@@ -18,7 +18,7 @@ use serde_json::Value;
 use super::super::edits::{EditKey, Edits};
 #[cfg(doc)]
 use super::super::field::flattened;
-use super::{ConfigPane, PaneEdit};
+use super::{ConfigPane, PaneEdit, SectionWrite};
 
 impl ConfigPane {
     /// The section with every field edit in `edits` applied at its own path,
@@ -39,17 +39,22 @@ impl ConfigPane {
     /// absent, and refusing such an edit would cost every other edit in the
     /// close its write.
     ///
-    /// [`None`] for a sheep pane, for a set holding no field edit, for a
-    /// section that does not parse, and for any one entry this writer cannot
-    /// land: a value with no TOML type, or a path that lands on something
-    /// other than the shape the row edits (a scalar where the schema says a
-    /// table, a table where the row edits one key inside it). A partial
-    /// section is worse than none, since the request would replace the table
-    /// with it.
+    /// [`SectionWrite::Nothing`] for a sheep pane, which holds no section, for
+    /// a set carrying no field edit, and for a batch whose every edit the
+    /// section already carries. [`SectionWrite::Refused`] for a section that
+    /// does not parse, and for any one entry this writer cannot land: a value
+    /// with no TOML type, or a path that lands on something other than the
+    /// shape the row edits (a scalar where the schema says a table, a table
+    /// where the row edits one key inside it). A partial section is worse than
+    /// none, since the request would replace the table with it.
     #[must_use]
-    pub fn edited_section_with(&self, edits: &Edits) -> Option<String> {
-        let section = self.section.as_deref()?;
-        let mut doc: toml_edit::DocumentMut = section.parse().ok()?;
+    pub fn edited_section_with(&self, edits: &Edits) -> SectionWrite {
+        let Some(section) = self.section.as_deref() else {
+            return SectionWrite::Nothing;
+        };
+        let Ok(mut doc) = section.parse::<toml_edit::DocumentMut>() else {
+            return SectionWrite::Refused;
+        };
         let mut changed = false;
         for (key, edit) in edits.iter() {
             let EditKey::Field(name) = key else {
@@ -73,10 +78,14 @@ impl ConfigPane {
             match landed {
                 Landed::Changed => changed = true,
                 Landed::Already => {}
-                Landed::Refused => return None,
+                Landed::Refused => return SectionWrite::Refused,
             }
         }
-        changed.then(|| doc.to_string())
+        if changed {
+            SectionWrite::Written(doc.to_string().into())
+        } else {
+            SectionWrite::Nothing
+        }
     }
 }
 
@@ -303,6 +312,15 @@ mod tests {
         edits
     }
 
+    /// The section a write produced, panicking on either other answer so a
+    /// test that wants text fails naming what it got instead.
+    fn want_written(write: SectionWrite) -> String {
+        match write {
+            SectionWrite::Written(toml) => toml.as_str().to_owned(),
+            other => panic!("wanted a section to send, got {other:?}"),
+        }
+    }
+
     /// Every form takes the set where it is, and neither comment survives
     /// anywhere but where the operator wrote it.
     #[test]
@@ -338,9 +356,10 @@ mod tests {
                 ),
             ),
         ] {
-            let out = nested_pane(section)
-                .edited_section_with(&edits_of(&[("models.worker.model", json!("large"))]))
-                .expect("the section parses");
+            let out = want_written(
+                nested_pane(section)
+                    .edited_section_with(&edits_of(&[("models.worker.model", json!("large"))])),
+            );
             assert_eq!(out, want, "{section}");
         }
     }
@@ -349,9 +368,10 @@ mod tests {
     /// header it needs and nothing above it.
     #[test]
     fn a_set_that_creates_a_table_writes_no_empty_parent_header() {
-        let out = nested_pane("name = \"small\"\n")
-            .edited_section_with(&edits_of(&[("models.worker.model", json!("large"))]))
-            .expect("the section parses");
+        let out = want_written(
+            nested_pane("name = \"small\"\n")
+                .edited_section_with(&edits_of(&[("models.worker.model", json!("large"))])),
+        );
         assert_eq!(
             out,
             concat!(
@@ -367,12 +387,10 @@ mod tests {
     /// new key joins its table at the end rather than at the top.
     #[test]
     fn key_order_survives_a_set() {
-        let out = nested_pane(HEADER)
-            .edited_section_with(&edits_of(&[
-                ("models.worker.token", json!("sk-new")),
-                ("name", json!("large")),
-            ]))
-            .expect("the section parses");
+        let out = want_written(nested_pane(HEADER).edited_section_with(&edits_of(&[
+            ("models.worker.token", json!("sk-new")),
+            ("name", json!("large")),
+        ])));
         assert_eq!(
             out,
             concat!(
@@ -390,12 +408,10 @@ mod tests {
     /// Two edits to one table are two lines of the same write.
     #[test]
     fn two_edits_in_one_table_both_land() {
-        let out = nested_pane(HEADER)
-            .edited_section_with(&edits_of(&[
-                ("models.worker.model", json!("large")),
-                ("models.worker.token", json!("sk-new")),
-            ]))
-            .expect("the section parses");
+        let out = want_written(nested_pane(HEADER).edited_section_with(&edits_of(&[
+            ("models.worker.model", json!("large")),
+            ("models.worker.token", json!("sk-new")),
+        ])));
         assert_eq!(
             out,
             concat!(
@@ -444,21 +460,24 @@ mod tests {
                 ),
             ),
         ] {
-            let out = nested_pane(section)
-                .edited_section_with(&edits_of(&[("models.worker.model", Value::Null)]))
-                .expect("the section parses");
+            let out = want_written(
+                nested_pane(section)
+                    .edited_section_with(&edits_of(&[("models.worker.model", Value::Null)])),
+            );
             assert_eq!(out, want, "{section}");
         }
     }
 
     /// A batch that changed nothing sends nothing: the removal found no
     /// parent, so the section it would have sent is the one it was handed.
+    /// `Nothing`, not `Refused`: the file already says what the operator asked
+    /// for.
     #[test]
     fn a_null_under_an_absent_parent_writes_nothing() {
         assert_eq!(
             nested_pane("name = \"small\"\n")
                 .edited_section_with(&edits_of(&[("models.worker.model", Value::Null)])),
-            None
+            SectionWrite::Nothing
         );
     }
 
@@ -467,12 +486,10 @@ mod tests {
     /// it.
     #[test]
     fn a_null_on_a_key_the_section_does_not_carry_keeps_the_rest_of_the_batch() {
-        let out = nested_pane(NO_TOKEN)
-            .edited_section_with(&edits_of(&[
-                ("models.worker.token", Value::Null),
-                ("name", json!("large")),
-            ]))
-            .expect("the removal changed nothing, so the batch stands on its edit");
+        let out = want_written(nested_pane(NO_TOKEN).edited_section_with(&edits_of(&[
+            ("models.worker.token", Value::Null),
+            ("name", json!("large")),
+        ])));
         assert_eq!(
             out,
             concat!(
@@ -488,12 +505,12 @@ mod tests {
     /// The same for a parent the section does not carry at all.
     #[test]
     fn a_null_under_an_absent_parent_keeps_the_rest_of_the_batch() {
-        let out = nested_pane("name = \"small\"\n")
-            .edited_section_with(&edits_of(&[
+        let out = want_written(
+            nested_pane("name = \"small\"\n").edited_section_with(&edits_of(&[
                 ("models.worker.model", Value::Null),
                 ("name", json!("large")),
-            ]))
-            .expect("nothing to remove is not a failure");
+            ])),
+        );
         assert_eq!(out, "name = \"large\"\n");
     }
 
@@ -510,7 +527,7 @@ mod tests {
             let pane = nested_pane(section);
             assert_eq!(
                 pane.edited_section_with(&edits_of(&[("models.worker.model", json!("large"))])),
-                None,
+                SectionWrite::Refused,
                 "{section}"
             );
             assert_eq!(
@@ -518,7 +535,7 @@ mod tests {
                     ("models.worker.model", json!("large")),
                     ("name", json!("large")),
                 ])),
-                None,
+                SectionWrite::Refused,
                 "{section}"
             );
         }
@@ -572,9 +589,10 @@ mod tests {
                 ),
             ),
         ] {
-            let out = nested_pane(section)
-                .edited_section_with(&edits_of(&[("models.worker.model", json!("large"))]))
-                .expect("the section parses");
+            let out = want_written(
+                nested_pane(section)
+                    .edited_section_with(&edits_of(&[("models.worker.model", json!("large"))])),
+            );
             assert_eq!(out, want, "{section}");
             let doc: toml_edit::DocumentMut = out.parse().expect("the output parses");
             assert_eq!(
@@ -591,9 +609,7 @@ mod tests {
     fn a_property_named_with_a_dot_stays_one_key() {
         let pane = nested_pane("\"a.b\" = \"literal\"\nname = \"small\"\n");
         assert_eq!(pane.value("\"a.b\""), "literal");
-        let out = pane
-            .edited_section_with(&edits_of(&[("\"a.b\"", json!("other"))]))
-            .expect("the section parses");
+        let out = want_written(pane.edited_section_with(&edits_of(&[("\"a.b\"", json!("other"))])));
         assert_eq!(out, "\"a.b\" = \"other\"\nname = \"small\"\n");
     }
 
@@ -605,7 +621,7 @@ mod tests {
         let pane = nested_pane("name = \"small\"\n");
         assert_eq!(
             pane.edited_section_with(&edits_of(&[("name", json!(u64::MAX))])),
-            None
+            SectionWrite::Refused
         );
     }
 
@@ -618,7 +634,7 @@ mod tests {
         for value in [json!(["a", "b"]), json!({ "model": "gpt" })] {
             assert_eq!(
                 pane.edited_section_with(&edits_of(&[("name", value.clone())])),
-                None,
+                SectionWrite::Refused,
                 "{value}"
             );
         }
@@ -635,9 +651,8 @@ mod tests {
             (json!("gpt"), "count = \"gpt\"\n"),
         ] {
             let pane = nested_pane("count = 0\n");
-            let out = pane
-                .edited_section_with(&edits_of(&[("count", value.clone())]))
-                .expect("the section parses");
+            let out =
+                want_written(pane.edited_section_with(&edits_of(&[("count", value.clone())])));
             assert_eq!(out, want, "{value}");
         }
     }
@@ -649,9 +664,7 @@ mod tests {
         let pane = bark_pane();
         let mut edits = Edits::default();
         edits.set(field("poll", json!("30s")), None);
-        let out = pane
-            .edited_section_with(&edits)
-            .expect("the fixture section parses");
+        let out = want_written(pane.edited_section_with(&edits));
         assert!(out.contains("# how often"), "{out}");
         assert!(out.contains("poll = \"30s\""), "{out}");
         assert!(out.contains("history_bytes = 4096"), "{out}");
@@ -665,9 +678,7 @@ mod tests {
         let pane = bark_pane();
         let mut edits = Edits::default();
         edits.set(field("history_bytes", Value::Null), None);
-        let out = pane
-            .edited_section_with(&edits)
-            .expect("the fixture section parses");
+        let out = want_written(pane.edited_section_with(&edits));
         assert!(!out.contains("history_bytes"), "{out}");
         assert!(out.contains("# how often"), "{out}");
     }
@@ -680,9 +691,7 @@ mod tests {
         let mut edits = Edits::default();
         edits.set(field("sink_timeout", json!("5s")), None);
         edits.set(field("poll", json!("30s")), None);
-        let section = pane
-            .edited_section_with(&edits)
-            .expect("the fixture parses");
+        let section = want_written(pane.edited_section_with(&edits));
         assert!(section.contains("poll = \"30s\""), "{section}");
         assert!(section.contains("sink_timeout = \"5s\""), "{section}");
     }
@@ -700,14 +709,14 @@ mod tests {
             },
             None,
         );
-        assert_eq!(pane.edited_section_with(&edits), None);
+        assert_eq!(pane.edited_section_with(&edits), SectionWrite::Nothing);
     }
 
     /// A stray env edit in a set that also carries a field edit must not
     /// revive the old "one bad entry aborts the whole batch" bug: skipping
     /// the env edit and an early return on any non-field entry both leave
     /// `an_env_edit_is_ignored_by_a_dog_section` green, since an env-only
-    /// set returns `None` either way. Only a mixed set tells them apart.
+    /// set answers `Nothing` either way. Only a mixed set tells them apart.
     #[test]
     fn a_field_edit_lands_even_when_the_same_batch_carries_an_env_edit() {
         let pane = bark_pane();
@@ -720,19 +729,18 @@ mod tests {
             },
             None,
         );
-        let out = pane
-            .edited_section_with(&edits)
-            .expect("the field edit alone should still write");
+        let out = want_written(pane.edited_section_with(&edits));
         assert!(out.contains("poll = \"30s\""), "{out}");
         assert!(!out.contains("SECRET"), "{out}");
     }
 
-    /// A section here would send a sheep's config out through a dog's door.
+    /// A section here would send a sheep's config out through a dog's door,
+    /// and there is no section to send it from.
     #[test]
     fn a_sheep_pane_has_no_section_to_edit() {
         let pane = ConfigPane::sheep(web());
         let mut edits = Edits::default();
         edits.set(field("cwd", json!("/srv")), None);
-        assert_eq!(pane.edited_section_with(&edits), None);
+        assert_eq!(pane.edited_section_with(&edits), SectionWrite::Nothing);
     }
 }

@@ -37,4 +37,4 @@ pub use edit::PaneTyping;
 pub use env::EnvTyping;
 pub(crate) use fields::{resolved_display, sheep_fields};
 pub use list::{ListPane, ListRow};
-pub use types::{FieldValue, Lock, PaneEdit, PaneRow, PaneTarget};
+pub use types::{FieldValue, Lock, PaneEdit, PaneRow, PaneTarget, SectionWrite};

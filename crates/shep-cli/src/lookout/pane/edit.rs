@@ -424,6 +424,7 @@ mod tests {
     use shep_core::protocol::SheepConfigView;
 
     use super::super::Lock;
+    use super::super::SectionWrite;
     use super::super::fixtures::{bark_pane, filed, filed_impact, secret_dog_pane, web};
     use super::*;
 
@@ -744,9 +745,10 @@ mod tests {
             Some(Value::Null),
             "a dog restores by removing the key, not by filing its default"
         );
-        let out = pane
-            .edited_section_with(pane.edits())
-            .expect("the fixture section parses");
+        let SectionWrite::Written(section) = pane.edited_section_with(pane.edits()) else {
+            panic!("the fixture section parses, and the removal lands in it");
+        };
+        let out = section.as_str();
         assert!(!out.contains("merge_logs"), "{out}");
     }
 

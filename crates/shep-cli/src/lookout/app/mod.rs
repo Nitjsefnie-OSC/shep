@@ -43,7 +43,7 @@ use super::field::{FieldKind, FieldSet};
 use super::level::{Classifier, Level};
 use super::pane::{
     ConfigPane, DogTableState, DogsPane, FieldValue, Lock, PaneEdit, PaneRow, PaneTarget,
-    ReloadKind, SheepDogEntry,
+    ReloadKind, SectionWrite, SheepDogEntry,
 };
 use super::pane_bleats::BleatsPane;
 use super::pane_sheep::SheepPane;
