@@ -65,7 +65,7 @@ impl ConfigPane {
             let unnamed = vec![name.clone()];
             let path = self.section_paths.get(name).unwrap_or(&unnamed);
             let landed = match toml_cell(value) {
-                Some(cell) => set_at(doc.as_table_mut(), path, cell),
+                Some(cell) => set_at(doc.as_table_mut(), path, cell, false),
                 // `null` has no TOML cell: it is the removal, not a value.
                 None if value.is_null() => remove_at(doc.as_table_mut(), path),
                 None => Landed::Refused,
@@ -130,13 +130,23 @@ fn toml_cell(value: &Value) -> Option<toml_edit::Item> {
 /// `worker = { model = ... }` inline table are all [`toml_edit::TableLike`],
 /// and each renders back in the form it came in. A parent the section lacks is
 /// created implicit, so the write adds `[models.worker]` and no empty
-/// `[models]` header above it.
+/// `[models]` header above it, and inside an inline table it is created as an
+/// inline table, which is the only kind that renders there.
 ///
 /// [`Landed::Refused`] where the section already holds something else at a
 /// step of the path: `models = "old"` there is the operator's value, and a
 /// nested row is not licensed to trade it for a table. The same for a leaf
 /// that is already a table, which no row of this pane edits.
-fn set_at(table: &mut dyn toml_edit::TableLike, path: &[String], cell: toml_edit::Item) -> Landed {
+///
+/// `inline` says whether `table` is an inline table, which is not something
+/// [`toml_edit::TableLike`] answers: a table created inside one has to be an
+/// inline table too, or it renders as nothing.
+fn set_at(
+    table: &mut dyn toml_edit::TableLike,
+    path: &[String],
+    cell: toml_edit::Item,
+    inline: bool,
+) -> Landed {
     let Some((key, rest)) = path.split_first() else {
         return Landed::Refused;
     };
@@ -150,15 +160,24 @@ fn set_at(table: &mut dyn toml_edit::TableLike, path: &[String], cell: toml_edit
         *entry = cell;
         return Landed::Changed;
     }
-    if matches!(entry, toml_edit::Item::None) {
-        *entry = implicit_table();
+    let nested_inline = if entry.is_none() {
+        *entry = if inline {
+            inline_child()
+        } else {
+            implicit_table()
+        };
+        inline
+    } else if entry.is_inline_table() {
+        true
     } else if !entry.is_table_like() {
         return Landed::Refused;
-    }
+    } else {
+        false
+    };
     let Some(nested) = entry.as_table_like_mut() else {
         return Landed::Refused;
     };
-    set_at(nested, rest, cell)
+    set_at(nested, rest, cell, nested_inline)
 }
 
 /// Removes the leaf `path` names, and nothing above it.
@@ -196,6 +215,14 @@ fn implicit_table() -> toml_edit::Item {
     let mut table = toml_edit::Table::new();
     table.set_implicit(true);
     toml_edit::Item::Table(table)
+}
+
+/// The kind of table to create inside an inline table. An inline table renders
+/// its values and its inline tables and nothing else, so a regular
+/// [`toml_edit::Item::Table`] inserted there reports a set and renders as
+/// though nothing was written.
+fn inline_child() -> toml_edit::Item {
+    toml_edit::Item::Value(toml_edit::Value::InlineTable(toml_edit::InlineTable::new()))
 }
 
 #[cfg(test)]
@@ -506,10 +533,56 @@ mod tests {
             .expect("the section parses");
         let path = ["models".to_owned()];
         assert_eq!(
-            set_at(doc.as_table_mut(), &path, toml_edit::value("old")),
+            set_at(doc.as_table_mut(), &path, toml_edit::value("old"), false),
             Landed::Refused
         );
         assert!(doc.to_string().contains("[models.worker]"), "{doc}");
+    }
+
+    /// A new table on the path takes the form of the table it goes into.
+    /// Inserting a regular `Item::Table` into an inline table reports success
+    /// and renders nothing at all: inline tables emit only their values, so
+    /// the section comes back exactly as it went in and the edit is gone.
+    #[test]
+    fn a_set_inside_an_inline_table_creates_an_inline_table() {
+        for (section, want) in [
+            (
+                "models = {}\nname = \"small\"\n",
+                "models = { worker = { model = \"large\" } }\nname = \"small\"\n",
+            ),
+            (
+                "models = { token = \"sk-old\" }\nname = \"small\"\n",
+                // The space the new entry's separator takes sits before the
+                // comma rather than after it, which is `toml_edit` keeping the
+                // decor the operator's own entry had.
+                concat!(
+                    "models = { token = \"sk-old\" , worker = { model = \"large\" } }\n",
+                    "name = \"small\"\n",
+                ),
+            ),
+            (
+                "models = { worker = {} }\nname = \"small\"\n",
+                "models = { worker = { model = \"large\" } }\nname = \"small\"\n",
+            ),
+            (
+                "models = { worker = { token = \"sk-old\" } }\nname = \"small\"\n",
+                concat!(
+                    "models = { worker = { token = \"sk-old\" , model = \"large\" } }\n",
+                    "name = \"small\"\n",
+                ),
+            ),
+        ] {
+            let out = nested_pane(section)
+                .edited_section_with(&edits_of(&[("models.worker.model", json!("large"))]))
+                .expect("the section parses");
+            assert_eq!(out, want, "{section}");
+            let doc: toml_edit::DocumentMut = out.parse().expect("the output parses");
+            assert_eq!(
+                doc["models"]["worker"]["model"].as_str(),
+                Some("large"),
+                "{out}"
+            );
+        }
     }
 
     /// A property literally named `a.b` is one key, and the section spells
