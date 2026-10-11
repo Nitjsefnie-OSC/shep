@@ -14,7 +14,8 @@
 //! `list` hold what it does when a key lands; `dogs` holds a sheep's dogs
 //! sub-screen and `sheep_dog` the pane over one dog's table on it; `types`
 //! and `fields` hold what the rest read and write; `section_write` turns a
-//! filed set back into a dog's TOML text.
+//! filed set back into a dog's TOML text; `walk` holds the rows and the
+//! cursor's walk through them.
 
 mod config;
 mod dogs;
@@ -27,6 +28,7 @@ mod list;
 mod section_write;
 mod sheep_dog;
 mod types;
+mod walk;
 
 pub use config::{ConfigPane, ReloadKind};
 pub(crate) use dogs::dog_names;
