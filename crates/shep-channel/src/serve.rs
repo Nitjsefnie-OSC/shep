@@ -1,14 +1,13 @@
-use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use crate::dispatch::{Dispatch, Outcome, run};
+use crate::metric::MetricOptions;
 use crate::outbox::{DEFAULT_CAPACITY, Drain, Outbox};
 use crate::{
-    CHANNEL_VERSION, Channel, ChannelError, ChildMessage, LambLabel, MetricType, VERSION_VAR,
-    session,
+    CHANNEL_VERSION, Channel, ChannelError, ChildMessage, LambLabel, VERSION_VAR, session,
 };
 
 /// What to tell an author running under shep with no channel.
@@ -282,61 +281,6 @@ impl Shepherd {
     }
 }
 
-/// The optional half of a metric sample: kind, labels and help text.
-///
-/// Built, not configured: every method takes and returns `Self`. Names
-/// and labels carry no grammar check here, the same reason
-/// [`ChildMessage::Metric`] carries none: the metrics dog enforces it.
-///
-/// [`Shepherd::metric_with`] takes one.
-#[derive(Clone, Default, PartialEq, Eq)]
-pub struct MetricOptions {
-    kind: Option<MetricType>,
-    labels: BTreeMap<String, String>,
-    help: Option<String>,
-}
-
-// Hand-written: the derive would print label values and help text
-// verbatim, the same reason `Shepherd`'s Debug hides metric names (IR-41).
-impl core::fmt::Debug for MetricOptions {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("MetricOptions")
-            .field("kind", &self.kind)
-            .field("labels", &self.labels.len())
-            .field("help", &self.help.is_some())
-            .finish()
-    }
-}
-
-impl MetricOptions {
-    /// Options with no kind, no labels and no help text.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Sets the metric kind. Absent on the wire means gauge.
-    #[must_use]
-    pub fn kind(mut self, kind: MetricType) -> Self {
-        self.kind = Some(kind);
-        self
-    }
-
-    /// Adds one label, replacing any prior value for `key`.
-    #[must_use]
-    pub fn label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.labels.insert(key.into(), value.into());
-        self
-    }
-
-    /// Sets the help text.
-    #[must_use]
-    pub fn help(mut self, text: impl Into<String>) -> Self {
-        self.help = Some(text.into());
-        self
-    }
-}
-
 /// Opens this process's channel and starts serving it.
 ///
 /// Always returns a usable handle. With no channel, every call on it
@@ -509,6 +453,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::MetricType;
 
     /// Bounds the one test below that could hang forever on a real
     /// regression. A working reader answers in microseconds. This is slack
@@ -600,25 +545,6 @@ mod tests {
                 r#"{"kind":"metric","name":"queue_depth","value":3.0,"type":"counter","#,
                 r#""labels":{"model":"qwen"},"help":"Requests waiting for the lease."}"#,
             )
-        );
-    }
-
-    /// IR-41: pins the exact string, and separately that no label value
-    /// or help text appears. Either check alone would catch a regression.
-    #[test]
-    fn metric_options_debug_hides_labels_and_help() {
-        let options = MetricOptions::new()
-            .kind(MetricType::Counter)
-            .label("model", "SECRET-LABEL-VALUE")
-            .help("SECRET HELP TEXT");
-        let rendered = format!("{options:?}");
-        assert_eq!(
-            rendered,
-            "MetricOptions { kind: Some(Counter), labels: 1, help: true }"
-        );
-        assert!(
-            !rendered.contains("SECRET-LABEL-VALUE") && !rendered.contains("SECRET HELP TEXT"),
-            "a label or help text reached the Debug output: {rendered}"
         );
     }
 
