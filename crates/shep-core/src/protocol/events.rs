@@ -222,8 +222,8 @@ impl BusEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{LambLabel, MetricType};
     use crate::protocol::request::{ExitInfo, ProcessInfo};
+    use crate::protocol::{LambLabel, MetricType};
     use crate::status::ProcStatus;
 
     /// The comment above this enum said a new variant is not free because

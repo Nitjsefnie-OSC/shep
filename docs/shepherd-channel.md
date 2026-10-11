@@ -175,7 +175,7 @@ build a JSON object, append `\n`, write it.
 | Message | Meaning |
 |---|---|
 | `{"kind":"ready"}` | You are up and ready to serve. Only meaningful if `wait_ready = true`; the daemon is otherwise not waiting for it. |
-| `{"kind":"metric","name":"<name>","value":<number>}` | A custom metric sample. Currently logged by the daemon at debug level and nothing more — no dog reads it yet. |
+| `{"kind":"metric","name":"<name>","value":<number>}`, optionally with `"type":"gauge"|"counter"`, `"labels":{"<key>":"<value>", ...}` and `"help":"<text>"` | A custom metric sample. An absent `type` means gauge; an unknown one makes the line malformed and the daemon drops it. `labels` is a string map: an absent key and an empty map are the same message. `help` is free text. Currently logged by the daemon at debug level and nothing more — no dog reads it yet. |
 | `{"kind":"action-reply","action":"<name>","body":"<text>","id":<number>}` | Your answer to a triggered action. `action` names which one; `body` is free-form text and becomes what the operator sees. `id` is optional — echo the `id` from the `action` message you are answering and shep matches your reply to that exact request. |
 | `{"kind":"lamb-label","pid":<number>,"label":"<text>"}` | Names one of your own child processes in `shep describe` and lookout. An empty `label` clears it. See [Naming your lambs](#naming-your-lambs). |
 
