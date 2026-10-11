@@ -232,9 +232,4 @@ mod actor;
 
 mod rearm;
 
-// Windows only: the failure it hunts is a `windows-latest` one, and gating it
-// here keeps every other leg green while it is on the branch.
-#[cfg(windows)]
-mod probe628;
-
 mod slow;
