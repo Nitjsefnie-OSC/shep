@@ -470,6 +470,17 @@ or read-only, and Enter on a set or unset one opens a pane over it, a
 nested table flattened into dotted rows and a secret drawn `<set>`. No
 wire change: `PROTOCOL_VERSION` stays at 10.
 
+**The dog's own pane flattens the same way.** `e` on a dog row now shows a
+nested table in its `dogs.toml` section as dotted rows, `models.worker.model`
+and its like, each editable by its own type, and a credential inside one drawn
+`<set>` with its editor opening empty. The write walks that path into the
+section, so a `[models.worker]` header, dotted keys and an inline table each
+take the set where they are, comments and key order intact. A list or a map is
+still a `~` row, and a value TOML cannot hold (an array, a map, a whole number
+past `i64::MAX`), or a scalar sitting where the schema has a table, refuses the
+whole write instead of landing as text or replacing what the operator wrote. No
+wire change.
+
 **A dog can ask for the shepherd channel.** A `shep-channel: true` line in
 a dog's `--version` answer, or `dogs::Probe::ask_for_channel` in a dog
 built on `shep-client`, is recorded by `shep adopt` in `[daemon]

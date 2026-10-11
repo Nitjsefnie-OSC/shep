@@ -166,7 +166,7 @@ pub(super) fn list_body_from(
 #[cfg(test)]
 mod tests {
     use super::super::fixtures::{
-        marked, pane_to, screen_at, secret_list_dog_pane, text_of, web_pane, web_with_args,
+        marked, pane_to, screen_at, secret_array_dog_pane, text_of, web_pane, web_with_args,
     };
     use super::super::pane_lines;
     use super::*;
@@ -226,17 +226,15 @@ mod tests {
         );
     }
 
-    /// No Flockfile field is secret today, but a dog's schema can mark one,
-    /// and the list sub-screen has to mask it the same way the field list
-    /// and the confirm sentence already do.
+    /// No Flockfile field is secret today, and a dog's pane has no widget
+    /// for an array at all, so a secret array is one masked row everywhere
+    /// this screen could otherwise open.
     #[test]
-    fn the_list_screen_masks_a_secret_arrays_elements() {
-        let text = text_of(&pane_lines(
-            &secret_list_dog_pane(),
-            fixtures::plain(),
-            120,
-            0,
-        ));
+    fn a_dogs_secret_array_opens_no_list_screen_and_never_draws_its_elements() {
+        let mut pane = secret_array_dog_pane();
+        pane.open_list();
+        assert!(pane.list().is_none(), "a locked row opens no sub-screen");
+        let text = text_of(&pane_lines(&pane, fixtures::plain(), 120, 0));
         assert!(
             !text
                 .iter()
@@ -244,8 +242,8 @@ mod tests {
             "a secret element is never rendered: {text:?}"
         );
         assert!(
-            text.iter().filter(|line| line.contains("<set>")).count() == 2,
-            "both elements mask to <set>: {text:?}"
+            text.iter().any(|line| line.contains("<set>")),
+            "the row says there is one: {text:?}"
         );
     }
 

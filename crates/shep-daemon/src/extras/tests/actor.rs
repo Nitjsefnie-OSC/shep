@@ -164,17 +164,39 @@ fn backoff_app() -> shep_core::config::ResolvedApp {
 /// Each `list()` is a full round trip through the actor's mailbox, so this
 /// makes progress rather than merely observing it.
 async fn settle_into(supervisor: &SupervisorHandle, id: u32, status: ProcStatus) {
+    let mut last = Vec::new();
     for _ in 0..200 {
         tokio::task::yield_now().await;
-        let listing = supervisor.list().await;
-        if listing
+        last = supervisor.list().await;
+        if last
             .iter()
             .any(|info| info.id == id && info.status == status)
         {
             return;
         }
     }
-    panic!("id {id} never reached {status:?}");
+    // The status it did reach is the whole diagnosis: `Online` means the
+    // trigger never fired, `Starting` means the spawn never finished, and no
+    // entry at all means the id was never registered.
+    let seen = last
+        .iter()
+        .filter(|info| info.id == id)
+        .map(|info| {
+            format!(
+                "status={:?} restarts={} pid={:?}",
+                info.status, info.restarts, info.pid
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    panic!(
+        "id {id} never reached {status:?} (last listing: {})",
+        if seen.is_empty() {
+            "no entry with this id".to_string()
+        } else {
+            seen
+        }
+    );
 }
 
 // A sheep waiting out its restart backoff has no live task, so its stop

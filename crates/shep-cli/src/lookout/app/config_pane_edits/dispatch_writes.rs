@@ -4,9 +4,11 @@ impl App {
     /// Everything the open pane has filed, as the requests that carry it,
     /// leaving the pane holding nothing.
     ///
-    /// Empty for no pane, for an empty set, and for a dog whose section
-    /// stopped parsing between the read and the keystroke, which is
-    /// reported rather than sent as an empty table.
+    /// Empty for no pane, for an empty set, and for a dog whose every filed
+    /// edit is one its section already carries, which needs no request and no
+    /// notice. Reported, not sent, for a dog whose section stopped parsing
+    /// between the read and the keystroke, or whose text holds something other
+    /// than the shape the row edits.
     ///
     /// A sheep's set is one request per entry and a dog's is one request
     /// for the lot: [`Sent::SetDogSection`] and [`Sent::SetSheepDogTable`]
@@ -43,19 +45,26 @@ impl App {
         let mut ticket = self.next_write_ticket;
         let sent = match pane.target().clone() {
             PaneTarget::Dog { name, .. } => match pane.edited_section_with(&edits) {
-                Some(toml) => {
+                SectionWrite::Written(toml) => {
                     let section = vec![Sent::SetDogSection {
                         name,
                         ticket,
-                        toml: toml.into(),
+                        toml,
                         authority,
                     }];
                     ticket += 1;
                     section
                 }
-                None => {
+                // The section already says what every filed edit asked for, so
+                // the close is finished and has nothing to send. Not a
+                // refusal, and nothing to report: the edit reached this arm
+                // through a re-read that landed it under the operator's hand.
+                SectionWrite::Nothing => Vec::new(),
+                SectionWrite::Refused => {
                     self.notice = Some(Notice {
-                        text: format!("{name}: its section in dogs.toml does not parse"),
+                        text: format!(
+                            "{name}: its section in dogs.toml does not parse, or is not shaped for the edit"
+                        ),
                         grave: true,
                     });
                     return Vec::new();
@@ -405,6 +414,109 @@ mod tests {
         assert_ne!(
             first[0], second[0],
             "a second close does not reuse the first's tickets"
+        );
+    }
+
+    /// A dog pane's rows are dotted for a nested table, and the write walks
+    /// that path into the section: the text that comes back differs from the
+    /// text that went in in the one line the operator typed.
+    #[test]
+    fn a_dotted_dog_row_changes_one_line_of_its_section() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        pane_to(&mut app, "models.worker.model");
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        for _ in 0..64 {
+            let _ = app.update(Msg::Key(KeyPress::TextBackspace));
+        }
+        for typed in "large".chars() {
+            let _ = app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        let _ = app.update(Msg::Key(KeyPress::TextApply));
+        // `esc` reads the section again before writing it, the same door a
+        // sheep's batch closes through.
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Escape)) else {
+            panic!("a dog close reads its section first");
+        };
+        let effect = app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: fixtures::nested_dog_section().into(),
+            }),
+        });
+        let mut batch = wire_batch(effect);
+        let Sent::SetDogSection { name, toml, .. } = batch.remove(0) else {
+            panic!("closing the pane sends the section: {batch:?}");
+        };
+        assert_eq!(name, "jobs");
+        let before = fixtures::nested_dog_section();
+        let sent = toml.as_str();
+        let changed: Vec<(usize, &str, &str)> = sent
+            .lines()
+            .zip(before.lines())
+            .enumerate()
+            .filter(|(_, pair)| pair.0 != pair.1)
+            .map(|(line, pair)| (line, pair.0, pair.1))
+            .collect();
+        assert_eq!(
+            changed,
+            vec![(6, "model = \"large\"", "model = \"gpt\"")],
+            "{sent}",
+        );
+    }
+
+    /// The trigger: an unset filed on a key that someone else removes from
+    /// `dogs.toml` while the pane is open. The close re-reads, sees the section
+    /// moved, and holds the pane under the same edit. The second close finds
+    /// the key already gone, which is the edit already done, not a broken file.
+    #[test]
+    fn a_dog_unset_the_section_already_carries_closes_without_a_notice() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        pane_to(&mut app, "models.worker.model");
+        let _ = app.update(Msg::Key(KeyPress::Remove));
+        assert_eq!(
+            app.config_pane().expect("the pane is open").edits().len(),
+            1,
+            "d on a dog row files the removal"
+        );
+        let removed = fixtures::nested_dog_section().replace("model = \"gpt\"\n", "");
+
+        // First close: the section moved under the edit, so nothing is written
+        // and the pane stays up with it.
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Escape)) else {
+            panic!("a dog close reads its section first");
+        };
+        let effect = app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: removed.clone().into(),
+            }),
+        });
+        assert!(matches!(effect, Effect::None), "{effect:?}");
+        assert!(
+            app.config_pane().is_some(),
+            "a moved section holds the pane"
+        );
+
+        // Second close: the section is the one the pane holds now, and the one
+        // edit it carries is the removal the file already made.
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Escape)) else {
+            panic!("the second close reads again");
+        };
+        let effect = app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: removed.into(),
+            }),
+        });
+        assert!(matches!(effect, Effect::None), "{effect:?}");
+        assert!(
+            app.config_pane().is_none(),
+            "the close finishes: nothing to send is not a refusal"
+        );
+        assert_eq!(
+            app.notice().map(ToString::to_string),
+            None,
+            "the file parses and already says what the operator asked for"
         );
     }
 }

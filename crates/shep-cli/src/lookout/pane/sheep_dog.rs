@@ -71,6 +71,7 @@ impl ConfigPane {
             dogs: None,
             section: None,
             dog_table: Some(Box::new(SheepDogTable { paths, table })),
+            section_paths: BTreeMap::new(),
         }
     }
 

@@ -1,28 +1,32 @@
-//! The pane itself: what it is over, what it reads off that target, and
-//! where the cursor is.
+//! The pane itself: what it is over, and what it reads off that target.
 //!
 //! One `FieldSet`, the values the target currently holds, and a `Viewport`
 //! over the rows. Everything here answers a question; the answers to
-//! keystrokes live in the four modules beside it.
+//! keystrokes live in the modules beside it, and the rows themselves and the
+//! cursor's walk through them in [`super::walk`].
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde_json::{Map, Value};
-use shep_core::config::{ApplyGroup, GROUP_ORDER, apply_group, reaches_running};
+use shep_core::config::{ApplyGroup, apply_group, reaches_running};
 use shep_core::protocol::SheepConfigView;
 
 use super::super::edits::{EditKey, Edits};
-use super::super::field::{FieldKind, FieldSet};
+use super::super::field::{FieldKind, FieldSet, Flattened, flatten_values, flattened};
 use super::super::viewport::Viewport;
 use super::fields::{render_json, resolved_display, sheep_fields};
 use super::sheep_dog::SheepDogTable;
 
 // Link-only (IR-32): the unit grammars a row's resolved display goes
-// through, and the field kind a locked row reports.
+// through, the field kind a locked row reports, and the group order this
+// type's own field indexes into.
 #[cfg(doc)]
 use super::super::field::ValueKind;
 use super::dogs::dog_names;
 use super::{DogsPane, EnvTyping, ListPane, Lock, PaneEdit, PaneRow, PaneTarget, PaneTyping};
+#[cfg(doc)]
+use shep_core::config::GROUP_ORDER;
 #[cfg(doc)]
 use shep_core::values::{MemSize, UpDuration};
 
@@ -80,6 +84,13 @@ pub struct ConfigPane {
     /// A dog's table on a sheep, whole, and where each dotted row lives in
     /// it. [`None`] for every other target. See [`Self::sheep_dog`].
     pub(super) dog_table: Option<Box<SheepDogTable>>,
+    /// Each dotted row key of a dog pane to the real property path it was
+    /// built from. Empty for any other target.
+    ///
+    /// The rows are [`flattened`]'s, so a key is dotted for a nested table
+    /// and quoted for a property literally named with a dot. The write walks
+    /// this map rather than the key: see [`Self::edited_section_with`].
+    pub(super) section_paths: BTreeMap<String, Vec<String>>,
 }
 
 impl core::fmt::Debug for ConfigPane {
@@ -121,6 +132,7 @@ impl ConfigPane {
             dogs: None,
             section: None,
             dog_table: None,
+            section_paths: BTreeMap::new(),
         }
     }
 
@@ -131,9 +143,11 @@ impl ConfigPane {
     /// `Request::DogConfig` rendered it, empty when `dogs.toml` has none.
     ///
     /// Flat, in schema order, with no group headers: a dog's schema
-    /// carries no `init.group`. A [`FieldKind::Map`] or
+    /// carries no `init.group`. A nested table becomes dotted rows, as it
+    /// does on that dog's table over a sheep. A [`FieldKind::Map`] or
     /// [`FieldKind::List`] row is marked not editable and draws
-    /// [`Lock::NoWidget`].
+    /// [`Lock::NoWidget`]: this pane has no widget for either, so a list
+    /// stays one row rather than the sub-screen a sheep's `args` opens.
     #[must_use]
     pub fn dog(
         name: String,
@@ -141,22 +155,17 @@ impl ConfigPane {
         schema: Value,
         section: String,
     ) -> Self {
-        let defs = schema
-            .get("$defs")
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
-        let properties = schema
-            .get("properties")
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
-        let set = FieldSet::from_properties(&properties, &defs, &[]);
+        let Flattened { fields, paths } = flattened(&schema);
         let fields = FieldSet::from_fields(
-            set.fields()
+            fields
+                .fields()
                 .iter()
                 .cloned()
                 .map(|mut field| {
+                    // `flattened` leaves a list editable, because a sheep's
+                    // pane writes one whole at its dotted path. This pane has
+                    // no list sub-screen, and it already closed a `Map` to
+                    // [`FieldKind::Opaque`].
                     if matches!(field.kind, FieldKind::Map | FieldKind::List(_)) {
                         field.editable = false;
                     }
@@ -165,12 +174,13 @@ impl ConfigPane {
                 .collect(),
             &[],
         );
-        let values: Map<String, Value> = section
+        let table: Map<String, Value> = section
             .parse::<toml::Table>()
             .ok()
             .and_then(|table| serde_json::to_value(table).ok())
             .and_then(|value| value.as_object().cloned())
             .unwrap_or_default();
+        let values = flatten_values(&table, &paths);
         Self {
             target: PaneTarget::Dog { name, adopted_path },
             fields,
@@ -187,6 +197,7 @@ impl ConfigPane {
             dogs: None,
             section: Some(section),
             dog_table: None,
+            section_paths: paths,
         }
     }
 
@@ -401,124 +412,6 @@ impl ConfigPane {
         reload_mode(flag("wait_ready"), has_probe, flag("reuse_port"))
     }
 
-    /// The cursor and offset.
-    #[must_use]
-    pub fn view(&self) -> &Viewport {
-        &self.view
-    }
-
-    /// Records the terminal's height, in rows of data.
-    pub fn set_rows(&mut self, rows: usize) {
-        let len = self.rows().len();
-        self.view.set_rows(rows, len);
-    }
-
-    /// The active group's name, one of the nine in [`GROUP_ORDER`],
-    /// defaulting to the first.
-    ///
-    /// Meaningless for a dog pane in the sense that nothing filters on it:
-    /// a dog's schema carries no `init.group`, so every one of its fields
-    /// is visible under any name this returns. See [`Self::rows`].
-    #[must_use]
-    pub fn group(&self) -> &'static str {
-        GROUP_ORDER
-            .get(self.group)
-            .copied()
-            .unwrap_or(GROUP_ORDER[0])
-    }
-
-    /// Walks to the next group, wrapping from the last back to the first.
-    pub fn next_group(&mut self) {
-        self.group = (self.group + 1) % GROUP_ORDER.len();
-    }
-
-    /// Walks to the previous group, wrapping from the first back to the last.
-    pub fn prev_group(&mut self) {
-        self.group = (self.group + GROUP_ORDER.len() - 1) % GROUP_ORDER.len();
-    }
-
-    /// Jumps to the `digit`th group, one-based, the way `1`..`9` name them
-    /// on the tab row. A digit past [`GROUP_ORDER`]'s length is ignored, so
-    /// a tenth group added later needs a key of its own before it is
-    /// reachable.
-    pub fn set_group(&mut self, digit: u8) {
-        let Some(index) = usize::from(digit).checked_sub(1) else {
-            return;
-        };
-        if index < GROUP_ORDER.len() {
-            self.group = index;
-        }
-    }
-
-    /// One row per field of the active group, in display order, then this
-    /// sheep's own env keys and the row that adds one. A field carrying no
-    /// group at all (every field on a dog pane, whose schema declares
-    /// none) is visible regardless of which group is active, which is
-    /// what keeps a dog's flat list undisturbed by a control meant for a
-    /// sheep's nine.
-    ///
-    /// The `env` field itself is left out of the field portion for a
-    /// sheep: its own [`PaneRow::Env`] rows are what replaced the sub-screen
-    /// it used to open, and a row that still showed the field's own "N
-    /// keys" summary beside them would be the same fact said twice. A
-    /// dog's schema is somebody else's and can declare a field named
-    /// `env` of its own, which stays.
-    #[must_use]
-    pub fn rows(&self) -> Vec<PaneRow> {
-        let group = self.group();
-        let is_sheep = matches!(self.target, PaneTarget::Sheep { .. });
-        let mut rows: Vec<PaneRow> = self
-            .fields
-            .fields()
-            .iter()
-            .enumerate()
-            .filter(|(_, field)| !is_sheep || field.key != "env")
-            .filter(|(_, field)| field.group.as_deref().is_none_or(|g| g == group))
-            .map(|(index, _)| PaneRow::Field(index))
-            .collect();
-        if is_sheep {
-            rows.extend((0..self.env_keys.len()).map(PaneRow::Env));
-            rows.push(PaneRow::AddEnv);
-        }
-        rows
-    }
-
-    /// [`Self::rows`]'s own [`PaneRow::Field`] entries, alone: what the
-    /// field body's own scroll walk lays out. [`Self::rows`] is the
-    /// cursor's whole walk, env rows included; this is the narrower list
-    /// the renderer needs to lay the field portion out on its own, since
-    /// `view::scroll::to_cursor` has to know how many rows exist
-    /// in the body it is walking, not in the cursor's wider one.
-    #[must_use]
-    pub(in crate::lookout) fn field_rows(&self) -> Vec<PaneRow> {
-        self.rows()
-            .into_iter()
-            .filter(|row| matches!(row, PaneRow::Field(_)))
-            .collect()
-    }
-
-    /// The row under the cursor, or `None` for an empty form.
-    #[must_use]
-    pub fn cursor(&self) -> Option<PaneRow> {
-        let rows = self.rows();
-        rows.get(self.view.cursor()).copied()
-    }
-
-    pub(in crate::lookout) fn move_by(&mut self, delta: isize) {
-        let len = self.rows().len();
-        self.view.move_by(delta, len);
-    }
-
-    pub(in crate::lookout) fn move_to_first(&mut self) {
-        let len = self.rows().len();
-        self.view.move_to(0, len);
-    }
-
-    pub(in crate::lookout) fn move_to_last(&mut self) {
-        let len = self.rows().len();
-        self.view.move_to(len.saturating_sub(1), len);
-    }
-
     /// Adopts a previous pane's pending set, so a refresh does not
     /// silently drop changes the operator has not written yet.
     ///
@@ -533,37 +426,6 @@ impl ConfigPane {
     /// keyboard back when that happens.
     pub(in crate::lookout) fn adopt_edits(&mut self, previous: Edits) {
         self.edits = previous;
-    }
-
-    /// Adopts a previous pane's cursor and offset, clamped to this one's
-    /// own row count. What a refresh of an already-open pane rides on, so
-    /// `r` does not throw the operator back to the first field.
-    pub(in crate::lookout) fn adopt_view(&mut self, view: Viewport) {
-        self.view = view;
-        let len = self.rows().len();
-        self.view.clamp(len);
-    }
-
-    /// Switches to `key`'s own group, then walks the cursor onto it, the
-    /// way an operator reaches a field in a different group than the one
-    /// the pane opened on. A no-op for a name no field carries.
-    #[cfg(test)]
-    pub(crate) fn move_to_key(&mut self, key: &str) {
-        let Some(field) = self.fields.by_key(key) else {
-            return;
-        };
-        if let Some(group) = field.group.clone()
-            && let Some(index) = GROUP_ORDER.iter().position(|known| *known == group)
-        {
-            self.group = index;
-        }
-        if let Some(row_index) = self.rows().iter().position(|row| match row {
-            PaneRow::Field(field_index) => self.fields.fields()[*field_index].key == key,
-            PaneRow::Env(_) | PaneRow::AddEnv => false,
-        }) {
-            let len = self.rows().len();
-            self.view.move_to(row_index, len);
-        }
     }
 }
 
@@ -712,43 +574,6 @@ mod tests {
     }
 
     #[test]
-    fn the_cursor_walks_the_rows_and_clamps_at_both_ends() {
-        let mut pane = ConfigPane::sheep(web());
-        assert_eq!(pane.cursor(), Some(PaneRow::Field(0)));
-        pane.move_by(1);
-        assert_eq!(pane.cursor(), Some(PaneRow::Field(1)));
-        pane.move_by(-5);
-        assert_eq!(pane.cursor(), Some(PaneRow::Field(0)));
-        pane.move_to_last();
-        // `process`, the group a fresh pane opens on, has ten fields, at
-        // indices `0..10` since it sorts first, then `web`'s own one env
-        // key and the row that adds another.
-        assert_eq!(pane.cursor(), Some(PaneRow::AddEnv));
-        assert_eq!(
-            pane.fields().fields()[9].key,
-            "user",
-            "the last field is process's own last one"
-        );
-        pane.move_to_first();
-        assert_eq!(pane.cursor(), Some(PaneRow::Field(0)));
-    }
-
-    #[test]
-    fn a_refreshed_pane_keeps_the_cursor_it_had() {
-        let mut pane = ConfigPane::sheep(web());
-        pane.set_rows(10);
-        pane.move_to_last();
-        let carried = pane.view().clone();
-        let mut fresh = ConfigPane::sheep(web());
-        fresh.adopt_view(carried);
-        assert_eq!(fresh.cursor(), Some(PaneRow::AddEnv));
-    }
-
-    /// `kill_timeout` defaults to 1600ms, which `UpDuration::Display`
-    /// prints as the bare digits `"1600"`; `listen_timeout` defaults to
-    /// 3s, which it already prints with a unit. `value` stays the raw,
-    /// parseable form an editor would seed from.
-    #[test]
     fn a_bare_up_duration_shows_its_resolved_unit_and_a_suffixed_one_is_unchanged() {
         let pane = ConfigPane::sheep(web());
         assert_eq!(pane.display_value("kill_timeout"), "1600ms");
@@ -851,6 +676,118 @@ mod tests {
         assert_eq!(pane.lock("sinks"), Some(Lock::NoWidget));
         assert_eq!(pane.lock("rules"), Some(Lock::NoWidget));
         assert_eq!(pane.lock("poll"), None);
+    }
+
+    /// `flattened` leaves a list editable, because a dog's table on a sheep
+    /// writes one whole at its dotted path. This pane has no list
+    /// sub-screen, so a list row is locked exactly as a map row is.
+    #[test]
+    fn a_dogs_list_field_stays_locked_though_the_flattener_left_it_editable() {
+        let schema = serde_json::json!({
+            "properties": {
+                "hosts": { "type": "array", "items": { "type": "string" } },
+            },
+        });
+        let pane = ConfigPane::dog("watch".into(), None, schema, "hosts = [\"a\"]\n".to_owned());
+        let field = pane.fields().by_key("hosts").expect("hosts is a field");
+        assert!(!field.editable);
+        assert_eq!(pane.lock("hosts"), Some(Lock::NoWidget));
+        assert_eq!(pane.value("hosts"), r#"["a"]"#);
+    }
+
+    /// A dog's own schema nests a table inside a table the same way its
+    /// per-sheep one does, and `dogs.toml` spells the same data three ways:
+    /// a `[models.worker]` header, dotted keys, and an inline table.
+    #[test]
+    fn a_nested_table_in_a_dogs_own_schema_becomes_dotted_rows() {
+        let schema = serde_json::json!({
+            "$ref": "#/$defs/Settings",
+            "$defs": {
+                "Settings": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "models": { "$ref": "#/$defs/Models" },
+                    },
+                },
+                "Models": {
+                    "type": "object",
+                    "properties": { "worker": { "$ref": "#/$defs/Worker" } },
+                },
+                "Worker": {
+                    "type": "object",
+                    "properties": {
+                        "model": { "type": "string" },
+                        "token": { "type": "string", "x-shep-secret": true },
+                    },
+                },
+            },
+        });
+        for section in [
+            "[models.worker]\nmodel = \"gpt\"\ntoken = \"sk-live-51Hx9Qa\"\n",
+            "models.worker.model = \"gpt\"\nmodels.worker.token = \"sk-live-51Hx9Qa\"\n",
+            "models = { worker = { model = \"gpt\", token = \"sk-live-51Hx9Qa\" } }\n",
+        ] {
+            let pane = ConfigPane::dog("jobs".into(), None, schema.clone(), section.to_owned());
+            let keys: Vec<&str> = pane
+                .fields()
+                .fields()
+                .iter()
+                .map(|f| f.key.as_str())
+                .collect();
+            assert_eq!(
+                keys,
+                ["models.worker.model", "models.worker.token", "name"],
+                "{section}"
+            );
+            assert_eq!(pane.value("models.worker.model"), "gpt", "{section}");
+            assert_eq!(
+                pane.value("models.worker.token"),
+                "sk-live-51Hx9Qa",
+                "{section}"
+            );
+            assert!(
+                pane.fields()
+                    .by_key("models.worker.token")
+                    .expect("a row for the secret")
+                    .secret,
+                "a secret one table down is still marked"
+            );
+            assert_eq!(pane.lock("models.worker.model"), None, "{section}");
+        }
+    }
+
+    /// A secret row seeds its editor empty, however deep in the section the
+    /// credential sits: the pane renders `<set>` and must not hand the old
+    /// value back for a backspace to edit.
+    #[test]
+    fn a_secret_under_a_nested_table_seeds_its_editor_empty() {
+        let schema = serde_json::json!({
+            "properties": { "db": { "$ref": "#/$defs/Db" } },
+            "$defs": {
+                "Db": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string" },
+                        "password": { "type": "string", "x-shep-secret": true },
+                    },
+                },
+            },
+        });
+        let mut pane = ConfigPane::dog(
+            "watch".into(),
+            None,
+            schema,
+            "[db]\nhost = \"h\"\npassword = \"ab12cd34\"\n".to_owned(),
+        );
+        pane.move_to_key("db.password");
+        pane.begin_typing();
+        assert_eq!(
+            pane.typing().expect("the editor is open").buffer,
+            "",
+            "a secret seeds empty, at any depth"
+        );
+        assert!(!pane.fields().by_key("db.host").expect("a row").secret);
     }
 
     /// A dog's section is the single most credential-dense thing this

@@ -30,7 +30,10 @@ pub use self::config_rows::{
     config_pane_pending_rows_for_tests, config_pane_row_for_tests, config_pane_tab_row_for_tests,
     config_pane_title_band_for_tests,
 };
-pub use self::dog_pane::{app_in_dog_pane, app_in_dog_pane_with_two_edits, dog_section};
+pub use self::dog_pane::{
+    app_in_dog_pane, app_in_dog_pane_with_a_nested_table, app_in_dog_pane_with_two_edits,
+    dog_section, nested_dog_schema, nested_dog_section,
+};
 pub use self::flock::{
     acting_app, allowed_app, app_with, app_with_a_built_in_dog_selected_and_control,
     app_with_a_dog, app_with_a_dog_selected_and_control, armed_app,

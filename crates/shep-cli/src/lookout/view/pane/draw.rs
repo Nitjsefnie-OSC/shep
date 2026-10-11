@@ -374,7 +374,7 @@ pub fn draw_pane(app: &App, pane: &ConfigPane, area: Rect, buffer: &mut Buffer) 
 #[cfg(test)]
 mod tests {
     use super::super::fixtures::{
-        bark_pane, config_pane_lines_for_tests, pane_to, text_of, web_pane,
+        bark_pane, config_pane_lines_for_tests, nested_table_dog_pane, pane_to, text_of, web_pane,
     };
     use super::super::layout::{FULL_WIDTH, LANDS_WITH_PANEL_MIN};
     use super::*;
@@ -497,6 +497,28 @@ mod tests {
             "{text:?}"
         );
         insta::assert_snapshot!("dog_pane_wide", text.join("\n"));
+    }
+
+    /// The same pane over a dog whose schema nests a table: the rows are
+    /// dotted, the credential one table down is a row of its own and reads
+    /// `<set>`, and the cost cell is still empty on every one of them.
+    #[test]
+    fn a_dog_pane_over_a_nested_table() {
+        let text = text_of(&pane_lines(
+            &nested_table_dog_pane(),
+            fixtures::plain(),
+            120,
+            0,
+        ));
+        assert!(
+            !text.iter().any(|line| line.contains("sk-live")),
+            "a secret is never rendered: {text:?}"
+        );
+        assert!(
+            text.iter().any(|line| line.contains("models.worker.model")),
+            "{text:?}"
+        );
+        insta::assert_snapshot!("dog_pane_nested_table", text.join("\n"));
     }
 
     #[test]
