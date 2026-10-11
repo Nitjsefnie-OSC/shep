@@ -214,6 +214,9 @@ impl Shepherd {
             outbox.push_lossy(ChildMessage::Metric {
                 name: name.into(),
                 value,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
             });
         }
     }
@@ -497,6 +500,9 @@ mod tests {
         outbox.push_lossy(ChildMessage::Metric {
             name: "SECRET-METRIC-NAME".into(),
             value: 1.0,
+            metric_type: None,
+            labels: std::collections::BTreeMap::new(),
+            help: None,
         });
         let shepherd = Shepherd(Arc::new(Inner {
             outbox: Some(Arc::clone(&outbox)),
@@ -656,6 +662,9 @@ mod tests {
             .push_blocking(ChildMessage::Metric {
                 name: "rps".to_string(),
                 value: 1.0,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
             })
             .expect("room for the second message");
         outbox.close();
@@ -700,6 +709,9 @@ mod tests {
             outbox.push_lossy(ChildMessage::Metric {
                 name: "rps".to_string(),
                 value,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
             });
         }
         outbox.close();

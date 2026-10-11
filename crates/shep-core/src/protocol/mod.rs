@@ -42,7 +42,9 @@ pub use request::{
     Reply, Request, Response, RpcError, RpcErrorCode, SelectorSpec, SheepApplied, SheepConfigView,
     SheepDrift, SheepRefusal, SignalOutcome, SignalReply, Smit, SmitError, sort_flock,
 };
-pub use shep_channel::{CHANNEL_VERSION, ChildMessage, LambLabel, LambLabelError, ShepherdMessage};
+pub use shep_channel::{
+    CHANNEL_VERSION, ChildMessage, LambLabel, LambLabelError, MetricType, ShepherdMessage,
+};
 pub use wire::{MAX_FRAME_BYTES, WireError, codec, decode_frame, encode_frame, reply_id};
 
 /// The shepherd channel's wire types. Moved to the `shep-channel` crate;

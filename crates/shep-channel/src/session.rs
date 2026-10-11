@@ -202,6 +202,9 @@ mod tests {
         ChildMessage::Metric {
             name: "rps".into(),
             value,
+            metric_type: None,
+            labels: std::collections::BTreeMap::new(),
+            help: None,
         }
     }
 
@@ -318,6 +321,9 @@ mod tests {
         let big = ChildMessage::Metric {
             name: "x".repeat(MAX_RETAINED * 2),
             value: 1.0,
+            metric_type: None,
+            labels: std::collections::BTreeMap::new(),
+            help: None,
         };
 
         write_messages(&mut out, &[big], &mut line).unwrap();

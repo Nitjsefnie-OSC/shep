@@ -185,11 +185,12 @@ pub(super) async fn run_sheep<P: RunningProcess>(
                             ChildMessage::Ready => {
                                 let _ = actor_tx.send(Msg::Ready { id }).await;
                             }
-                            ChildMessage::Metric { name, value } => {
+                            ChildMessage::Metric { name, value, labels, .. } => {
                                 tracing::debug!(
                                     id,
                                     name,
                                     value,
+                                    ?labels,
                                     "child metric forwarded to the bus as channel.metric"
                                 );
                             }

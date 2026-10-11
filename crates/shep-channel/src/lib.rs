@@ -63,4 +63,6 @@ pub use endpoint::{Endpoint, FD_VAR, PIPE_VAR, VERSION_VAR, discover};
 pub use error::ChannelError;
 #[cfg(feature = "client")]
 pub use serve::{Shepherd, serve};
-pub use wire::{CHANNEL_VERSION, ChildMessage, LambLabel, LambLabelError, ShepherdMessage};
+pub use wire::{
+    CHANNEL_VERSION, ChildMessage, LambLabel, LambLabelError, MetricType, ShepherdMessage,
+};
