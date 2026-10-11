@@ -34,18 +34,23 @@ impl ConfigPane {
     ///
     /// A `null` value removes the leaf and nothing above it, which is how the
     /// pane's empty buffer unsets one, and is what puts the dog back on its
-    /// own default.
+    /// own default. A `null` on a key the section does not carry changes
+    /// nothing and is not a failure: the section already says the key is
+    /// absent, and refusing such an edit would cost every other edit in the
+    /// close its write.
     ///
     /// [`None`] for a sheep pane, for a set holding no field edit, for a
     /// section that does not parse, and for any one entry this writer cannot
-    /// land: a value with no TOML type, or a removal whose parent table the
-    /// section does not carry. A partial section is worse than none, since
-    /// the request would replace the table with it.
+    /// land: a value with no TOML type, or a path that lands on something
+    /// other than the shape the row edits (a scalar where the schema says a
+    /// table, a table where the row edits one key inside it). A partial
+    /// section is worse than none, since the request would replace the table
+    /// with it.
     #[must_use]
     pub fn edited_section_with(&self, edits: &Edits) -> Option<String> {
         let section = self.section.as_deref()?;
         let mut doc: toml_edit::DocumentMut = section.parse().ok()?;
-        let mut wrote = false;
+        let mut changed = false;
         for (key, edit) in edits.iter() {
             let EditKey::Field(name) = key else {
                 continue;
@@ -59,18 +64,37 @@ impl ConfigPane {
             // one literal key, never split on its dots.
             let unnamed = vec![name.clone()];
             let path = self.section_paths.get(name).unwrap_or(&unnamed);
-            let landed = if value.is_null() {
-                remove_at(doc.as_table_mut(), path)
-            } else {
-                toml_cell(value).is_some_and(|cell| set_at(doc.as_table_mut(), path, cell))
+            let landed = match toml_cell(value) {
+                Some(cell) => set_at(doc.as_table_mut(), path, cell),
+                // `null` has no TOML cell: it is the removal, not a value.
+                None if value.is_null() => remove_at(doc.as_table_mut(), path),
+                None => Landed::Refused,
             };
-            if !landed {
-                return None;
+            match landed {
+                Landed::Changed => changed = true,
+                Landed::Already => {}
+                Landed::Refused => return None,
             }
-            wrote = true;
         }
-        wrote.then(|| doc.to_string())
+        changed.then(|| doc.to_string())
     }
+}
+
+/// What one edit left behind it in the document.
+///
+/// Three states because a batch is judged as a whole: one entry that cannot
+/// land loses the whole close, while an entry the section already carries must
+/// not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Landed {
+    /// The document now says something it did not before.
+    Changed,
+    /// The document already said this, so it is unchanged: a `null` on a key
+    /// the section does not carry.
+    Already,
+    /// The path lands on something other than the table or the key this row
+    /// edits, so nothing was written anywhere in the document.
+    Refused,
 }
 
 /// The TOML item a filed value becomes, or [`None`] for one this writer has
@@ -107,41 +131,63 @@ fn toml_cell(value: &Value) -> Option<toml_edit::Item> {
 /// and each renders back in the form it came in. A parent the section lacks is
 /// created implicit, so the write adds `[models.worker]` and no empty
 /// `[models]` header above it.
-fn set_at(table: &mut dyn toml_edit::TableLike, path: &[String], cell: toml_edit::Item) -> bool {
+///
+/// [`Landed::Refused`] where the section already holds something else at a
+/// step of the path: `models = "old"` there is the operator's value, and a
+/// nested row is not licensed to trade it for a table. The same for a leaf
+/// that is already a table, which no row of this pane edits.
+fn set_at(table: &mut dyn toml_edit::TableLike, path: &[String], cell: toml_edit::Item) -> Landed {
     let Some((key, rest)) = path.split_first() else {
-        return false;
+        return Landed::Refused;
     };
     // `entry` rather than `insert`: `insert` re-formats the key it replaces,
     // and that is where a comment the operator wrote above the key goes.
     let entry = table.entry(key).or_insert(toml_edit::Item::None);
     if rest.is_empty() {
+        if entry.is_table_like() {
+            return Landed::Refused;
+        }
         *entry = cell;
-        return true;
+        return Landed::Changed;
     }
-    if !entry.is_table_like() {
+    if matches!(entry, toml_edit::Item::None) {
         *entry = implicit_table();
+    } else if !entry.is_table_like() {
+        return Landed::Refused;
     }
     let Some(nested) = entry.as_table_like_mut() else {
-        return false;
+        return Landed::Refused;
     };
     set_at(nested, rest, cell)
 }
 
 /// Removes the leaf `path` names, and nothing above it.
 ///
-/// [`false`] when a step on the path is absent or is not a table: the caller
-/// refuses the whole batch rather than sending a section that removed nothing.
-fn remove_at(table: &mut dyn toml_edit::TableLike, path: &[String]) -> bool {
+/// [`Landed::Already`] when the leaf, or a table on the way to it, is not in
+/// the section: the key is already unset, which is what the edit wanted.
+/// [`Landed::Refused`] only when a step on the path is there and holds no
+/// keys, so the removal was aimed at something that is not a table.
+fn remove_at(table: &mut dyn toml_edit::TableLike, path: &[String]) -> Landed {
     let Some((key, rest)) = path.split_first() else {
-        return false;
+        return Landed::Refused;
     };
     if rest.is_empty() {
-        return table.remove(key).is_some();
+        return if table.remove(key).is_some() {
+            Landed::Changed
+        } else {
+            Landed::Already
+        };
     }
-    table
-        .get_mut(key)
-        .and_then(toml_edit::Item::as_table_like_mut)
-        .is_some_and(|nested| remove_at(nested, rest))
+    let Some(item) = table.get_mut(key) else {
+        return Landed::Already;
+    };
+    if matches!(item, toml_edit::Item::None) {
+        return Landed::Already;
+    }
+    let Some(nested) = item.as_table_like_mut() else {
+        return Landed::Refused;
+    };
+    remove_at(nested, rest)
 }
 
 /// A table `toml_edit` will not print a header for while it has no values of
@@ -210,6 +256,16 @@ mod tests {
         "# which model to run\n",
         "name = \"small\"\n",
         "models = { worker = { token = \"sk-old\", model = \"gpt\" } }\n",
+    );
+
+    /// The header form with the credential left out, which is how an unset
+    /// optional field reads in `dogs.toml`.
+    const NO_TOKEN: &str = concat!(
+        "# which model to run\n",
+        "name = \"small\"\n",
+        "\n",
+        "[models.worker]\n",
+        "model = \"gpt\"\n",
     );
 
     fn edits_of(pairs: &[(&str, Value)]) -> Edits {
@@ -368,9 +424,8 @@ mod tests {
         }
     }
 
-    /// A removal whose parent is absent removed nothing, and a section sent
-    /// on that basis would be the operator's section with an edit that never
-    /// happened.
+    /// A batch that changed nothing sends nothing: the removal found no
+    /// parent, so the section it would have sent is the one it was handed.
     #[test]
     fn a_null_under_an_absent_parent_writes_nothing() {
         assert_eq!(
@@ -378,6 +433,83 @@ mod tests {
                 .edited_section_with(&edits_of(&[("models.worker.model", Value::Null)])),
             None
         );
+    }
+
+    /// An unset field the operator unsets again is a no-op, not a failure: a
+    /// refusal here would drop the sibling edit in the same close along with
+    /// it.
+    #[test]
+    fn a_null_on_a_key_the_section_does_not_carry_keeps_the_rest_of_the_batch() {
+        let out = nested_pane(NO_TOKEN)
+            .edited_section_with(&edits_of(&[
+                ("models.worker.token", Value::Null),
+                ("name", json!("large")),
+            ]))
+            .expect("the removal changed nothing, so the batch stands on its edit");
+        assert_eq!(
+            out,
+            concat!(
+                "# which model to run\n",
+                "name = \"large\"\n",
+                "\n",
+                "[models.worker]\n",
+                "model = \"gpt\"\n",
+            )
+        );
+    }
+
+    /// The same for a parent the section does not carry at all.
+    #[test]
+    fn a_null_under_an_absent_parent_keeps_the_rest_of_the_batch() {
+        let out = nested_pane("name = \"small\"\n")
+            .edited_section_with(&edits_of(&[
+                ("models.worker.model", Value::Null),
+                ("name", json!("large")),
+            ]))
+            .expect("nothing to remove is not a failure");
+        assert_eq!(out, "name = \"large\"\n");
+    }
+
+    /// `models = "old"` is the operator's own line, and a row editing a key
+    /// inside `models` is not licensed to trade it for a table. Refused whole:
+    /// a batch this writer cannot finish sends no part of itself.
+    #[test]
+    fn a_set_onto_a_scalar_where_the_schema_has_a_table_writes_nothing() {
+        for section in [
+            "models = \"old\"\nname = \"small\"\n",
+            "models.worker = \"old\"\nname = \"small\"\n",
+            "models = { worker = \"old\" }\nname = \"small\"\n",
+        ] {
+            let pane = nested_pane(section);
+            assert_eq!(
+                pane.edited_section_with(&edits_of(&[("models.worker.model", json!("large"))])),
+                None,
+                "{section}"
+            );
+            assert_eq!(
+                pane.edited_section_with(&edits_of(&[
+                    ("models.worker.model", json!("large")),
+                    ("name", json!("large")),
+                ])),
+                None,
+                "{section}"
+            );
+        }
+    }
+
+    /// No row of this pane ends at a table, so this is the writer's own rule
+    /// stated where it lives rather than a path an operator reaches.
+    #[test]
+    fn a_set_never_replaces_a_table_the_operator_wrote() {
+        let mut doc: toml_edit::DocumentMut = "[models.worker]\nmodel = \"gpt\"\n"
+            .parse()
+            .expect("the section parses");
+        let path = ["models".to_owned()];
+        assert_eq!(
+            set_at(doc.as_table_mut(), &path, toml_edit::value("old")),
+            Landed::Refused
+        );
+        assert!(doc.to_string().contains("[models.worker]"), "{doc}");
     }
 
     /// A property literally named `a.b` is one key, and the section spells

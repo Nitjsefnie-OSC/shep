@@ -5,8 +5,9 @@ impl App {
     /// leaving the pane holding nothing.
     ///
     /// Empty for no pane, for an empty set, and for a dog whose section
-    /// stopped parsing between the read and the keystroke, which is
-    /// reported rather than sent as an empty table.
+    /// stopped parsing between the read and the keystroke, or whose text
+    /// holds something other than the shape the row edits, which is reported
+    /// rather than sent as a section that dropped an edit.
     ///
     /// A sheep's set is one request per entry and a dog's is one request
     /// for the lot: [`Sent::SetDogSection`] and [`Sent::SetSheepDogTable`]
@@ -55,7 +56,9 @@ impl App {
                 }
                 None => {
                     self.notice = Some(Notice {
-                        text: format!("{name}: its section in dogs.toml does not parse"),
+                        text: format!(
+                            "{name}: its section in dogs.toml does not parse, or is not shaped for the edit"
+                        ),
                         grave: true,
                     });
                     return Vec::new();
