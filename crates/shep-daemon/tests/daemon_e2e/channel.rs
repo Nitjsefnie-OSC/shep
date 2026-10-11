@@ -199,7 +199,7 @@ async fn a_childs_metric_reaches_a_channel_subscriber_over_the_socket() {
     .expect("no channel.* frame within the timeout");
 
     match frame {
-        ChildMessage::Metric { name, value } => {
+        ChildMessage::Metric { name, value, .. } => {
             assert_eq!(name, "rps");
             assert!((value - 42.0).abs() < f64::EPSILON, "{value}");
         }

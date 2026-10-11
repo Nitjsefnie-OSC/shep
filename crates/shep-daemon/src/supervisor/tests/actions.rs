@@ -111,6 +111,9 @@ async fn a_metric_on_the_channel_reaches_the_bus_with_its_name_and_value() {
         .send(ChildMessage::Metric {
             name: "rps".to_string(),
             value: 42.0,
+            metric_type: None,
+            labels: std::collections::BTreeMap::new(),
+            help: None,
         })
         .await
         .unwrap();
@@ -132,6 +135,9 @@ async fn a_metric_on_the_channel_reaches_the_bus_with_its_name_and_value() {
             ChildMessage::Metric {
                 name: "rps".to_string(),
                 value: 42.0,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
             }
         )
     );

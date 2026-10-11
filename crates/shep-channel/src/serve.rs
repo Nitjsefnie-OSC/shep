@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use crate::dispatch::{Dispatch, Outcome, run};
+use crate::metric::MetricOptions;
 use crate::outbox::{DEFAULT_CAPACITY, Drain, Outbox};
 use crate::{
     CHANNEL_VERSION, Channel, ChannelError, ChildMessage, LambLabel, VERSION_VAR, session,
@@ -214,6 +215,39 @@ impl Shepherd {
             outbox.push_lossy(ChildMessage::Metric {
                 name: name.into(),
                 value,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
+            });
+        }
+    }
+
+    /// Records one metric sample with a kind, labels or help text.
+    ///
+    /// Never blocks and never fails, like [`Shepherd::metric`]: a sample
+    /// may be dropped under backpressure; see [`Shepherd::dropped_metrics`].
+    ///
+    /// ```
+    /// use shep_channel::{MetricOptions, MetricType};
+    ///
+    /// let shepherd = shep_channel::serve();
+    /// shepherd.metric_with(
+    ///     "queue_depth",
+    ///     3.0,
+    ///     MetricOptions::new()
+    ///         .kind(MetricType::Counter)
+    ///         .label("model", "qwen")
+    ///         .help("Requests waiting for the lease."),
+    /// );
+    /// ```
+    pub fn metric_with(&self, name: impl Into<String>, value: f64, options: MetricOptions) {
+        if let Some(outbox) = &self.0.outbox {
+            outbox.push_lossy(ChildMessage::Metric {
+                name: name.into(),
+                value,
+                metric_type: options.kind,
+                labels: options.labels,
+                help: options.help,
             });
         }
     }
@@ -419,6 +453,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::MetricType;
 
     /// Bounds the one test below that could hang forever on a real
     /// regression. A working reader answers in microseconds. This is slack
@@ -461,6 +496,7 @@ mod tests {
         shepherd.on_action("gc", |_, _| "ok".to_string());
         shepherd.on_shutdown(|| {});
         shepherd.metric("rps", 42.0);
+        shepherd.metric_with("rps", 42.0, MetricOptions::new());
         shepherd.ready().expect("an inert ready is not an error");
         shepherd
             .flush(Duration::ZERO)
@@ -484,6 +520,34 @@ mod tests {
         );
     }
 
+    /// Reads what `metric_with` left in the outbox, serialized: the
+    /// exact bytes the writer will hand the transport.
+    #[test]
+    fn metric_with_puts_labels_type_and_help_on_the_wire() {
+        let outbox = Arc::new(Outbox::new(4));
+        let shepherd = shepherd_over(&outbox);
+        shepherd.metric_with(
+            "queue_depth",
+            3.0,
+            MetricOptions::new()
+                .kind(MetricType::Counter)
+                .label("model", "qwen")
+                .help("Requests waiting for the lease."),
+        );
+
+        let taken = outbox.take();
+        let [ChildMessage::Metric { .. }] = taken.as_slice() else {
+            panic!("expected one metric sample in the outbox, got {taken:?}");
+        };
+        assert_eq!(
+            serde_json::to_string(&taken[0]).expect("encode"),
+            concat!(
+                r#"{"kind":"metric","name":"queue_depth","value":3.0,"type":"counter","#,
+                r#""labels":{"model":"qwen"},"help":"Requests waiting for the lease."}"#,
+            )
+        );
+    }
+
     /// IR-41: pins the exact string, and separately that no queued payload
     /// appears. Either check alone would catch a regression.
     #[test]
@@ -497,6 +561,9 @@ mod tests {
         outbox.push_lossy(ChildMessage::Metric {
             name: "SECRET-METRIC-NAME".into(),
             value: 1.0,
+            metric_type: None,
+            labels: std::collections::BTreeMap::new(),
+            help: None,
         });
         let shepherd = Shepherd(Arc::new(Inner {
             outbox: Some(Arc::clone(&outbox)),
@@ -656,6 +723,9 @@ mod tests {
             .push_blocking(ChildMessage::Metric {
                 name: "rps".to_string(),
                 value: 1.0,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
             })
             .expect("room for the second message");
         outbox.close();
@@ -700,6 +770,9 @@ mod tests {
             outbox.push_lossy(ChildMessage::Metric {
                 name: "rps".to_string(),
                 value,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
             });
         }
         outbox.close();

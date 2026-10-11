@@ -362,6 +362,9 @@ mod tests {
         ChildMessage::Metric {
             name: "rps".into(),
             value,
+            metric_type: None,
+            labels: std::collections::BTreeMap::new(),
+            help: None,
         }
     }
 

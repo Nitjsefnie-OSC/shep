@@ -121,10 +121,16 @@ channel = true`}</CodeBlock>
     <div class="wire-table">
       <div class="row header"><span>Message</span> <span>Meaning</span></div>
       <div class="row"><span><code>{`{"kind":"ready"}`}</code></span> <span data-label="Meaning">You are up and ready to serve. Only meaningful if <code>wait_ready = true</code>.</span></div>
-      <div class="row"><span><code>{`{"kind":"metric","name":"<n>","value":<num>}`}</code></span> <span data-label="Meaning">A custom metric sample. Currently logged by the daemon at debug level and nothing more. No dog reads it yet.</span></div>
+      <div class="row"><span><code>{`{"kind":"metric","name":"<n>","value":<num>}`}</code>, optionally <code>{`"type":"gauge"|"counter"`}</code>, <code>{`"labels":{…}`}</code>, <code>{`"help":"<t>"`}</code></span> <span data-label="Meaning">A custom metric sample. An absent <code>type</code> means gauge; an unknown one makes the line malformed. Currently logged by the daemon at debug level and nothing more. No dog reads it yet.</span></div>
       <div class="row"><span><code>{`{"kind":"action-reply","action":"<n>","body":"<t>","id":<num>}`}</code></span> <span data-label="Meaning">Your answer to a triggered action. <code>id</code> is optional: echo the one from the <code>action</code> message and shep matches your reply to that exact request.</span></div>
       <div class="row"><span><code>{`{"kind":"lamb-label","pid":<num>,"label":"<t>"}`}</code></span> <span data-label="Meaning">Names one of your child processes in <code>shep describe</code>. See <a href="#naming-your-lambs">naming your lambs</a>.</span></div>
     </div>
+    <p class="fine">
+      In Rust, <code>Shepherd::metric_with(name, value, MetricOptions)</code>{" "}
+      sends the optional three: <code>.kind(MetricType::Counter)</code>,{" "}
+      <code>.label(k, v)</code>, <code>.help(text)</code>. It drops samples
+      under backpressure exactly like <code>metric</code>.
+    </p>
 
     <h3 id="what-you-receive-daemon-writes-this">What you receive (daemon writes this)</h3>
     <div class="wire-table">
