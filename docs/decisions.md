@@ -2385,6 +2385,14 @@ A sheep's Flockfile entry carries `[app.dogs.<name>]`, stored as `AppConfig::dog
 
 `verified crates/shep-cli/src/lookout/field/flatten.rs, crates/shep-cli/src/lookout/pane/sheep_dog.rs, crates/shep-cli/src/lookout/pane/dogs.rs, crates/shep-cli/src/lookout/pane/config.rs (lock, value), crates/shep-cli/src/lookout/view/pane/dogs.rs`
 
+### A dog's own section flattens to the same dotted rows, and its writer refuses what TOML cannot hold
+
+`ConfigPane::dog` builds its rows with `flattened` too, so a nested table in a dog's `--schema` answer is `models.worker.model` and its like in the dog pane as well as on the sheep's table, with the dotted key to path map kept beside the section text. `edited_section_with` walks that path through `toml_edit`: a parent already written as a `[models.worker]` header, as dotted keys or as an inline table takes the set where it is, and a parent the section lacks is created implicit, so the write adds `[models.worker]` and no empty `[models]` header. `null` removes the leaf and nothing above it, and a removal whose parent is absent, like a value with no TOML type (an array, a map, a `u64` above `i64::MAX`), returns `None` for the whole batch. A list and a map stay read-only rows here, as they were, so the writer has no arm for either.
+
+**Why:** The two panes read one dog's schema and had to disagree about what a table is, which is the difference an operator would only find by pressing a key. Writing by path rather than re-rendering is what keeps the comments and key order in `dogs.toml`, the reason the dog's write patches text at all. A refusal returns `None` because `Request::SetDogConfig` replaces the table: a section that dropped an edit it could not land, or wrote `"[1, 2]"` where the dog reads an array, is a file the operator has to diff by hand. A `u64` past `i64::MAX` is refused rather than written as the float it would round to (#571), and an array is refused rather than written as JSON text (#561).
+
+`verified crates/shep-cli/src/lookout/pane/section_write.rs (edited_section_with, set_at, remove_at), crates/shep-cli/src/lookout/pane/config.rs (dog, section_paths), crates/shep-cli/src/lookout/field/flatten.rs (flattened, flatten_values)`
+
 ## A dog's shepherd channel
 
 ### A dog asks for the shepherd channel in its `--version` answer, and the ask is recorded in `shep.toml` and carried on `DogSource`

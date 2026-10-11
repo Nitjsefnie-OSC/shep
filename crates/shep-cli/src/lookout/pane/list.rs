@@ -594,7 +594,8 @@ mod tests {
     }
 
     /// A dog's write replaces its whole section, and `edited_section_with`
-    /// has no rendering for an array, so the pane offers no editor for one.
+    /// refuses an array rather than write JSON text as a TOML string, so the
+    /// pane offers no editor for one.
     #[test]
     fn a_dogs_array_field_has_no_widget_here() {
         let schema = serde_json::json!({
