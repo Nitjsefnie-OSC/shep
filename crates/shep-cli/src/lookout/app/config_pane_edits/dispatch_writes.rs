@@ -407,4 +407,51 @@ mod tests {
             "a second close does not reuse the first's tickets"
         );
     }
+
+    /// A dog pane's rows are dotted for a nested table, and the write walks
+    /// that path into the section: the text that comes back differs from the
+    /// text that went in in the one line the operator typed.
+    #[test]
+    fn a_dotted_dog_row_changes_one_line_of_its_section() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        pane_to(&mut app, "models.worker.model");
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        for _ in 0..64 {
+            let _ = app.update(Msg::Key(KeyPress::TextBackspace));
+        }
+        for typed in "large".chars() {
+            let _ = app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        let _ = app.update(Msg::Key(KeyPress::TextApply));
+        // `esc` reads the section again before writing it, the same door a
+        // sheep's batch closes through.
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Escape)) else {
+            panic!("a dog close reads its section first");
+        };
+        let effect = app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: fixtures::nested_dog_section().into(),
+            }),
+        });
+        let mut batch = wire_batch(effect);
+        let Sent::SetDogSection { name, toml, .. } = batch.remove(0) else {
+            panic!("closing the pane sends the section: {batch:?}");
+        };
+        assert_eq!(name, "jobs");
+        let before = fixtures::nested_dog_section();
+        let sent = toml.as_str();
+        let changed: Vec<(usize, &str, &str)> = sent
+            .lines()
+            .zip(before.lines())
+            .enumerate()
+            .filter(|(_, pair)| pair.0 != pair.1)
+            .map(|(line, pair)| (line, pair.0, pair.1))
+            .collect();
+        assert_eq!(
+            changed,
+            vec![(6, "model = \"large\"", "model = \"gpt\"")],
+            "{sent}",
+        );
+    }
 }

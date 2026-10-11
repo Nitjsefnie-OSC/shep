@@ -54,6 +54,64 @@ pub fn app_in_dog_pane() -> App {
     app
 }
 
+/// A dog whose schema nests `models.worker` two tables down through a
+/// `$ref` chain, with a credential beside a plain field in the inner one.
+pub fn nested_dog_schema() -> serde_json::Value {
+    serde_json::json!({
+        "$ref": "#/$defs/Settings",
+        "$defs": {
+            "Settings": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "models": { "$ref": "#/$defs/Models" },
+                },
+            },
+            "Models": {
+                "type": "object",
+                "properties": { "worker": { "$ref": "#/$defs/Worker" } },
+            },
+            "Worker": {
+                "type": "object",
+                "properties": {
+                    "model": { "type": "string" },
+                    "token": { "type": "string", "x-shep-secret": true },
+                },
+            },
+        },
+    })
+}
+
+/// The `[jobs]` section that schema opens on, in the header form of its
+/// nested table.
+pub fn nested_dog_section() -> String {
+    "# which model to run\nname = \"small\"\n\n[models.worker]\n# the credential\ntoken = \"sk-live-51Hx9Qa\"\nmodel = \"gpt\"\n"
+        .to_string()
+}
+
+/// A dashboard with the `jobs` dog's config pane open, over
+/// [`nested_dog_section`], so a dotted row is what an edit walks. Opened the
+/// way the event loop opens one: the schema probe, then the shepherd's
+/// section. The control gate is open.
+pub fn app_in_dog_pane_with_a_nested_table() -> App {
+    let mut app = app_with(flock_of(3, 0), plain());
+    app.set_control_for_tests(Control::Allowed);
+    app.update(Msg::DogPane {
+        name: "jobs".to_string(),
+        adopted_path: None,
+        result: Ok(nested_dog_schema()),
+    });
+    app.update(Msg::Replied {
+        sent: Sent::DogSection {
+            name: "jobs".to_string(),
+        },
+        result: Ok(Response::DogSection {
+            toml: nested_dog_section().into(),
+        }),
+    });
+    app
+}
+
 /// [`app_in_dog_pane`] with two edits filed, driven by real key presses:
 /// `poll` typed, then `history_bytes` typed.
 ///

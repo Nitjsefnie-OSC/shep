@@ -5,6 +5,7 @@
 //! over the rows. Everything here answers a question; the answers to
 //! keystrokes live in the four modules beside it.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde_json::{Map, Value};
@@ -12,7 +13,7 @@ use shep_core::config::{ApplyGroup, GROUP_ORDER, apply_group, reaches_running};
 use shep_core::protocol::SheepConfigView;
 
 use super::super::edits::{EditKey, Edits};
-use super::super::field::{FieldKind, FieldSet};
+use super::super::field::{FieldKind, FieldSet, Flattened, flatten_values, flattened};
 use super::super::viewport::Viewport;
 use super::fields::{render_json, resolved_display, sheep_fields};
 use super::sheep_dog::SheepDogTable;
@@ -80,6 +81,13 @@ pub struct ConfigPane {
     /// A dog's table on a sheep, whole, and where each dotted row lives in
     /// it. [`None`] for every other target. See [`Self::sheep_dog`].
     pub(super) dog_table: Option<Box<SheepDogTable>>,
+    /// Each dotted row key of a dog pane to the real property path it was
+    /// built from. Empty for any other target.
+    ///
+    /// The rows are [`flattened`]'s, so a key is dotted for a nested table
+    /// and quoted for a property literally named with a dot. The write walks
+    /// this map rather than the key: see [`Self::edited_section_with`].
+    pub(super) section_paths: BTreeMap<String, Vec<String>>,
 }
 
 impl core::fmt::Debug for ConfigPane {
@@ -121,6 +129,7 @@ impl ConfigPane {
             dogs: None,
             section: None,
             dog_table: None,
+            section_paths: BTreeMap::new(),
         }
     }
 
@@ -131,9 +140,11 @@ impl ConfigPane {
     /// `Request::DogConfig` rendered it, empty when `dogs.toml` has none.
     ///
     /// Flat, in schema order, with no group headers: a dog's schema
-    /// carries no `init.group`. A [`FieldKind::Map`] or
+    /// carries no `init.group`. A nested table becomes dotted rows, as it
+    /// does on that dog's table over a sheep. A [`FieldKind::Map`] or
     /// [`FieldKind::List`] row is marked not editable and draws
-    /// [`Lock::NoWidget`].
+    /// [`Lock::NoWidget`]: this pane has no widget for either, so a list
+    /// stays one row rather than the sub-screen a sheep's `args` opens.
     #[must_use]
     pub fn dog(
         name: String,
@@ -141,22 +152,17 @@ impl ConfigPane {
         schema: Value,
         section: String,
     ) -> Self {
-        let defs = schema
-            .get("$defs")
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
-        let properties = schema
-            .get("properties")
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
-        let set = FieldSet::from_properties(&properties, &defs, &[]);
+        let Flattened { fields, paths } = flattened(&schema);
         let fields = FieldSet::from_fields(
-            set.fields()
+            fields
+                .fields()
                 .iter()
                 .cloned()
                 .map(|mut field| {
+                    // `flattened` leaves a list editable, because a sheep's
+                    // pane writes one whole at its dotted path. This pane has
+                    // no list sub-screen, and it already closed a `Map` to
+                    // [`FieldKind::Opaque`].
                     if matches!(field.kind, FieldKind::Map | FieldKind::List(_)) {
                         field.editable = false;
                     }
@@ -165,12 +171,13 @@ impl ConfigPane {
                 .collect(),
             &[],
         );
-        let values: Map<String, Value> = section
+        let table: Map<String, Value> = section
             .parse::<toml::Table>()
             .ok()
             .and_then(|table| serde_json::to_value(table).ok())
             .and_then(|value| value.as_object().cloned())
             .unwrap_or_default();
+        let values = flatten_values(&table, &paths);
         Self {
             target: PaneTarget::Dog { name, adopted_path },
             fields,
@@ -187,6 +194,7 @@ impl ConfigPane {
             dogs: None,
             section: Some(section),
             dog_table: None,
+            section_paths: paths,
         }
     }
 
@@ -851,6 +859,118 @@ mod tests {
         assert_eq!(pane.lock("sinks"), Some(Lock::NoWidget));
         assert_eq!(pane.lock("rules"), Some(Lock::NoWidget));
         assert_eq!(pane.lock("poll"), None);
+    }
+
+    /// `flattened` leaves a list editable, because a dog's table on a sheep
+    /// writes one whole at its dotted path. This pane has no list
+    /// sub-screen, so a list row is locked exactly as a map row is.
+    #[test]
+    fn a_dogs_list_field_stays_locked_though_the_flattener_left_it_editable() {
+        let schema = serde_json::json!({
+            "properties": {
+                "hosts": { "type": "array", "items": { "type": "string" } },
+            },
+        });
+        let pane = ConfigPane::dog("watch".into(), None, schema, "hosts = [\"a\"]\n".to_owned());
+        let field = pane.fields().by_key("hosts").expect("hosts is a field");
+        assert!(!field.editable);
+        assert_eq!(pane.lock("hosts"), Some(Lock::NoWidget));
+        assert_eq!(pane.value("hosts"), r#"["a"]"#);
+    }
+
+    /// A dog's own schema nests a table inside a table the same way its
+    /// per-sheep one does, and `dogs.toml` spells the same data three ways:
+    /// a `[models.worker]` header, dotted keys, and an inline table.
+    #[test]
+    fn a_nested_table_in_a_dogs_own_schema_becomes_dotted_rows() {
+        let schema = serde_json::json!({
+            "$ref": "#/$defs/Settings",
+            "$defs": {
+                "Settings": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "models": { "$ref": "#/$defs/Models" },
+                    },
+                },
+                "Models": {
+                    "type": "object",
+                    "properties": { "worker": { "$ref": "#/$defs/Worker" } },
+                },
+                "Worker": {
+                    "type": "object",
+                    "properties": {
+                        "model": { "type": "string" },
+                        "token": { "type": "string", "x-shep-secret": true },
+                    },
+                },
+            },
+        });
+        for section in [
+            "[models.worker]\nmodel = \"gpt\"\ntoken = \"sk-live-51Hx9Qa\"\n",
+            "models.worker.model = \"gpt\"\nmodels.worker.token = \"sk-live-51Hx9Qa\"\n",
+            "models = { worker = { model = \"gpt\", token = \"sk-live-51Hx9Qa\" } }\n",
+        ] {
+            let pane = ConfigPane::dog("jobs".into(), None, schema.clone(), section.to_owned());
+            let keys: Vec<&str> = pane
+                .fields()
+                .fields()
+                .iter()
+                .map(|f| f.key.as_str())
+                .collect();
+            assert_eq!(
+                keys,
+                ["models.worker.model", "models.worker.token", "name"],
+                "{section}"
+            );
+            assert_eq!(pane.value("models.worker.model"), "gpt", "{section}");
+            assert_eq!(
+                pane.value("models.worker.token"),
+                "sk-live-51Hx9Qa",
+                "{section}"
+            );
+            assert!(
+                pane.fields()
+                    .by_key("models.worker.token")
+                    .expect("a row for the secret")
+                    .secret,
+                "a secret one table down is still marked"
+            );
+            assert_eq!(pane.lock("models.worker.model"), None, "{section}");
+        }
+    }
+
+    /// A secret row seeds its editor empty, however deep in the section the
+    /// credential sits: the pane renders `<set>` and must not hand the old
+    /// value back for a backspace to edit.
+    #[test]
+    fn a_secret_under_a_nested_table_seeds_its_editor_empty() {
+        let schema = serde_json::json!({
+            "properties": { "db": { "$ref": "#/$defs/Db" } },
+            "$defs": {
+                "Db": {
+                    "type": "object",
+                    "properties": {
+                        "host": { "type": "string" },
+                        "password": { "type": "string", "x-shep-secret": true },
+                    },
+                },
+            },
+        });
+        let mut pane = ConfigPane::dog(
+            "watch".into(),
+            None,
+            schema,
+            "[db]\nhost = \"h\"\npassword = \"ab12cd34\"\n".to_owned(),
+        );
+        pane.move_to_key("db.password");
+        pane.begin_typing();
+        assert_eq!(
+            pane.typing().expect("the editor is open").buffer,
+            "",
+            "a secret seeds empty, at any depth"
+        );
+        assert!(!pane.fields().by_key("db.host").expect("a row").secret);
     }
 
     /// A dog's section is the single most credential-dense thing this

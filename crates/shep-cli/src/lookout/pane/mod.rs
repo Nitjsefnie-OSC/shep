@@ -13,7 +13,8 @@
 //! `config` holds the pane and everything it answers; `edit`, `env` and
 //! `list` hold what it does when a key lands; `dogs` holds a sheep's dogs
 //! sub-screen and `sheep_dog` the pane over one dog's table on it; `types`
-//! and `fields` hold what the rest read and write.
+//! and `fields` hold what the rest read and write; `section_write` turns a
+//! filed set back into a dog's TOML text.
 
 mod config;
 mod dogs;
@@ -23,6 +24,7 @@ mod fields;
 #[cfg(test)]
 mod fixtures;
 mod list;
+mod section_write;
 mod sheep_dog;
 mod types;
 

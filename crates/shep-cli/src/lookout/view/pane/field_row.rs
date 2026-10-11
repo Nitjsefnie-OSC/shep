@@ -258,7 +258,8 @@ pub(super) fn impact_tag(group: ApplyGroup) -> (char, &'static str, &'static str
 #[cfg(test)]
 mod tests {
     use super::super::fixtures::{
-        nested_secret_dog_pane, secret_dog_pane_with_an_edit, text_of, web_pane,
+        nested_secret_dog_pane, opaque_secret_dog_pane, secret_dog_pane_with_an_edit, text_of,
+        web_pane,
     };
     use super::super::pane_lines;
     use super::*;
@@ -504,21 +505,49 @@ mod tests {
         );
     }
 
-    /// A table row is drawn whole as JSON, so a secret one level inside it
-    /// masks the row, and the panel's `now` line with it (#630).
+    /// A row `flattened` has no walk into stays one row drawn whole as JSON,
+    /// so a secret one level inside it masks the row, and the panel's `now`
+    /// line with it (#630).
     #[test]
     fn a_table_holding_a_secret_draws_masked_in_the_row_and_the_panel() {
-        let pane = nested_secret_dog_pane();
+        let pane = opaque_secret_dog_pane();
         let text = text_of(&pane_lines(&pane, fixtures::plain(), 160, 0));
         let row = text
             .iter()
-            .find(|line| line.contains(" db "))
-            .expect("db is drawn at 160 columns");
+            .find(|line| line.contains(" hosts"))
+            .expect("hosts is drawn at 160 columns");
         assert!(row.contains("<set>"), "{row:?}");
         assert!(
             text.iter()
                 .any(|line| line.contains("now") && line.contains("<set>")),
             "the panel's now line: {text:?}"
+        );
+        assert!(
+            !text.join("\n").contains("ab12cd34"),
+            "the password leaked: {text:?}"
+        );
+    }
+
+    /// A nested table is dotted rows here, so a secret inside one masks its
+    /// own row, and the plain field beside it still draws its value.
+    #[test]
+    fn a_secret_under_a_nested_table_masks_its_own_row_and_its_siblings_do_not() {
+        let pane = nested_secret_dog_pane();
+        let text = text_of(&pane_lines(&pane, fixtures::plain(), 160, 0));
+        let row = text
+            .iter()
+            .find(|line| line.starts_with(">  db.password"))
+            .expect("the cursor is on the secret row");
+        assert!(row.contains("<set>"), "{row:?}");
+        assert!(
+            text.iter()
+                .any(|line| line.contains("now") && line.contains("<set>")),
+            "the panel's now line: {text:?}"
+        );
+        assert!(
+            text.iter()
+                .any(|line| line.starts_with("   db.host") && line.contains("pg.internal")),
+            "the sibling row still shows its value: {text:?}"
         );
         assert!(
             !text.join("\n").contains("ab12cd34"),
