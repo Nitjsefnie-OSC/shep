@@ -477,8 +477,9 @@ and its like, each editable by its own type, and a credential inside one drawn
 section, so a `[models.worker]` header, dotted keys and an inline table each
 take the set where they are, comments and key order intact. A list or a map is
 still a `~` row, and a value TOML cannot hold (an array, a map, a whole number
-past `i64::MAX`) refuses the whole write instead of landing as text. No wire
-change.
+past `i64::MAX`), or a scalar sitting where the schema has a table, refuses the
+whole write instead of landing as text or replacing what the operator wrote. No
+wire change.
 
 **A dog can ask for the shepherd channel.** A `shep-channel: true` line in
 a dog's `--version` answer, or `dogs::Probe::ask_for_channel` in a dog

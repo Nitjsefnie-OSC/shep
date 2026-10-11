@@ -649,11 +649,11 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       <code>u</code> undoes them the same way; nothing reaches the dog's
       section until <code>Esc</code> closes the pane. A section edited
       meanwhile is reloaded under your edits, not overwritten. However many
-      fields
-      changed, the write sends the section whole, in one request, so the
+      fields changed, the write sends the section whole, in one request, so the
       comments and key order in <code>dogs.toml</code> survive it. Applying
       an empty value removes the key, which puts the dog back on its own
-      default. Neither <code>*</code> nor <code>!</code> appears: a dog has
+      default. A write that cannot land is refused whole. Neither
+      <code>*</code> nor <code>!</code> appears: a dog has
       no Flockfile to differ from, and <code>dogs.toml</code> is the one
       copy of its settings.
     </p>
