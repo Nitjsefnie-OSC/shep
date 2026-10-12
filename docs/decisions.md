@@ -913,6 +913,20 @@ ProcessSelector::is_exact plus one shared selection helper in the actor ensures 
 
 `docs/writing-plans/plans/2026-08-12-shep-phase9-dogs.md:111`
 
+### A dog is the descriptor it was handed, and its grants are checked there, with no confinement
+
+Each dog gets a connection of its own: a second descriptor handed to it at spawn, already connected and speaking the client protocol. Holding it is the dog's identity. The shepherd checks every request on it against the permissions the operator granted that dog, and denies the rest. Nothing else confines a dog: it runs as the operator, and can still open the control socket like the CLI does.
+
+**Why not check the name a dog connects with:** today a dog names itself through `connect_as`, from its own environment. A name is a claim, so filtering requests by it stops nothing: any process running as the operator can connect without claiming to be a dog at all. Possession of a descriptor only the shepherd hands out is the one identity a dog can't fake on a connection it opened itself.
+
+**Why not a token in the environment:** it leaks to every child process and to anything that can read the dog's environment, the hole recorded for `SHEP_CHANNEL_FD` under "The inherited descriptor" below.
+
+**Why no confinement:** the only real fixes are a uid per dog, which needs root to set up on three operating systems, or an OS sandbox per dog (Seatbelt, landlock, AppContainer) that keeps it off the control socket. Both were judged overkill for now. Without either, grants keep honest dogs honest and make every request attributable, and the install prompt says plainly that a hostile dog can step around them. Revisit if untrusted community dogs become common.
+
+**What it costs:** a dog started by hand has no descriptor, connects like the CLI and acts as the operator. A dog's own child processes inherit the descriptor and so its grants. The shepherd has to carry each dog's end across a handover, as it already does for the shepherd channel.
+
+The maintainer, 2026-10-12, in the dogs-as-plugins grill (`docs/brainstorming/specs/2026-10-12-dogs-as-plugins-design.md`). Not built yet.
+
 ## Audit debt
 
 ### Action replies get a stamped correlation id (SHEP_CHANNEL_VERSION=1)
