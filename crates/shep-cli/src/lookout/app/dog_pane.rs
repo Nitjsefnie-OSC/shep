@@ -589,15 +589,10 @@ mod tests {
         assert_eq!(nested_rows(&app), 3, "and closed");
     }
 
-    /// `e`, space, `d` and `u` on a table row file nothing and open nothing.
+    /// `e`, space and `d` on a table row file nothing and open nothing.
     #[test]
-    fn e_space_d_and_u_on_a_table_row_do_nothing() {
-        for key in [
-            KeyPress::Edit,
-            KeyPress::Cycle,
-            KeyPress::Remove,
-            KeyPress::Undo,
-        ] {
+    fn e_space_and_d_on_a_table_row_do_nothing() {
+        for key in [KeyPress::Edit, KeyPress::Cycle, KeyPress::Remove] {
             let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
             nested_cursor_to(&mut app, 1);
             let before = app.config_pane().expect("the pane is open").cursor();
@@ -610,6 +605,23 @@ mod tests {
             assert_eq!(pane.cursor(), before, "{key:?}");
             assert_eq!(pane.rows().len(), 3, "{key:?} toggled the table");
         }
+    }
+
+    /// `u` drops the newest edit in the pane, wherever the cursor stands, so
+    /// it still works after `←` has climbed onto a table's row.
+    #[test]
+    fn u_on_a_table_row_undoes_the_newest_edit() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        nested_cursor_to(&mut app, 2);
+        app.update(Msg::Key(KeyPress::Edit));
+        app.update(Msg::Key(KeyPress::TextChar('x')));
+        app.update(Msg::Key(KeyPress::TextApply));
+        assert!(!app.config_pane().expect("open").edits().is_empty());
+        app.update(Msg::Key(KeyPress::SelectUp));
+        let on = app.config_pane().expect("open").cursor();
+        assert!(matches!(on, Some(PaneRow::Table(_))), "{on:?}");
+        app.update(Msg::Key(KeyPress::Undo));
+        assert!(app.config_pane().expect("open").edits().is_empty());
     }
 
     /// `r` re-reads the section and the pane that comes back has the same

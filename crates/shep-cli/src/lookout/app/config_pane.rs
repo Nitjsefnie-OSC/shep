@@ -331,12 +331,8 @@ impl App {
             // key that unfiles something cannot write, and refusing it
             // behind a closed gate would leave an edit the gate already
             // refused to file.
-            //
-            // Not on a table row, which no edit belongs to.
             KeyPress::Undo => {
-                if let Some(pane) = self.config_pane_mut()
-                    && !pane.cursor_on_table()
-                {
+                if let Some(pane) = self.config_pane_mut() {
                     pane.undo_edit();
                 }
             }
