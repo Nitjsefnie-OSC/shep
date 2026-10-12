@@ -14,9 +14,9 @@
 //! [`item_refusal`] is the same gate for one element of a list field,
 //! against the bounds its item schema published.
 
-mod forms;
 #[cfg(test)]
 mod fixtures;
+mod forms;
 
 pub use forms::bullets;
 
@@ -43,7 +43,7 @@ pub const REDACTED: &str = "<set>";
 /// through [`not_a_whole_number`], and has to resolve the value the same
 /// way.
 #[must_use]
-pub(super) fn shown_value<'a>(secret: bool, typed: &'a str) -> &'a str {
+pub(super) fn shown_value(secret: bool, typed: &str) -> &str {
     if secret { REDACTED } else { typed }
 }
 
@@ -202,7 +202,10 @@ fn enum_refusal(key: &str, bounds: &Bounds, value: &Value, shown: &str) -> Optio
     }
     let allowed: Vec<String> = bounds.choices.iter().map(choice_text).collect();
     Some(Refusal {
-        text: format!("{key} is \"{shown}\"; {key} takes one of {}", allowed.join(", ")),
+        text: format!(
+            "{key} is \"{shown}\"; {key} takes one of {}",
+            allowed.join(", ")
+        ),
     })
 }
 
@@ -240,7 +243,9 @@ fn integer_of(key: &str, bounds: &Bounds, typed: &str, shown: &str) -> Result<i6
             text: format!("{key} takes no value: its schema asks for a range with nothing in it"),
         });
     }
-    typed.parse::<i64>().map_err(|_| not_a_whole_number(key, shown))
+    typed
+        .parse::<i64>()
+        .map_err(|_| not_a_whole_number(key, shown))
 }
 
 /// The floor and ceiling `bounds` sets on an integer already parsed.
@@ -336,7 +341,10 @@ mod tests {
     #[test]
     fn the_shown_value_of_a_secret_is_the_marker_and_never_the_buffer() {
         let mut field = text_field("token");
-        assert_eq!(shown_value(field.secret, "sk_live_HUNTER2"), "sk_live_HUNTER2");
+        assert_eq!(
+            shown_value(field.secret, "sk_live_HUNTER2"),
+            "sk_live_HUNTER2"
+        );
         field.secret = true;
         assert_eq!(shown_value(field.secret, "sk_live_HUNTER2"), REDACTED);
         assert!(
@@ -623,7 +631,11 @@ mod tests {
             ..Default::default()
         };
         let numbers = Bounds {
-            choices: vec![serde_json::json!(1), serde_json::json!(2), serde_json::json!(3)],
+            choices: vec![
+                serde_json::json!(1),
+                serde_json::json!(2),
+                serde_json::json!(3),
+            ],
             ..Default::default()
         };
         let range = Bounds {
@@ -740,7 +752,10 @@ mod tests {
         );
         let refused = item_refusal("tags", ListItem::Text, &bounds, "caf", false)
             .expect("three characters is under four");
-        assert_eq!(refused.text, "tags is \"caf\"; tags needs at least 4 characters");
+        assert_eq!(
+            refused.text,
+            "tags is \"caf\"; tags needs at least 4 characters"
+        );
     }
 
     /// A dog that ships a broken regex in its item schema has a bug in its
@@ -804,8 +819,8 @@ mod tests {
             minimum: Some(1000),
             ..Default::default()
         };
-        let refused = item_refusal("pins", ListItem::Integer, &range, "7", true)
-            .expect("below the floor");
+        let refused =
+            item_refusal("pins", ListItem::Integer, &range, "7", true).expect("below the floor");
         assert_eq!(refused.text, "pins is \"<set>\"; pins starts at 1000");
     }
 

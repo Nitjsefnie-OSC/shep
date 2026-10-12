@@ -179,9 +179,12 @@ impl App {
 
     /// The list sub-screen's own text keymap.
     ///
-    /// `TextApply` files the whole array. An integer element whose buffer
-    /// does not parse keeps the editor open, which is why the mode follows
-    /// what the sub-screen did rather than what the key asked for.
+    /// `TextApply` files the whole array. An element the item schema refuses
+    /// keeps the editor open, which is why the mode follows what the
+    /// sub-screen did rather than what the key asked for, and the sentence
+    /// naming the rule goes in the status bar: a dog's table is written
+    /// without being read, so an operator who is not told now finds out from
+    /// the dog's own log, or never.
     pub(super) fn on_list_text_key(&mut self, key: KeyPress) -> Effect {
         // See the comment in `Self::take_pane_writes`: a direct field
         // match, not `Self::config_pane_mut`, so `self.mode` stays
@@ -207,8 +210,15 @@ impl App {
                 if list.typing().is_none() {
                     self.mode = InputMode::Normal;
                 }
-                if let Some(text) = applied {
-                    pane.file_list_element(text);
+                match applied {
+                    Ok(Some(text)) => pane.file_list_element(text),
+                    Ok(None) => {}
+                    Err(refused) => {
+                        self.notice = Some(Notice {
+                            text: refused.text,
+                            grave: true,
+                        });
+                    }
                 }
             }
             KeyPress::TextAbandon => {
@@ -362,6 +372,56 @@ mod tests {
         };
         assert_eq!(key, "args");
         assert_eq!(value, serde_json::json!(["9090"]));
+    }
+
+    /// A refused element keeps `InputMode::Text` on, files nothing, and puts
+    /// the sentence naming the rule in the status bar, grave for the same
+    /// reason a scalar field's refusal is: a dog's table is written without
+    /// being read.
+    ///
+    /// `stop_exit_codes` is the list the Flockfile schema puts no bound on
+    /// its items, so the rule here is the one every integer list carries:
+    /// the element has to be a whole number.
+    #[test]
+    fn a_refused_list_element_keeps_text_mode_on_and_says_why() {
+        let mut app = fixtures::app_in_sheep_pane_with_control();
+        pane_to(&mut app, "stop_exit_codes");
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        let _ = app.update(Msg::Key(KeyPress::Edit));
+        assert_eq!(app.mode(), InputMode::Text, "e opens the element editor");
+        let _ = app.update(Msg::Key(KeyPress::TextChar('x')));
+        assert_eq!(
+            app.update(Msg::Key(KeyPress::TextApply)),
+            Effect::None,
+            "a refusal is not a send"
+        );
+        assert_eq!(
+            app.mode(),
+            InputMode::Text,
+            "the editor stays open on what was typed"
+        );
+        let notice = app.notice().expect("a refusal answers");
+        assert!(notice.is_grave(), "{notice}");
+        assert_eq!(
+            notice.to_string(),
+            "stop_exit_codes is \"x\", which is not a whole number shep accepts"
+        );
+        assert!(
+            app.config_pane()
+                .expect("the pane is open")
+                .edits()
+                .is_empty(),
+            "nothing was filed"
+        );
+        assert!(
+            app.config_pane()
+                .expect("the pane is open")
+                .list()
+                .expect("the sub-screen is still up")
+                .typing()
+                .is_some(),
+            "and the buffer is still in the editor"
+        );
     }
 
     /// `Escape` backs out of the sub-screen and leaves the pane up, the

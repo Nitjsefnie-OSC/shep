@@ -277,7 +277,7 @@ mod tests {
                 .bounds
                 .items
                 .as_deref()
-                .expect(&format!("{key} declares an item schema"))
+                .unwrap_or_else(|| panic!("{key} declares an item schema"))
                 .clone()
         };
         assert_eq!(items("inline").min_length, Some(2));
@@ -287,7 +287,10 @@ mod tests {
             Some(3),
             "the anyOf arm must be resolved before its bounds are read"
         );
-        assert_eq!((items("numbers").minimum, items("numbers").maximum), (Some(1), Some(64)));
+        assert_eq!(
+            (items("numbers").minimum, items("numbers").maximum),
+            (Some(1), Some(64))
+        );
         // The negative control: an array of plain strings publishes nothing
         // an element is held to, so a list editor over one refuses nothing.
         assert_eq!(items("plain"), Bounds::default());
@@ -309,7 +312,11 @@ mod tests {
         let set = FieldSet::from_properties(&p, &defs, &[]);
         let bounds = &set.by_key("tree").unwrap().bounds;
         let item = bounds.items.as_deref().expect("the array declares items");
-        assert_eq!(item.choices, vec![json!("a")], "the def's own bounds are read");
+        assert_eq!(
+            item.choices,
+            vec![json!("a")],
+            "the def's own bounds are read"
+        );
         assert_eq!(
             item.items.as_deref(),
             None,
