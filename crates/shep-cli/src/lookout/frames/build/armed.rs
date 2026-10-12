@@ -274,6 +274,9 @@ pub(super) fn apply_post_tick_scene(app: &mut App, which: Scene) {
                     }
                     Scene::SheepDogTable => {
                         app.update(Msg::Key(KeyPress::Confirm));
+                        // `models.worker` starts closed, so walk down to
+                        // the secret the way an operator opens the table.
+                        select_field(app, "models.worker.token");
                     }
                     _ => {}
                 }
@@ -644,23 +647,30 @@ mod tests {
         assert!(!remove.contains(TOKEN), "{remove:?}");
         assert!(!remove.contains(LEGACY_CREDENTIAL), "{remove:?}");
 
-        // SheepDogTable: every leaf `jobs_schema` declares is its own
-        // dotted row, and the one it marks secret draws `<set>` alone.
+        // SheepDogTable: a tree, the first level open, with the table two
+        // levels down opened onto the one leaf `jobs_schema` marks secret,
+        // which draws `<set>` alone.
         let table = render_text(&scene(Scene::SheepDogTable).1);
-        for dotted in [
-            "hours.end",
-            "hours.start",
+        for drawn in [
+            "\u{25be} hours",
+            "end",
+            "start",
             "merge",
-            "models.worker.model",
-            "models.worker.token",
+            "\u{25be} models",
+            "\u{25be} worker",
+            "model",
+            "token",
         ] {
-            assert!(table.contains(dotted), "{dotted} is its own row: {table:?}");
+            assert!(table.contains(drawn), "{drawn} is its own row: {table:?}");
         }
         let token_row = table
             .lines()
-            .find(|line| line.contains("models.worker.token"))
-            .expect("the secret's own row");
-        assert!(token_row.contains("<set>"), "{token_row:?}");
+            .find(|line| line.starts_with('>'))
+            .expect("the cursor is on the secret's own row");
+        assert!(
+            token_row.contains("token") && token_row.contains("<set>"),
+            "{token_row:?}"
+        );
         assert!(!table.contains(TOKEN), "{table:?}");
         assert!(!table.contains(LEGACY_CREDENTIAL), "{table:?}");
     }

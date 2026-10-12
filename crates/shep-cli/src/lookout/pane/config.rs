@@ -5,15 +5,16 @@
 //! keystrokes live in the modules beside it, and the rows themselves and the
 //! cursor's walk through them in [`super::walk`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use shep_core::config::{ApplyGroup, apply_group, reaches_running};
 use shep_core::protocol::SheepConfigView;
 
 use super::super::edits::{EditKey, Edits};
-use super::super::field::{FieldKind, FieldSet, Flattened, flatten_values, flattened};
+use super::super::field::{FieldKind, FieldSet, Flattened, Outline, flatten_values, flattened};
 use super::super::viewport::Viewport;
 use super::fields::{render_json, resolved_display, sheep_fields};
 use super::sheep_dog::SheepDogTable;
@@ -91,6 +92,12 @@ pub struct ConfigPane {
     /// and quoted for a property literally named with a dot. The write walks
     /// this map rather than the key: see [`Self::edited_section_with`].
     pub(super) section_paths: BTreeMap<String, Vec<String>>,
+    /// The tables a dog pane's rows nest in. Empty for a sheep. Shared, so
+    /// the pane stays small enough to sit in `Body` unboxed.
+    pub(super) outline: Arc<Outline>,
+    /// The tables currently drawn open, by their dotted path. See
+    /// [`Self::rows`].
+    pub(super) open: BTreeSet<String>,
 }
 
 impl core::fmt::Debug for ConfigPane {
@@ -133,6 +140,8 @@ impl ConfigPane {
             section: None,
             dog_table: None,
             section_paths: BTreeMap::new(),
+            outline: Arc::new(Outline::default()),
+            open: BTreeSet::new(),
         }
     }
 
@@ -142,9 +151,10 @@ impl ConfigPane {
     /// open rather than read from anywhere; `section` is the table as
     /// `Request::DogConfig` rendered it, empty when `dogs.toml` has none.
     ///
-    /// Flat, in schema order, with no group headers: a dog's schema
-    /// carries no `init.group`. A nested table becomes dotted rows, as it
-    /// does on that dog's table over a sheep. A [`FieldKind::Map`] or
+    /// In schema order, with no group headers: a dog's schema carries no
+    /// `init.group`. A nested table is a row that opens and closes, with its
+    /// keys under it, as it is on that dog's table over a sheep; see
+    /// [`Self::rows`]. A [`FieldKind::Map`] or
     /// [`FieldKind::List`] row is marked not editable and draws
     /// [`Lock::NoWidget`]: this pane has no widget for either, so a list
     /// stays one row rather than the sub-screen a sheep's `args` opens.
@@ -155,7 +165,11 @@ impl ConfigPane {
         schema: Value,
         section: String,
     ) -> Self {
-        let Flattened { fields, paths } = flattened(&schema);
+        let Flattened {
+            fields,
+            paths,
+            outline,
+        } = flattened(&schema);
         let fields = FieldSet::from_fields(
             fields
                 .fields()
@@ -198,6 +212,8 @@ impl ConfigPane {
             section: Some(section),
             dog_table: None,
             section_paths: paths,
+            open: outline.top_level_paths(),
+            outline: Arc::new(outline),
         }
     }
 

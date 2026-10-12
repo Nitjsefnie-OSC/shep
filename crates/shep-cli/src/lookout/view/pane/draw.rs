@@ -374,7 +374,8 @@ pub fn draw_pane(app: &App, pane: &ConfigPane, area: Rect, buffer: &mut Buffer) 
 #[cfg(test)]
 mod tests {
     use super::super::fixtures::{
-        bark_pane, config_pane_lines_for_tests, nested_table_dog_pane, pane_to, text_of, web_pane,
+        bark_pane, config_pane_lines_for_tests, marked, nested_sheep_dog_pane,
+        nested_table_dog_pane, pane_to, screen_of, text_of, web_pane,
     };
     use super::super::layout::{FULL_WIDTH, LANDS_WITH_PANEL_MIN};
     use super::*;
@@ -499,26 +500,116 @@ mod tests {
         insta::assert_snapshot!("dog_pane_wide", text.join("\n"));
     }
 
-    /// The same pane over a dog whose schema nests a table: the rows are
-    /// dotted, the credential one table down is a row of its own and reads
-    /// `<set>`, and the cost cell is still empty on every one of them.
+    /// The same pane over a dog whose schema nests a table: a tree with the
+    /// first level open, the table two levels down closed, and the cost cell
+    /// empty on every row. Opening that table reveals the credential in it,
+    /// which reads `<set>`.
     #[test]
     fn a_dog_pane_over_a_nested_table() {
-        let text = text_of(&pane_lines(
-            &nested_table_dog_pane(),
-            fixtures::plain(),
-            120,
-            0,
-        ));
+        let mut pane = nested_table_dog_pane();
+        let text = text_of(&pane_lines(&pane, fixtures::plain(), 120, 0));
+        assert!(
+            text.iter().any(|line| line.contains("\u{25b8} worker")),
+            "the table two levels down starts closed: {text:?}"
+        );
+        assert!(!text.iter().any(|line| line.contains("token")), "{text:?}");
+        insta::assert_snapshot!("dog_pane_nested_table_closed", text.join("\n"));
+        pane.move_to_key("models.worker.token");
+        let text = text_of(&pane_lines(&pane, fixtures::plain(), 120, 0));
         assert!(
             !text.iter().any(|line| line.contains("sk-live")),
             "a secret is never rendered: {text:?}"
         );
         assert!(
-            text.iter().any(|line| line.contains("models.worker.model")),
+            text.iter().any(|line| line.contains("\u{25be} worker")),
             "{text:?}"
         );
         insta::assert_snapshot!("dog_pane_nested_table", text.join("\n"));
+    }
+
+    /// Every table opened down to the credential, so the tree shows all
+    /// three depths.
+    fn opened(mut pane: ConfigPane) -> ConfigPane {
+        pane.move_to_key("models.worker.token");
+        pane
+    }
+
+    /// The dog pane as a tree at the design target, and at a width with no
+    /// side panel. The snapshots are the assertions.
+    #[test]
+    fn a_dog_pane_as_a_tree_at_160x48_and_narrow() {
+        for (name, width) in [("dog_pane_tree_160x48", 160), ("dog_pane_tree_narrow", 89)] {
+            let lines = pane_lines(
+                &opened(nested_table_dog_pane()),
+                fixtures::plain(),
+                width,
+                48,
+            );
+            let text = text_of(&lines);
+            assert!(
+                !text.iter().any(|line| line.contains("sk-live")),
+                "a secret is never rendered: {text:?}"
+            );
+            insta::assert_snapshot!(name, text.join("\n"));
+        }
+    }
+
+    /// The per-sheep table pane as a tree, at the same two widths.
+    #[test]
+    fn a_sheep_dog_table_pane_as_a_tree_at_160x48_and_narrow() {
+        for (name, width) in [
+            ("sheep_dog_pane_tree_160x48", 160),
+            ("sheep_dog_pane_tree_narrow", 89),
+        ] {
+            let lines = pane_lines(
+                &opened(nested_sheep_dog_pane()),
+                fixtures::plain(),
+                width,
+                48,
+            );
+            let text = text_of(&lines);
+            assert!(
+                !text.iter().any(|line| line.contains("sk-live")),
+                "a secret is never rendered: {text:?}"
+            );
+            insta::assert_snapshot!(name, text.join("\n"));
+        }
+    }
+
+    /// At `view::MIN_HEIGHT` the body has no room for the chrome, so the
+    /// cursor's row is drawn alone, whether it is a table or a leaf.
+    #[test]
+    fn the_cursor_row_of_a_tree_survives_at_the_minimum_height() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        let total = app.config_pane().expect("open").rows().len();
+        let mut frames = Vec::new();
+        for _ in 0..total {
+            let text = screen_of(&mut app, 160, crate::lookout::view::flock::MIN_HEIGHT);
+            assert_eq!(marked(&text), 1, "{text}");
+            frames.push(text);
+            app.update(Msg::Key(KeyPress::SelectDown));
+        }
+        insta::assert_snapshot!("dog_pane_tree_min_height_on_a_table", frames[0]);
+        insta::assert_snapshot!("dog_pane_tree_min_height_on_a_leaf", frames[total - 1]);
+
+        // The per-sheep table pane, with the three body lines
+        // `view::MIN_HEIGHT` leaves under the title.
+        let mut pane = nested_sheep_dog_pane();
+        let lines = pane_lines(&pane, fixtures::plain(), 160, 3);
+        let on_a_table = text_of(&lines);
+        assert!(
+            on_a_table
+                .iter()
+                .any(|line| line.starts_with(">  \u{25be} models")),
+            "{on_a_table:?}"
+        );
+        insta::assert_snapshot!("sheep_dog_pane_tree_min_height", on_a_table.join("\n"));
+        pane.move_to_last();
+        let on_a_leaf = text_of(&pane_lines(&pane, fixtures::plain(), 160, 3));
+        assert!(
+            on_a_leaf.iter().any(|line| line.starts_with(">  name")),
+            "{on_a_leaf:?}"
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ mod init;
 mod schema;
 
 pub use bounds::Bounds;
-pub(crate) use flatten::{Flattened, flatten_values, flattened};
+pub(crate) use flatten::{Child, Flattened, Outline, flatten_values, flattened, segment};
 
 use serde_json::{Map, Value};
 

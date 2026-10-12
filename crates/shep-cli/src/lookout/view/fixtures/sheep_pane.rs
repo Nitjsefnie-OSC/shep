@@ -95,9 +95,9 @@ pub fn select_env_key(app: &mut App, key: &str) {
             crate::lookout::pane::PaneRow::Env(env_index) => {
                 pane.env_key_names().get(*env_index).map(String::as_str) == Some(key)
             }
-            crate::lookout::pane::PaneRow::Field(_) | crate::lookout::pane::PaneRow::AddEnv => {
-                false
-            }
+            crate::lookout::pane::PaneRow::Field(_)
+            | crate::lookout::pane::PaneRow::Table(_)
+            | crate::lookout::pane::PaneRow::AddEnv => false,
         })
         .unwrap_or_else(|| panic!("no env key named {key}"));
     app.update(Msg::Key(KeyPress::SelectFirst));
@@ -255,17 +255,46 @@ pub fn select_field(app: &mut App, key: &str) {
         let digit = u8::try_from(position + 1).expect("nine groups fit a u8");
         app.update(Msg::Key(KeyPress::Group(digit)));
     }
+    // A tree pane hides a key under a closed table, so open the tables
+    // above `key` one `→` at a time first.
+    while row_of(app, key).is_none() {
+        let pane = app.config_pane().expect("the pane is open");
+        let table = pane
+            .rows()
+            .iter()
+            .position(|row| match row {
+                crate::lookout::pane::PaneRow::Table(index) => {
+                    pane.table_path(*index).is_some_and(|path| {
+                        key.starts_with(&format!("{path}.")) && !pane.open_tables().contains(path)
+                    })
+                }
+                crate::lookout::pane::PaneRow::Field(_)
+                | crate::lookout::pane::PaneRow::Env(_)
+                | crate::lookout::pane::PaneRow::AddEnv => false,
+            })
+            .unwrap_or_else(|| panic!("{key} is not in the active group's rows"));
+        walk_to_row(app, table);
+        app.update(Msg::Key(KeyPress::TabNext));
+    }
+    let index = row_of(app, key).expect("the loop above found the row");
+    walk_to_row(app, index);
+}
+
+/// The index of `key`'s row in the open pane's rows, if it is drawn.
+fn row_of(app: &App, key: &str) -> Option<usize> {
     let pane = app.config_pane().expect("the pane is open");
-    let index = pane
-        .rows()
-        .iter()
-        .position(|row| match row {
-            crate::lookout::pane::PaneRow::Field(field_index) => {
-                pane.fields().fields()[*field_index].key == key
-            }
-            crate::lookout::pane::PaneRow::Env(_) | crate::lookout::pane::PaneRow::AddEnv => false,
-        })
-        .unwrap_or_else(|| panic!("{key} is not in the active group's rows"));
+    pane.rows().iter().position(|row| match row {
+        crate::lookout::pane::PaneRow::Field(field_index) => {
+            pane.fields().fields()[*field_index].key == key
+        }
+        crate::lookout::pane::PaneRow::Table(_)
+        | crate::lookout::pane::PaneRow::Env(_)
+        | crate::lookout::pane::PaneRow::AddEnv => false,
+    })
+}
+
+/// Walks the cursor onto row `index` with `SelectFirst` and `SelectDown`.
+fn walk_to_row(app: &mut App, index: usize) {
     app.update(Msg::Key(KeyPress::SelectFirst));
     for _ in 0..index {
         app.update(Msg::Key(KeyPress::SelectDown));

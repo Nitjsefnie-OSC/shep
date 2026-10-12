@@ -270,10 +270,28 @@ impl App {
             // `Self::on_sheep_config`.
             KeyPress::Refresh => return self.reread_pane(),
             KeyPress::Cycle => return self.cycle_field(),
+            KeyPress::Confirm => return self.confirm_field(),
             // `e` does exactly what `Enter` does here: an operator who
             // opened the pane with `e` should not have to learn a second
-            // key to use it.
-            KeyPress::Confirm | KeyPress::Edit => return self.confirm_field(),
+            // key to use it. Except on a table, which `Enter` opens and
+            // closes and which holds nothing for `e` to edit.
+            KeyPress::Edit => {
+                if self.config_pane().is_some_and(|pane| !pane.cursor_on_table()) {
+                    return self.confirm_field();
+                }
+            }
+            // On a dog's pane `←` and `→` close and open the table under the
+            // cursor; a sheep pane has no tables and they do nothing.
+            KeyPress::TabPrev => {
+                if let Some(pane) = self.config_pane_mut() {
+                    pane.close_table();
+                }
+            }
+            KeyPress::TabNext => {
+                if let Some(pane) = self.config_pane_mut() {
+                    pane.open_table();
+                }
+            }
             KeyPress::Help => {
                 self.open_keymap();
             }
@@ -295,8 +313,6 @@ impl App {
             | KeyPress::Secrets
             | KeyPress::Reveal
             | KeyPress::Copy
-            | KeyPress::TabPrev
-            | KeyPress::TabNext
             | KeyPress::SecretDelete
             | KeyPress::Collapse
             // Bound only in the close dialog; with none up, `c` is a stray
@@ -315,8 +331,12 @@ impl App {
             // key that unfiles something cannot write, and refusing it
             // behind a closed gate would leave an edit the gate already
             // refused to file.
+            //
+            // Not on a table row, which no edit belongs to.
             KeyPress::Undo => {
-                if let Some(pane) = self.config_pane_mut() {
+                if let Some(pane) = self.config_pane_mut()
+                    && !pane.cursor_on_table()
+                {
                     pane.undo_edit();
                 }
             }

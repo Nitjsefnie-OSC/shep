@@ -1,0 +1,10 @@
+---
+source: crates/shep-cli/src/lookout/view/pane/draw.rs
+expression: "frames[total - 1]"
+---
+shep lookout   /home/ada/.shep                                                                                                                    3 in the flock
+  jobs  (dog config)                                                                                                                                            
+  ... 2 above                                                                            FOCUSED  name  text                                                    
+>  name                       small                                                       name                                                                  
+  shep publishes the change; jobs decides what to reload                                                                                                        
+esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit   control enabled

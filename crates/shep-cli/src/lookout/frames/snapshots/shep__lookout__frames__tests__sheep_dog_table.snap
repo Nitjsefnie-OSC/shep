@@ -1,22 +1,21 @@
 ---
 source: crates/shep-cli/src/lookout/frames/mod.rs
-assertion_line: 91
 expression: render_text(&buffer)
 ---
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
   api › jobs  (dog table)                                                                                                                                       
->  concurrency                2                                                          FOCUSED  concurrency  integer                                          
-   hours.end                  17:00                                                       concurrency                                                           
-   hours.start                09:00                                                                                                                             
-   merge                      ask                                                         now     2                                                             
-   models.worker.model        small                                                       default (none)                                                        
-   models.worker.token        <set>                                                       example (none)                                                        
-                                                                                                                                                                
-                                                                                          ──────────────────────────────────────────────────────────────────────
-                                                                                          VALIDATION                                                            
-                                                                                          █ a whole number                                                      
+   concurrency                2                                                          FOCUSED  models.worker.token  text                                     
+   ▾ hours                                                                    table       token                                                                 
+     end                      17:00                                                                                                                             
+     start                    09:00                                                       now     <set>                                                         
+   merge                      ask                                                         default (none)                                                        
+   ▾ models                                                                   table       example (none)                                                        
+     ▾ worker                                                                 table                                                                             
+       model                  small                                                                                                                             
+>      token                  <set>                                                                                                                             
   shep publishes the change; jobs decides what to reload                                                                                                        
+                                                                                                                                                                
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 

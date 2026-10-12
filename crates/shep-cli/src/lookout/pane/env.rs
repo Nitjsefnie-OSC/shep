@@ -94,7 +94,7 @@ impl ConfigPane {
                 key: None,
                 buffer: String::new(),
             }),
-            Some(PaneRow::Field(_)) | None => None,
+            Some(PaneRow::Field(_) | PaneRow::Table(_)) | None => None,
         };
     }
 
@@ -156,7 +156,7 @@ impl ConfigPane {
         match self.cursor()? {
             PaneRow::Env(index) => Some(self.env_keys.get(index).cloned()),
             PaneRow::AddEnv => Some(None),
-            PaneRow::Field(_) => None,
+            PaneRow::Field(_) | PaneRow::Table(_) => None,
         }
     }
 
@@ -175,7 +175,7 @@ impl ConfigPane {
                     PaneRow::Env(env_index) => {
                         self.env_keys.get(*env_index).map(String::as_str) == Some(key)
                     }
-                    PaneRow::Field(_) | PaneRow::AddEnv => false,
+                    PaneRow::Field(_) | PaneRow::Table(_) | PaneRow::AddEnv => false,
                 })
             })
             .unwrap_or_else(|| rows.len().saturating_sub(1));
@@ -193,7 +193,7 @@ impl ConfigPane {
     pub(crate) fn cursor_env_key_name(&self) -> Option<&str> {
         match self.cursor()? {
             PaneRow::Env(index) => self.env_keys.get(index).map(String::as_str),
-            PaneRow::Field(_) | PaneRow::AddEnv => None,
+            PaneRow::Field(_) | PaneRow::Table(_) | PaneRow::AddEnv => None,
         }
     }
 

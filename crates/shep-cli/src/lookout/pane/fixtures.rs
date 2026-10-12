@@ -85,3 +85,46 @@ pub(super) fn field(key: &str, value: serde_json::Value) -> PaneEdit {
         value: value.into(),
     }
 }
+
+/// A dog whose schema nests: two top-level tables that each hold a `model`,
+/// one holding a table of its own, and a leaf after them.
+pub(super) fn tree_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "agents": {
+                "type": "object",
+                "properties": {
+                    "model": { "type": "string" },
+                    "retries": { "type": "integer" },
+                },
+            },
+            "budget": {
+                "type": "object",
+                "properties": {
+                    "cap": { "type": "integer" },
+                    "model": { "type": "string" },
+                },
+            },
+            "deep": {
+                "type": "object",
+                "properties": {
+                    "inner": {
+                        "type": "object",
+                        "properties": { "leaf": { "type": "boolean" } },
+                    },
+                },
+            },
+            "name": { "type": "string" },
+        },
+    })
+}
+
+pub(super) fn tree_section() -> String {
+    "name = \"x\"\n[agents]\nmodel = \"small\"\n[budget]\nmodel = \"large\"\ncap = 3\n".to_owned()
+}
+
+/// [`tree_schema`] over [`tree_section`].
+pub(super) fn tree_pane() -> ConfigPane {
+    ConfigPane::dog("tree".into(), None, tree_schema(), tree_section())
+}

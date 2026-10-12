@@ -4,6 +4,13 @@
 use super::*;
 
 impl App {
+    /// Whether the open pane draws its rows as a tree of tables, which is
+    /// what the keymap overlay reads to caption `←/→`.
+    #[must_use]
+    pub(in crate::lookout) fn over_a_tree(&self) -> bool {
+        self.config_pane().is_some_and(ConfigPane::is_tree)
+    }
+
     /// A dog's schema probe answered. `Ok` parks the schema and asks the
     /// shepherd for the section; the pane is built once that lands. `Err`
     /// gets no pane, and the refusal names the file to edit instead. The
@@ -61,9 +68,12 @@ impl App {
                 // Everything a refresh has to carry across, read before the
                 // rebuild replaces the pane: see `Self::on_sheep_config`,
                 // which states the argument for each. A dog pane has no env
-                // sub-screen or list sub-screen, so only its view and its
-                // edits carry across.
+                // sub-screen or list sub-screen, so only its view, its open
+                // tables and its edits carry across.
                 let carried = self.config_pane().map(|pane| pane.view().clone());
+                // The tables the operator opened or closed ride along with
+                // the cursor, which is an index into the rows they shape.
+                let carried_open = self.config_pane().map(|pane| pane.open_tables().clone());
                 let carried_edits = self
                     .config_pane()
                     .map(|pane| pane.edits().clone())
@@ -75,6 +85,9 @@ impl App {
                     toml.as_str().to_owned(),
                 );
                 pane.adopt_edits(carried_edits);
+                if let Some(open) = carried_open {
+                    pane.adopt_open_tables(&open);
+                }
                 if let Some(carried) = carried {
                     pane.adopt_view(carried);
                 }
@@ -546,5 +559,92 @@ mod tests {
                 name: "bark".to_string()
             })
         );
+    }
+
+    /// Walks the nested fixture's pane onto its `row`th row.
+    fn nested_cursor_to(app: &mut App, row: usize) {
+        app.update(Msg::Key(KeyPress::SelectFirst));
+        for _ in 0..row {
+            app.update(Msg::Key(KeyPress::SelectDown));
+        }
+    }
+
+    fn nested_rows(app: &App) -> usize {
+        app.config_pane().expect("the pane is open").rows().len()
+    }
+
+    /// `models` is row 0 and open, `worker` row 1 and closed, `name` row 2.
+    #[test]
+    fn right_and_left_open_and_close_the_table_under_the_cursor() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        assert_eq!(nested_rows(&app), 3);
+        nested_cursor_to(&mut app, 1);
+        app.update(Msg::Key(KeyPress::TabNext));
+        assert_eq!(nested_rows(&app), 5, "worker opened onto model and token");
+        app.update(Msg::Key(KeyPress::TabPrev));
+        assert_eq!(nested_rows(&app), 3);
+        app.update(Msg::Key(KeyPress::Confirm));
+        assert_eq!(nested_rows(&app), 5, "enter toggles it open");
+        app.update(Msg::Key(KeyPress::Confirm));
+        assert_eq!(nested_rows(&app), 3, "and closed");
+    }
+
+    /// `e`, space, `d` and `u` on a table row file nothing and open nothing.
+    #[test]
+    fn e_space_d_and_u_on_a_table_row_do_nothing() {
+        for key in [
+            KeyPress::Edit,
+            KeyPress::Cycle,
+            KeyPress::Remove,
+            KeyPress::Undo,
+        ] {
+            let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+            nested_cursor_to(&mut app, 1);
+            let before = app.config_pane().expect("the pane is open").cursor();
+            assert!(matches!(before, Some(PaneRow::Table(_))), "{before:?}");
+            let effect = app.update(Msg::Key(key));
+            assert_eq!(effect, Effect::None, "{key:?}");
+            let pane = app.config_pane().expect("the pane is open");
+            assert!(pane.edits().is_empty(), "{key:?} filed something");
+            assert!(pane.typing().is_none(), "{key:?} opened an editor");
+            assert_eq!(pane.cursor(), before, "{key:?}");
+            assert_eq!(pane.rows().len(), 3, "{key:?} toggled the table");
+        }
+    }
+
+    /// `r` re-reads the section and the pane that comes back has the same
+    /// tables open, with the cursor where it was.
+    #[test]
+    fn a_re_read_keeps_the_open_tables_and_the_cursor() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        nested_cursor_to(&mut app, 1);
+        app.update(Msg::Key(KeyPress::TabNext));
+        app.update(Msg::Key(KeyPress::SelectDown));
+        let cursor = app.config_pane().expect("the pane is open").cursor();
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Refresh)) else {
+            panic!("r re-reads the section");
+        };
+        app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: fixtures::nested_dog_section().into(),
+            }),
+        });
+        let pane = app.config_pane().expect("still open");
+        assert_eq!(pane.rows().len(), 5);
+        assert!(pane.open_tables().contains("models.worker"));
+        assert_eq!(pane.cursor(), cursor);
+    }
+
+    /// `←` and `→` mean nothing on a sheep's own pane.
+    #[test]
+    fn left_and_right_do_nothing_on_a_sheep_pane() {
+        let mut app = fixtures::app_in_sheep_pane();
+        let before = app.config_pane().expect("the pane is open").cursor();
+        let effect = app.update(Msg::Key(KeyPress::TabNext));
+        assert_eq!(effect, Effect::None);
+        let effect = app.update(Msg::Key(KeyPress::TabPrev));
+        assert_eq!(effect, Effect::None);
+        assert_eq!(app.config_pane().expect("open").cursor(), before);
     }
 }

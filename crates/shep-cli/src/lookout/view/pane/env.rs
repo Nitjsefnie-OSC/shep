@@ -112,7 +112,7 @@ pub(super) fn cursor_env_row_line(
             env_row_line(pane, name, true, width, palette, show_lands)
         }
         Some(PaneRow::AddEnv) => add_env_row_line(pane, true, width, palette, show_lands),
-        Some(PaneRow::Field(_)) | None => {
+        Some(PaneRow::Field(_) | PaneRow::Table(_)) | None => {
             unreachable!("callers check the cursor is on an env row first")
         }
     }
