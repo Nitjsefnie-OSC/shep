@@ -41,7 +41,7 @@ pub(super) fn grouped_body_lines(
         lines.extend(tail);
         return lines;
     }
-    let mut lines = if !pane.fields().is_empty() && budget > 0 {
+    let mut lines = if !pane.field_rows().is_empty() && budget > 0 {
         let field_rows = pane.field_rows();
         let cursor_row = field_rows
             .iter()

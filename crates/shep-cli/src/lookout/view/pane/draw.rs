@@ -316,7 +316,7 @@ pub(super) fn ungrouped_pane_lines_with_panel(
     // wrapped help must not spend the last line reserved for the cursor's
     // own row.
     push_wrapped_blurb(&mut lines, &mut body_budget, pane, palette, width);
-    if !pane.fields().is_empty() && body_budget > 0 {
+    if !pane.rows().is_empty() && body_budget > 0 {
         let total = pane.rows().len();
         let cursor_row = pane.view().cursor().min(total - 1);
         let body = scroll::to_cursor(
@@ -525,6 +525,18 @@ mod tests {
             "{text:?}"
         );
         insta::assert_snapshot!("dog_pane_nested_table", text.join("\n"));
+    }
+
+    /// A dog whose only setting is a table with no keys has no field, but
+    /// the table is still a row the cursor can stand on, so it is drawn.
+    #[test]
+    fn a_dog_pane_holding_only_an_empty_table_draws_its_row() {
+        let schema = serde_json::json!({
+            "properties": { "limits": { "type": "object", "properties": {} } }
+        });
+        let pane = ConfigPane::dog("jobs".into(), None, schema, String::new());
+        let text = text_of(&pane_lines(&pane, fixtures::plain(), 120, 0));
+        assert!(text.iter().any(|line| line.contains("limits")), "{text:?}");
     }
 
     /// Every table opened down to the credential, so the tree shows all
