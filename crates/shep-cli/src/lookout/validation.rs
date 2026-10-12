@@ -14,10 +14,13 @@
 //! that the sentence an operator reads and the check that stops the write
 //! are built from one table. A dog's section is written by the shepherd
 //! without being read, so there is no second gate behind this one.
+//! [`item_refusal`] is the same gate for one element of a list field,
+//! against the bounds its item schema published.
 
+use serde_json::Value;
 use shep_core::values::{MemSize, UpDuration};
 
-use super::field::{Field, FieldKind, ValueKind};
+use super::field::{Bounds, Field, FieldKind, ListItem, ValueKind};
 
 /// One line of the table: what to print, and the strings that prove it.
 ///
@@ -167,19 +170,19 @@ pub fn bullets(field: &Field) -> Bullets {
 /// operator reads one word for one idea rather than learning a second.
 pub const REDACTED: &str = "<set>";
 
-/// What may be printed for `typed`: [`REDACTED`] when the field carries a
-/// credential, the value itself otherwise.
+/// What may be printed for `typed`: [`REDACTED`] when `secret`, the value
+/// itself otherwise.
 ///
 /// Every sentence this module builds resolves its value here, so a refusal
 /// added later cannot echo a secret by forgetting to ask. The rule is one
-/// line and the reason it is a function is that it has two callers.
+/// line and the reason it is a function is that it has three callers.
 ///
 /// `pub(super)`: `ConfigPane::apply_typing` builds one refusal of its own
 /// through [`not_a_whole_number`], and has to resolve the value the same
 /// way.
 #[must_use]
-pub(super) fn shown_value<'a>(field: &Field, typed: &'a str) -> &'a str {
-    if field.secret { REDACTED } else { typed }
+pub(super) fn shown_value<'a>(secret: bool, typed: &'a str) -> &'a str {
+    if secret { REDACTED } else { typed }
 }
 
 /// Why a typed buffer was not filed, in the operator's words.
@@ -216,7 +219,8 @@ pub struct Refusal {
 ///
 /// [`None`] for everything else, which is most fields: a plain string with
 /// no pattern takes any string, and shep is not the authority on a dog's
-/// config beyond what that dog published.
+/// config beyond what that dog published. A list field's element is checked
+/// by [`item_refusal`] rather than here, against its item schema.
 ///
 /// Fails open on a `pattern` that does not compile. A dog that ships a
 /// broken regex has a bug in its schema, and refusing every value for that
@@ -238,9 +242,9 @@ pub fn refusal(field: &Field, typed: &str) -> Option<Refusal> {
     // this, not shep, so it is reachable rather than theoretical: a dog
     // publishing `pattern` or a `$ref` grammar on a field it also marks
     // `x-shep-secret` sends a credential straight through `pattern_refusal`.
-    let shown = shown_value(field, typed);
+    let shown = shown_value(field.secret, typed);
     if field.kind == FieldKind::Integer {
-        return integer_refusal(field, typed, shown);
+        return integer_refusal(&field.key, &field.bounds, typed, shown);
     }
     match field.value_kind {
         Some(ValueKind::UpDuration) => typed
@@ -251,7 +255,101 @@ pub fn refusal(field: &Field, typed: &str) -> Option<Refusal> {
             .parse::<MemSize>()
             .is_err()
             .then(|| refuse(&field.key, shown, "a size", MEMORY_FORMS)),
-        None => pattern_refusal(field, typed, shown),
+        None => pattern_refusal(
+            &field.key,
+            field.bounds.pattern.as_deref(),
+            &field.accepts,
+            typed,
+            shown,
+        ),
+    }
+}
+
+/// Why one typed element of a list field was not filed, in the operator's
+/// words.
+///
+/// The rules are the ones the item schema published, which is a different
+/// schema from the one the dog published about the array: `minLength`,
+/// `pattern` and `enum` for a string list, the schema's floor and ceiling
+/// for an integer one, and `enum` for both. An element with no rule on it
+/// is accepted, exactly as a scalar field its schema says nothing about is:
+/// shep is not the authority on a dog's config beyond what that dog
+/// published.
+///
+/// `secret` decides what the sentence may print, resolved here rather than
+/// per rule so a rule added later cannot echo a credential by forgetting to
+/// ask. A list the schema marks secret is rare rather than impossible: a
+/// dog's `Vec<String>` of tokens publishes `x-shep-secret` on its items.
+///
+/// Fails open on a `pattern` that does not compile, for [`refusal`]'s
+/// reason.
+///
+/// The empty buffer never reaches here: it is nothing to write, which is
+/// [`super::pane::ListPane::apply_typing`]'s own case.
+#[must_use]
+pub fn item_refusal(
+    key: &str,
+    item: ListItem,
+    bounds: &Bounds,
+    typed: &str,
+    secret: bool,
+) -> Option<Refusal> {
+    let shown = shown_value(secret, typed);
+    let value = match item {
+        ListItem::Integer => match integer_of(key, bounds, typed, shown) {
+            Ok(number) => {
+                if let Some(refused) = range_refusal(key, bounds, shown, number) {
+                    return Some(refused);
+                }
+                Value::from(number)
+            }
+            Err(refused) => return Some(refused),
+        },
+        ListItem::Text => {
+            if let Some(refused) = min_length_refusal(key, bounds, typed, shown) {
+                return Some(refused);
+            }
+            if let Some(refused) =
+                pattern_refusal(key, bounds.pattern.as_deref(), &[], typed, shown)
+            {
+                return Some(refused);
+            }
+            Value::String(typed.to_owned())
+        }
+    };
+    enum_refusal(key, bounds, &value, shown)
+}
+
+/// [`item_refusal`]'s `minLength` arm. The count is of characters, so an
+/// element with one accented letter is one character long rather than two.
+fn min_length_refusal(key: &str, bounds: &Bounds, typed: &str, shown: &str) -> Option<Refusal> {
+    let least = bounds.min_length?;
+    (typed.chars().count() < least).then(|| Refusal {
+        text: format!("{key} is \"{shown}\"; {key} needs at least {least} characters"),
+    })
+}
+
+/// [`item_refusal`]'s `enum` arm: the element as the JSON value it parsed
+/// to, against the values the schema wrote.
+///
+/// The refusal lists the allowed set because an `enum` is the one rule an
+/// operator can satisfy by copying from it.
+fn enum_refusal(key: &str, bounds: &Bounds, value: &Value, shown: &str) -> Option<Refusal> {
+    if bounds.choices.is_empty() || bounds.choices.iter().any(|choice| choice == value) {
+        return None;
+    }
+    let allowed: Vec<String> = bounds.choices.iter().map(choice_text).collect();
+    Some(Refusal {
+        text: format!("{key} is \"{shown}\"; {key} takes one of {}", allowed.join(", ")),
+    })
+}
+
+/// One `enum` member as the operator reads it: bare for a string, compact
+/// JSON for anything else.
+fn choice_text(choice: &Value) -> String {
+    match choice {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
     }
 }
 
@@ -260,21 +358,32 @@ pub fn refusal(field: &Field, typed: &str) -> Option<Refusal> {
 ///
 /// `shown` is what may be printed, which is `typed` for an ordinary field
 /// and [`REDACTED`] for a secret one. `typed` is still what gets parsed.
-fn integer_refusal(field: &Field, typed: &str, shown: &str) -> Option<Refusal> {
-    let key = &field.key;
-    // Ahead of the parse, because it is true of every value: a field whose
-    // schema admits no integer cannot be answered, and saying "starts at 3"
-    // to somebody who then types 3 and is told it "stops at 1" explains
-    // nothing.
-    if field.bounds.unsatisfiable {
-        return Some(Refusal {
+fn integer_refusal(key: &str, bounds: &Bounds, typed: &str, shown: &str) -> Option<Refusal> {
+    match integer_of(key, bounds, typed, shown) {
+        Ok(number) => range_refusal(key, bounds, shown, number),
+        Err(refused) => Some(refused),
+    }
+}
+
+/// `typed` as the whole number it names, or the sentence saying it names
+/// none.
+///
+/// The empty range is checked ahead of the parse, because it is true of
+/// every value: a field whose schema admits no integer cannot be answered,
+/// and saying "starts at 3" to somebody who then types 3 and is told it
+/// "stops at 1" explains nothing.
+fn integer_of(key: &str, bounds: &Bounds, typed: &str, shown: &str) -> Result<i64, Refusal> {
+    if bounds.unsatisfiable {
+        return Err(Refusal {
             text: format!("{key} takes no value: its schema asks for a range with nothing in it"),
         });
     }
-    let Ok(number) = typed.parse::<i64>() else {
-        return Some(not_a_whole_number(key, shown));
-    };
-    match (field.bounds.minimum, field.bounds.maximum) {
+    typed.parse::<i64>().map_err(|_| not_a_whole_number(key, shown))
+}
+
+/// The floor and ceiling `bounds` sets on an integer already parsed.
+fn range_refusal(key: &str, bounds: &Bounds, shown: &str, number: i64) -> Option<Refusal> {
+    match (bounds.minimum, bounds.maximum) {
         (Some(min), _) if number < min => Some(Refusal {
             text: format!("{key} is \"{shown}\"; {key} starts at {min}"),
         }),
@@ -292,23 +401,28 @@ fn integer_refusal(field: &Field, typed: &str, shown: &str) -> Option<Refusal> {
 /// The field's own `accepts` is what the refusal names when it has any,
 /// since that is the spelling its author wrote for an operator. The raw
 /// pattern is the fallback, which is worse copy than a sentence and better
-/// than the silence it replaced.
-fn pattern_refusal(field: &Field, typed: &str, shown: &str) -> Option<Refusal> {
-    let pattern = field.bounds.pattern.as_deref()?;
-    let compiled = regex::Regex::new(pattern).ok()?;
+/// than the silence it replaced. A list's item schema has no `accepts` of
+/// its own, so [`item_refusal`] passes none.
+///
+/// Fails open on a `pattern` that does not compile: `.ok()?`.
+fn pattern_refusal(
+    key: &str,
+    pattern: Option<&str>,
+    accepts: &[String],
+    typed: &str,
+    shown: &str,
+) -> Option<Refusal> {
+    let compiled = regex::Regex::new(pattern?).ok()?;
     if compiled.is_match(typed) {
         return None;
     }
-    let takes = if field.accepts.is_empty() {
-        format!("it matches {pattern}")
+    let takes = if accepts.is_empty() {
+        format!("it matches {}", pattern?)
     } else {
-        field.accepts.join(", ")
+        accepts.join(", ")
     };
     Some(Refusal {
-        text: format!(
-            "{} is \"{shown}\", which it does not take; try {takes}",
-            field.key
-        ),
+        text: format!("{key} is \"{shown}\", which it does not take; try {takes}"),
     })
 }
 
@@ -509,11 +623,11 @@ mod tests {
     #[test]
     fn the_shown_value_of_a_secret_is_the_marker_and_never_the_buffer() {
         let mut field = text_field("token");
-        assert_eq!(shown_value(&field, "sk_live_HUNTER2"), "sk_live_HUNTER2");
+        assert_eq!(shown_value(field.secret, "sk_live_HUNTER2"), "sk_live_HUNTER2");
         field.secret = true;
-        assert_eq!(shown_value(&field, "sk_live_HUNTER2"), REDACTED);
+        assert_eq!(shown_value(field.secret, "sk_live_HUNTER2"), REDACTED);
         assert!(
-            !not_a_whole_number(&field.key, shown_value(&field, "sk_live_HUNTER2"))
+            !not_a_whole_number(&field.key, shown_value(field.secret, "sk_live_HUNTER2"))
                 .text
                 .contains("HUNTER2")
         );
@@ -774,6 +888,229 @@ mod tests {
     fn a_field_with_no_grammar_and_no_pattern_refuses_nothing() {
         assert_eq!(refusal(&text_field("cwd"), "/srv/web"), None);
         assert_eq!(refusal(&text_field("cwd"), "!!! anything"), None);
+    }
+
+    /// Every rule an item schema can publish, with the value it takes and
+    /// the one it turns down, and the whole sentence for the refused one.
+    ///
+    /// `minLength` is checked at exactly its bound, because a rule that
+    /// refused its own minimum would be a field nothing can be set to.
+    #[test]
+    fn every_item_rule_refuses_one_element_and_takes_the_next() {
+        let min_length = Bounds {
+            min_length: Some(3),
+            ..Default::default()
+        };
+        let pattern = Bounds {
+            pattern: Some("^[a-z]+$".to_owned()),
+            ..Default::default()
+        };
+        let words = Bounds {
+            choices: vec![serde_json::json!("ask"), serde_json::json!("auto")],
+            ..Default::default()
+        };
+        let numbers = Bounds {
+            choices: vec![serde_json::json!(1), serde_json::json!(2), serde_json::json!(3)],
+            ..Default::default()
+        };
+        let range = Bounds {
+            minimum: Some(1),
+            maximum: Some(64),
+            ..Default::default()
+        };
+        let cases = [
+            (
+                "minLength",
+                ListItem::Text,
+                &min_length,
+                "abc",
+                "ab",
+                "tags is \"ab\"; tags needs at least 3 characters",
+            ),
+            (
+                "pattern",
+                ListItem::Text,
+                &pattern,
+                "abc",
+                "Ab1",
+                "tags is \"Ab1\", which it does not take; try it matches ^[a-z]+$",
+            ),
+            (
+                "enum",
+                ListItem::Text,
+                &words,
+                "auto",
+                "never",
+                "tags is \"never\"; tags takes one of ask, auto",
+            ),
+            (
+                "integer enum",
+                ListItem::Integer,
+                &numbers,
+                "2",
+                "4",
+                "tags is \"4\"; tags takes one of 1, 2, 3",
+            ),
+            (
+                "minimum",
+                ListItem::Integer,
+                &range,
+                "1",
+                "0",
+                "tags is \"0\"; tags starts at 1",
+            ),
+            (
+                "maximum",
+                ListItem::Integer,
+                &range,
+                "64",
+                "65",
+                "tags is \"65\"; tags stops at 64",
+            ),
+        ];
+        for (rule, item, bounds, accepted, refused, sentence) in cases {
+            assert_eq!(
+                item_refusal("tags", item, bounds, accepted, false),
+                None,
+                "{rule}: {accepted} is the value the rule takes"
+            );
+            let refused = item_refusal("tags", item, bounds, refused, false).expect(rule);
+            assert_eq!(refused.text, sentence, "{rule}");
+        }
+    }
+
+    /// The one thing an integer list refuses even with no bounds on its
+    /// items, and the sentence the scalar editor already uses for it.
+    #[test]
+    fn an_integer_element_that_is_not_a_number_is_refused_out_loud() {
+        let bounds = Bounds::default();
+        let refused = item_refusal("stop_exit_codes", ListItem::Integer, &bounds, "lots", false)
+            .expect("lots is not a number");
+        assert_eq!(
+            refused.text,
+            "stop_exit_codes is \"lots\", which is not a whole number shep accepts"
+        );
+        assert_eq!(
+            item_refusal("stop_exit_codes", ListItem::Integer, &bounds, "-1", false),
+            None,
+            "a negative exit code is a whole number"
+        );
+    }
+
+    /// A list whose items are a plain string, which is every list the
+    /// Flockfile schema publishes today. Nothing is refused, and the gate
+    /// is not shep's chance to invent a grammar for a dog's array.
+    #[test]
+    fn a_list_with_no_item_rules_refuses_nothing() {
+        let bounds = Bounds::default();
+        for typed in ["a", "!!! anything", ""] {
+            assert_eq!(
+                item_refusal("args", ListItem::Text, &bounds, typed, false),
+                None,
+                "{typed}"
+            );
+        }
+    }
+
+    /// The count is of characters, not bytes: an element the operator
+    /// spelled with an accent is one character long, not two.
+    #[test]
+    fn a_min_length_counts_characters_and_not_bytes() {
+        let bounds = Bounds {
+            min_length: Some(4),
+            ..Default::default()
+        };
+        assert_eq!(
+            item_refusal("tags", ListItem::Text, &bounds, "caf\u{00e9}", false),
+            None,
+            "four characters, five bytes"
+        );
+        let refused = item_refusal("tags", ListItem::Text, &bounds, "caf", false)
+            .expect("three characters is under four");
+        assert_eq!(refused.text, "tags is \"caf\"; tags needs at least 4 characters");
+    }
+
+    /// A dog that ships a broken regex in its item schema has a bug in its
+    /// schema, and the list editor fails open on it for [`refusal`]'s
+    /// reason: refusing every element would lock an operator out of a
+    /// setting over somebody else's typo.
+    #[test]
+    fn a_list_pattern_that_does_not_compile_refuses_nothing() {
+        let broken = ["^[", "a-z"].concat();
+        assert!(
+            regex::Regex::new(&broken).is_err(),
+            "the fixture must be a pattern regex really refuses"
+        );
+        let bounds = Bounds {
+            pattern: Some(broken),
+            ..Default::default()
+        };
+        assert_eq!(
+            item_refusal("tags", ListItem::Text, &bounds, "ab", false),
+            None,
+            "a pattern that does not compile bounds nothing"
+        );
+    }
+
+    /// A list of credentials reaches a refusal the same two doors a scalar
+    /// does, and neither may print the element: the list sub-screen draws
+    /// what is typed, and this sentence is the one place a value typed into
+    /// it would be repeated.
+    #[test]
+    fn a_secret_lists_refusal_names_the_marker_and_never_the_element() {
+        const CREDENTIAL: &str = "tok_HUNTER2";
+        let pattern = Bounds {
+            pattern: Some("^sk-".to_owned()),
+            ..Default::default()
+        };
+        let refused = item_refusal("tokens", ListItem::Text, &pattern, CREDENTIAL, true)
+            .expect("the pattern refuses it");
+        assert_eq!(
+            refused.text,
+            "tokens is \"<set>\", which it does not take; try it matches ^sk-"
+        );
+
+        let min_length = Bounds {
+            min_length: Some(32),
+            ..Default::default()
+        };
+        let refused = item_refusal("tokens", ListItem::Text, &min_length, CREDENTIAL, true)
+            .expect("too short");
+        assert!(!refused.text.contains(CREDENTIAL), "{}", refused.text);
+        assert!(refused.text.contains("<set>"), "{}", refused.text);
+
+        let choices = Bounds {
+            choices: vec![serde_json::json!("ask"), serde_json::json!("auto")],
+            ..Default::default()
+        };
+        let refused = item_refusal("tokens", ListItem::Text, &choices, CREDENTIAL, true)
+            .expect("not a member");
+        assert!(!refused.text.contains(CREDENTIAL), "{}", refused.text);
+
+        let range = Bounds {
+            minimum: Some(1000),
+            ..Default::default()
+        };
+        let refused = item_refusal("pins", ListItem::Integer, &range, "7", true)
+            .expect("below the floor");
+        assert_eq!(refused.text, "pins is \"<set>\"; pins starts at 1000");
+    }
+
+    /// The control on the test above: an element of a list that is not a
+    /// credential is quoted back, since redacting everything would pass
+    /// that test while making every refusal useless.
+    #[test]
+    fn an_ordinary_element_is_still_quoted_back() {
+        let bounds = Bounds {
+            pattern: Some("^eu-".to_owned()),
+            ..Default::default()
+        };
+        assert!(
+            item_refusal("regions", ListItem::Text, &bounds, "Europe", false)
+                .expect("refused")
+                .text
+                .contains("Europe"),
+        );
     }
 
     /// A [`ValueKind::UpDuration`] field built the way a dog's schema
