@@ -237,12 +237,6 @@ impl FieldSet {
     pub fn len(&self) -> usize {
         self.fields.len()
     }
-
-    /// Whether there are none.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
-    }
 }
 
 fn field_from(key: &str, schema: &Value, defs: &Map<String, Value>) -> Field {
