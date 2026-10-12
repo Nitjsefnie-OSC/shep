@@ -726,9 +726,9 @@ speaks protocol 9, accepts 8 and newer`}</CodeBlock>
       never the value. A nested struct in <code>S</code> becomes dotted
       rows there, <code>models.worker.model</code> for a{" "}
       <code>models</code> field holding a <code>worker</code> field
-      holding a <code>model</code>. An array, or a map with more than a
-      fixed set of keys, stays one read-only row: neither has a shape the
-      pane can write back into.
+      holding a <code>model</code>. A map with more than a fixed set of
+      keys, an array of tables, or a list whose items can be null stays
+      one read-only row.
     </p>
     <p class="fine">
       Without the <code>schema</code> feature,{" "}
