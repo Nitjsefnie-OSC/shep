@@ -44,7 +44,8 @@ async fn a_fresh_home_lists_both_built_ins_disabled_at_ids_0_and_1() {
     .unwrap();
 
     let flock = daemon.context().supervisor.list_checked().await.unwrap();
-    let ids: Vec<(String, u32)> = flock.iter().map(|i| (i.name.clone(), i.id)).collect();
+    let mut ids: Vec<(String, u32)> = flock.iter().map(|i| (i.name.clone(), i.id)).collect();
+    ids.sort_by_key(|(_, id)| *id);
     assert_eq!(ids, [("metrics".to_string(), 0), ("bark".to_string(), 1)]);
     for info in &flock {
         assert_eq!(info.status, ProcStatus::Stopped, "{info:?}");

@@ -118,7 +118,7 @@ pub(crate) fn poll_http_get(
 /// array. Panics on expiry, since a `None` would leave a running dog
 /// unregistered with the guard that exists to reap it.
 pub(crate) fn wait_for_dog_pid(home: &Path, name: &str) -> nix::unistd::Pid {
-    let flock = poll_flock_data(home, FLOCK_DEADLINE, |data| {
+    let flock = poll_flock_listing(home, FLOCK_DEADLINE, |data| {
         data.as_array().is_some_and(|entries| {
             entries
                 .iter()
