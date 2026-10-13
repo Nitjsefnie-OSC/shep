@@ -26,6 +26,7 @@ async fn stopping_the_last_instance_stops_its_cron_worker() {
         .await
         .unwrap();
 
+    wait_for_cron_worker(&clock).await;
     cross_one_hour().await;
     expect_restart(&mut rx, "web", EVENT_WAIT).await;
 
@@ -162,15 +163,54 @@ fn backoff_app() -> shep_core::config::ResolvedApp {
     })
 }
 
+/// How long a settle wait may run on the real clock before it gives up.
+/// Generous enough that a loaded runner cannot flake it, and spent only when
+/// something is wrong: a wait returns the moment it is satisfied.
+const SETTLE_DEADLINE: Duration = Duration::from_secs(10);
+
+/// How far a settle wait may carry the paused clock. The rounds advance it
+/// 1ms at a time when the runtime is idle, so without this a long real-time
+/// wait would also run virtual time on, past a cron occurrence or a backoff
+/// and into side effects the test is not about. Far below either, and far
+/// above the few rounds a wait that is going to succeed needs.
+const SETTLE_VIRTUAL_LIMIT: Duration = Duration::from_secs(5);
+
+/// Waits until the armed cron worker has taken its first reading of `clock`.
+///
+/// The worker derives its occurrence from that reading, so time advanced
+/// before it lands moves the occurrence out with it: a crossing that starts
+/// early finds the schedule an hour further on, and the trigger never fires.
+/// Call this between starting the app and [`cross_one_hour`].
+///
+/// Bounded on the real clock rather than in rounds, since how many rounds a
+/// busy machine needs is not something a test can know.
+async fn wait_for_cron_worker(clock: &TestClock) {
+    let started = std::time::Instant::now();
+    while clock.reads() == 0 {
+        assert!(
+            started.elapsed() < SETTLE_DEADLINE,
+            "the cron worker never took its first clock reading"
+        );
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
 /// Each `list()` is a full round trip through the actor's mailbox, so this
 /// makes progress rather than merely observing it.
 ///
 /// A round waits on the paused clock, not on `yield_now`: a stop's lamb walk
 /// runs on the blocking pool, and the runtime holds the clock still until it
 /// returns, where a yield would spend its rounds before the pool answers.
+/// Bounded on both clocks: [`SETTLE_DEADLINE`] of real time, for a wait that
+/// runs off the paused clock and so spends no virtual time while it lasts,
+/// and [`SETTLE_VIRTUAL_LIMIT`] of paused time, so a wait that spins cannot
+/// carry the clock past an occurrence. A satisfied wait returns on its first
+/// round either way.
 async fn settle_into(supervisor: &SupervisorHandle, id: u32, status: ProcStatus) {
+    let started = std::time::Instant::now();
+    let virtual_start = tokio::time::Instant::now();
     let mut last = Vec::new();
-    for _ in 0..200 {
+    while started.elapsed() < SETTLE_DEADLINE && virtual_start.elapsed() < SETTLE_VIRTUAL_LIMIT {
         tokio::time::sleep(Duration::from_millis(1)).await;
         last = supervisor.list().await;
         if last
@@ -216,6 +256,7 @@ async fn stopping_a_sheep_mid_backoff_still_stops_its_cron_worker() {
 
     // The cron occurrence restarts it onto the immediately-exiting proc,
     // landing it in its three-hour backoff.
+    wait_for_cron_worker(&clock).await;
     cross_one_hour().await;
     expect_restart(&mut rx, "web", EVENT_WAIT).await;
     settle_into(&h.ctx.supervisor, 0, ProcStatus::WaitingRestart).await;
@@ -240,6 +281,7 @@ async fn deleting_a_sheep_mid_backoff_takes_its_cron_worker_with_it() {
     let mut rx = h.ctx.events.subscribe();
     h.ctx.supervisor.start(vec![backoff_app()]).await.unwrap();
 
+    wait_for_cron_worker(&clock).await;
     cross_one_hour().await;
     expect_restart(&mut rx, "web", EVENT_WAIT).await;
     settle_into(&h.ctx.supervisor, 0, ProcStatus::WaitingRestart).await;
@@ -274,6 +316,7 @@ async fn a_cron_restart_is_never_reported_as_a_user_action() {
     let mut rx = h.ctx.events.subscribe();
     h.ctx.supervisor.start(vec![backoff_app()]).await.unwrap();
 
+    wait_for_cron_worker(&clock).await;
     cross_one_hour().await;
     let (running, manually) = expect_restart_event(&mut rx, "web", EVENT_WAIT).await;
     assert_eq!(running.restarts, 1);
@@ -320,6 +363,7 @@ async fn a_respawn_that_cannot_spawn_stops_the_name_groups_cron_worker() {
         .await
         .unwrap();
 
+    wait_for_cron_worker(&clock).await;
     cross_one_hour().await;
     settle_into(&h.ctx.supervisor, 0, ProcStatus::Errored).await;
 
@@ -525,6 +569,7 @@ async fn a_respawn_waits_out_a_slow_lamb_walk_before_it_errors() {
         .await
         .unwrap();
 
+    wait_for_cron_worker(&clock).await;
     cross_one_hour().await;
     settle_into(&h.ctx.supervisor, 0, ProcStatus::Errored).await;
 }
