@@ -116,8 +116,12 @@ fn type_of(schema: &Value) -> Option<&str> {
     }
 }
 
-pub(super) fn kind_of(schema: &Value, defs: &Map<String, Value>) -> FieldKind {
-    let schema = resolved(schema, defs);
+/// The names of a closed set of strings: a `oneOf` of `const`s, or an
+/// `enum` of strings, in the order the schema wrote them. [`None`] for
+/// anything else, including a set with a member that is not a string. An
+/// empty `enum` is `Some` of nothing, so a caller can tell it from a schema
+/// that is no closed set at all.
+fn closed_set(schema: &Value) -> Option<Vec<String>> {
     if let Some(consts) = schema.get("oneOf").and_then(Value::as_array) {
         let names: Vec<String> = consts
             .iter()
@@ -125,22 +129,27 @@ pub(super) fn kind_of(schema: &Value, defs: &Map<String, Value>) -> FieldKind {
             .map(str::to_owned)
             .collect();
         if !names.is_empty() && names.len() == consts.len() {
-            return FieldKind::Choice(names);
+            return Some(names);
         }
     }
-    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
-        let names: Vec<String> = values
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect();
+    let values = schema.get("enum").and_then(Value::as_array)?;
+    let names: Vec<String> = values
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    (names.len() == values.len()).then_some(names)
+}
+
+pub(super) fn kind_of(schema: &Value, defs: &Map<String, Value>) -> FieldKind {
+    let schema = resolved(schema, defs);
+    if let Some(names) = closed_set(schema) {
         // A choice with nothing to choose has no row worth drawing.
-        if values.is_empty() {
-            return FieldKind::Opaque;
-        }
-        if names.len() == values.len() {
-            return FieldKind::Choice(names);
-        }
+        return if names.is_empty() {
+            FieldKind::Opaque
+        } else {
+            FieldKind::Choice(names)
+        };
     }
     match type_of(schema) {
         Some("boolean") => FieldKind::Bool,
@@ -154,6 +163,13 @@ pub(super) fn kind_of(schema: &Value, defs: &Map<String, Value>) -> FieldKind {
         Some("array") if allows_null(items(schema), defs) => FieldKind::Opaque,
         Some("array") => {
             let item = resolved(items(schema), defs);
+            if let Some(names) = closed_set(item) {
+                return if names.is_empty() {
+                    FieldKind::Opaque
+                } else {
+                    FieldKind::List(ListItem::Choice(names))
+                };
+            }
             match type_of(item) {
                 Some("string") => FieldKind::List(ListItem::Text),
                 Some("integer") => FieldKind::List(ListItem::Integer),
@@ -631,6 +647,79 @@ mod tests {
         let defs = Map::new();
         let schema = json!({ "anyOf": [{ "type": "string" }, { "type": ["null"] }] });
         assert_eq!(strip_nullable(&schema, &defs), &json!({ "type": "string" }));
+    }
+
+    /// An array whose items are a closed set of strings is a checklist,
+    /// however the set is spelled. One that can also be `null` stays
+    /// read-only, as a nullable text list does.
+    #[test]
+    fn a_list_of_a_closed_set_is_a_choice_list_unless_the_set_can_be_null() {
+        let defs = props(json!({
+            "Kind": { "enum": ["a", "b", "c"] },
+            "Mode": {
+                "oneOf": [
+                    { "type": "string", "const": "x" },
+                    { "type": "string", "const": "y" },
+                ],
+            },
+            "MaybeKind": { "anyOf": [{ "$ref": "#/$defs/Kind" }, { "type": "null" }] },
+        }));
+        let list = |items: Value| json!({ "type": "array", "items": items });
+        let names = |names: &[&str]| {
+            FieldKind::List(ListItem::Choice(
+                names.iter().map(|name| (*name).to_owned()).collect(),
+            ))
+        };
+        for (name, items, want) in [
+            (
+                "enum",
+                json!({ "type": "string", "enum": ["a", "b", "c"] }),
+                names(&["a", "b", "c"]),
+            ),
+            (
+                "enum without a type",
+                json!({ "enum": ["c", "a"] }),
+                names(&["c", "a"]),
+            ),
+            (
+                "oneOf of consts",
+                json!({ "oneOf": [{ "const": "x" }, { "const": "y" }] }),
+                names(&["x", "y"]),
+            ),
+            (
+                "$ref to an enum",
+                json!({ "$ref": "#/$defs/Kind" }),
+                names(&["a", "b", "c"]),
+            ),
+            (
+                "$ref to a oneOf",
+                json!({ "$ref": "#/$defs/Mode" }),
+                names(&["x", "y"]),
+            ),
+            (
+                "enum that lists null",
+                json!({ "enum": ["a", null] }),
+                FieldKind::Opaque,
+            ),
+            (
+                "type list naming null",
+                json!({ "type": ["string", "null"], "enum": ["a", "b"] }),
+                FieldKind::Opaque,
+            ),
+            (
+                "anyOf with null",
+                json!({ "anyOf": [{ "enum": ["a", "b"] }, { "type": "null" }] }),
+                FieldKind::Opaque,
+            ),
+            (
+                "$ref to an anyOf with null",
+                json!({ "$ref": "#/$defs/MaybeKind" }),
+                FieldKind::Opaque,
+            ),
+            ("empty enum", json!({ "enum": [] }), FieldKind::Opaque),
+        ] {
+            assert_eq!(kind_of(&list(items), &defs), want, "{name}");
+        }
     }
 
     #[test]

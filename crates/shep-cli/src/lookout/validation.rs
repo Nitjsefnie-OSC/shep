@@ -151,7 +151,7 @@ pub fn refusal(field: &Field, typed: &str) -> Option<Refusal> {
 #[must_use]
 pub fn item_refusal(
     key: &str,
-    item: ListItem,
+    item: &ListItem,
     bounds: &Bounds,
     typed: &str,
     secret: bool,
@@ -167,7 +167,9 @@ pub fn item_refusal(
             }
             Err(refused) => return Some(refused),
         },
-        ListItem::Text => {
+        // A choice list never reaches here: its elements are toggled, not
+        // typed. Read as text, it would still hold an element to its set.
+        ListItem::Text | ListItem::Choice(_) => {
             if let Some(refused) = min_length_refusal(key, bounds, typed, shown) {
                 return Some(refused);
             }
@@ -718,11 +720,11 @@ mod tests {
         ];
         for (rule, item, bounds, accepted, refused, sentence) in cases {
             assert_eq!(
-                item_refusal("tags", item, bounds, accepted, false),
+                item_refusal("tags", &item, bounds, accepted, false),
                 None,
                 "{rule}: {accepted} is the value the rule takes"
             );
-            let refused = item_refusal("tags", item, bounds, refused, false).expect(rule);
+            let refused = item_refusal("tags", &item, bounds, refused, false).expect(rule);
             assert_eq!(refused.text, sentence, "{rule}");
         }
     }
@@ -740,12 +742,12 @@ mod tests {
         };
         for typed in ["1", "2"] {
             assert_eq!(
-                item_refusal("levels", ListItem::Integer, &bounds, typed, false),
+                item_refusal("levels", &ListItem::Integer, &bounds, typed, false),
                 None,
                 "{typed} is the value the schema wrote"
             );
         }
-        let refused = item_refusal("levels", ListItem::Integer, &bounds, "3", false)
+        let refused = item_refusal("levels", &ListItem::Integer, &bounds, "3", false)
             .expect("3 is not in the set");
         assert_eq!(
             refused.text,
@@ -759,7 +761,7 @@ mod tests {
             ..Default::default()
         };
         let refused =
-            item_refusal("levels", ListItem::Integer, &halves, "1", false).expect("1 is not 1.5");
+            item_refusal("levels", &ListItem::Integer, &halves, "1", false).expect("1 is not 1.5");
         assert_eq!(refused.text, "levels is \"1\"; levels takes one of 1.5");
     }
 
@@ -768,14 +770,20 @@ mod tests {
     #[test]
     fn an_integer_element_that_is_not_a_number_is_refused_out_loud() {
         let bounds = Bounds::default();
-        let refused = item_refusal("stop_exit_codes", ListItem::Integer, &bounds, "lots", false)
-            .expect("lots is not a number");
+        let refused = item_refusal(
+            "stop_exit_codes",
+            &ListItem::Integer,
+            &bounds,
+            "lots",
+            false,
+        )
+        .expect("lots is not a number");
         assert_eq!(
             refused.text,
             "stop_exit_codes is \"lots\", which is not a whole number shep accepts"
         );
         assert_eq!(
-            item_refusal("stop_exit_codes", ListItem::Integer, &bounds, "-1", false),
+            item_refusal("stop_exit_codes", &ListItem::Integer, &bounds, "-1", false),
             None,
             "a negative exit code is a whole number"
         );
@@ -789,7 +797,7 @@ mod tests {
         let bounds = Bounds::default();
         for typed in ["a", "!!! anything", ""] {
             assert_eq!(
-                item_refusal("args", ListItem::Text, &bounds, typed, false),
+                item_refusal("args", &ListItem::Text, &bounds, typed, false),
                 None,
                 "{typed}"
             );
@@ -806,11 +814,11 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            item_refusal("tags", ListItem::Text, &bounds, "abc\u{00e9}", false),
+            item_refusal("tags", &ListItem::Text, &bounds, "abc\u{00e9}", false),
             None,
             "four characters, five bytes"
         );
-        let refused = item_refusal("tags", ListItem::Text, &bounds, "ab\u{00e9}", false)
+        let refused = item_refusal("tags", &ListItem::Text, &bounds, "ab\u{00e9}", false)
             .expect("three characters is under four");
         assert_eq!(
             refused.text,
@@ -834,7 +842,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            item_refusal("tags", ListItem::Text, &bounds, "ab", false),
+            item_refusal("tags", &ListItem::Text, &bounds, "ab", false),
             None,
             "a pattern that does not compile bounds nothing"
         );
@@ -851,7 +859,7 @@ mod tests {
             pattern: Some("^sk-".to_owned()),
             ..Default::default()
         };
-        let refused = item_refusal("tokens", ListItem::Text, &pattern, CREDENTIAL, true)
+        let refused = item_refusal("tokens", &ListItem::Text, &pattern, CREDENTIAL, true)
             .expect("the pattern refuses it");
         assert_eq!(
             refused.text,
@@ -862,7 +870,7 @@ mod tests {
             min_length: Some(32),
             ..Default::default()
         };
-        let refused = item_refusal("tokens", ListItem::Text, &min_length, CREDENTIAL, true)
+        let refused = item_refusal("tokens", &ListItem::Text, &min_length, CREDENTIAL, true)
             .expect("too short");
         assert!(!refused.text.contains(CREDENTIAL), "{}", refused.text);
         assert!(refused.text.contains("<set>"), "{}", refused.text);
@@ -871,7 +879,7 @@ mod tests {
             choices: vec![serde_json::json!("ask"), serde_json::json!("auto")],
             ..Default::default()
         };
-        let refused = item_refusal("tokens", ListItem::Text, &choices, CREDENTIAL, true)
+        let refused = item_refusal("tokens", &ListItem::Text, &choices, CREDENTIAL, true)
             .expect("not a member");
         assert!(!refused.text.contains(CREDENTIAL), "{}", refused.text);
 
@@ -880,7 +888,7 @@ mod tests {
             ..Default::default()
         };
         let refused =
-            item_refusal("pins", ListItem::Integer, &range, "7", true).expect("below the floor");
+            item_refusal("pins", &ListItem::Integer, &range, "7", true).expect("below the floor");
         assert_eq!(refused.text, "pins is \"<set>\"; pins starts at 1000");
     }
 
@@ -894,7 +902,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            item_refusal("regions", ListItem::Text, &bounds, "Europe", false)
+            item_refusal("regions", &ListItem::Text, &bounds, "Europe", false)
                 .expect("refused")
                 .text
                 .contains("Europe"),
