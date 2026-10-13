@@ -1,9 +1,11 @@
 use super::super::*;
 
 impl App {
-    /// The operator's `Enter` on the config pane. Four meanings, picked in
+    /// The operator's `Enter` on the config pane. Five meanings, picked in
     /// this order:
     ///
+    /// - The cursor is on a table of a dog's pane: opens it if it is closed
+    ///   and closes it if it is open.
     /// - The cursor is on a sheep's `dogs` row: probes the dogs for the
     ///   sub-screen that lists them. A read, so no gate.
     /// - The cursor is on an env row or `+ add a key`: opens the env
@@ -17,6 +19,11 @@ impl App {
     /// is checked on the keystroke that would file an edit, not on the
     /// close that writes them.
     pub(in crate::lookout::app) fn confirm_field(&mut self) -> Effect {
+        if let Some(pane) = self.config_pane_mut()
+            && pane.toggle_table()
+        {
+            return Effect::None;
+        }
         if let Some(probe) = self.dogs_row_effect() {
             // Each adopted dog's binary answers in its own time, up to
             // `VERSION_BUDGET` apiece, so the wait says what it is.

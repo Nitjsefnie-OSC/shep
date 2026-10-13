@@ -6,6 +6,7 @@
 //! touched, the schema's or not, goes back exactly as it came.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
@@ -23,7 +24,7 @@ use super::{ConfigPane, PaneEdit, PaneTarget};
 pub(in crate::lookout) struct SheepDogTable {
     /// Dotted row key to the real key path. A row key is never split on its
     /// dots, since a property can be named `a.b`.
-    paths: BTreeMap<String, Vec<String>>,
+    pub(super) paths: BTreeMap<String, Vec<String>>,
     /// The table as the shepherd holds it, keys the schema does not name
     /// included.
     table: Map<String, Value>,
@@ -45,7 +46,8 @@ impl ConfigPane {
     ///
     /// `schema` is the dog's `x-shep-sheep` answer with the root's `$defs`
     /// attached; `table` is what the sheep carries for it, empty for none.
-    /// Flat, in key order, with no group headers, like [`Self::dog`].
+    /// In key order, with no group headers, a tree of tables like
+    /// [`Self::dog`].
     #[must_use]
     pub fn sheep_dog(
         sheep: String,
@@ -53,7 +55,11 @@ impl ConfigPane {
         schema: &Value,
         table: Map<String, Value>,
     ) -> Self {
-        let Flattened { fields, paths } = flattened(schema);
+        let Flattened {
+            fields,
+            paths,
+            outline,
+        } = flattened(schema);
         let values = flatten_values(&table, &paths);
         Self {
             target: PaneTarget::SheepDog { sheep, dog },
@@ -72,6 +78,8 @@ impl ConfigPane {
             section: None,
             dog_table: Some(Box::new(SheepDogTable { paths, table })),
             section_paths: BTreeMap::new(),
+            open: outline.top_level_paths(),
+            outline: Arc::new(outline),
         }
     }
 
@@ -261,12 +269,13 @@ mod tests {
 
     #[test]
     fn a_secret_draws_set_and_its_value_reaches_no_row() {
-        let pane = jobs_pane();
+        let mut pane = jobs_pane();
+        pane.move_to_key("models.worker.token");
         let text = render_all(&pane_lines(&pane, plain(), 160, 0));
         assert!(!text.contains("sk-live-51Hx9Qa"), "{text}");
         let token_row = text
             .lines()
-            .find(|line| line.contains("models.worker.token"))
+            .find(|line| line.starts_with('>'))
             .expect("the secret has a row");
         assert!(token_row.contains("<set>"), "{token_row}");
     }
@@ -516,5 +525,22 @@ mod tests {
         );
         let state = pane.dog_table.as_ref().expect("a table pane");
         assert_eq!(format!("{state:?}"), "SheepDogTable { rows: 6, keys: 5 }");
+    }
+
+    /// A re-read replaces the table under the pane, and the tables the
+    /// operator opened stay open under the cursor they were opened with.
+    #[test]
+    fn a_refresh_keeps_the_open_tables_and_the_cursor() {
+        let mut pane = jobs_pane();
+        pane.move_to_key("models.worker.model");
+        let cursor = pane.cursor();
+        assert!(pane.open_tables().contains("models.worker"));
+
+        let fresh = json!({ "models": { "worker": { "model": "large" } } });
+        pane.adopt_table(fresh.as_object().cloned().expect("a table"));
+        assert!(pane.open_tables().contains("models.worker"));
+        assert!(pane.open_tables().contains("models"));
+        assert_eq!(pane.cursor(), cursor);
+        assert_eq!(pane.value("models.worker.model"), "large");
     }
 }

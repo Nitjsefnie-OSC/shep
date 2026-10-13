@@ -226,8 +226,8 @@ impl App {
     }
 
     /// A sheep's re-read landing under one of its dogs' table panes: the
-    /// pane takes that table's current value in place, cursor and edits
-    /// kept. `false`, and nothing touched, when no such pane is up.
+    /// pane takes that table's current value in place, cursor, open tables
+    /// and edits kept. `false`, and nothing touched, when no such pane is up.
     pub(super) fn refresh_sheep_dog_pane(&mut self, view: &SheepConfigView) -> bool {
         let Some(pane) = self.config_pane_mut() else {
             return false;

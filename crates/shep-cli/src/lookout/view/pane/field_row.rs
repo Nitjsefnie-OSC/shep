@@ -84,7 +84,10 @@ pub(super) fn field_line(
         None => ' ',
     };
     let mut rest = String::from(lock);
-    rest.push_str(&fit(&format!("{flag}{}", field.key), key_w));
+    rest.push_str(&fit(
+        &format!("{flag}{}", key_cell(pane, index, field)),
+        key_w,
+    ));
     let cost_cell = (cost_w > 0).then(|| fit(pane.cost(&field.key).map_or("", cost_label), cost_w));
 
     // The selected row's own paint: a paper-2 ground the full width of the
@@ -150,6 +153,72 @@ pub(super) fn field_line(
     }
     Line::from(spans)
 }
+
+/// What a leaf's KEY cell draws after its flag: the full key, except on a
+/// dog's pane, where the tables above it are rows of their own and it is the
+/// key's last segment, indented two columns per table.
+fn key_cell(pane: &ConfigPane, index: usize, field: &Field) -> String {
+    match pane.tree_row(PaneRow::Field(index)) {
+        Some(tree) => format!("{}{}", "  ".repeat(tree.depth), tree.label),
+        None => field.key.clone(),
+    }
+}
+
+/// One nested table's row on a dog's pane: the selection mark, the open or
+/// closed glyph and the key's last segment, indented to its depth. The value
+/// cell is empty, and the cost cell, which a dog's pane leaves empty on a
+/// leaf, names the row's type.
+///
+/// Muted when it is not the selected row, as a locked leaf is: a table holds
+/// no value to edit, and the glyph carries the fact in a `plain` palette.
+pub(super) fn table_line(
+    pane: &ConfigPane,
+    index: usize,
+    selected: bool,
+    width: u16,
+    palette: Palette,
+    show_lands: bool,
+) -> Line<'static> {
+    let Some(tree) = pane.tree_row(PaneRow::Table(index)) else {
+        return Line::default();
+    };
+    let (key_w, value_w, cost_w) = widths(body_width(width), show_lands);
+    let glyph = if tree.open == Some(true) {
+        '\u{25be}'
+    } else {
+        '\u{25b8}'
+    };
+    let mut text = String::from(" ");
+    text.push_str(&fit(
+        &format!(" {}{glyph} {}", "  ".repeat(tree.depth), tree.label),
+        key_w,
+    ));
+    if value_w > 0 {
+        text.push_str("  ");
+        text.push_str(&fit("", value_w));
+    }
+    if cost_w > 0 {
+        text.push_str("  ");
+        text.push_str(&fit(TABLE_LABEL, cost_w));
+    }
+    let ground = if selected {
+        palette.ground()
+    } else {
+        Style::default()
+    };
+    let mark_style = if selected {
+        palette.attention().patch(ground)
+    } else {
+        Style::default()
+    };
+    Line::from(vec![
+        Span::styled(mark(selected), mark_style),
+        Span::styled(text, palette.muted().patch(ground)),
+    ])
+}
+
+/// The type label of a nested table's row, beside [`type_label`]'s own.
+pub(super) const TABLE_LABEL: &str = "table";
 
 /// The rows the field list reserves under its title: the selected field's
 /// own help text, wrapped, at widths where the explanation panel cannot
@@ -528,15 +597,15 @@ mod tests {
         );
     }
 
-    /// A nested table is dotted rows here, so a secret inside one masks its
-    /// own row, and the plain field beside it still draws its value.
+    /// A nested table is a node with rows under it, so a secret inside one
+    /// masks its own row, and the plain field beside it still draws its value.
     #[test]
     fn a_secret_under_a_nested_table_masks_its_own_row_and_its_siblings_do_not() {
         let pane = nested_secret_dog_pane();
         let text = text_of(&pane_lines(&pane, fixtures::plain(), 160, 0));
         let row = text
             .iter()
-            .find(|line| line.starts_with(">  db.password"))
+            .find(|line| line.starts_with(">") && line.contains(" password"))
             .expect("the cursor is on the secret row");
         assert!(row.contains("<set>"), "{row:?}");
         assert!(
@@ -546,7 +615,7 @@ mod tests {
         );
         assert!(
             text.iter()
-                .any(|line| line.starts_with("   db.host") && line.contains("pg.internal")),
+                .any(|line| line.contains(" host") && line.contains("pg.internal")),
             "the sibling row still shows its value: {text:?}"
         );
         assert!(

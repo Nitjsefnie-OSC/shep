@@ -27,6 +27,7 @@ mod fixtures;
 mod list;
 mod section_write;
 mod sheep_dog;
+mod tree;
 mod types;
 mod walk;
 

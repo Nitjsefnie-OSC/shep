@@ -2407,6 +2407,14 @@ A sheep's Flockfile entry carries `[app.dogs.<name>]`, stored as `AppConfig::dog
 
 `verified crates/shep-cli/src/lookout/pane/section_write.rs (edited_section_with, set_at, remove_at), crates/shep-cli/src/lookout/pane/types.rs (SectionWrite), crates/shep-cli/src/lookout/pane/config.rs (dog, section_paths), crates/shep-cli/src/lookout/field/flatten.rs (flattened, flatten_values)`
 
+### A dog's settings draw as a tree of tables, and `Field::key` stays the full dotted key
+
+`flattened` returns an `Outline` beside `fields` and `paths`: each nested table is a node holding its quoted last segment, its dotted path, its depth, its parent and its children, and each leaf is the index of its `Field`. The dog pane and the per-sheep table pane walk it in `ConfigPane::rows`, a table's row and then its children while it is open, and the sheep pane does not. `ConfigPane` holds the open set by dotted path, so a refresh carries it and removes a table the new schema no longer has from the set. A new pane opens the first level. `→` opens a table, `←` closes an open table, and on a leaf or a closed table climbs to the parent's row, `Enter` toggles it, and `e`, space and `d` do nothing on one. `u` still drops the newest edit in the pane. A leaf row draws its last segment, indented two columns a level, so two tables that each hold `model` draw two rows that read `model`.
+
+**Why:** #755. One flat list of dotted rows reads as one long list once a schema has nine tables. Leaving `Field::key` as the dotted key keeps `Edits`, `paths`, `by_key`, validation and both writers as they were, so an edit still lands at its own path. The row order comes from the outline, in the order `properties` iterates, since `FieldSet`'s sort is by group and a dog has none. The keymap overlay captions `←/→` as `close/open table` over a tree pane: `close / open a table` does not fit the 17-cell sentence column.
+
+`verified crates/shep-cli/src/lookout/field/flatten.rs (flattened, Outline), crates/shep-cli/src/lookout/pane/tree.rs, crates/shep-cli/src/lookout/pane/walk.rs (rows), crates/shep-cli/src/lookout/view/pane/field_row.rs (table_line), crates/shep-cli/src/lookout/keymap.rs (rows_over)`
+
 ## A dog's shepherd channel
 
 ### A dog asks for the shepherd channel in its `--version` answer, and the ask is recorded in `shep.toml` and carried on `DogSource`
