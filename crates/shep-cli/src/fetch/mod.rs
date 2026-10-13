@@ -11,6 +11,9 @@
 //! contradicted by a second one; and one above the caller's `limit`,
 //! rechecked as the body arrives. The head has its own cap,
 //! [`MAX_HEADER_BYTES`]. No `Accept-Encoding` is sent.
+//!
+//! The `otel` feature adds `post_json` in the `post` submodule, over the
+//! same transport: a build without it compiles none of that half.
 use core::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +23,15 @@ use tokio::net::TcpStream;
 use tokio_rustls::rustls::pki_types::ServerName;
 
 use crate::terminal_safe;
+
+/// The POST half, compiled only for a build with the `otel` feature.
+#[cfg(feature = "otel")]
+mod post;
+
+/// The one item outside this module uses from it, kept at the path the rest
+/// of the crate reaches it as. Its `PostReply` is named where it is made.
+#[cfg(feature = "otel")]
+pub use post::post_json;
 
 /// The most this module will read before the blank line that ends a
 /// response's header block, status line included.

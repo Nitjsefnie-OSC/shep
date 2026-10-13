@@ -112,7 +112,13 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3200 for `shep delete` on a dog: one verb now carries both
   // removals, and the page has to say what survives it and that a built-in
   // is refused. Required content, not prose to trim back out.
-  dogs: 3260, // 3254
+  //
+  // Raised again for the metrics dog's OTLP export: four config keys an
+  // operator has to be told the defaults of, the `--features otel` install
+  // line, what a build without the feature does with `otlp_endpoint`, and
+  // the measured binary size #292 asked for. All of it is operator-facing
+  // surface for a shipped feature, not prose to trim back out.
+  dogs: 3600, // 3572
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's

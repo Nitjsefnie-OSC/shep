@@ -392,9 +392,11 @@ landed part of a spec section, the entry names the part still missing rather
 than the whole section. See `docs/systematic-refactor/refactor-workspace/`
 for what phase is next.
 
-**OTLP export (metrics dog)** (spec §8) — the metrics dog serves
-Prometheus exposition only; no `otel` cargo feature exists in
-`crates/shep-cli/Cargo.toml`. Tracked as https://github.com/shep-pm/shep/issues/347.
+**OTLP export (metrics dog)** (spec §8) — the `otel` cargo feature pushes
+the dog's series to an OTLP/HTTP collector. What is still missing is the
+channel samples: what a sheep reports over the shepherd channel is not
+exported. Tracked as https://github.com/shep-pm/shep/issues/347, with
+https://github.com/shep-pm/shep/issues/736 for that half.
 
 ## Known debt, recorded rather than built
 

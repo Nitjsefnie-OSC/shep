@@ -184,9 +184,12 @@ import CodeBlock from "../../components/docs/CodeBlock.astro";
     </p>
     <ul>
       <li>
-        <strong>OTLP export for the metrics dog.</strong> The dog serves
-        Prometheus exposition only today; no <code>otel</code> cargo feature
-        exists yet. Tracked as <a href="https://github.com/shep-pm/shep/issues/347">issue 347</a>.
+        <strong>OTLP export for the metrics dog.</strong> The{" "}
+        <code>otel</code> feature pushes the dog's series to an OTLP/HTTP
+        collector. What is left is the channel samples: what a sheep reports
+        over its shepherd channel. Tracked as{" "}
+        <a href="https://github.com/shep-pm/shep/issues/347">issue 347</a>,
+        with <a href="https://github.com/shep-pm/shep/issues/736">issue 736</a>.
       </li>
     </ul>
 </article>
