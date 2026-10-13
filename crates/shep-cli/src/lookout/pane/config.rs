@@ -156,10 +156,10 @@ impl ConfigPane {
     /// In schema order, with no group headers: a dog's schema carries no
     /// `init.group`. A nested table is a row that opens and closes, with its
     /// keys under it, as it is on that dog's table over a sheep; see
-    /// [`Self::rows`]. A [`FieldKind::Map`] or
-    /// [`FieldKind::List`] row is marked not editable and draws
-    /// [`Lock::NoWidget`]: this pane has no widget for either, so a list
-    /// stays one row rather than the sub-screen a sheep's `args` opens.
+    /// [`Self::rows`]. A [`FieldKind::List`] row opens the list sub-screen,
+    /// as a sheep's `args` does. A [`FieldKind::Map`] row, and a list
+    /// [`flattened`] closed to [`FieldKind::Opaque`], is marked not editable
+    /// and draws [`Lock::NoWidget`].
     #[must_use]
     pub fn dog(
         name: String,
@@ -178,11 +178,7 @@ impl ConfigPane {
                 .iter()
                 .cloned()
                 .map(|mut field| {
-                    // `flattened` leaves a list editable, because a sheep's
-                    // pane writes one whole at its dotted path. This pane has
-                    // no list sub-screen, and it already closed a `Map` to
-                    // [`FieldKind::Opaque`].
-                    if matches!(field.kind, FieldKind::Map | FieldKind::List(_)) {
+                    if field.kind == FieldKind::Map {
                         field.editable = false;
                     }
                     field
@@ -696,21 +692,59 @@ mod tests {
         assert_eq!(pane.lock("poll"), None);
     }
 
-    /// `flattened` leaves a list editable, because a dog's table on a sheep
-    /// writes one whole at its dotted path. This pane has no list
-    /// sub-screen, so a list row is locked exactly as a map row is.
+    /// A dog's list is edited on the same sub-screen a sheep's `args` is, so
+    /// its row is not locked and the sub-screen opens on the elements the
+    /// section holds.
     #[test]
-    fn a_dogs_list_field_stays_locked_though_the_flattener_left_it_editable() {
+    fn a_dogs_string_list_opens_the_sub_screen_on_its_stored_elements() {
         let schema = serde_json::json!({
             "properties": {
                 "hosts": { "type": "array", "items": { "type": "string" } },
             },
         });
-        let pane = ConfigPane::dog("watch".into(), None, schema, "hosts = [\"a\"]\n".to_owned());
-        let field = pane.fields().by_key("hosts").expect("hosts is a field");
-        assert!(!field.editable);
-        assert_eq!(pane.lock("hosts"), Some(Lock::NoWidget));
-        assert_eq!(pane.value("hosts"), r#"["a"]"#);
+        let mut pane = ConfigPane::dog(
+            "watch".into(),
+            None,
+            schema,
+            "hosts = [\"a\", \"b\"]\n".to_owned(),
+        );
+        assert!(pane.fields().by_key("hosts").expect("a field").editable);
+        assert_eq!(pane.lock("hosts"), None);
+        pane.open_list();
+        let list = pane.list().expect("the sub-screen opens");
+        assert_eq!(list.key(), "hosts");
+        assert_eq!(list.elements(), ["a", "b"]);
+    }
+
+    /// A map has no widget, and a secret list would draw its elements
+    /// unmasked on the sub-screen, so both stay locked in a dog pane.
+    #[test]
+    fn a_dogs_secret_list_and_map_stay_locked() {
+        let schema = serde_json::json!({
+            "properties": {
+                "keys": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "x-shep-secret": true,
+                },
+                "labels": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                },
+            },
+        });
+        let mut pane = ConfigPane::dog(
+            "watch".into(),
+            None,
+            schema,
+            "keys = [\"sk-live\"]\n".to_owned(),
+        );
+        for key in ["keys", "labels"] {
+            assert_eq!(pane.lock(key), Some(Lock::NoWidget), "{key}");
+        }
+        pane.move_to_key("keys");
+        pane.open_list();
+        assert!(pane.list().is_none(), "no sub-screen over a secret list");
     }
 
     /// A dog's own schema nests a table inside a table the same way its

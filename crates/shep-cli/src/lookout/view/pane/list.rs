@@ -268,7 +268,7 @@ mod tests {
         ]));
         pane.move_to_key("args");
         pane.open_list();
-        pane.file_list_removal();
+        pane.file_list_removal().expect("filed");
         for height in 1..=20u16 {
             pane.list_mut().unwrap().move_to_first();
             let total = pane.list().unwrap().rows().len();

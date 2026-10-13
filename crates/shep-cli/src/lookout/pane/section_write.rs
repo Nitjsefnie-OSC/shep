@@ -109,11 +109,13 @@ enum Landed {
 /// The TOML item a filed value becomes, or [`None`] for one this writer has
 /// no arm for.
 ///
-/// A dog pane marks an array and a map read-only, so neither should reach
-/// here; writing one as JSON text would put a string in `dogs.toml` where
-/// the dog reads a table or a list. A number that is neither an `i64` nor a
-/// genuine float (a `u64` above `i64::MAX`) is refused for the same reason:
-/// the float it would round to reads back as something else.
+/// An array is a cell only when every element is a string or every element is
+/// an `i64`, the two shapes the list sub-screen files; an empty one is both.
+/// Any other array, and a map, is refused: writing one as JSON text would put
+/// a string in `dogs.toml` where the dog reads a table or a list. A number
+/// that is neither an `i64` nor a genuine float (a `u64` above `i64::MAX`) is
+/// refused for the same reason: the float it would round to reads back as
+/// something else.
 fn toml_cell(value: &Value) -> Option<toml_edit::Item> {
     match value {
         Value::Bool(flag) => Some(toml_edit::value(*flag)),
@@ -127,7 +129,26 @@ fn toml_cell(value: &Value) -> Option<toml_edit::Item> {
             }
         }
         Value::String(text) => Some(toml_edit::value(text.as_str())),
-        Value::Null | Value::Array(_) | Value::Object(_) => None,
+        Value::Array(elements) => {
+            toml_array(elements).map(|array| toml_edit::Item::Value(toml_edit::Value::Array(array)))
+        }
+        Value::Null | Value::Object(_) => None,
+    }
+}
+
+/// `elements` as a TOML array, or [`None`] unless they are all strings or all
+/// integers.
+fn toml_array(elements: &[Value]) -> Option<toml_edit::Array> {
+    if elements.iter().all(Value::is_string) {
+        elements
+            .iter()
+            .map(|element| element.as_str().map(toml_edit::Value::from))
+            .collect()
+    } else {
+        elements
+            .iter()
+            .map(|element| element.as_i64().map(toml_edit::Value::from))
+            .collect()
     }
 }
 
@@ -269,6 +290,16 @@ mod tests {
 
     fn nested_pane(section: &str) -> ConfigPane {
         ConfigPane::dog("jobs".into(), None, nested_schema(), section.to_owned())
+    }
+
+    /// [`nested_schema`] with a list on the top level and one a table down.
+    fn list_pane(section: &str) -> ConfigPane {
+        let mut schema = nested_schema();
+        schema["properties"]["hosts"] = json!({ "type": "array", "items": { "type": "string" } });
+        schema["properties"]["codes"] = json!({ "type": "array", "items": { "type": "integer" } });
+        schema["$defs"]["Worker"]["properties"]["models"] =
+            json!({ "type": "array", "items": { "type": "string" } });
+        ConfigPane::dog("jobs".into(), None, schema, section.to_owned())
     }
 
     /// The same data in the three forms `dogs.toml` allows for a nested
@@ -625,18 +656,95 @@ mod tests {
         );
     }
 
-    /// The pane marks an array and a map read-only, so neither should reach
-    /// the writer. JSON text written as a TOML string is a value the dog
-    /// cannot read back as the shape it was.
+    /// An array that is not all strings or all integers has no TOML list the
+    /// pane edits, and a map has no cell at all. JSON text written as a TOML
+    /// string is a value the dog cannot read back as the shape it was.
     #[test]
-    fn an_array_or_a_map_writes_nothing() {
+    fn a_mixed_array_an_array_of_objects_or_a_map_writes_nothing() {
         let pane = nested_pane("name = \"small\"\n");
-        for value in [json!(["a", "b"]), json!({ "model": "gpt" })] {
+        for value in [
+            json!(["a", 1]),
+            json!([1.5, 2.5]),
+            json!([true]),
+            json!([null]),
+            json!([["a"]]),
+            json!([{ "model": "gpt" }]),
+            json!({ "model": "gpt" }),
+        ] {
             assert_eq!(
                 pane.edited_section_with(&edits_of(&[("name", value.clone())])),
                 SectionWrite::Refused,
                 "{value}"
             );
+        }
+    }
+
+    /// The array replaces the operator's line where it stands, and the
+    /// comment above it is the operator's own.
+    #[test]
+    fn a_string_list_replaces_its_line_and_keeps_the_comment_above_it() {
+        let out = want_written(
+            list_pane("# who to ask\nhosts = [\"a\"]\nname = \"small\"\n")
+                .edited_section_with(&edits_of(&[("hosts", json!(["a", "b"]))])),
+        );
+        assert_eq!(
+            out,
+            "# who to ask\nhosts = [\"a\", \"b\"]\nname = \"small\"\n"
+        );
+    }
+
+    #[test]
+    fn an_integer_list_writes_integers_not_text() {
+        let out = want_written(
+            list_pane("codes = [0]\nname = \"small\"\n")
+                .edited_section_with(&edits_of(&[("codes", json!([0, 143]))])),
+        );
+        assert_eq!(out, "codes = [0, 143]\nname = \"small\"\n");
+    }
+
+    /// Removing the last element leaves the key set to nothing, which is not
+    /// the same as unsetting it.
+    #[test]
+    fn an_empty_list_writes_an_empty_array() {
+        let out = want_written(
+            list_pane("hosts = [\"a\"]\n").edited_section_with(&edits_of(&[("hosts", json!([]))])),
+        );
+        assert_eq!(out, "hosts = []\n");
+    }
+
+    /// A list the section does not carry yet joins it at the end.
+    #[test]
+    fn a_list_the_section_lacks_is_added_after_the_keys_it_has() {
+        let out = want_written(
+            list_pane("name = \"small\"\n")
+                .edited_section_with(&edits_of(&[("hosts", json!(["a"]))])),
+        );
+        assert_eq!(out, "name = \"small\"\nhosts = [\"a\"]\n");
+    }
+
+    /// A list one table down is written at its dotted path, in whichever of
+    /// the three forms the section uses for the table.
+    #[test]
+    fn a_list_under_a_nested_table_lands_at_its_dotted_path() {
+        for (section, want) in [
+            (
+                "[models.worker]\n# the pool\nmodels = [\"gpt\"]\n",
+                "[models.worker]\n# the pool\nmodels = [\"gpt\", \"large\"]\n",
+            ),
+            (
+                "models.worker.models = [\"gpt\"]\n",
+                "models.worker.models = [\"gpt\", \"large\"]\n",
+            ),
+            (
+                "[models.worker]\nmodel = \"gpt\"\n",
+                "[models.worker]\nmodel = \"gpt\"\nmodels = [\"gpt\", \"large\"]\n",
+            ),
+        ] {
+            let out = want_written(list_pane(section).edited_section_with(&edits_of(&[(
+                "models.worker.models",
+                json!(["gpt", "large"]),
+            )])));
+            assert_eq!(out, want, "{section}");
         }
     }
 
