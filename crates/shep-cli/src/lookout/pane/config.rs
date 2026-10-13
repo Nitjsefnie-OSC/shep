@@ -517,6 +517,29 @@ impl ConfigPane {
     pub(in crate::lookout) fn adopt_edits(&mut self, previous: Edits) {
         self.edits = previous;
     }
+
+    /// [`Self::adopt_edits`] from `previous`, less every edit filed under an
+    /// array entry this pane no longer holds at the same position, which is
+    /// how many it dropped.
+    ///
+    /// An array entry is named by its place in the array, so after another
+    /// writer inserts or removes one, the same key names a different entry,
+    /// and the edit would be written into it.
+    pub(in crate::lookout) fn adopt_edits_from(&mut self, previous: &Self) -> usize {
+        let mut kept = previous.edits.clone();
+        let mut dropped = 0;
+        for (key, _) in previous.edits.iter() {
+            let EditKey::Field(name) = key else {
+                continue;
+            };
+            if !previous.entries.names_same_entry(name, &self.entries) {
+                kept.remove(key);
+                dropped += 1;
+            }
+        }
+        self.edits = kept;
+        dropped
+    }
 }
 
 /// Which of the daemon's two reloads an app takes.

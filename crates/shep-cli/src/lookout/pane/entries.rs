@@ -32,6 +32,9 @@ pub(super) struct EntryRows {
     roots: BTreeMap<usize, Vec<usize>>,
     /// The arena row of each [`EntryBody::Leaf`], by its key.
     leaves: BTreeMap<String, usize>,
+    /// What the section holds for each entry, by the entry's path, which is
+    /// the identity an edit under an array position is checked against.
+    items: BTreeMap<String, Value>,
 }
 
 /// One row under an [`FieldKind::Entries`] field.
@@ -76,6 +79,8 @@ pub(in crate::lookout) enum EntryBody {
         /// How many leading steps of `at` name the entry, which a write
         /// finds and never creates.
         entry_len: usize,
+        /// The path of the entry it is in, a key of [`EntryRows::items`].
+        entry: String,
         /// The value as a row draws it: a count for a nested
         /// [`FieldKind::Entries`].
         text: String,
@@ -168,6 +173,21 @@ impl EntryRows {
         }
     }
 
+    /// Whether the edit filed under `key` still names the entry it was made
+    /// in, once `next` holds the section as it is now.
+    ///
+    /// An entry of an array is named by its position, so it is the same entry
+    /// only when `next` holds the same table at that position. An entry of a
+    /// map is named by its key and always is. A key that names no leaf here
+    /// is not an entry's edit and always stays.
+    pub(super) fn names_same_entry(&self, key: &str, next: &Self) -> bool {
+        let Some(EntryBody::Leaf { at, entry, .. }) = self.leaf_body(key) else {
+            return true;
+        };
+        let by_position = at.iter().any(|step| matches!(step, PathStep::Index(_)));
+        !by_position || self.items.get(entry) == next.items.get(entry)
+    }
+
     /// The body of the leaf whose key is `key`.
     pub(super) fn leaf_body(&self, key: &str) -> Option<&EntryBody> {
         self.rows.get(*self.leaves.get(key)?).map(|row| &row.body)
@@ -215,6 +235,7 @@ impl EntryRows {
                 },
                 parent: at.parent,
             });
+            self.items.insert(path.clone(), item.clone());
             let table = item.as_object().cloned().unwrap_or_default();
             let values = flatten_values(&table, &at.shape.paths);
             let mut steps = at.steps.clone();
@@ -274,6 +295,7 @@ impl EntryRows {
                             stored: value.cloned().unwrap_or(Value::Null),
                             at,
                             entry_len: under.steps.len(),
+                            entry: under.entry.to_owned(),
                             field: Box::new(field),
                         },
                         parent: under.parent,

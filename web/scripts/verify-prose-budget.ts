@@ -86,7 +86,7 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3465 for editing a field inside an entry: the page said
   // everything under one was read-only, and now has to say what edits, what
   // stays read-only, and that Esc writes the section once.
-  "lookout-config": 3530, // 3504
+  "lookout-config": 3530, // 3521
   // Raised from 2930 on 2026-09-14 for the host line, which `shep flock`
   // began printing on a one-shot listing and not only under `--follow`. It
   // shows above every table on this page, so four transcripts gained a line

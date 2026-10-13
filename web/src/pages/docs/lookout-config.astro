@@ -664,7 +664,8 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       editors, validation and <code>d</code>. Applying one files it, and{" "}
       <code>Esc</code> writes the section once for every entry you edited. A
       list, a map or a nested array of tables inside an entry stays
-      read-only.
+      read-only. A refresh that finds an array's entry moved drops the edits
+      filed under it, and says so.
     </p>
     <p>
       Edits file into the same change set a sheep's pane uses, and{" "}

@@ -292,3 +292,83 @@ fn a_refresh_drops_an_open_array_entry_past_the_new_end() {
     assert!(open.contains("clients[1]"), "{open:?}");
     assert!(!open.contains("clients[2]"), "{open:?}");
 }
+
+const ALPHA: &str = "[[clients]]\nname = \"alpha\"\nkey = \"hunter2\"\ntimeout = 30\n\n";
+
+/// `r` answered with `section`.
+#[track_caller]
+fn refresh_with(app: &mut App, section: String) {
+    let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Refresh)) else {
+        panic!("r re-reads the section");
+    };
+    app.update(Msg::Replied {
+        sent,
+        result: Ok(Response::DogSection {
+            toml: section.into(),
+        }),
+    });
+}
+
+/// `clients[1]` was `b-2`. Once the first client is gone it is the entry that
+/// was `clients[2]`, and an edit filed for `b-2` must not be written there.
+#[test]
+fn a_refresh_that_moves_an_array_entry_drops_the_edit_filed_under_its_old_place() {
+    let mut app = fixtures::app_in_dog_pane_with_entries();
+    open_every_client(&mut app);
+    type_into(&mut app, "clients[1].name", "beta");
+    refresh_with(&mut app, entries_dog_section().replace(ALPHA, ""));
+    assert!(pane(&app).edits().is_empty());
+    assert_eq!(
+        app.notice().map(ToString::to_string).as_deref(),
+        Some("paddock: 1 edit under an entry that moved in the file was dropped")
+    );
+}
+
+#[test]
+fn esc_that_finds_an_array_entry_moved_holds_the_pane_without_the_edit() {
+    let mut app = fixtures::app_in_dog_pane_with_entries();
+    open_every_client(&mut app);
+    type_into(&mut app, "clients[1].name", "beta");
+    type_into(&mut app, "retries", "5");
+    let moved = entries_dog_section().replace(ALPHA, "");
+    let sent = Sent::DogSection {
+        name: "paddock".into(),
+    };
+    assert_eq!(
+        app.update(Msg::Key(KeyPress::Escape)),
+        Effect::Send(sent.clone())
+    );
+    let effect = app.update(Msg::Replied {
+        sent,
+        result: Ok(Response::DogSection {
+            toml: moved.clone().into(),
+        }),
+    });
+    assert_eq!(effect, Effect::None);
+    assert_eq!(pane(&app).edits().len(), 1, "only the entry's edit is lost");
+    assert_eq!(
+        app.notice().map(ToString::to_string).as_deref(),
+        Some(
+            "paddock: its section in dogs.toml changed while this pane was open, so nothing \
+             was written; esc writes your edits over the new values; \
+             1 edit under an entry that moved in the file was dropped"
+        )
+    );
+    let written = close_with(&mut app, &moved);
+    assert_eq!(written, moved.replace("retries = 3", "retries = 5"));
+}
+
+#[test]
+fn a_refresh_that_leaves_the_entry_where_it_was_keeps_its_edit() {
+    let mut app = fixtures::app_in_dog_pane_with_entries();
+    open_every_client(&mut app);
+    type_into(&mut app, "clients[1].name", "beta");
+    let without_last = entries_dog_section().replace("[[clients]]\nkey = \"hunter4\"\n\n", "");
+    refresh_with(&mut app, without_last);
+    assert!(
+        pane(&app)
+            .edits()
+            .get(&EditKey::Field("clients[1].name".into()))
+            .is_some()
+    );
+}
