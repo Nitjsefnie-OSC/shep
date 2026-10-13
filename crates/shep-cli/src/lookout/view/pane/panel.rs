@@ -188,6 +188,7 @@ pub(in crate::lookout::view) fn panel_lines(
         Some(PaneRow::Field(index)) => index,
         Some(PaneRow::Table(index)) => return panel_for_table(pane, index, palette, width),
         Some(PaneRow::Entry(index)) => return panel_for_entry(pane, index, palette, width),
+        Some(PaneRow::Choice { field, .. }) => field,
         Some(PaneRow::Env(_) | PaneRow::AddEnv) | None => return Vec::new(),
     };
     let Some(field) = pane.fields().fields().get(index) else {

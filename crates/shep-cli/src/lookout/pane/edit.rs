@@ -106,10 +106,14 @@ impl ConfigPane {
     }
 
     /// Files the opposite of what a bool holds, or the next name in a
-    /// choice. Does nothing for a locked field, or for one no keystroke
+    /// choice, or a name of a checklist toggled. Does nothing for a locked field, or for one no keystroke
     /// cycles ([`FieldKind::Text`], [`FieldKind::Integer`],
     /// [`FieldKind::Map`], [`FieldKind::Opaque`], [`FieldKind::Entries`]).
     pub fn cycle(&mut self) {
+        if let Some(PaneRow::Choice { field, item }) = self.cursor() {
+            self.toggle_choice(field, item);
+            return;
+        }
         let Some(PaneRow::Field(index)) = self.cursor() else {
             return;
         };

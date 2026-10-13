@@ -43,6 +43,7 @@ impl ConfigPane {
                 Child::Leaf(index) => {
                     rows.push(PaneRow::Field(index));
                     self.push_entry_rows(index, rows);
+                    self.push_choice_rows(index, rows);
                 }
                 Child::Table(index) => {
                     rows.push(PaneRow::Table(index));
@@ -102,12 +103,7 @@ impl ConfigPane {
                 })
             }
             PaneRow::Field(index) => {
-                let key = &self.fields.fields().get(index)?.key;
-                let paths = match &self.dog_table {
-                    Some(state) => &state.paths,
-                    None => &self.section_paths,
-                };
-                let path = paths.get(key)?;
+                let path = self.row_path(&self.fields.fields().get(index)?.key)?;
                 Some(TreeRow {
                     depth: path.len().saturating_sub(1),
                     label: segment(path.last()?),
@@ -122,7 +118,24 @@ impl ConfigPane {
                     open: self.node_path(row).map(|path| self.open.contains(path)),
                 })
             }
+            PaneRow::Choice { .. } => {
+                let choice = self.choice_row(row)?;
+                Some(TreeRow {
+                    depth: choice.depth,
+                    label: choice.text(),
+                    open: None,
+                })
+            }
             PaneRow::Env(_) | PaneRow::AddEnv => None,
+        }
+    }
+
+    /// The real path of property names the dotted row key `key` was built
+    /// from.
+    pub(super) fn row_path(&self, key: &str) -> Option<&Vec<String>> {
+        match &self.dog_table {
+            Some(state) => state.paths.get(key),
+            None => self.section_paths.get(key),
         }
     }
 
@@ -133,7 +146,9 @@ impl ConfigPane {
         match row {
             PaneRow::Table(index) => self.outline.tables.get(index).map(|t| t.path.as_str()),
             PaneRow::Field(index) => {
-                self.entries.roots(index)?;
+                if !self.is_checklist(index) {
+                    self.entries.roots(index)?;
+                }
                 self.fields
                     .fields()
                     .get(index)
@@ -143,7 +158,7 @@ impl ConfigPane {
                 EntryBody::Node { path, .. } => Some(path),
                 EntryBody::Leaf { .. } => None,
             },
-            PaneRow::Env(_) | PaneRow::AddEnv => None,
+            PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => None,
         }
     }
 
@@ -163,6 +178,7 @@ impl ConfigPane {
                 .position(|table| table.children.contains(&Child::Leaf(index)))
                 .map(PaneRow::Table),
             PaneRow::Entry(index) => self.entries.row(index).map(|entry| entry.parent),
+            PaneRow::Choice { field, .. } => Some(PaneRow::Field(field)),
             PaneRow::Env(_) | PaneRow::AddEnv => None,
         }
     }
@@ -278,7 +294,7 @@ impl ConfigPane {
         self.open.extend(above);
     }
 
-    fn is_open(&self, row: PaneRow) -> bool {
+    pub(super) fn is_open(&self, row: PaneRow) -> bool {
         self.node_path(row)
             .is_some_and(|path| self.open.contains(path))
     }

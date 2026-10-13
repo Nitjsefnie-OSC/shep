@@ -94,8 +94,8 @@ impl ListPane {
 
     /// What the elements are, for the editor that parses one back.
     #[must_use]
-    pub fn item(&self) -> ListItem {
-        self.item
+    pub fn item(&self) -> &ListItem {
+        &self.item
     }
 
     /// Whether the field is a secret: what masks an element's value on the
@@ -258,7 +258,7 @@ impl ListPane {
         }
         if let Some(refused) = item_refusal(
             &self.key,
-            self.item,
+            &self.item,
             &self.item_bounds,
             &buffer,
             self.secret,
@@ -331,9 +331,9 @@ fn array_elements(value: &Value) -> Vec<String> {
 /// the daemon refuses it by name instead of this guessing a number. Only
 /// reachable for an element the config itself carried, since
 /// [`ListPane::apply_typing`] refuses to arm one an operator typed.
-fn list_value(item: ListItem, elements: &[String]) -> Value {
+fn list_value(item: &ListItem, elements: &[String]) -> Value {
     let element = |text: &String| match item {
-        ListItem::Text => Value::String(text.clone()),
+        ListItem::Text | ListItem::Choice(_) => Value::String(text.clone()),
         ListItem::Integer => text
             .parse::<i64>()
             .map_or_else(|_| Value::String(text.clone()), Value::from),
@@ -380,9 +380,10 @@ impl ConfigPane {
         let Some(field) = self.fields.fields().get(index) else {
             return;
         };
-        let FieldKind::List(item) = field.kind else {
+        let FieldKind::List(item @ (ListItem::Text | ListItem::Integer)) = &field.kind else {
             return;
         };
+        let item = item.clone();
         let key = field.key.clone();
         let item_bounds = field.bounds.items.as_deref().cloned().unwrap_or_default();
         let secret = field.secret;
@@ -500,7 +501,7 @@ impl ConfigPane {
             return Ok(());
         };
         if matches!(self.target(), PaneTarget::Dog { .. })
-            && list.item() == ListItem::Integer
+            && *list.item() == ListItem::Integer
             && let Some(odd) = elements.iter().find(|text| text.parse::<i64>().is_err())
         {
             let key = list.key();
@@ -536,9 +537,10 @@ impl ConfigPane {
         let Some(field) = self.fields.by_key(key) else {
             return;
         };
-        let FieldKind::List(item) = field.kind else {
+        let FieldKind::List(item @ (ListItem::Text | ListItem::Integer)) = &field.kind else {
             return;
         };
+        let item = item.clone();
         let item_bounds = field.bounds.items.as_deref().cloned().unwrap_or_default();
         let secret = field.secret;
         let mut list = ListPane::new(

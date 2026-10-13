@@ -201,7 +201,7 @@ pub fn select_node(app: &mut App, path: &str) {
             PaneRow::Entry(index) => pane.entry_row(index).is_some_and(
                 |entry| matches!(&entry.body, EntryBody::Node { path: at, .. } if at == path),
             ),
-            PaneRow::Env(_) | PaneRow::AddEnv => false,
+            PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => false,
         })
         .unwrap_or_else(|| panic!("no node {path} is drawn"));
     app.update(Msg::Key(KeyPress::SelectFirst));

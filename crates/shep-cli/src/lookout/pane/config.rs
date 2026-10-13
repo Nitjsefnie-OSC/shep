@@ -245,6 +245,7 @@ impl ConfigPane {
                     EntryBody::Node { .. } => None,
                 };
             }
+            PaneRow::Choice { field, .. } => field,
             PaneRow::Table(_) | PaneRow::Env(_) | PaneRow::AddEnv => return None,
         };
         let field = self.fields.fields().get(index)?;
@@ -261,7 +262,7 @@ impl ConfigPane {
                 EntryBody::Leaf { field, .. } => Some(&field.kind),
                 EntryBody::Node { .. } => None,
             },
-            PaneRow::Table(_) | PaneRow::Env(_) | PaneRow::AddEnv => None,
+            PaneRow::Table(_) | PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => None,
         }
     }
 
@@ -313,6 +314,9 @@ impl ConfigPane {
         {
             return entries_text(self.values.get(key));
         }
+        if let Some(text) = self.checklist_text(key, self.values.get(key)) {
+            return text;
+        }
         self.values
             .get(key)
             .map_or_else(|| render_json(&Value::Null), render_json)
@@ -328,7 +332,9 @@ impl ConfigPane {
         else {
             return None;
         };
-        let raw = render_json(value.as_value());
+        let raw = self
+            .checklist_text(key, Some(value.as_value()))
+            .unwrap_or_else(|| render_json(value.as_value()));
         Some(resolved_display(&self.fields, key, &raw))
     }
 
