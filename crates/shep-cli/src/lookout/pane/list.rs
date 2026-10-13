@@ -14,7 +14,7 @@
 use serde_json::Value;
 
 use super::super::edits::EditKey;
-use super::super::field::{Bounds, FieldKind, ListItem};
+use super::super::field::{Bounds, Field, FieldKind, ListItem};
 use super::super::textbox::{TextBox, TextEdit};
 use super::super::validation::{Refusal, item_refusal};
 use super::super::viewport::Viewport;
@@ -371,6 +371,19 @@ impl ConfigPane {
         self.list.as_deref_mut()
     }
 
+    /// The items `field`'s list sub-screen edits, or [`None`] when the field
+    /// is not a list it opens for. A list of choices the pane does not draw
+    /// as a checklist, a flat pane's or a secret one, is typed as text.
+    fn sub_screen_item(&self, field: &Field) -> Option<ListItem> {
+        match &field.kind {
+            FieldKind::List(item @ (ListItem::Text | ListItem::Integer)) => Some(item.clone()),
+            FieldKind::List(ListItem::Choice(_)) if !self.drawn_as_checklist(field) => {
+                Some(ListItem::Text)
+            }
+            _ => None,
+        }
+    }
+
     /// Opens the list sub-screen over the array field under the cursor.
     /// Does nothing on any other row.
     pub(in crate::lookout) fn open_list(&mut self) {
@@ -380,10 +393,9 @@ impl ConfigPane {
         let Some(field) = self.fields.fields().get(index) else {
             return;
         };
-        let FieldKind::List(item @ (ListItem::Text | ListItem::Integer)) = &field.kind else {
+        let Some(item) = self.sub_screen_item(field) else {
             return;
         };
-        let item = item.clone();
         let key = field.key.clone();
         let item_bounds = field.bounds.items.as_deref().cloned().unwrap_or_default();
         let secret = field.secret;
@@ -537,10 +549,9 @@ impl ConfigPane {
         let Some(field) = self.fields.by_key(key) else {
             return;
         };
-        let FieldKind::List(item @ (ListItem::Text | ListItem::Integer)) = &field.kind else {
+        let Some(item) = self.sub_screen_item(field) else {
             return;
         };
-        let item = item.clone();
         let item_bounds = field.bounds.items.as_deref().cloned().unwrap_or_default();
         let secret = field.secret;
         let mut list = ListPane::new(

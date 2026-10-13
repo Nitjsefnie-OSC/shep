@@ -13,7 +13,7 @@
 use serde_json::Value;
 
 use super::super::edits::EditKey;
-use super::super::field::{FieldKind, ListItem};
+use super::super::field::{Field, FieldKind, ListItem};
 use super::fields::render_json;
 use super::{ConfigPane, PaneEdit, PaneRow};
 
@@ -68,9 +68,20 @@ impl ConfigPane {
     }
 
     /// Whether field `field` is a list of choices drawn as a checklist: on
-    /// a pane that nests, since a flat one has no rows to hang names from.
+    /// a pane that nests, since a flat one has no rows to hang names from,
+    /// and not a secret one, whose held names the rows would show.
     pub(super) fn is_checklist(&self, field: usize) -> bool {
-        self.is_tree() && self.choice_names(field).is_some()
+        self.fields
+            .fields()
+            .get(field)
+            .is_some_and(|field| self.drawn_as_checklist(field))
+    }
+
+    /// [`Self::is_checklist`] for the field itself.
+    pub(super) fn drawn_as_checklist(&self, field: &Field) -> bool {
+        self.is_tree()
+            && !field.secret
+            && matches!(field.kind, FieldKind::List(ListItem::Choice(_)))
     }
 
     /// `key`'s array as the operator has it: what is filed for the field,
@@ -191,8 +202,19 @@ impl ConfigPane {
             elements.push(choice.value);
         }
         self.file_field(key, Value::Array(elements));
-        let len = self.rows().len();
-        self.view.clamp(len);
+        // An element outside the set leaves its row when toggled off. The
+        // cursor goes to the list's own row, not the name that slides under
+        // it, which the next key would toggle.
+        let row = if item < self.choices(field).len() {
+            PaneRow::Choice { field, item }
+        } else {
+            PaneRow::Field(field)
+        };
+        let rows = self.rows();
+        match rows.iter().position(|candidate| *candidate == row) {
+            Some(at) => self.view.move_to(at, rows.len()),
+            None => self.view.clamp(rows.len()),
+        }
     }
 }
 
@@ -200,6 +222,7 @@ impl ConfigPane {
 mod tests {
     use serde_json::{Map, Value, json};
 
+    use super::super::Lock;
     use super::super::fixtures::filed;
     use super::*;
 
@@ -375,6 +398,40 @@ mod tests {
         pane.cycle();
         assert_eq!(filed(&pane, "kinds"), Some(json!(["a"])));
         assert_eq!(checklist(&pane), ["[x] a", "[ ] b", "[ ] c"]);
+        assert_eq!(
+            pane.cursor(),
+            Some(kinds_row(&pane)),
+            "the cursor does not slide onto a name the next key would toggle"
+        );
+    }
+
+    #[test]
+    fn a_secret_list_of_choices_stays_locked_and_draws_no_names() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "tokens": {
+                    "type": "array",
+                    "items": { "enum": ["a", "b"] },
+                    "x-shep-secret": true,
+                },
+            },
+        });
+        let table = json!({ "tokens": ["a", "sk-live-51Hx9Qa"] });
+        let Value::Object(table) = table else {
+            panic!("a table is an object");
+        };
+        let mut pane = ConfigPane::sheep_dog("web".into(), "ruler".into(), &schema, table);
+        pane.open_table();
+        assert!(
+            pane.rows()
+                .iter()
+                .all(|row| pane.choice_row(*row).is_none()),
+            "no name is drawn"
+        );
+        assert_eq!(pane.lock("tokens"), Some(Lock::NoWidget));
+        pane.open_list();
+        assert!(pane.list().is_none(), "no sub-screen over a secret list");
     }
 
     #[test]
