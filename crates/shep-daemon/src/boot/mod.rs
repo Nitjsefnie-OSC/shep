@@ -206,7 +206,7 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
     // still held. Rebinding would race the predecessor's own socket file, and
     // re-locking would mean releasing first.
     #[cfg(unix)]
-    let (mut pidfile_lock, listener, inherited) = match successor_handover() {
+    let (mut pidfile_lock, listener, inherited) = match successor_handover()? {
         Some(carried) => {
             let (lock, listener, flock) = rehydrate(carried, &paths)?;
             (lock, listener, Some(flock))

@@ -193,6 +193,24 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         Request::Stop { selector } => {
             selector_call(id, selector, |s| ctx.supervisor.stop(s), Response::Stopped).await
         }
+        Request::Disable { selector } => {
+            selector_call(
+                id,
+                selector,
+                |s| ctx.supervisor.disable(s),
+                Response::Disabled,
+            )
+            .await
+        }
+        Request::Enable { selector } => {
+            selector_call(
+                id,
+                selector,
+                |s| ctx.supervisor.enable(s),
+                Response::Enabled,
+            )
+            .await
+        }
         // Forward, dependencies first, when the selector matches more than
         // one sheep. Not reverse-stop then forward-start: the rolling version
         // puts the whole fold down at once in the middle, and forward-only

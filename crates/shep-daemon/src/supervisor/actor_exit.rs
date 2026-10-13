@@ -394,8 +394,13 @@ impl<R: ProcessRunner> Actor<R> {
         // A manual Restart forces a respawn, where `decide_on_exit` would
         // choose CleanStop off `manual_stop`. Not while shutting down, which
         // would orphan a child outside the shutdown snapshot; not under
-        // `pending_delete`, which would hand back a live process as deleted.
-        if kind == Some(ManualKind::Restart) && !self.shutting_down && !pending_delete {
+        // `pending_delete`, which would hand back a live process as deleted;
+        // not for a disabled app, whose stop rode this marker.
+        if kind == Some(ManualKind::Restart)
+            && !self.shutting_down
+            && !pending_delete
+            && !self.is_disabled_id(id)
+        {
             // Re-fetched rather than carried down: the reload branches above
             // hand `self` back to itself, ending the earlier borrow.
             self.sheep

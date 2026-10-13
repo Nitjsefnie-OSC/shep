@@ -77,6 +77,14 @@ const dogLogDemo = `2026-09-02T14:22:31.412+02:00 [shep] shep started this dog; 
     <h2 id="turning-one-on">Turning one on</h2>
     <VerbSignature verb="enable" usage="shep enable <name>">
       <p>
+        <code>enable</code> and <code>disable</code> also take a sheep's
+        name, which is{" "}
+        <a href="/docs/lifecycle#what-stays-what-goes-the-muster-roll">
+          a different verb
+        </a>
+        . What follows is the dog half.
+      </p>
+      <p>
         Writes <code>shep.toml</code> first, then starts the dog now if a
         shepherd is listening. Run it with nothing listening and it still
         exits 0: the config says the dog belongs, and the next shepherd
@@ -240,8 +248,8 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
       <a href="/docs/lookout">the dog config pane</a>, which is why an edit
       made there reaches a running bark without bouncing it, and a provider
       dog's push that changes a value the section names with{" "}
-      <code>{"{{secret:namespace/KEY}}"}</code>. Pushing the same values
-      again publishes nothing. A hand edit still needs the stop and start
+      <code>{"{{secret:namespace/KEY}}"}</code>. Re-pushing the same values
+      publishes nothing. A hand edit still needs the stop and start
       above.
     </p>
     <Callout variant="careful">

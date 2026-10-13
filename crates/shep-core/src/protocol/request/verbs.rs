@@ -338,6 +338,23 @@ pub enum Request {
         /// Which sheep. No default: a reload replaces running processes.
         selector: SelectorSpec,
     },
+    /// Stop matching sheep and refuse to spawn them again until `Enable`.
+    ///
+    /// The mark belongs to the app, so a selector naming an instance (an id
+    /// or a slot) is widened to that instance's app. Answers
+    /// [`Response::Disabled`].
+    Disable {
+        /// Which sheep
+        selector: SelectorSpec,
+    },
+    /// Clear the disabled mark on matching sheep and start them.
+    ///
+    /// A selector matching a sheep that is not disabled changes nothing.
+    /// Answers [`Response::Enabled`].
+    Enable {
+        /// Which sheep
+        selector: SelectorSpec,
+    },
     /// Stop + deregister matching sheep
     Delete {
         /// Which sheep

@@ -218,8 +218,11 @@ async fn assert_no_liveness_within(rx: &mut mpsc::Receiver<LivenessReport>, wind
 
 /// Crosses one hourly occurrence in steps far finer than either sleep cap,
 /// so the worker's own cadence decides how often it wakes.
+///
+/// One step past the hour, so the occurrence does not depend on the last
+/// advance landing exactly on it.
 async fn cross_one_hour() {
-    for _ in 0..120 {
+    for _ in 0..121 {
         tokio::time::advance(Duration::from_secs(30)).await;
     }
 }

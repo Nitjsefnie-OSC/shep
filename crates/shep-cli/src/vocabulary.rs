@@ -83,6 +83,9 @@ pub(crate) enum Reported {
     /// A dog whose process is up and which has never answered this
     /// shepherd.
     Silent,
+    /// A stopped sheep whose app an operator disabled. A fact about the
+    /// shepherd's refusal to spawn it, which `ProcStatus` does not carry.
+    Disabled,
 }
 
 impl Reported {
@@ -115,6 +118,7 @@ impl Reported {
             // Matches `dogs.rs`'s own `silent_dogs` population name, so
             // a reload's report and a flock listing agree.
             Self::Silent => "silent".to_string(),
+            Self::Disabled => "disabled".to_string(),
         }
     }
 
@@ -126,6 +130,8 @@ impl Reported {
             // Not `(x.x)` either: this process has not failed, only gone
             // unheard.
             Self::Silent => "(?_?)",
+            // The stopped face: it is stopped, and the word says the rest.
+            Self::Disabled => face(ProcStatus::Stopped),
         }
     }
 
@@ -137,6 +143,7 @@ impl Reported {
             // the same red as a crash would send an operator looking for
             // one.
             Self::Silent => Role::Butter,
+            Self::Disabled => role_of(ProcStatus::Stopped),
         }
     }
 }

@@ -117,6 +117,12 @@ pub enum SupervisorError {
     /// land. Nothing was spawned, nothing was killed, and the file on disk
     /// is what it was before the request.
     Overrides(String),
+    /// A spawn of an app an operator disabled; carries that app's name.
+    ///
+    /// Refused before anything is registered, for `Start`, `Scale` up and an
+    /// operator `Restart`. Maps to
+    /// [`RpcErrorCode::Disabled`](shep_core::protocol::RpcErrorCode::Disabled).
+    Disabled(String),
     /// The actor has shut down; its mailbox is closed.
     EngineStopped,
 }
@@ -135,6 +141,10 @@ impl fmt::Display for SupervisorError {
             Self::InvalidEnv(msg) => write!(f, "cannot set that env key: {msg}"),
             Self::InvalidField(msg) => write!(f, "cannot set that field: {msg}"),
             Self::Overrides(msg) => write!(f, "overrides store unusable: {msg}"),
+            Self::Disabled(name) => write!(
+                f,
+                "{name} is disabled; `shep enable {name}` clears that and starts it"
+            ),
             Self::EngineStopped => f.write_str("supervisor engine has shut down"),
         }
     }
