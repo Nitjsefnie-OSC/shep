@@ -144,6 +144,12 @@ pub fn list_dog_section() -> String {
 /// [`list_dog_section`], opened the way the event loop opens one. The
 /// control gate is open.
 pub fn app_in_dog_pane_with_lists() -> App {
+    app_in_dog_pane_over_lists(list_dog_section())
+}
+
+/// [`app_in_dog_pane_with_lists`] over a `[watch]` section of the caller's
+/// own, for a hand-written one the schema would not have produced.
+pub fn app_in_dog_pane_over_lists(section: String) -> App {
     let mut app = app_with(flock_of(3, 0), plain());
     app.set_control_for_tests(Control::Allowed);
     app.update(Msg::DogPane {
@@ -156,7 +162,7 @@ pub fn app_in_dog_pane_with_lists() -> App {
             name: "watch".to_string(),
         },
         result: Ok(Response::DogSection {
-            toml: list_dog_section().into(),
+            toml: section.into(),
         }),
     });
     app

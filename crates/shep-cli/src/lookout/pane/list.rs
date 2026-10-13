@@ -17,7 +17,7 @@ use super::super::edits::EditKey;
 use super::super::field::{Bounds, FieldKind, ListItem};
 use super::super::validation::{Refusal, item_refusal};
 use super::super::viewport::Viewport;
-use super::{ConfigPane, PaneEdit, PaneRow};
+use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
 
 /// One row of the list sub-screen.
 ///
@@ -428,29 +428,41 @@ impl ConfigPane {
     ///
     /// The whole array travels as one value: `Request::SetSheepField`
     /// carries one field, so an element is not a thing the wire can name.
-    pub(in crate::lookout) fn file_list_element(&mut self, text: String) {
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal`] as [`Self::file_list`] has it.
+    pub(in crate::lookout) fn file_list_element(&mut self, text: String) -> Result<(), Refusal> {
         let Some(elements) = self.list.as_ref().and_then(|list| list.with_element(text)) else {
-            return;
+            return Ok(());
         };
-        self.file_list(elements);
+        self.file_list(elements)
     }
 
     /// Files the whole array without the element under the cursor.
-    pub(in crate::lookout) fn file_list_removal(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal`] as [`Self::file_list`] has it.
+    pub(in crate::lookout) fn file_list_removal(&mut self) -> Result<(), Refusal> {
         let Some(elements) = self.list.as_ref().and_then(|list| list.without_element()) else {
-            return;
+            return Ok(());
         };
-        self.file_list(elements);
+        self.file_list(elements)
     }
 
     /// Files the whole array with the element under the cursor moved
     /// `delta` places. Does nothing at either end, where there is nowhere
     /// to move.
-    pub(in crate::lookout) fn file_list_reorder(&mut self, delta: isize) {
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal`] as [`Self::file_list`] has it.
+    pub(in crate::lookout) fn file_list_reorder(&mut self, delta: isize) -> Result<(), Refusal> {
         let Some(elements) = self.list.as_ref().and_then(|list| list.reordered(delta)) else {
-            return;
+            return Ok(());
         };
-        self.file_list(elements);
+        self.file_list(elements)
     }
 
     /// Files `elements` as the field's whole value, then makes the open
@@ -462,16 +474,44 @@ impl ConfigPane {
     /// recompute the next keystroke from it and file an array missing this
     /// one. The write that used to refresh the screen is gone: the pane
     /// files and writes once, when it closes.
-    fn file_list(&mut self, elements: Vec<String>) {
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal`] naming the first element of an integer list that is not
+    /// an integer, on a dog's pane, with nothing filed. A dog's section is
+    /// written by this pane and not by the shepherd, and the writer has no
+    /// cell for an array that mixes strings and integers, so the refusal
+    /// would otherwise land when the pane closes and take every other filed
+    /// edit with it. A hand-written `ports = [80, "http"]` reaches the
+    /// sub-screen as it is; removing the odd element files the rest. A
+    /// sheep's pane files it, and the daemon refuses it by name.
+    fn file_list(&mut self, elements: Vec<String>) -> Result<(), Refusal> {
         let Some(list) = self.list.as_ref() else {
-            return;
+            return Ok(());
         };
+        if matches!(self.target(), PaneTarget::Dog { .. })
+            && list.item() == ListItem::Integer
+            && let Some(odd) = elements.iter().find(|text| text.parse::<i64>().is_err())
+        {
+            let key = list.key();
+            let shown = if list.is_secret() {
+                "(hidden)"
+            } else {
+                odd.as_str()
+            };
+            return Err(Refusal {
+                text: format!(
+                    "{key} holds \"{shown}\", which is not an integer; remove it before changing {key}"
+                ),
+            });
+        }
         let key = list.key().to_owned();
         let value = list_value(list.item(), &elements);
         self.file_field(key, value);
         if let Some(list) = self.list.as_mut() {
             list.set_elements(elements);
         }
+        Ok(())
     }
 
     /// Re-opens the list sub-screen on the refreshed array, at the cursor
@@ -546,7 +586,7 @@ mod tests {
         pane.move_to_key("args");
         pane.open_list();
         pane.list_mut().expect("open").move_to(1);
-        pane.file_list_element("9090".into());
+        pane.file_list_element("9090".into()).expect("filed");
         assert_eq!(
             filed(&pane, "args"),
             Some(serde_json::json!(["--port", "9090"]))
@@ -635,7 +675,7 @@ mod tests {
                 .flatten()
                 .expect("three characters is the bound itself")
         };
-        pane.file_list_element(text);
+        pane.file_list_element(text).expect("filed");
         assert_eq!(filed(&pane, "tags"), Some(serde_json::json!(["abc"])));
     }
 
@@ -676,7 +716,7 @@ mod tests {
                 .flatten()
                 .expect("the pattern takes it")
         };
-        pane.file_list_element(text);
+        pane.file_list_element(text).expect("filed");
         assert_eq!(filed(&pane, "tags"), Some(serde_json::json!(["ops-team"])));
     }
 
@@ -738,10 +778,10 @@ mod tests {
         pane.move_to_key("args");
         pane.open_list();
         pane.list_mut().expect("open").move_to(1);
-        pane.file_list_removal();
+        pane.file_list_removal().expect("filed");
         assert_eq!(filed(&pane, "args"), Some(serde_json::json!(["a", "c"])));
 
-        pane.file_list_reorder(-1);
+        pane.file_list_reorder(-1).expect("filed");
         assert_eq!(
             filed(&pane, "args"),
             Some(serde_json::json!(["c", "a"])),
@@ -760,9 +800,9 @@ mod tests {
         pane.move_to_key("args");
         pane.open_list();
         pane.list_mut().expect("open").move_to_last();
-        pane.file_list_element("abc".into());
+        pane.file_list_element("abc".into()).expect("filed");
         pane.list_mut().expect("open").move_to_last();
-        pane.file_list_element("def".into());
+        pane.file_list_element("def".into()).expect("filed");
         assert_eq!(
             filed(&pane, "args"),
             Some(serde_json::json!(["abc", "def"]))
@@ -779,7 +819,7 @@ mod tests {
         pane.move_to_key("args");
         pane.open_list();
         pane.list_mut().expect("open").move_to(0);
-        pane.file_list_removal();
+        pane.file_list_removal().expect("filed");
         assert_eq!(pane.list().expect("open").elements(), ["b"]);
         pane.close_list();
         pane.open_list();
@@ -794,7 +834,7 @@ mod tests {
         pane.move_to_key("args");
         pane.open_list();
         pane.list_mut().expect("open").move_to(0);
-        pane.file_list_reorder(1);
+        pane.file_list_reorder(1).expect("filed");
         assert_eq!(
             filed(&pane, "args"),
             Some(serde_json::json!(["b", "a", "c"]))
@@ -809,10 +849,10 @@ mod tests {
         pane.move_to_key("args");
         pane.open_list();
         pane.list_mut().expect("open").move_to_last();
-        pane.file_list_removal();
+        pane.file_list_removal().expect("filed");
         assert!(pane.edits().is_empty(), "the `+ new` row holds no element");
         pane.list_mut().expect("open").move_to_first();
-        pane.file_list_reorder(-1);
+        pane.file_list_reorder(-1).expect("filed");
         assert!(pane.edits().is_empty(), "the first element cannot move up");
     }
 
@@ -825,7 +865,7 @@ mod tests {
         pane.open_list();
         assert_eq!(pane.list().expect("open").elements(), ["0", "143"]);
         pane.list_mut().expect("open").move_to(0);
-        pane.file_list_element("2".into());
+        pane.file_list_element("2".into()).expect("filed");
         assert_eq!(
             filed(&pane, "stop_exit_codes"),
             Some(serde_json::json!([2, 143]))
