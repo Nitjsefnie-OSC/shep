@@ -36,7 +36,7 @@ The whole vocabulary, and whether it exists yet.
 | a smit | a short mark a dog paints on a sheep | the SMIT column in `shep flock` and the lookout | yes |
 | the whistle | the MCP interface agents talk to | `shep whistle` | yes |
 | the lookout | the terminal dashboard | `shep lookout` (alias `dash`) | partly |
-| adopt / rehome | register or drop a third-party dog | `shep adopt <path> [--name <name>]` | yes |
+| adopt / delete | register a third-party dog, or drop one for good | `shep adopt <path> [--name <name>]`, `shep delete <name>` | yes |
 | that'll do | graceful stop, after the real herding command | `shep thatlldo` | yes |
 | stock | change how many instances of an app run (the stocking rate) | `shep stock <name> <count>` (alias `scale`) | yes |
 | signal | send a signal to one sheep's own process | `shep signal <selector> <signal>` | yes |

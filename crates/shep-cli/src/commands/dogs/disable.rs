@@ -21,9 +21,9 @@ use super::{
 /// removal from `[daemon] enabled_dogs`.
 ///
 /// `disable_dog` leaves `[daemon] adopted_dogs` alone, the difference
-/// between `disable` and `rehome`, so the source reads the same before or
-/// after the edit. Read for the report only: `DisableDog` carries a name and
-/// nothing else.
+/// between `disable` and removing a dog with `shep delete`, so the source
+/// reads the same before or after the edit. Read for the report only:
+/// `DisableDog` carries a name and nothing else.
 ///
 /// # Errors
 /// [`ShepTomlError`] if the read-modify-write underneath the edit failed.

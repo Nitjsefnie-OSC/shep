@@ -415,6 +415,11 @@ impl<R: ProcessRunner> Actor<R> {
     /// Immediate results are collected up front and folded into the same
     /// `PendingReply` as the deferred ids, so a mixed selector's reply carries
     /// every match and fires once the last running one goes terminal.
+    ///
+    /// A `Delete` that reaches a built-in dog is refused whole, before any id
+    /// is claimed: the dog has no registration to forget, and a command that
+    /// took the sheep beside it and refused the dog would leave the operator
+    /// reading a listing rather than a refusal.
     pub(super) fn begin_manual(
         &mut self,
         selector: ProcessSelector,
@@ -429,7 +434,30 @@ impl<R: ProcessRunner> Actor<R> {
             return;
         }
 
+        if kind == ManualKind::Delete
+            && let Some(name) = matched.iter().find_map(|id| self.built_in_dog_name(*id))
+        {
+            send_reply(
+                reply,
+                Err(SupervisorError::IsADog(crate::dogs::built_in_dog_refusal(
+                    &name,
+                ))),
+            );
+            return;
+        }
+
         self.begin_manual_ids(matched, kind, origin, reply);
+    }
+
+    /// `id`'s name, when the entry behind it is a built-in dog, and `None`
+    /// for a sheep or an adopted dog.
+    ///
+    /// Read off the entry's own [`DogSource`], not off the name: a saved
+    /// sheep that kept the name `metrics` on an upgrade is deletable, and a
+    /// name is the only thing the two have in common.
+    fn built_in_dog_name(&self, id: u32) -> Option<String> {
+        let slot = self.sheep.get(&id)?;
+        (slot.entry.dog == Some(DogSource::BuiltIn)).then(|| slot.entry.spec.config().name.clone())
     }
 
     /// [`Self::begin_manual`]'s per-id aggregation, taking the matched ids

@@ -1,4 +1,4 @@
-//! `shep enable`/`shep disable`/`shep adopt`/`shep rehome`: turning a
+//! `shep enable`/`shep disable`/`shep adopt`/`shep delete <dog>`: turning a
 //! registered dog on and off, and registering or forgetting a third-party
 //! one.
 //!
@@ -13,10 +13,10 @@
 //!
 //! One file per verb, plus [`vet`] for the binary-vetting machinery
 //! `adopt` alone needs: [`mod@enable`], [`mod@disable`], [`mod@adopt`],
-//! [`mod@rehome`], [`mod@barks`]. This module holds only what every verb
-//! shares: the connect-or-absent dance, the config-error mapping, and the
-//! two status strings a verb's own report reaches for when no shepherd
-//! answered.
+//! [`mod@remove`] (which the hidden `shep rehome` and `shep delete <dog>`
+//! both run), [`mod@barks`]. This module holds only what every verb shares:
+//! the connect-or-absent dance, the config-error mapping, and the two status
+//! strings a verb's own report reaches for when no shepherd answered.
 
 use shep_client::{Client, ConnectError};
 use shep_core::paths::ShepPaths;
@@ -30,7 +30,7 @@ mod adopt;
 mod barks;
 mod disable;
 mod enable;
-mod rehome;
+mod remove;
 mod vet;
 
 #[cfg(all(test, unix))]
@@ -42,7 +42,8 @@ pub use adopt::adopt;
 pub use barks::barks;
 pub use disable::disable;
 pub use enable::enable;
-pub use rehome::rehome;
+pub use remove::rehome;
+pub(crate) use remove::{Removal, remove_dog};
 pub use vet::{DogSchema, warn_of_a_dog_a_restart_would_break};
 
 // `pub(crate)` re-exports: reached from other modules by their original
@@ -99,7 +100,7 @@ fn emit_dog_action(
 /// config-validation failures, so [`ExitCode::InvalidConfig`];
 /// [`ShepTomlError::Io`] has no more specific code than
 /// [`ExitCode::Failure`].
-fn fail_config(streams: &mut Streams<'_>, err: &ShepTomlError) -> ExitCode {
+pub(crate) fn fail_config(streams: &mut Streams<'_>, err: &ShepTomlError) -> ExitCode {
     let code = match err {
         ShepTomlError::Io { .. } => ExitCode::Failure,
         ShepTomlError::Parse { .. } | ShepTomlError::WrongShape { .. } => ExitCode::InvalidConfig,

@@ -139,15 +139,16 @@ impl Render for DogRows {
     const PRIORITIES: &'static [u8] = &[0, 0, 0, 2, 4, 6, 5, 3, 1, 7];
 }
 
-/// `shep enable`/`disable`/`adopt`/`rehome`'s one-row reply: what the config
-/// edit and, if a shepherd was reached, the resulting RPC did.
+/// `shep enable`/`disable`/`adopt`, and `shep delete`/`rehome` on a dog's,
+/// one-row reply: what the config edit and, if a shepherd was reached, the
+/// resulting RPC did.
 ///
 /// [`Self::shepherd_acted`] and [`Self::status`] are how a `--format json`
 /// consumer tells the two outcomes apart.
 ///
 /// `source` keeps the whole [`DogSource`], so JSON carries an adopted
 /// binary's path; the SOURCE column renders the kind alone, which is all a
-/// column has room for. `None` is `rehome`'s case alone: it reads the source
+/// column has room for. `None` is a removal's case alone: it reads the source
 /// before the edit forgets it, and a dog that was never adopted has none.
 #[derive(Debug, Serialize)]
 pub struct DogActionRow {

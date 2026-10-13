@@ -426,10 +426,11 @@ impl ShepToml {
     /// Forgets `name`'s adoption in this file: out of `enabled_dogs`,
     /// `adopted_dogs` and `channel_dogs`.
     ///
-    /// The whole of a rehome's config half. A `[dog.<name>]` an un-migrated
+    /// The whole of a removal's config half, run by `shep delete <name>` and
+    /// by the hidden `shep rehome <name>`. A `[dog.<name>]` an un-migrated
     /// `shep.toml` still carries stays, as the `[<name>]` in `dogs.toml`
-    /// does: the settings an operator wrote are theirs, and `rehome`
-    /// forgets only where the binary lived. The difference from
+    /// does: the settings an operator wrote are theirs, and a removal forgets
+    /// only where the binary lived. The difference from
     /// [`Self::disable_dog`] is `adopted_dogs`, so recovery needs a fresh
     /// `shep adopt <path>` rather than an `enable`.
     pub fn rehome_dog(&mut self, name: &str) {

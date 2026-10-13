@@ -96,7 +96,7 @@ report to whoever wrote it`;
         cost one child rather than two.
       </p>
     </VerbSignature>
-    <VerbSignature verb="rehome" usage="shep rehome <name>">
+    <VerbSignature verb="delete" usage="shep delete <name>">
       <p>
         <code>disable</code>'s counterpart for a third-party dog: stops it
         if running and forgets where its binary lived, rather than leaving
@@ -115,7 +115,7 @@ report to whoever wrote it`;
 NAME      SOURCE   SHEPHERD  STATUS
 watchdog  adopted  true      online
 
-$ shep rehome watchdog
+$ shep delete watchdog
 NAME      SOURCE   SHEPHERD  STATUS
 watchdog  adopted  true      stopped`}</CodeBlock>
     <p>

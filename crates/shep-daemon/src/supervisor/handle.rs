@@ -594,6 +594,8 @@ impl SupervisorHandle {
     /// # Errors
     ///
     /// - [`SupervisorError::NotFound`]: nothing matched.
+    /// - [`SupervisorError::IsADog`]: the selector reached a built-in dog,
+    ///   which no verb removes; the message names `shep disable`.
     /// - [`SupervisorError::EngineStopped`]: the actor is gone.
     pub(crate) async fn delete(
         &self,
