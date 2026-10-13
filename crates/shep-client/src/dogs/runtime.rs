@@ -156,7 +156,7 @@ mod tests {
 
         assert_eq!(
             asked,
-            Request::DogConfig {
+            Request::DogConfigResolved {
                 name: "bark".to_owned()
             }
         );

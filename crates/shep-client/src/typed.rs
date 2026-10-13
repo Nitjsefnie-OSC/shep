@@ -4,22 +4,32 @@
 //! so a caller never writes the match or the error for any other answer.
 //! [`Client`] and [`ReconnectingClient`] carry the same set.
 
+use core::future::Future;
+
 use shep_core::protocol::{
-    DogSectionToml, HostUsage, ProcessInfo, Request, Response, SelectorSpec,
+    DogSectionToml, HostUsage, ProcessInfo, Request, Response, RpcError, RpcErrorCode, SelectorSpec,
 };
+use shep_core::secrets::references_in;
 
 use crate::ReconnectingClient;
 use crate::client::{Client, LOG_PLANE_DEADLINE, RequestError};
 
 impl Client {
-    /// The dog `name`'s own section of `dogs.toml`, empty when it has none.
+    /// The dog `name`'s own section of `dogs.toml` with every
+    /// `{{secret:...}}` reference resolved, empty when it has none.
+    ///
+    /// Asks [`Request::DogConfigResolved`]. A shepherd too old to know it
+    /// is asked [`Request::DogConfig`] instead, and a section that still
+    /// holds a reference is refused rather than handed over unresolved.
     ///
     /// # Errors
     ///
     /// As [`Self::request`], and [`RequestError::UnexpectedReply`] for any
-    /// answer but [`Response::DogSection`].
+    /// answer but [`Response::DogSection`]. [`RequestError::Rpc`] with
+    /// [`RpcErrorCode::Unsupported`] when an older shepherd's section names
+    /// a secret reference it cannot resolve.
     pub async fn dog_config(&self, name: &str) -> Result<DogSectionToml, RequestError> {
-        dog_section(self.request(dog_config_request(name)).await?)
+        resolved_dog_section(name, |body| self.request(body)).await
     }
 
     /// Every supervised entry, dogs included.
@@ -66,7 +76,7 @@ impl ReconnectingClient {
     ///
     /// As [`Client::dog_config`].
     pub async fn dog_config(&self, name: &str) -> Result<DogSectionToml, RequestError> {
-        dog_section(self.request(dog_config_request(name)).await?)
+        resolved_dog_section(name, |body| self.request(body)).await
     }
 
     /// Shorthand for [`Client::list_flock`] on the current generation.
@@ -102,15 +112,53 @@ impl ReconnectingClient {
 }
 
 fn dog_config_request(name: &str) -> Request {
-    Request::DogConfig {
+    Request::DogConfigResolved {
         name: name.to_owned(),
+    }
+}
+
+/// Asks `ask` for the resolved section, and for the plain one when the
+/// shepherd does not know the request.
+///
+/// A shepherd built before the request refuses it with `Unsupported`, which
+/// `Request::Unrecognized` earns on the daemon side. `Unrecognized` covers a
+/// code this build was not taught.
+async fn resolved_dog_section<F, Fut>(name: &str, ask: F) -> Result<DogSectionToml, RequestError>
+where
+    F: Fn(Request) -> Fut,
+    Fut: Future<Output = Result<Response, RequestError>>,
+{
+    match ask(dog_config_request(name)).await {
+        Err(RequestError::Rpc(refusal))
+            if matches!(
+                refusal.code,
+                RpcErrorCode::Unsupported | RpcErrorCode::Unrecognized
+            ) =>
+        {
+            let plain = Request::DogConfig {
+                name: name.to_owned(),
+            };
+            let section = dog_section(ask(plain).await?)?;
+            if !references_in(section.as_str()).is_empty() {
+                return Err(RequestError::Rpc(RpcError {
+                    code: RpcErrorCode::Unsupported,
+                    message: format!(
+                        "the shepherd is too old to resolve secret references in the \
+                         `{name}` dog's section"
+                    ),
+                    daemon_version: refusal.daemon_version,
+                }));
+            }
+            Ok(section)
+        }
+        answer => dog_section(answer?),
     }
 }
 
 fn dog_section(answer: Response) -> Result<DogSectionToml, RequestError> {
     match answer {
         Response::DogSection { toml } => Ok(toml),
-        other => Err(unexpected("DogConfig", &other)),
+        other => Err(unexpected("DogConfigResolved", &other)),
     }
 }
 
@@ -146,13 +194,64 @@ fn unexpected(asked: &'static str, answer: &Response) -> RequestError {
 mod tests {
     use std::time::Duration;
 
-    use shep_core::protocol::{Envelope, HostUsage};
+    use shep_core::protocol::{Envelope, HostUsage, RpcError, RpcErrorCode};
     use tokio::sync::mpsc::UnboundedReceiver;
 
     use super::*;
     use crate::testing::{
-        control_address, fake_client_answering, sample_ack, sample_info, serve_one_request,
+        Handovers, Handshake, control_address, fake_client_answering, fake_daemon_across_handovers,
+        sample_ack, sample_info, serve_one_request,
     };
+
+    /// The sentinel stands for a secret's value: it must reach no error text.
+    const SENTINEL: &str = "sentinel-value-1f3a";
+
+    /// What a shepherd that has never heard of the request answers.
+    fn does_not_know_the_request() -> RpcError {
+        RpcError {
+            code: RpcErrorCode::Unsupported,
+            message: "this shepherd does not implement the request".to_owned(),
+            daemon_version: None,
+        }
+    }
+
+    /// A shepherd built before `DogConfigResolved`, whose section is `section`.
+    fn older_shepherd(path: &std::path::Path, section: &str) -> Handovers {
+        let shepherd = fake_daemon_across_handovers(path, vec![Handshake::Accept(sample_ack())]);
+        shepherd.reply_to_dog_config(section);
+        shepherd.refuse_dog_config_resolved(does_not_know_the_request());
+        shepherd
+    }
+
+    /// The request bodies the shepherd received, in order.
+    fn asked(shepherd: &Handovers) -> Vec<Request> {
+        shepherd
+            .envelopes()
+            .into_iter()
+            .map(|(_, envelope)| envelope.body)
+            .collect()
+    }
+
+    fn named(name: &str) -> (Request, Request) {
+        (
+            Request::DogConfigResolved {
+                name: name.to_owned(),
+            },
+            Request::DogConfig {
+                name: name.to_owned(),
+            },
+        )
+    }
+
+    fn too_old_refusal(name: &str) -> RequestError {
+        RequestError::Rpc(RpcError {
+            code: RpcErrorCode::Unsupported,
+            message: format!(
+                "the shepherd is too old to resolve secret references in the `{name}` dog's section"
+            ),
+            daemon_version: None,
+        })
+    }
 
     /// The one envelope the client under test sent.
     async fn sent(envelopes: &mut UnboundedReceiver<Envelope>) -> Envelope {
@@ -176,7 +275,7 @@ mod tests {
         assert_eq!(section.as_str(), "poll = \"1m\"\n");
         assert_eq!(
             sent(&mut envelopes).await.body,
-            Request::DogConfig {
+            Request::DogConfigResolved {
                 name: "bark".to_owned()
             }
         );
@@ -288,9 +387,90 @@ mod tests {
             .unwrap();
         assert_eq!(
             envelope.body,
-            Request::DogConfig {
+            Request::DogConfigResolved {
                 name: "metrics".to_owned()
             }
         );
+    }
+
+    #[tokio::test]
+    async fn an_older_shepherd_that_does_not_know_the_request_is_asked_the_plain_one_when_the_section_names_no_reference()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let path = control_address(dir.path());
+        let shepherd = older_shepherd(&path, "poll = \"1m\"\n");
+        let client = Client::connect(&path).await.unwrap();
+
+        let section = client.dog_config("bark").await.unwrap();
+
+        assert_eq!(section.as_str(), "poll = \"1m\"\n");
+        let (resolved, plain) = named("bark");
+        assert_eq!(asked(&shepherd), vec![resolved, plain]);
+    }
+
+    #[tokio::test]
+    async fn an_older_shepherd_with_a_reference_in_the_section_is_refused_without_the_section_text()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let path = control_address(dir.path());
+        let _shepherd = older_shepherd(&path, &format!("token = \"{{{{secret:{SENTINEL}}}}}\"\n"));
+        let client = Client::connect(&path).await.unwrap();
+
+        let err = client.dog_config("bark").await.unwrap_err();
+
+        assert_eq!(err, too_old_refusal("bark"));
+        let text = format!("{err} {err:?}");
+        assert!(!text.contains(SENTINEL), "{text}");
+        assert!(!text.contains("{{secret:"), "{text}");
+    }
+
+    /// An escaped `{{{{secret:` and a malformed token name no reference, so
+    /// the plain section is safe to hand over.
+    #[tokio::test]
+    async fn an_older_shepherd_with_only_text_that_looks_like_a_reference_is_read_as_before() {
+        for text in [
+            "note = \"{{{{secret:X}}}}\"\n",
+            "note = \"{{secret:bad key}}\"\n",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = control_address(dir.path());
+            let _shepherd = older_shepherd(&path, text);
+            let client = Client::connect(&path).await.unwrap();
+
+            let section = client.dog_config("bark").await.unwrap();
+
+            assert_eq!(section.as_str(), text);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reconnecting_client_on_an_older_shepherd_asks_the_plain_one_when_the_section_names_no_reference()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let path = control_address(dir.path());
+        let shepherd = older_shepherd(&path, "poll = \"1m\"\n");
+        let client = ReconnectingClient::connect(&path).await.unwrap();
+
+        let section = client.dog_config("metrics").await.unwrap();
+
+        assert_eq!(section.as_str(), "poll = \"1m\"\n");
+        let (resolved, plain) = named("metrics");
+        assert_eq!(asked(&shepherd), vec![resolved, plain]);
+    }
+
+    #[tokio::test]
+    async fn a_reconnecting_client_on_an_older_shepherd_with_a_reference_is_refused_without_the_section_text()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let path = control_address(dir.path());
+        let _shepherd = older_shepherd(&path, &format!("token = \"{{{{secret:{SENTINEL}}}}}\"\n"));
+        let client = ReconnectingClient::connect(&path).await.unwrap();
+
+        let err = client.dog_config("metrics").await.unwrap_err();
+
+        assert_eq!(err, too_old_refusal("metrics"));
+        let text = format!("{err} {err:?}");
+        assert!(!text.contains(SENTINEL), "{text}");
+        assert!(!text.contains("{{secret:"), "{text}");
     }
 }
