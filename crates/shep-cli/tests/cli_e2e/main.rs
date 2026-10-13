@@ -48,6 +48,7 @@ mod guard;
 mod handover_basic;
 mod handover_clustered;
 mod handover_disabled;
+mod handover_dogs;
 mod handover_extras;
 mod home_and_watch;
 mod import_env;
