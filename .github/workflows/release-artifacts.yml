@@ -179,7 +179,7 @@ jobs:
           # prebuilt archive (#737). `cargo install shep` and the Homebrew
           # formula still build without it; docs/distribution.md and the web
           # install page carry that split. It adds no dependency, and the
-          # measured delta is about 93 KiB per binary, well under the 0.25
+          # measured delta is about 77 KiB per binary, well under the 0.25
           # MiB ceiling #737 set.
           features: otel
           checksum: sha256
