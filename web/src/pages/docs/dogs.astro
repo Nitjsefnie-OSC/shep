@@ -94,17 +94,15 @@ const dogLogDemo = `2026-09-02T14:22:31.412+02:00 [shep] shep started this dog; 
         <code>shep start</code> and <code>shep muster</code>.
       </p>
       <p>
-        Takes a built-in name or one <code>shep adopt</code> has recorded,
-        and refuses anything else before it writes. A refused enable leaves{" "}
-        <code>shep.toml</code> untouched. The check reads{" "}
-        <code>[daemon] adopted_dogs</code> rather than the shepherd, so it
-        holds with nothing listening.
+        Takes a built-in name or one <code>shep adopt</code> has recorded.
+        Any other name exits 3 and lists the dogs, or 5 with no shepherd.
       </p>
     </VerbSignature>
     <VerbSignature verb="disable" usage="shep disable <name>">
       <p>
         The mirror: stops the dog if one is running and removes it from the
-        boot list either way. It carries no name check of its own,
+        boot list either way. <code>shep flock</code> keeps listing it,{" "}
+        <code>disabled</code>. It carries no name check of its own,
         deliberately, so it is what takes a hand-written{" "}
         <code>enabled_dogs</code> entry back out.
       </p>
@@ -335,7 +333,7 @@ shep_host_memory_total_bytes 51539607552`}</CodeBlock>
       <div class="row"><span><code>shep_sheep_restart_total</code></span> <span data-label="Meaning">Restart count since registration.</span></div>
       <div class="row"><span><code>shep_sheep_uptime_seconds</code></span> <span data-label="Meaning">Seconds since this sheep's last successful start.</span></div>
       <div class="row"><span><code>shep_sheep_status</code></span> <span data-label="Meaning">1 for the status this sheep is currently in, 0 for every other status.</span></div>
-      <div class="row"><span><code>shep_dog_up</code></span> <span data-label="Meaning">1 when this dog is online, 0 otherwise.</span></div>
+      <div class="row"><span><code>shep_dog_up</code></span> <span data-label="Meaning">1 when this dog is online, 0 otherwise. A disabled dog has no series.</span></div>
       <div class="row"><span><code>shep_daemon_up</code></span> <span data-label="Meaning">Always 1: the scrape reached the shepherd.</span></div>
       <div class="row"><span><code>shep_daemon_pid</code></span> <span data-label="Meaning">The shepherd's own pid, so a restart is visible as a step change.</span></div>
       <div class="row"><span><code>shep_host_memory_total_bytes</code></span> <span data-label="Meaning">Total physical memory on the host.</span></div>

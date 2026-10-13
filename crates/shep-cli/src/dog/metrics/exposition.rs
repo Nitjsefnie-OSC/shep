@@ -212,6 +212,11 @@ pub fn render(reading: &Reading) -> String {
 
     for info in &reading.flock {
         if let Some(source) = &info.dog {
+            // Parked on purpose: a series at 0 would read as a dog that
+            // went down, and fire the alert written for that.
+            if info.disabled == Some(true) {
+                continue;
+            }
             let pairs = [
                 ("dog", info.name.as_str()),
                 ("source", <&'static str>::from(source)),
@@ -407,6 +412,27 @@ mod tests {
         assert!(
             !text.contains(r#"shep_sheep_status{sheep="bark""#),
             "a dog is not reported as a sheep"
+        );
+    }
+
+    /// fails if disabling a dog reads as it going down, which fires the
+    /// "dog down" alert an operator wrote for a crash.
+    #[test]
+    fn a_disabled_dog_exports_no_series_at_all() {
+        let mut parked = sample_info("bark");
+        parked.status = ProcStatus::Stopped;
+        parked.dog = Some(DogSource::BuiltIn);
+        parked.disabled = Some(true);
+        let mut running = sample_info("metrics");
+        running.dog = Some(DogSource::BuiltIn);
+        let text = render(&Reading {
+            flock: vec![parked, running],
+            ..reading()
+        });
+        assert!(!text.contains(r#"dog="bark""#), "{text}");
+        assert!(
+            text.contains(r#"shep_dog_up{dog="metrics",source="built-in"} 1"#),
+            "{text}"
         );
     }
 

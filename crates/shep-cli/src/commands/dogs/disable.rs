@@ -1,5 +1,5 @@
 //! `shep disable`: removes a dog from the config, and stops it if a
-//! shepherd is running.
+//! shepherd is running. The shepherd keeps listing it, disabled.
 
 use std::path::Path;
 
@@ -67,8 +67,8 @@ async fn disable_after_config(
             false,
         );
     };
-    // `Response::Deleted`, the same reply `Delete` gives: disabling
-    // deregisters exactly as `Delete` does.
+    // `Response::Deleted`, the same reply `Delete` gives, though the dog stays
+    // registered: it is the only reply an older CLI accepts for this request.
     match client
         .request(Request::DisableDog {
             name: name.to_string(),

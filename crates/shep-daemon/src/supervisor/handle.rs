@@ -441,6 +441,26 @@ impl SupervisorHandle {
         Ok(infos)
     }
 
+    /// Stops the dog registered as `name` and marks it disabled, leaving it
+    /// registered at rest.
+    ///
+    /// Answers with the dog's id. A dog that is already stopped is marked and
+    /// answered the same way.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::NotFound`]: no dog is registered under `name`.
+    ///   A sheep holding the name is left alone.
+    /// - [`SupervisorError::EngineStopped`]: the actor is gone.
+    pub(crate) async fn disable_dog(&self, name: String) -> Result<Vec<u32>, SupervisorError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Command(Command::DisableDog { name, reply }))
+            .await
+            .map_err(|_| SupervisorError::EngineStopped)?;
+        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+    }
+
     /// Clears the disabled mark on the app of every sheep matching `selector`
     /// and starts it.
     ///
