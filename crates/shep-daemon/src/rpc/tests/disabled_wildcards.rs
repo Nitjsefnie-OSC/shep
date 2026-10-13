@@ -271,11 +271,12 @@ async fn enable_all_reaches_every_disabled_sheep_and_no_dog() {
 
     assert_eq!(names(&enabled), ["api", "web"]);
     let flock = list_flock(&h.ctx, 6).await;
-    assert!(flock.iter().all(|info| info.disabled.is_none()), "{flock:?}");
     assert!(
-        flock
-            .iter()
-            .all(|info| info.status == ProcStatus::Online),
+        flock.iter().all(|info| info.disabled.is_none()),
+        "{flock:?}"
+    );
+    assert!(
+        flock.iter().all(|info| info.status == ProcStatus::Online),
         "{flock:?}"
     );
     assert_eq!(

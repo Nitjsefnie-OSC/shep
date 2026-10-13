@@ -35,6 +35,7 @@ use crate::output::{FlockRows, Streams};
 mod add;
 mod configure;
 mod deadline;
+mod disabled_selectors;
 mod dogs;
 mod interpreters_stock;
 mod operational;
