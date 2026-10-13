@@ -206,7 +206,7 @@ pub fn select_node(app: &mut App, path: &str) {
                     EntryBody::Node { path: at, .. } => at == path,
                     EntryBody::Leaf { field, .. } => field.key == path,
                 }),
-            PaneRow::Env(_) | PaneRow::AddEnv => false,
+            PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => false,
         })
         .unwrap_or_else(|| panic!("no node {path} is drawn"));
     app.update(Msg::Key(KeyPress::SelectFirst));
