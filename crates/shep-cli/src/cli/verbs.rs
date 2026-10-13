@@ -177,23 +177,27 @@ pub enum Commands {
     /// mark cleared and is started; a dog is written into `[daemon]
     /// enabled_dogs` in `shep.toml` and started now if a shepherd is running.
     ///
-    /// A sheep needs a running shepherd, and takes its name only: an id or
+    /// A sheep needs a running shepherd, and takes a name, a `fold:`, a
+    /// `/regex/` or `all`. A sweep reaches only disabled sheep and never a
+    /// dog, so `shep enable all` undoes a batch of disables. An id or
     /// `name:slot` is refused, since the mark belongs to the whole app. A
     /// sheep that is not disabled is left alone and the verb says so. A dog
-    /// writes the config either way and exits 0 with no shepherd running --
-    /// it comes up with the next one. `shep muster` is the only verb that
-    /// autostarts a shepherd; this is not it.
+    /// is named, and writes the config either way and exits 0 with no
+    /// shepherd running -- it comes up with the next one. `shep muster` is
+    /// the only verb that autostarts a shepherd; this is not it.
     Enable(EnableArgs),
     /// Stop a sheep and refuse to start it again until `shep enable`, or turn
     /// a dog off. A dog is removed from `[daemon] enabled_dogs` and stopped
     /// now if a shepherd is running.
     ///
-    /// A sheep needs a running shepherd, and takes its name only: an id or
-    /// `name:slot` is refused, since the mark belongs to the whole app.
-    /// While it is set, `start`, `restart` and `stock` refuse the sheep and
-    /// exit 2 naming `shep enable`. A dog's own configuration in `dogs.toml`
-    /// survives a disable/enable cycle; `shep rehome` forgets the adoption
-    /// as well.
+    /// A sheep needs a running shepherd, and takes a name, a `fold:`, a
+    /// `/regex/` or `all`; a sweep never reaches a dog. An id or `name:slot`
+    /// is refused, since the mark belongs to the whole app. While it is set,
+    /// `start`, `restart` and `stock` refuse the sheep by name and exit 2
+    /// naming `shep enable`, and `all`, a fold or a regex pass it by. Naming
+    /// it still reaches `stop`, `delete`, `describe` and `signal`. A dog's
+    /// own configuration in `dogs.toml` survives a disable/enable cycle;
+    /// `shep rehome` forgets the adoption as well.
     Disable(DisableArgs),
     /// Vet a binary shep has never seen and register it as a dog: writes
     /// `[daemon] adopted_dogs` and `[daemon] enabled_dogs` in `shep.toml`,

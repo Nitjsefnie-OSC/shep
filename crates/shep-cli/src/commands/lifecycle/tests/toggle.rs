@@ -158,19 +158,89 @@ async fn an_id_is_refused_with_usage_naming_its_app() {
     }
 }
 
-/// fails if a wildcard, which a later ticket owns, is sent as a request.
+/// fails if a wildcard is refused client-side, or is widened or narrowed
+/// before it reaches the shepherd, which owns what a sweep matches.
 #[tokio::test]
-async fn a_wildcard_is_refused_until_it_is_supported() {
+async fn a_wildcard_is_sent_to_the_shepherd_as_typed() {
     let dir = tempfile::tempdir().unwrap();
     let path = shep_client::testing::control_address(dir.path());
-    let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
+    let (client, mut envelopes) = fake_client_answering(&path, |request| match request {
+        Request::Disable { .. } => Response::Disabled(vec![stopped_api(true)]),
+        Request::Enable { .. } => Response::Enabled(vec![stopped_api(false)]),
+        Request::ListFlock => Response::Flock(vec![stopped_api(true)]),
+        _ => Response::Pong,
+    })
+    .await;
 
-    for target in ["all", "/api/", "fold:backed"] {
-        let (code, _printed, said) =
-            toggle_against(&client, Toggle::Disable, target, Format::Table).await;
-        assert_eq!(code, ExitCode::Usage, "{target}: {said}");
+    let targets = [
+        ("all", SelectorSpec::All),
+        ("/api/", SelectorSpec::Regex("api".to_string())),
+        ("fold:backed", SelectorSpec::Fold("backed".to_string())),
+    ];
+    for (target, selector) in targets {
+        for verb in [Toggle::Disable, Toggle::Enable] {
+            let (code, _printed, said) = toggle_against(&client, verb, target, Format::Table).await;
+            assert_eq!(code, ExitCode::Success, "{target}: {said}");
+            let sent = loop {
+                let body = envelopes.recv().await.unwrap().body;
+                if body != Request::ListFlock {
+                    break body;
+                }
+            };
+            let expected = match verb {
+                Toggle::Disable => Request::Disable {
+                    selector: selector.clone(),
+                },
+                Toggle::Enable => Request::Enable {
+                    selector: selector.clone(),
+                },
+            };
+            assert_eq!(sent, expected, "{target}");
+        }
     }
-    assert!(envelopes.try_recv().is_err());
+}
+
+/// fails if `enable all` with nothing disabled prints a table as though
+/// something started.
+#[tokio::test]
+async fn enable_all_with_nothing_disabled_says_so_and_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, _envelopes) = fake_client_answering(&path, |request| match request {
+        Request::Enable { .. } => Response::Enabled(Vec::new()),
+        _ => Response::Pong,
+    })
+    .await;
+
+    let (code, printed, said) = toggle_against(&client, Toggle::Enable, "all", Format::Table).await;
+
+    assert_eq!(code, ExitCode::Success, "{said}");
+    assert!(
+        printed.contains("matching `all`") && printed.contains("nothing changed"),
+        "{printed}"
+    );
+}
+
+/// fails if `disable all` with every sheep already disabled prints a table or
+/// exits non-zero for work that is already done.
+#[tokio::test]
+async fn disable_all_with_everything_disabled_says_so_and_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, _envelopes) = fake_client_answering(&path, |request| match request {
+        Request::Disable { .. } => Response::Disabled(Vec::new()),
+        _ => Response::Pong,
+    })
+    .await;
+
+    let (code, printed, said) =
+        toggle_against(&client, Toggle::Disable, "all", Format::Table).await;
+
+    assert_eq!(code, ExitCode::Success, "{said}");
+    assert!(
+        printed.contains("already disabled") && printed.contains("nothing changed"),
+        "{printed}"
+    );
 }
 
 /// fails if an older shepherd's `Unsupported` reaches the operator as a bare

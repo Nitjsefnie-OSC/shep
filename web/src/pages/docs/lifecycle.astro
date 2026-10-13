@@ -307,10 +307,11 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
       roll remembers. There's no undelete: the config is gone unless you
       kept the Flockfile that produced it.
     </p>
-    <VerbSignature verb="disable" usage="shep disable <name>">
+    <VerbSignature verb="disable" usage="shep disable <selector>">
       <p>
         Stops the app and refuses to start it again until{" "}
-        <code>shep enable</code>. It takes one app name: an id or{" "}
+        <code>shep enable</code>. It takes a name, <code>fold:</code>,{" "}
+        <code>/regex/</code> or <code>all</code>. An id or{" "}
         <code>name:slot</code> exits 2 and names the app to type. A disabled
         app answers <code>start</code>, <code>restart</code>,{" "}
         <code>reload</code> and <code>stock</code> with exit 2, and shows{" "}
@@ -328,7 +329,7 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
         loads and the verb exits 0. A Flockfile value never clears the mark.
       </p>
     </VerbSignature>
-    <VerbSignature verb="enable" usage="shep enable <name>">
+    <VerbSignature verb="enable" usage="shep enable <selector>">
       <p>
         Clears the mark and starts the app. An app that is not disabled is
         left alone, and the verb says so.
