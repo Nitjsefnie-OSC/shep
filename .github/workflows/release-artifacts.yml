@@ -232,6 +232,10 @@ jobs:
           export SHEP_HOME
           SHEP_HOME="$(mktemp -d)"
           printf '[metrics]\notlp_endpoint = "http://127.0.0.1:4318"\n' > "$SHEP_HOME/dogs.toml"
+          # Built-in dogs register `disabled` until an operator enables
+          # them, and `enable` is how: it writes `enabled_dogs` into
+          # `$SHEP_HOME/shep.toml`, which the daemon then spawns at boot.
+          "$bin" enable metrics
           "$bin" daemon > daemon.log 2>&1 &
           daemon_pid=$!
           trap 'kill "$daemon_pid" 2>/dev/null || true' EXIT
