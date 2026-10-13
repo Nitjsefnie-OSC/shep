@@ -87,10 +87,19 @@ version_group = "shep"
 [[package]]
 name = "shep-daemon"
 version_group = "shep"
+# The published 0.12.5 no longer builds: tokio-util 0.7.20 made a `flush()`
+# call in shep-daemon ambiguous (fixed on main by #802), and
+# cargo-semver-checks builds that baseline with fresh dependencies, so every
+# release PR run fails on it. Turn the check back on for both once 0.13.0
+# is published, since that becomes the baseline. The version still comes
+# from the conventional commits, and a breaking one bumps the minor.
+semver_check = false
 
 [[package]]
 name = "shep"
 version_group = "shep"
+# Off until 0.13.0 is published, as for shep-daemon above.
+semver_check = false
 
 # The placeholder holding the `shep-cli` name on crates.io. Has no code, so
 # no commit will ever imply a version bump; excluded from the release flow.
