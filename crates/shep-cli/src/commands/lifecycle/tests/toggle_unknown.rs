@@ -42,16 +42,16 @@ fn the_dogs_follow_the_shepherds_words_as_an_english_list() {
 /// say which names would have worked.
 #[tokio::test]
 async fn an_unknown_name_exits_not_found_and_lists_the_dogs() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = shep_client::testing::control_address(dir.path());
-    let (client, _daemon) = fake_client_replying_err(
-        &path,
-        RpcErrorCode::NotFound,
-        "selector matched no registered sheep",
-    )
-    .await;
-
+    // The fake daemon scripts one reply, so each verb gets its own.
     for verb in [Toggle::Enable, Toggle::Disable] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = shep_client::testing::control_address(dir.path());
+        let (client, _daemon) = fake_client_replying_err(
+            &path,
+            RpcErrorCode::NotFound,
+            "selector matched no registered sheep",
+        )
+        .await;
         let (code, said) =
             toggle_with_dogs(&client, verb, "metrcs", &dogs(&["metrics", "bark", "otel"])).await;
 
