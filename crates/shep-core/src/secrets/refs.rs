@@ -61,14 +61,7 @@ impl fmt::Display for SecretRef<'_> {
 #[must_use]
 pub fn references(config: &AppConfig) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
-    let mut scan = |value: &str| {
-        secret_references_in(value, |reference| {
-            found.insert(match reference.namespace {
-                Some(namespace) => format!("{namespace}/{}", reference.key),
-                None => reference.key.to_string(),
-            });
-        });
-    };
+    let mut scan = |value: &str| found.extend(references_in(value));
     for value in config.env.values() {
         scan(value);
     }
@@ -81,6 +74,26 @@ pub fn references(config: &AppConfig) -> BTreeSet<String> {
     if let Some(value) = &config.err_file {
         scan(value);
     }
+    found
+}
+
+/// Every `{{secret:...}}` reference `value` names, as [`references`] spells
+/// them (`KEY` or `namespace/KEY`, no braces), deduplicated.
+///
+/// The same tokenizer [`references`] walks a config's fields with and
+/// [`template::render_secrets`] resolves against, so a string this reports
+/// nothing for is one `render_secrets` would not substitute. A malformed
+/// `{{secret:...}}` is not a reference here; `render_secrets` is what refuses
+/// it.
+#[must_use]
+pub fn references_in(value: &str) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    secret_references_in(value, |reference| {
+        found.insert(match reference.namespace {
+            Some(namespace) => format!("{namespace}/{}", reference.key),
+            None => reference.key.to_string(),
+        });
+    });
     found
 }
 
@@ -191,6 +204,22 @@ mod tests {
             ]),
             "every field scanned, deduplicated, and no positional tokens"
         );
+    }
+
+    #[test]
+    fn references_in_reads_one_string_through_the_same_tokenizer() {
+        assert_eq!(
+            references_in("a {{secret:ONE}} {{name}} {{secret:vercel/TWO}} {{secret:ONE}}"),
+            BTreeSet::from(["ONE".to_string(), "vercel/TWO".to_string()])
+        );
+        for none in [
+            "plain",
+            "{{{{secret:ONE}}}}",
+            "{{secret:bad key}}",
+            "{{secret:ONE",
+        ] {
+            assert!(references_in(none).is_empty(), "{none:?} names nothing");
+        }
     }
 
     /// The key, not the reference. `references` answers the other direction,

@@ -434,7 +434,30 @@ pub enum Request {
     /// as it stands
     Muster,
     /// Ask for one dog's `[dog.<name>]` section, as the dog itself parses it
+    ///
+    /// The text as the operator wrote it: a `{{secret:...}}` reference comes
+    /// back as a reference. An editor must use this one. Lookout reads the
+    /// section and writes the whole text back through [`Self::SetDogConfig`],
+    /// so a resolved read would put the credential into `dogs.toml`.
+    ///
+    /// Answers [`Response::DogSection`].
     DogConfig {
+        /// The dog's name: the config key, not a selector
+        name: String,
+    },
+    /// Ask for one dog's section with every `{{secret:...}}` reference
+    /// replaced by its value, resolved in the shepherd's own environment
+    ///
+    /// For a dog that consumes its configuration. [`Self::DogConfig`] is
+    /// unchanged and stays the raw read. A reference that cannot resolve
+    /// fails the request with [`RpcErrorCode::InvalidConfig`], naming the
+    /// key path and the reference and never a value. `dogs.toml` is never
+    /// rewritten.
+    ///
+    /// Answers [`Response::DogSection`]. Not a protocol bump, as
+    /// [`Self::HostUsage`] was not: a shepherd that has never heard of this
+    /// one decodes [`Self::Unrecognized`] and refuses by name.
+    DogConfigResolved {
         /// The dog's name: the config key, not a selector
         name: String,
     },
@@ -970,8 +993,34 @@ mod tests {
                     table: None,
                 },
             ),
+            // Paired with the `dog_config` row (11): they differ by their
+            // `kind` alone.
+            envelope(
+                38,
+                Request::DogConfigResolved {
+                    name: "bark".to_string(),
+                },
+            ),
         ];
         insta::assert_json_snapshot!("request_wire_v11", requests);
+    }
+
+    #[test]
+    fn dog_config_resolved_serializes_as_its_own_kind() {
+        assert_eq!(
+            serde_json::to_string(&Request::DogConfigResolved {
+                name: "bark".to_string()
+            })
+            .unwrap(),
+            r#"{"kind":"dog_config_resolved","name":"bark"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Request::DogConfig {
+                name: "bark".to_string()
+            })
+            .unwrap(),
+            r#"{"kind":"dog_config","name":"bark"}"#
+        );
     }
 
     #[test]
