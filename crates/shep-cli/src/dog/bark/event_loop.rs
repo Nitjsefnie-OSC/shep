@@ -604,6 +604,14 @@ mod tests {
             self.0.recv().await.map(Err)
         }
 
+        fn topics(&self) -> &[String] {
+            &[]
+        }
+
+        async fn set_topics(&mut self, _topics: Vec<String>) -> Result<(), Resubscribe> {
+            Ok(())
+        }
+
         async fn resubscribe(&mut self) -> Result<(), Resubscribe> {
             Err(Resubscribe::Lost(LinkLost::Budget {
                 waited: Duration::ZERO,
