@@ -472,6 +472,7 @@ mod tests {
             flock: vec![],
             daemon_version: "9.9.9".to_string(),
             daemon_pid: 12345,
+            samples: vec![],
             host: None,
         }
     }
