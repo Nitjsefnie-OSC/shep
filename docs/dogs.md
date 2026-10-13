@@ -292,9 +292,10 @@ Resource attributes are `service.name = "shep"`, `service.version` and
 
 One failed export is one line in the dog's log, on the first failure after
 a success and again on recovery, never once per tick. A 2xx whose body names
-a `partialSuccess` counts as one: the collector took some points and said
-why, and its reason is that line. The answer's body is read for that and
-nothing else, up to 8 KiB. It never touches the scrape server or the dog's
+a `partialSuccess` counts as one: the line carries its
+`rejectedDataPoints` and `errorMessage`, and an empty `partialSuccess` is a
+clean export. The answer's body is read for that and nothing else, up to
+8 KiB. It never touches the scrape server or the dog's
 exit code, and there is no final flush on stop: the next tick sends current
 values anyway.
 
@@ -304,9 +305,9 @@ install-size method):
 
 | Build | `target/release/shep` |
 |---|---|
-| default | 18,994,048 bytes |
-| `--features otel` | 19,071,024 bytes |
-| delta | 76,976 bytes |
+| default | 18,994,592 bytes |
+| `--features otel` | 19,090,064 bytes |
+| delta | 95,472 bytes |
 
 ## The bark dog
 
