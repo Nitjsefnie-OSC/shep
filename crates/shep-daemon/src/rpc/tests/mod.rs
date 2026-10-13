@@ -145,6 +145,7 @@ mod dog_tables;
 mod lambs_staleness;
 mod misc_verbs;
 mod push;
+mod sheep_dog_names;
 mod start_add;
 mod stats;
 mod trigger_signal;
