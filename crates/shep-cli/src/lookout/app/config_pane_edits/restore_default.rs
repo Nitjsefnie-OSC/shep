@@ -5,7 +5,9 @@ impl App {
     /// operator's value for the field under the cursor, so the stored
     /// default shows through once sent: the same verb the list sub-screen's
     /// `d` performs on an element, which is why both carry
-    /// [`KeyPress::Remove`].
+    /// [`KeyPress::Remove`]. On the row of an entry of an array or map of
+    /// tables it files the entry's removal instead, behind the same write
+    /// gate; nothing is sent until the pane closes.
     ///
     /// Same lock-then-control order as [`Self::cycle_field`] and
     /// [`Self::confirm_field`]: the lock names the more specific reason and
@@ -22,6 +24,14 @@ impl App {
                 text: Self::lock_refusal(&key, lock),
                 grave: true,
             });
+            return Effect::None;
+        }
+        if self.config_pane().is_some_and(ConfigPane::cursor_on_entry) {
+            if self.authorize_write().is_some()
+                && let Some(pane) = self.config_pane_mut()
+            {
+                pane.file_entry_removal();
+            }
             return Effect::None;
         }
         if self

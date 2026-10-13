@@ -19,6 +19,7 @@ use super::super::field::{
 };
 use super::super::viewport::Viewport;
 use super::entries::{EntryBody, EntryRows};
+use super::entry_remove::Removal;
 use super::fields::{entries_text, render_json, resolved_by_kind, resolved_display, sheep_fields};
 use super::sheep_dog::SheepDogTable;
 
@@ -96,7 +97,8 @@ pub struct ConfigPane {
     /// The rows are [`flattened`]'s, so a key is dotted for a nested table
     /// and quoted for a property literally named with a dot. The write walks
     /// this map rather than the key: see [`Self::edited_section_with`].
-    pub(super) section_paths: BTreeMap<String, Vec<String>>,
+    /// Shared, so the pane stays small enough to sit in `Body` unboxed.
+    pub(super) section_paths: Arc<BTreeMap<String, Vec<String>>>,
     /// The tables a dog pane's rows nest in. Empty for a sheep. Shared, so
     /// the pane stays small enough to sit in `Body` unboxed.
     pub(super) outline: Arc<Outline>,
@@ -105,6 +107,10 @@ pub struct ConfigPane {
     /// The tables currently drawn open, by their dotted path. See
     /// [`Self::rows`].
     pub(super) open: BTreeSet<String>,
+    /// What each entry removal took out of the set, newest last, so `u` can
+    /// hand it back. See [`Self::file_entry_removal`]. Shared, like
+    /// [`Self::entries`], so the pane stays small enough to sit in `Body`.
+    pub(super) removals: Arc<Vec<Removal>>,
 }
 
 impl core::fmt::Debug for ConfigPane {
@@ -146,7 +152,8 @@ impl ConfigPane {
             dogs: None,
             section: None,
             dog_table: None,
-            section_paths: BTreeMap::new(),
+            removals: Arc::default(),
+            section_paths: Arc::default(),
             outline: Arc::new(Outline::default()),
             entries: Arc::default(),
             open: BTreeSet::new(),
@@ -217,7 +224,8 @@ impl ConfigPane {
             dogs: None,
             section: Some(section),
             dog_table: None,
-            section_paths: paths,
+            removals: Arc::default(),
+            section_paths: Arc::new(paths),
             open: outline.top_level_paths(),
             outline: Arc::new(outline),
             entries: Arc::new(entries),
@@ -364,9 +372,12 @@ impl ConfigPane {
         else {
             return None;
         };
-        let raw = self
-            .checklist_text(key, Some(value.as_value()))
-            .unwrap_or_else(|| render_json(value.as_value()));
+        let raw = if self.entries_field(key).is_some() {
+            entries_text(Some(value.as_value()))
+        } else {
+            self.checklist_text(key, Some(value.as_value()))
+                .unwrap_or_else(|| render_json(value.as_value()))
+        };
         Some(self.resolved(key, &raw))
     }
 
@@ -522,29 +533,6 @@ impl ConfigPane {
     /// keyboard back when that happens.
     pub(in crate::lookout) fn adopt_edits(&mut self, previous: Edits) {
         self.edits = previous;
-    }
-
-    /// [`Self::adopt_edits`] from `previous`, less every edit filed under an
-    /// array entry this pane no longer holds at the same position, which is
-    /// how many it dropped.
-    ///
-    /// An array entry is named by its place in the array, so after another
-    /// writer inserts or removes one, the same key names a different entry,
-    /// and the edit would be written into it.
-    pub(in crate::lookout) fn adopt_edits_from(&mut self, previous: &Self) -> usize {
-        let mut kept = previous.edits.clone();
-        let mut dropped = 0;
-        for (key, _) in previous.edits.iter() {
-            let EditKey::Field(name) = key else {
-                continue;
-            };
-            if !previous.entries.names_same_entry(name, &self.entries) {
-                kept.remove(key);
-                dropped += 1;
-            }
-        }
-        self.edits = kept;
-        dropped
     }
 }
 

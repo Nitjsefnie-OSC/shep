@@ -174,3 +174,236 @@ fn a_missing_map_entry_is_not_created() {
         SectionWrite::Refused
     );
 }
+
+#[test]
+fn removing_the_middle_of_three_clients_leaves_each_other_its_own_comment() {
+    let out = written(
+        &pane(THREE),
+        &[("clients", json!([{ "name": "alpha" }, { "name": "gamma" }]))],
+    );
+    assert_eq!(
+        out,
+        concat!(
+            "retries = 3\n",
+            "\n",
+            "# first\n",
+            "[[clients]]\n",
+            "name = \"alpha\"\n",
+            "\n",
+            "# third\n",
+            "[[clients]]\n",
+            "name = \"gamma\"\n",
+        )
+    );
+}
+
+#[test]
+fn removing_the_first_of_three_clients_takes_its_comment_with_it() {
+    let out = written(
+        &pane(THREE),
+        &[(
+            "clients",
+            json!([{ "id": "b-2", "name": "beta" }, { "name": "gamma" }]),
+        )],
+    );
+    assert_eq!(
+        out,
+        concat!(
+            "retries = 3\n",
+            "\n",
+            "# second\n",
+            "[[clients]]\n",
+            "id = \"b-2\" # the id\n",
+            "name = \"beta\"\n",
+            "\n",
+            "# third\n",
+            "[[clients]]\n",
+            "name = \"gamma\"\n",
+        )
+    );
+}
+
+#[test]
+fn removing_the_last_of_three_clients_leaves_the_other_two_as_they_were() {
+    let out = written(
+        &pane(THREE),
+        &[(
+            "clients",
+            json!([{ "name": "alpha" }, { "id": "b-2", "name": "beta" }]),
+        )],
+    );
+    assert_eq!(
+        out,
+        concat!(
+            "retries = 3\n",
+            "\n",
+            "# first\n",
+            "[[clients]]\n",
+            "name = \"alpha\"\n",
+            "\n",
+            "# second\n",
+            "[[clients]]\n",
+            "id = \"b-2\" # the id\n",
+            "name = \"beta\"\n",
+        )
+    );
+}
+
+#[test]
+fn removing_the_only_client_writes_no_clients_table_at_all() {
+    let section = "retries = 3\n\n# only\n[[clients]]\nname = \"alpha\"\n";
+    let out = written(&pane(section), &[("clients", json!([]))]);
+    assert_eq!(out, "retries = 3\n");
+}
+
+#[test]
+fn removing_the_only_client_of_an_inline_array_leaves_an_empty_array() {
+    let section = "clients = [{ name = \"alpha\" }]\nretries = 3\n";
+    let out = written(&pane(section), &[("clients", json!([]))]);
+    assert_eq!(out, "clients = []\nretries = 3\n");
+}
+
+#[test]
+fn removing_one_of_two_inline_clients_keeps_the_other() {
+    let section = "clients = [{ name = \"alpha\" }, { name = \"beta\" }]\n";
+    let out = written(&pane(section), &[("clients", json!([{ "name": "beta" }]))]);
+    assert_eq!(out, "clients = [{ name = \"beta\" }]\n");
+}
+
+#[test]
+fn removing_the_last_of_two_inline_clients_keeps_the_first() {
+    let section = "clients = [{ name = \"alpha\" }, { name = \"beta\" }]\n";
+    let out = written(&pane(section), &[("clients", json!([{ "name": "alpha" }]))]);
+    assert_eq!(out, "clients = [{ name = \"alpha\" }]\n");
+}
+
+#[test]
+fn removing_one_of_two_models_leaves_the_other_with_its_comment() {
+    let section = concat!(
+        "# the small one\n",
+        "[models.small]\n",
+        "provider = \"local\"\n",
+        "\n",
+        "# the big one\n",
+        "[models.gpt]\n",
+        "provider = \"remote\"\n",
+        "context = 4096\n",
+    );
+    let out = written(
+        &pane(section),
+        &[(
+            "models",
+            json!({ "gpt": { "provider": "remote", "context": 4096 } }),
+        )],
+    );
+    assert_eq!(
+        out,
+        concat!(
+            "\n",
+            "# the big one\n",
+            "[models.gpt]\n",
+            "provider = \"remote\"\n",
+            "context = 4096\n",
+        )
+    );
+}
+
+#[test]
+fn removing_the_only_model_leaves_no_models_table() {
+    let section = "retries = 3\n\n[models.small]\nprovider = \"local\"\n";
+    let out = written(&pane(section), &[("models", json!({}))]);
+    assert_eq!(out, "retries = 3\n");
+}
+
+/// The pane folds an edit to entry 2 into the array it files when entry 0 is
+/// removed, so the writer sees entry 2 changed and entry 0 gone at once.
+#[test]
+fn a_removal_that_carries_an_edit_lands_the_edit_on_the_table_that_stays() {
+    let out = written(
+        &pane(THREE),
+        &[(
+            "clients",
+            json!([{ "id": "b-2", "name": "beta" }, { "name": "gamma", "admin": true }]),
+        )],
+    );
+    assert_eq!(
+        out,
+        concat!(
+            "retries = 3\n",
+            "\n",
+            "# second\n",
+            "[[clients]]\n",
+            "id = \"b-2\" # the id\n",
+            "name = \"beta\"\n",
+            "\n",
+            "# third\n",
+            "[[clients]]\n",
+            "name = \"gamma\"\n",
+            "admin = true\n",
+        )
+    );
+}
+
+/// With nothing identical to anchor on, the edited table pairs with the one
+/// at its place among those left.
+#[test]
+fn an_edited_table_next_to_a_removed_one_is_matched_by_position() {
+    let out = written(
+        &pane(THREE),
+        &[(
+            "clients",
+            json!([{ "name": "alpha" }, { "id": "b-2", "name": "bravo" }]),
+        )],
+    );
+    assert_eq!(
+        out,
+        THREE
+            .replace("\"beta\"", "\"bravo\"")
+            .replace("\n# third\n[[clients]]\nname = \"gamma\"\n", "",)
+    );
+}
+
+#[test]
+fn a_removal_that_also_unsets_a_key_of_a_table_that_stays_removes_that_key() {
+    let out = written(
+        &pane(THREE),
+        &[(
+            "clients",
+            json!([{ "name": "alpha" }, { "id": "b-2", "name": "beta" }, {}]),
+        )],
+    );
+    assert_eq!(out, THREE.replace("name = \"gamma\"\n", ""));
+}
+
+#[test]
+fn a_whole_value_with_a_table_the_section_lacks_is_refused() {
+    assert_eq!(
+        pane(THREE).edited_section_with(&edits_of(&[(
+            "clients",
+            json!([{ "name": "a" }, { "name": "b" }, { "name": "c" }, { "name": "d" }]),
+        )])),
+        SectionWrite::Refused
+    );
+}
+
+#[test]
+fn a_filed_whole_value_that_is_already_the_section_changes_nothing() {
+    let section = "[[clients]]\nname = \"alpha\"\n";
+    assert_eq!(
+        pane(section).edited_section_with(&edits_of(&[("clients", json!([{ "name": "alpha" }]))])),
+        SectionWrite::Nothing
+    );
+}
+
+#[test]
+fn leaf_edits_after_a_removal_use_the_indexes_the_array_has_then() {
+    let out = written(
+        &pane(THREE),
+        &[
+            ("clients", json!([{ "name": "alpha" }, { "name": "gamma" }])),
+            ("clients[1].name", json!("delta")),
+        ],
+    );
+    assert!(out.contains("name = \"delta\""), "{out}");
+    assert!(!out.contains("gamma") && !out.contains("beta"), "{out}");
+}

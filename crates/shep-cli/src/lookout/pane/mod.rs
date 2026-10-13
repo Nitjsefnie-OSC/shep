@@ -23,8 +23,10 @@ mod config;
 mod dogs;
 mod edit;
 mod entries;
+mod entries_write;
 #[cfg(test)]
 mod entry_edit;
+mod entry_remove;
 mod env;
 mod fields;
 #[cfg(test)]

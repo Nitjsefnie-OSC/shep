@@ -6,12 +6,12 @@ use crate::lookout::app::testing::*;
 use crate::lookout::pane::EntryBody;
 use crate::lookout::view::fixtures::{entries_dog_section, render, rows_of};
 
-fn pane(app: &App) -> &ConfigPane {
+pub(super) fn pane(app: &App) -> &ConfigPane {
     app.config_pane().expect("the pane is open")
 }
 
 /// Presses `→` on the row whose key is `key`, walking down to it first.
-fn open(app: &mut App, key: &str) {
+pub(super) fn open(app: &mut App, key: &str) {
     app.update(Msg::Key(KeyPress::SelectFirst));
     while !matches!(
         pane(app).cursor(),
@@ -23,7 +23,7 @@ fn open(app: &mut App, key: &str) {
 }
 
 /// Opens `clients` and every entry under it.
-fn open_every_client(app: &mut App) {
+pub(super) fn open_every_client(app: &mut App) {
     open(app, "clients");
     loop {
         let pane = pane(app);
@@ -71,14 +71,14 @@ fn a_frame_with_every_client_open_counts_them_and_never_draws_a_credential() {
 /// Walks the cursor onto the row keyed `key`, which the open entries have
 /// drawn.
 #[track_caller]
-fn select(app: &mut App, key: &str) {
+pub(super) fn select(app: &mut App, key: &str) {
     crate::lookout::view::fixtures::select_node(app, key);
 }
 
 /// Replaces what the editor `Enter` opens on `key` was seeded with by
 /// `text`, and applies it.
 #[track_caller]
-fn type_into(app: &mut App, key: &str, text: &str) {
+pub(super) fn type_into(app: &mut App, key: &str, text: &str) {
     select(app, key);
     app.update(Msg::Key(KeyPress::Confirm));
     for _ in 0..16 {
@@ -93,7 +93,7 @@ fn type_into(app: &mut App, key: &str, text: &str) {
 /// `Esc` on the pane, with the re-read it sends answered by `section`, and
 /// the one write that follows.
 #[track_caller]
-fn close_with(app: &mut App, section: &str) -> String {
+pub(super) fn close_with(app: &mut App, section: &str) -> String {
     let sent = Sent::DogSection {
         name: "paddock".into(),
     };
@@ -293,11 +293,11 @@ fn a_refresh_drops_an_open_array_entry_past_the_new_end() {
     assert!(!open.contains("clients[2]"), "{open:?}");
 }
 
-const ALPHA: &str = "[[clients]]\nname = \"alpha\"\nkey = \"hunter2\"\ntimeout = 30\n\n";
+pub(super) const ALPHA: &str = "[[clients]]\nname = \"alpha\"\nkey = \"hunter2\"\ntimeout = 30\n\n";
 
 /// `r` answered with `section`.
 #[track_caller]
-fn refresh_with(app: &mut App, section: String) {
+pub(super) fn refresh_with(app: &mut App, section: String) {
     let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Refresh)) else {
         panic!("r re-reads the section");
     };

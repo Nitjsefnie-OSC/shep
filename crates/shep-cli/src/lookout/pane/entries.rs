@@ -64,6 +64,9 @@ pub(in crate::lookout) enum EntryBody {
         children: Vec<usize>,
         /// Whether it is an entry, and not a table inside one.
         entry: bool,
+        /// Where the entry is in its entries field: its index in an array,
+        /// its key in a map. [`None`] for a table inside an entry.
+        step: Option<PathStep>,
     },
     /// One of the item schema's own properties.
     Leaf {
@@ -193,6 +196,23 @@ impl EntryRows {
         self.rows.get(*self.leaves.get(key)?).map(|row| &row.body)
     }
 
+    /// The place in the section of entry row `row`, and the entries field it
+    /// is directly under. [`None`] for a row that is not an entry.
+    pub(super) fn entry_place(&self, row: usize) -> Option<(usize, &PathStep)> {
+        let entry = self.rows.get(row)?;
+        match (&entry.body, entry.parent) {
+            (
+                EntryBody::Node {
+                    entry: true,
+                    step: Some(step),
+                    ..
+                },
+                PaneRow::Field(field),
+            ) => Some((field, step)),
+            _ => None,
+        }
+    }
+
     /// The open-set key of every entry and table inside one.
     pub(super) fn node_paths(&self) -> impl Iterator<Item = &str> {
         self.rows.iter().filter_map(|row| match &row.body {
@@ -232,6 +252,7 @@ impl EntryRows {
                     path: path.clone(),
                     children: Vec::new(),
                     entry: true,
+                    step: Some(step.clone()),
                 },
                 parent: at.parent,
             });
@@ -313,6 +334,7 @@ impl EntryRows {
                             path: path.clone(),
                             children: Vec::new(),
                             entry: false,
+                            step: None,
                         },
                         parent: under.parent,
                     });
