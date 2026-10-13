@@ -441,7 +441,7 @@ mod tests {
         }
     }
 
-    /// A full [`Reading`] carrying `store`'s snapshot over `flock`, so every
+    /// A full `Reading` carrying `store`'s snapshot over `flock`, so every
     /// assertion below reads the real exposition rather than the store.
     fn reading_with(store: &SampleStore, flock: &[ProcessInfo]) -> super::super::Reading {
         super::super::Reading {

@@ -106,8 +106,9 @@ impl fmt::Display for RefusalReason {
 
 /// One sample the dog refused.
 ///
-/// The feed prints [`Display`] once per sender and reason, which is what makes
-/// a refused metric visible to the author who wrote it.
+/// The feed prints one line per sender and reason through this type's
+/// [`fmt::Display`], which is what makes a refused metric visible to the
+/// author who wrote it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Refusal {
     /// The sender the sample came from, as its `ProcessInfo` id.
