@@ -102,6 +102,14 @@ fn apply(store: &SampleStore, event: BusEvent) {
 
 /// Whether `kind` means the samples this sender sent belong to an instance
 /// that no longer exists.
+///
+/// The arm a kind this build has not been taught lands on frees the samples.
+/// [`ProcessEventKind`] is `#[non_exhaustive]`, so this crate cannot match it
+/// exhaustively, and the guess that has to be made is made on the side that
+/// costs less: a sender sends its next sample, so freeing on a kind that
+/// turned out to mean "still the same instance" loses one sample period, while
+/// keeping on a kind that meant "this one is gone" leaves a dead instance's
+/// series in every scrape for good.
 fn clears_samples(kind: ProcessEventKind) -> bool {
     match kind {
         ProcessEventKind::Start
@@ -116,12 +124,11 @@ fn clears_samples(kind: ProcessEventKind) -> bool {
         // Still the same instance: `Online` follows a `Start` this dog already
         // cleared for, and a reload that never reached this one changed
         // nothing about it.
-        | ProcessEventKind::Online
-        | ProcessEventKind::Reload
-        | ProcessEventKind::ReloadAbandoned
-        // Decode-only today. A kind this build has not been taught is no
-        // reason to throw away samples the scrape-time guard can still judge.
-        | _ => false,
+        ProcessEventKind::Online | ProcessEventKind::Reload | ProcessEventKind::ReloadAbandoned => {
+            false
+        }
+        // Where `Unrecognized` and any variant added later land.
+        _ => true,
     }
 }
 #[cfg(test)]
@@ -250,8 +257,12 @@ mod tests {
         tokio::spawn(run(Arc::new(client), store))
     }
 
-    /// The whole clear/keep table, pinned per kind, so a new
-    /// `ProcessEventKind` cannot land on either side without a test noticing.
+    /// Every kind this build has is listed on one side of the table.
+    ///
+    /// `ProcessEventKind` is `#[non_exhaustive]`, so no match in this crate can
+    /// be exhaustive and no test here can enumerate what does not exist yet.
+    /// [`a_kind_this_build_has_not_been_taught_frees_the_senders_samples`] is
+    /// the half that survives a variant being added later.
     #[test]
     fn every_event_kind_is_listed_as_clear_or_keep() {
         for kind in [
@@ -278,6 +289,30 @@ mod tests {
                 "{kind:?} describes the instance that is still serving"
             );
         }
+    }
+
+    /// The arm a kind this build has not been taught lands on, read through
+    /// the kind that arm already has to serve: [`ProcessEventKind::Unrecognized`],
+    /// which only decoding produces.
+    ///
+    /// It frees rather than keeps. A sender sends its next sample, so freeing
+    /// costs at most one sample period, while a kept one is a series every
+    /// scrape renders and never updates.
+    #[test]
+    fn a_kind_this_build_has_not_been_taught_frees_the_senders_samples() {
+        assert!(
+            clears_samples(ProcessEventKind::Unrecognized),
+            "an unknown kind kept a dead instance's samples in every scrape"
+        );
+
+        let store = SampleStore::new();
+        let flock = [sheep(1, "web")];
+        apply(&store, metric(1, "rps", 7.0));
+        apply(
+            &store,
+            process_event(ProcessEventKind::Unrecognized, sheep(1, "web")),
+        );
+        assert!(sample_names(&store, &flock).is_empty());
     }
 
     #[test]
