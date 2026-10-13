@@ -240,12 +240,10 @@ fn a_successor_inheriting_an_empty_flock_does_not_restore_the_roll() {
     );
 
     assert_success(&shep(home).arg("delete").arg("ghost").output().unwrap());
-    let emptied = poll_flock_data(home, FLOCK_DEADLINE, |data| {
-        data.as_array().is_some_and(Vec::is_empty)
-    });
+    let emptied = poll_flock_data(home, FLOCK_DEADLINE, |data| sheep_rows(data).is_empty());
     assert_eq!(
-        emptied.as_array().map(Vec::len),
-        Some(0),
+        sheep_rows(&emptied).len(),
+        0,
         "the delete must leave an idle shepherd: {emptied}"
     );
     // Waited out rather than assumed: the debounced writer is about to record
@@ -257,11 +255,11 @@ fn a_successor_inheriting_an_empty_flock_does_not_restore_the_roll() {
     nix::sys::signal::kill(shepherd, nix::sys::signal::Signal::SIGHUP).unwrap();
 
     let after = poll_flock_data_across_a_handover(home, FLOCK_DEADLINE, |data| {
-        data.as_array().is_some_and(|rows| !rows.is_empty())
+        !sheep_rows(data).is_empty()
     });
     assert_eq!(
-        after.as_array().map(Vec::len),
-        Some(0),
+        sheep_rows(&after).len(),
+        0,
         "a successor must install the flock it was handed and nothing else; \
          this one restored a stale roll: {after}"
     );
@@ -343,8 +341,9 @@ fn add_registers_a_stopped_sheep_that_a_later_start_brings_up() {
         .unwrap();
     assert_success(&listed);
     let flock: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
-    assert_eq!(flock["data"][0]["name"], "pending", "it is in the flock");
-    assert_eq!(flock["data"][0]["status"], "stopped", "and still at rest");
+    let pending = &sheep_rows(&flock["data"])[0];
+    assert_eq!(pending["name"], "pending", "it is in the flock");
+    assert_eq!(pending["status"], "stopped", "and still at rest");
 
     // By name: a name reads no file, so this can only reach a sheep the flock
     // already holds.

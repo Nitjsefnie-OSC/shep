@@ -99,22 +99,29 @@ pub struct BootOptions {
     /// Assembled by the caller from `[daemon] enabled_dogs` and
     /// `[daemon] adopted_dogs`, so shep-daemon never reads `shep.toml` itself.
     pub dogs: Vec<DogSpec>,
-    /// Every dog name this shepherd may hold a section for, running or
-    /// not: the built-in dogs plus every name `[daemon] adopted_dogs`
-    /// records, plus whatever `[daemon] enabled_dogs` names.
+    /// Every dog this shepherd may hold a section for, running or not, with
+    /// the source it would spawn from: the built-in dogs, every dog
+    /// `[daemon] adopted_dogs` records, and whatever `[daemon] enabled_dogs`
+    /// names.
     ///
     /// Assembled by the caller from the same file [`Self::dogs`] comes out
     /// of, and for the same reason: shep-daemon never reads `shep.toml`
-    /// itself.
+    /// itself. A [`shep_core::protocol::DogSource::Adopted`] carries whether
+    /// the dog declared the shepherd channel (`[daemon] channel_dogs`), which
+    /// is what lets a dog be registered at rest without the file in hand.
     ///
     /// A superset of [`Self::dogs`], and the difference is the whole point
     /// of carrying both. That one is the spawn list, so it holds only the
     /// dogs an operator has switched on; this one holds the dogs that
-    /// exist. `Request::SetDogConfig` is guarded on this one, because the
-    /// dog most in need of configuring is the one that is disabled or has
-    /// never started, and a guard on the running set refuses exactly that
-    /// dog.
-    pub known_dogs: Vec<String>,
+    /// exist. Every entry here is registered once the flock is restored: a
+    /// dog outside [`Self::dogs`] sits `Stopped` and disabled until an
+    /// `EnableDog` starts it. `Request::SetDogConfig` is guarded on this
+    /// one, because the dog most in need of configuring is the one that is
+    /// disabled or has never started, and a guard on the running set
+    /// refuses exactly that dog.
+    ///
+    /// A dog in [`Self::dogs`] and absent here is registered all the same.
+    pub known_dogs: Vec<DogSpec>,
     /// Which of [`Self::dogs`] run before every sheep rather than after the
     /// flock, from `[daemon] boot_first_dogs`.
     ///
@@ -367,6 +374,11 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         .await?;
     }
 
+    // After the restore, so no saved sheep's id moves, and before the enabled
+    // dogs below, so each of those finds its entry at rest.
+    crate::dogs::register_dogs_at_rest(&options.known_dogs, &options.dogs, &paths, &supervisor)
+        .await;
+
     crate::dogs::spawn_enabled_dogs(&rest, &paths, &supervisor, &events).await;
 
     // Starts empty and is not carried across a handover: a successor has
@@ -412,7 +424,7 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         registry,
         snapshot_path: paths.snapshot.clone(),
         dogs_config: paths.dogs_config.clone(),
-        known_dogs: crate::rpc::KnownDogs::new(options.known_dogs.iter().cloned().collect()),
+        known_dogs: crate::rpc::KnownDogs::new(known_dog_names(&options)),
         dog_names,
         boot_first_dogs: options.boot_first_dogs.clone(),
         paths: paths.clone(),
@@ -467,6 +479,16 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         pidfile_lock,
         delete_flock_on_shutdown,
     })
+}
+
+/// Every dog name `options` makes known: the known list plus the enabled one.
+fn known_dog_names(options: &BootOptions) -> std::collections::BTreeSet<String> {
+    options
+        .known_dogs
+        .iter()
+        .chain(&options.dogs)
+        .map(|spec| spec.name.clone())
+        .collect()
 }
 
 /// The cron sleep bound this boot runs with: [`BootOptions::max_cron_sleep`],

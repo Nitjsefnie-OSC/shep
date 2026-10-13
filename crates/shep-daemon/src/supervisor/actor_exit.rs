@@ -5,6 +5,7 @@
 //! told apart from an operator's stop and from a drain. The others answer
 //! the remaining events a sheep or a subsystem raises.
 
+use super::actor_disable::Sweep;
 use super::*;
 
 impl<R: ProcessRunner> Actor<R> {
@@ -27,11 +28,11 @@ impl<R: ProcessRunner> Actor<R> {
     ) {
         let mut matched: Vec<ProcessInfo> = Vec::new();
         let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-        for id in self.matching_ids(selector) {
+        for id in self.reached_ids(selector, Sweep::Any) {
             let slot = self
                 .sheep
                 .get(&id)
-                .expect("`matching_ids` answers with ids read off this map a moment ago");
+                .expect("`reached_ids` answers with ids read off this map a moment ago");
             paths.insert(slot.entry.out_file.clone());
             paths.insert(slot.entry.err_file.clone());
             matched.push(to_info(&slot.entry, &self.smits));
@@ -178,11 +179,11 @@ impl<R: ProcessRunner> Actor<R> {
     ) {
         let mut matched: Vec<ProcessInfo> = Vec::new();
         let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-        for id in self.matching_ids(selector) {
+        for id in self.reached_ids(selector, Sweep::Any) {
             let slot = self
                 .sheep
                 .get(&id)
-                .expect("`matching_ids` answers with ids read off this map a moment ago");
+                .expect("`reached_ids` answers with ids read off this map a moment ago");
             paths.insert(slot.entry.out_file.clone());
             paths.insert(slot.entry.err_file.clone());
             matched.push(to_info(&slot.entry, &self.smits));

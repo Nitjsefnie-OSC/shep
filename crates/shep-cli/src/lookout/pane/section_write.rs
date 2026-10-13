@@ -23,6 +23,8 @@ use serde_json::Value;
 use super::super::edits::{EditKey, Edits};
 #[cfg(doc)]
 use super::super::field::flattened;
+use super::super::field::{Entries, FieldKind};
+use super::entries_write::set_entries;
 use super::{ConfigPane, PaneEdit, PathStep, SectionWrite};
 
 impl ConfigPane {
@@ -74,6 +76,14 @@ impl ConfigPane {
                 continue;
             };
             let value = value.as_value();
+            if let Some((kind, path)) = self.entries_field(name) {
+                match set_entries(&mut doc, kind, path, value) {
+                    Landed::Changed => changed = true,
+                    Landed::Already => {}
+                    Landed::Refused => return SectionWrite::Refused,
+                }
+                continue;
+            }
             let Some((path, existing)) = self.write_path(name) else {
                 return SectionWrite::Refused;
             };
@@ -98,6 +108,15 @@ impl ConfigPane {
 }
 
 impl ConfigPane {
+    /// The kind and section path of the array or map of tables `key` names,
+    /// or [`None`] for any other key.
+    pub(super) fn entries_field(&self, key: &str) -> Option<(Entries, &[String])> {
+        let FieldKind::Entries(kind) = self.fields.by_key(key)?.kind else {
+            return None;
+        };
+        Some((kind, self.section_paths.get(key)?))
+    }
+
     /// Where the row `key` is in the section, and how many leading steps of
     /// that path the section must already hold. [`None`] for a key that
     /// names no row.
@@ -116,7 +135,7 @@ impl ConfigPane {
 /// land loses the whole close, while an entry the section already carries must
 /// not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Landed {
+pub(super) enum Landed {
     /// The document now says something it did not before.
     Changed,
     /// The document already said this, so it is unchanged: a `null` on a key
@@ -137,7 +156,7 @@ enum Landed {
 /// that is neither an `i64` nor a genuine float (a `u64` above `i64::MAX`) is
 /// refused for the same reason: the float it would round to reads back as
 /// something else.
-fn toml_cell(value: &Value) -> Option<toml_edit::Item> {
+pub(super) fn toml_cell(value: &Value) -> Option<toml_edit::Item> {
     match value {
         Value::Bool(flag) => Some(toml_edit::value(*flag)),
         Value::Number(number) => {
@@ -196,7 +215,7 @@ fn toml_array(elements: &[Value]) -> Option<toml_edit::Array> {
 /// `inline` says whether `table` is an inline table, which is not something
 /// [`toml_edit::TableLike`] answers: a table created inside one has to be an
 /// inline table too, or it renders as nothing.
-fn set_at(
+pub(super) fn set_at(
     table: &mut dyn toml_edit::TableLike,
     path: &[PathStep],
     existing: usize,
@@ -261,7 +280,11 @@ fn set_at(
 /// [`Landed::Refused`], since the edit was aimed at something that is gone.
 /// [`Landed::Refused`] too when a step on the path is there and holds no keys,
 /// so the removal was aimed at something that is not a table.
-fn remove_at(table: &mut dyn toml_edit::TableLike, path: &[PathStep], existing: usize) -> Landed {
+pub(super) fn remove_at(
+    table: &mut dyn toml_edit::TableLike,
+    path: &[PathStep],
+    existing: usize,
+) -> Landed {
     let Some((PathStep::Key(key), rest)) = path.split_first() else {
         return Landed::Refused;
     };

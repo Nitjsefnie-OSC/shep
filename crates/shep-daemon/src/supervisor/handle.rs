@@ -98,6 +98,33 @@ impl SupervisorHandle {
         rx.await.map_err(|_| SupervisorError::EngineStopped)?
     }
 
+    /// Registers each dog as a flock member without starting it.
+    ///
+    /// Idempotent by name, as [`Self::register_at_rest`] is: a dog or sheep
+    /// already registered under the name is left as it stands. `disabled`
+    /// names the dogs of `dogs` to mark disabled as they register, and a name
+    /// registered already keeps whatever mark it has.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::EngineStopped`]: the actor is gone.
+    pub(crate) async fn register_dogs_at_rest(
+        &self,
+        dogs: Vec<(ResolvedApp, DogSource)>,
+        disabled: BTreeSet<String>,
+    ) -> Result<Vec<ProcessInfo>, SupervisorError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Command(Command::RegisterDogsAtRest {
+                dogs,
+                disabled,
+                reply,
+            }))
+            .await
+            .map_err(|_| SupervisorError::EngineStopped)?;
+        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+    }
+
     /// Names the fields in which each app differs from the flock's own copy of
     /// the sheep of the same name.
     ///
@@ -342,8 +369,11 @@ impl SupervisorHandle {
 
     /// Registers and starts one dog, marked as coming from `source`.
     ///
-    /// Idempotent by name: a dog already registered under `app`'s name is
-    /// reported as it stands rather than started twice.
+    /// Idempotent by name: a dog already running under `app`'s name is
+    /// reported as it stands rather than started twice. A dog registered at
+    /// rest (`Stopped`) is not running, so it is started in its own entry
+    /// from `app` and `source`, replacing the ones it was registered with,
+    /// and any disabled mark on it is cleared.
     ///
     /// # Errors
     ///

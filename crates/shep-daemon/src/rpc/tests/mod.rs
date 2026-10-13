@@ -132,6 +132,8 @@ mod disable_enable;
 mod disable_roll;
 mod disabled_reload;
 mod disabled_restarts;
+mod disabled_wildcards;
+mod dog_at_rest;
 mod dog_env;
 mod dog_fields;
 mod dog_lifecycle;

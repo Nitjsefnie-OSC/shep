@@ -167,8 +167,14 @@ pub fn entries_dog_section() -> String {
 /// [`entries_dog_section`], every entries row still closed. Opened the way
 /// the event loop opens one. The control gate is open.
 pub fn app_in_dog_pane_with_entries() -> App {
-    let mut app = app_with(flock_of(3, 0), plain());
+    let mut app = app_in_read_only_dog_pane_with_entries();
     app.set_control_for_tests(Control::Allowed);
+    app
+}
+
+/// [`app_in_dog_pane_with_entries`] on a lookout that may not write.
+pub fn app_in_read_only_dog_pane_with_entries() -> App {
+    let mut app = app_with(flock_of(3, 0), plain());
     app.update(Msg::DogPane {
         name: "paddock".to_string(),
         adopted_path: None,

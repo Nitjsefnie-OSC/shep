@@ -229,6 +229,7 @@ pub fn boot_options(
     args: &DaemonArgs,
     notify_socket: Option<&OsStr>,
 ) -> BootOptions {
+    let mut seen = std::collections::BTreeSet::new();
     BootOptions {
         socket: config.daemon.socket.clone(),
         ready_fd: None,
@@ -242,34 +243,24 @@ pub fn boot_options(
             .daemon
             .enabled_dogs
             .iter()
-            .map(|name| {
-                let source = match config.daemon.adopted_dogs.get(name) {
-                    Some(path) => DogSource::Adopted {
-                        path: path.display().to_string(),
-                        channel: config.daemon.channel_dogs.contains(name),
-                    },
-                    None => DogSource::BuiltIn,
-                };
-                DogSpec {
-                    name: name.clone(),
-                    source,
-                }
-            })
+            .map(|name| dog_spec(config, name))
             .collect(),
         // Every dog that EXISTS, which is not the list above: that one is
-        // the spawn order and holds only what an operator switched on.
-        // `Request::SetDogConfig` is guarded on this one, because the dog
-        // most in need of configuring is the one that is disabled or has
-        // never started. The same two sources `fail_enable_unknown_dog`
-        // calls valid names, plus `enabled_dogs` itself, so a name a
-        // hand-edited `shep.toml` enables without adopting is still a dog
-        // this shepherd tries to spawn and still one it may hold a section
-        // for.
+        // the spawn order and holds only what an operator switched on. The
+        // shepherd lists each at rest, and `Request::SetDogConfig` is
+        // guarded on this one, because the dog most in need of configuring
+        // is the one that is disabled or has never started. The same two
+        // sources `fail_enable_unknown_dog` calls valid names, plus
+        // `enabled_dogs` itself, so a name a hand-edited `shep.toml`
+        // enables without adopting is still a dog this shepherd tries to
+        // spawn and still one it may hold a section for.
         known_dogs: crate::dog::BUILT_IN_DOGS
             .iter()
             .map(|built_in| (*built_in).to_string())
             .chain(config.daemon.adopted_dogs.keys().cloned())
             .chain(config.daemon.enabled_dogs.iter().cloned())
+            .filter(|name| seen.insert(name.clone()))
+            .map(|name| dog_spec(config, &name))
             .collect(),
         boot_first_dogs: config.daemon.boot_first_dogs.clone(),
         // Overwritten by `boot_supervisor`, the only caller that ever wants
@@ -278,6 +269,21 @@ pub fn boot_options(
         // This process is the shep binary, which is what the field asserts, so
         // an init system's SIGHUP reaches the handover `shep daemon reload` does.
         handover: true,
+    }
+}
+
+/// The dog `name` is: adopted from the path `shep.toml` records, or built in.
+fn dog_spec(config: &DaemonConfig, name: &str) -> DogSpec {
+    let source = match config.daemon.adopted_dogs.get(name) {
+        Some(path) => DogSource::Adopted {
+            path: path.display().to_string(),
+            channel: config.daemon.channel_dogs.iter().any(|dog| dog == name),
+        },
+        None => DogSource::BuiltIn,
+    };
+    DogSpec {
+        name: name.to_string(),
+        source,
     }
 }
 
@@ -486,11 +492,25 @@ otel = "/usr/local/bin/shep-otel"
             None,
         );
 
-        let known: std::collections::BTreeSet<&str> =
-            opts.known_dogs.iter().map(String::as_str).collect();
         assert_eq!(
-            known,
-            ["bark", "metrics", "otel"].into_iter().collect(),
+            opts.known_dogs,
+            vec![
+                DogSpec {
+                    name: "metrics".into(),
+                    source: DogSource::BuiltIn
+                },
+                DogSpec {
+                    name: "bark".into(),
+                    source: DogSource::BuiltIn
+                },
+                DogSpec {
+                    name: "otel".into(),
+                    source: DogSource::Adopted {
+                        path: "/usr/local/bin/shep-otel".into(),
+                        channel: false,
+                    }
+                },
+            ],
             "adopted-and-disabled is the case this field exists for"
         );
     }
