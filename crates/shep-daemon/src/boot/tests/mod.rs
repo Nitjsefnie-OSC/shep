@@ -6,6 +6,7 @@
 //! `boot`'s own extras reporter over the whole production chain.
 
 mod dogs;
+mod dogs_at_rest;
 mod readiness;
 
 use crate::boot::*;

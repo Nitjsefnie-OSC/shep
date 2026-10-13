@@ -53,6 +53,28 @@ impl<R: ProcessRunner> Actor<R> {
             .into_info()
     }
 
+    /// Registers one dog as a flock member without spawning it.
+    ///
+    /// Marks it disabled when `disabled` names it, and only when this call is
+    /// what registered it: a dog or sheep already holding the name keeps the
+    /// mark it has.
+    pub(super) fn register_dog_at_rest(
+        &mut self,
+        app: &ResolvedApp,
+        source: DogSource,
+        disabled: &BTreeSet<String>,
+    ) -> ProcessInfo {
+        match self.register_without_spawning(app, ProcStatus::Stopped, Some(source)) {
+            Registration::Fresh(info) => {
+                if disabled.contains(&info.name) {
+                    self.disabled.insert(info.name.clone());
+                }
+                self.with_mark(info)
+            }
+            Registration::AlreadyKnown(info) => info,
+        }
+    }
+
     /// The secret view one spawn of `app` resolves against.
     ///
     /// The store is read here rather than inside [`assemble`], the same way
