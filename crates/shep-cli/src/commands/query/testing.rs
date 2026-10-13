@@ -100,6 +100,7 @@ pub(super) async fn describe_with_a_seeded_web(
     let roll = FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
         app: config,
         instances_running: 1,
+        disabled: false,
     }]);
     std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
     secrets::set(&paths.secrets, "DB_PASSWORD", "production", "hunter2").unwrap();

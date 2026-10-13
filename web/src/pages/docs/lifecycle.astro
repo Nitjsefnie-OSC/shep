@@ -318,8 +318,8 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
         serial reload already running: the app ends stopped and no
         replacement spawns. The shepherd's own restarts leave it stopped and
         log the drop: a <code>cron_restart</code> occurrence, a watch trigger,
-        the crash ladder, and memory and liveness restarts. The mark lives in
-        the shepherd's memory.
+        the crash ladder, and memory and liveness restarts. The mark is
+        written to the muster roll, so it survives a shepherd restart.
       </p>
     </VerbSignature>
     <VerbSignature verb="enable" usage="shep enable <name>">

@@ -75,6 +75,20 @@ impl<R: ProcessRunner> Actor<R> {
         }
     }
 
+    /// Marks the apps of `apps` that `names` lists disabled, ahead of their
+    /// registration at rest.
+    ///
+    /// A name outside `apps` is dropped: with no registered instance the
+    /// actor would prune it as soon as this message ends.
+    pub(super) fn mark_disabled(&mut self, apps: &[ResolvedApp], names: BTreeSet<String>) {
+        self.disabled.extend(
+            apps.iter()
+                .map(|app| &app.config().name)
+                .filter(|name| names.contains(*name))
+                .cloned(),
+        );
+    }
+
     /// Clears the mark on every disabled app `selector` reaches and starts
     /// it. An app that was not disabled is left as it is.
     pub(super) fn handle_enable(

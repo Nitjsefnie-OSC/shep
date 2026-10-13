@@ -103,7 +103,12 @@ impl<R: ProcessRunner> Actor<R> {
                 let _ = reply.send(result);
                 false
             }
-            Command::RegisterAtRest { apps, reply } => {
+            Command::RegisterAtRest {
+                apps,
+                disabled,
+                reply,
+            } => {
+                self.mark_disabled(&apps, disabled);
                 let registered = apps.iter().map(|app| self.register_at_rest(app)).collect();
                 let _ = reply.send(Ok(registered));
                 false

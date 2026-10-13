@@ -75,16 +75,24 @@ impl SupervisorHandle {
     /// Idempotent by name: an app already known is returned as it stands, so
     /// restoring a roll over a live flock disturbs nothing.
     ///
+    /// `disabled` names the apps of `apps` to mark disabled as they register,
+    /// so nothing can spawn them in between. A name not in `apps` is ignored.
+    ///
     /// # Errors
     ///
     /// - [`SupervisorError::EngineStopped`]: the actor is gone.
     pub(crate) async fn register_at_rest(
         &self,
         apps: Vec<ResolvedApp>,
+        disabled: BTreeSet<String>,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
         let (reply, rx) = oneshot::channel();
         self.tx
-            .send(Msg::Command(Command::RegisterAtRest { apps, reply }))
+            .send(Msg::Command(Command::RegisterAtRest {
+                apps,
+                disabled,
+                reply,
+            }))
             .await
             .map_err(|_| SupervisorError::EngineStopped)?;
         rx.await.map_err(|_| SupervisorError::EngineStopped)?

@@ -92,6 +92,7 @@ impl<R: ProcessRunner> Actor<R> {
                 pending_delete: slot.pending_delete,
                 epoch: slot.epoch,
                 ready_failed: slot.ready_failed,
+                disabled: self.is_disabled_id(slot.entry.id),
                 restart_due: slot.restart_due,
                 log_ctl: slot.log_ctl.clone(),
                 channel_open: slot.open_channel().is_some(),

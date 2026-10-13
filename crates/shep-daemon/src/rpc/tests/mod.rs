@@ -129,6 +129,7 @@ async fn sheep_config_view(
 
 mod apply_config;
 mod disable_enable;
+mod disable_roll;
 mod disabled_reload;
 mod disabled_restarts;
 mod dog_env;

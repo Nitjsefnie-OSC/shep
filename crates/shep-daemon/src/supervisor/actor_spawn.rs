@@ -444,6 +444,11 @@ impl<R: ProcessRunner> Actor<R> {
         // readiness re-arm between them has to see it, since a `ready_failed`
         // instance is `Starting` by construction and must not get a wait.
         let ready_failed = carried.ready_failed().unwrap_or(false);
+        // The mark is the app's, so it is set before the slot lands: nothing
+        // the successor does to this instance can respawn it in between.
+        if carried.disabled() == Some(true) {
+            self.disabled.insert(app.config().name.clone());
+        }
         // Restored as a pair with its reset flag: a parked config promoted
         // without it comes up on the identity the flag exists to replace.
         // A parked config that fails to normalize is dropped and warned about

@@ -33,6 +33,8 @@ pub(crate) enum Command {
     RegisterAtRest {
         /// Already-validated app specs to register, one entry each.
         apps: Vec<ResolvedApp>,
+        /// The names in `apps` to mark disabled as they register.
+        disabled: BTreeSet<String>,
         /// Answers with every entry now registered, in the order given.
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     },
