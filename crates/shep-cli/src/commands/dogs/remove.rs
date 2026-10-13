@@ -1,5 +1,17 @@
-//! `shep rehome`: stops an adopted dog and forgets where its binary lived,
-//! leaving the settings an operator wrote for it.
+//! The one removal an adopted dog has, run by `shep delete <name>` and by
+//! the hidden `shep rehome <name>`.
+//!
+//! Both verbs stop the dog, deregister it from this shepherd, and strike the
+//! adoption from `shep.toml`: out of `[daemon] enabled_dogs`,
+//! `[daemon] adopted_dogs` and `[daemon] channel_dogs`. What stays is the
+//! `[<name>]` section in `dogs.toml`, which is the operator's own writing, so
+//! re-adopting the dog finds those settings waiting. Saying so is part of the
+//! verb: "forget an adopted dog" no longer describes all of what it does.
+//!
+//! A built-in dog is refused here rather than only in the CLI's help text:
+//! it is an argv branch of this binary, with no registration to forget and no
+//! binary to lose, and `disable` is the verb that exists for it. The shepherd
+//! refuses the same request for a CLI too old to have this guard.
 
 use shep_client::Client;
 use shep_core::paths::ShepPaths;
@@ -16,18 +28,55 @@ use super::{
     emit_dog_action, fail_config,
 };
 
-/// `shep rehome <name>`: stops an adopted dog and forgets where its binary
-/// lived, leaving the settings an operator wrote for it.
+/// Which verb ran the removal
+///
+/// The two differ in nothing but the name they answer under, and that name is
+/// what a script reading `--format json` keys on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Removal {
+    /// `shep delete <name>`: the one way an operator removes a dog
+    Delete,
+    /// `shep rehome <name>`: hidden, kept for the scripts that already call it
+    Rehome,
+}
+
+impl Removal {
+    /// The verb as the operator typed it, which is also the `command` key its
+    /// reply carries
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Delete => "delete",
+            Self::Rehome => "rehome",
+        }
+    }
+}
+
+/// `shep delete <name>` and `shep rehome <name>`, for a dog
 ///
 /// One file: [`ShepToml::rehome_dog`] strikes the registration from
-/// `shep.toml`. `dogs.toml` is only read, to say whether there was a
-/// section to keep, on the argument `disable` already makes for itself.
-/// Re-adopting the same dog finds its old configuration waiting; the
+/// `shep.toml`. `dogs.toml` is only read, to say whether there was a section
+/// to keep. Re-adopting the same dog finds its old configuration waiting; the
 /// difference from `disable` is that recovery needs a fresh `shep adopt`.
-pub async fn rehome(streams: &mut Streams<'_>, paths: &ShepPaths, name: &str) -> ExitCode {
+///
+/// # Errors
+/// [`ExitCode::InvalidConfig`] after writing the refusal, when `name` is a
+/// built-in dog. Nothing is read or written on that arm: a name with no
+/// adoption must not spend a config edit.
+pub(crate) async fn remove_dog(
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    name: &str,
+    removal: Removal,
+) -> ExitCode {
+    if crate::dog::BUILT_IN_DOGS.contains(&name) {
+        return streams.fail(
+            ExitCode::InvalidConfig,
+            &shep_daemon::dogs::built_in_dog_refusal(name),
+        );
+    }
     let source = match ShepToml::edit(&paths.daemon_config, |cfg| {
         // Read before `rehome_dog` erases it. `None` is legitimate: a name
-        // never adopted, or a built-in dog's own.
+        // never adopted.
         let source = adopted_source(cfg, name);
         cfg.rehome_dog(name);
         source
@@ -42,30 +91,31 @@ pub async fn rehome(streams: &mut Streams<'_>, paths: &ShepPaths, name: &str) ->
         Ok(client) => client,
         Err(code) => return code,
     };
-    let code = rehome_after_config(streams, name, source, client.as_ref()).await;
+    let code = remove_after_config(streams, name, source, client.as_ref(), removal).await;
     if kept {
         streams.aside(
-            "rehome",
+            removal.verb(),
             &format!("kept [{name}] in dogs.toml; adopting {name} again finds those settings"),
         );
     }
     code
 }
 
-/// `rehome`'s daemon half; see enable_after_config for the split and
-/// for what `client: None` means. Sends `Delete` by name: `DisableDog` leaves
-/// the dog registered at rest, and [`rehome`] has erased the registration
-/// that entry was listed under.
-async fn rehome_after_config(
+/// The daemon half of [`remove_dog`]; see enable_after_config for the split
+/// and for what `client: None` means. Sends `Delete` by name: `DisableDog`
+/// leaves the dog registered at rest, and this verb has erased the
+/// registration that entry was listed under.
+async fn remove_after_config(
     streams: &mut Streams<'_>,
     name: &str,
     source: Option<DogSource>,
     client: Option<&Client>,
+    removal: Removal,
 ) -> ExitCode {
     let Some(client) = client else {
         return emit_dog_action(
             streams,
-            "rehome",
+            removal.verb(),
             name,
             source,
             NO_SHEPHERD_DISABLE_STATUS,
@@ -79,11 +129,20 @@ async fn rehome_after_config(
         .await
     {
         Ok(Response::Deleted(_ids)) => {
-            emit_dog_action(streams, "rehome", name, source, DISABLED_STATUS, true)
+            emit_dog_action(streams, removal.verb(), name, source, DISABLED_STATUS, true)
         }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
     }
+}
+
+/// `shep rehome <name>`: the removal, answering under its own `command`
+///
+/// Hidden from `--help` because `delete` is the verb an operator should look
+/// for. It stays reachable, and stays byte-identical in what it prints, for
+/// the scripts written against it.
+pub async fn rehome(streams: &mut Streams<'_>, paths: &ShepPaths, name: &str) -> ExitCode {
+    remove_dog(streams, paths, name, Removal::Rehome).await
 }
 
 #[cfg(all(test, unix))]
@@ -102,7 +161,7 @@ mod tests {
     /// neither goes. `metrics` is beside it to catch a rewrite that
     /// reaches further than it was asked to.
     #[tokio::test]
-    async fn rehome_keeps_the_settings_and_forgets_only_the_adoption() {
+    async fn a_removal_keeps_the_settings_and_forgets_only_the_adoption() {
         let dir = tempfile::tempdir().unwrap();
         let paths = ShepPaths::resolve(&|_| None, dir.path());
         std::fs::create_dir_all(&paths.home).unwrap();
@@ -123,18 +182,24 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = rehome(&mut streams(&mut out, &mut err), &paths, "otel").await;
+        let code = remove_dog(
+            &mut streams(&mut out, &mut err),
+            &paths,
+            "otel",
+            Removal::Delete,
+        )
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         let written = std::fs::read_to_string(&paths.daemon_config).unwrap();
         let cfg = shep_core::config::DaemonConfig::load(Some(&written), &|_| None).unwrap();
         assert!(
             cfg.daemon.enabled_dogs.is_empty(),
-            "rehome must remove the name from enabled_dogs: {written}"
+            "a removal must remove the name from enabled_dogs: {written}"
         );
         assert!(
             !cfg.daemon.adopted_dogs.contains_key("otel"),
-            "rehome must forget the adopted_dogs entry disable deliberately keeps: {written}"
+            "a removal must forget the adopted_dogs entry disable deliberately keeps: {written}"
         );
         assert!(
             cfg.dog.contains_key("otel"),
@@ -144,7 +209,7 @@ mod tests {
         let dogs = shep_core::config::DogsConfig::load(Some(&dogs)).unwrap();
         assert!(
             dogs.dog.contains_key("otel"),
-            "rehome must leave the section in dogs.toml, where a dog's config lives now"
+            "a removal must leave the section in dogs.toml, where a dog's config lives now"
         );
         assert!(
             dogs.dog.contains_key("metrics"),
@@ -159,7 +224,7 @@ mod tests {
     /// Rehoming a dog nobody ever configured must not invent an empty
     /// `dogs.toml`, fail over its absence, or claim it kept anything.
     #[tokio::test]
-    async fn rehoming_with_no_dogs_toml_at_all_writes_none() {
+    async fn a_removal_with_no_dogs_toml_at_all_writes_none() {
         let dir = tempfile::tempdir().unwrap();
         let paths = ShepPaths::resolve(&|_| None, dir.path());
         ShepToml::edit(&paths.daemon_config, |seed| {
@@ -170,7 +235,13 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = rehome(&mut streams(&mut out, &mut err), &paths, "otel").await;
+        let code = remove_dog(
+            &mut streams(&mut out, &mut err),
+            &paths,
+            "otel",
+            Removal::Rehome,
+        )
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         assert!(
@@ -188,7 +259,7 @@ mod tests {
     /// is the guard: either case alone passes while the other branch carries
     /// the wrong flag.
     #[tokio::test]
-    async fn rehome_reports_whether_a_shepherd_acted() {
+    async fn a_removal_reports_whether_a_shepherd_acted() {
         let dir = tempfile::tempdir().unwrap();
         let path = shep_client::testing::control_address(dir.path());
         let (client, _envelopes) =
@@ -201,8 +272,14 @@ mod tests {
             let mut streams = streams(&mut out, &mut err);
             streams.fmt = Format::Json;
 
-            let code =
-                rehome_after_config(&mut streams, "otel", Some(DogSource::BuiltIn), client).await;
+            let code = remove_after_config(
+                &mut streams,
+                "otel",
+                Some(DogSource::BuiltIn),
+                client,
+                Removal::Rehome,
+            )
+            .await;
 
             assert_eq!(code, ExitCode::Success);
             let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -217,13 +294,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rehome_asks_the_shepherd_to_stop_that_dog() {
+    async fn a_removal_asks_the_shepherd_to_stop_that_dog() {
         let dir = tempfile::tempdir().unwrap();
         let path = shep_client::testing::control_address(dir.path());
         let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let _ = rehome_after_config(
+        let _ = remove_after_config(
             &mut streams(&mut out, &mut err),
             "otel",
             Some(DogSource::Adopted {
@@ -231,6 +308,7 @@ mod tests {
                 channel: false,
             }),
             Some(&client),
+            Removal::Delete,
         )
         .await;
 
@@ -244,7 +322,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rehome_with_no_shepherd_writes_the_config_and_exits_zero() {
+    async fn a_removal_with_no_shepherd_writes_the_config_and_exits_zero() {
         let dir = tempfile::tempdir().unwrap();
         let paths = ShepPaths::resolve(&|_| None, dir.path());
         ShepToml::edit(&paths.daemon_config, |seed| {
@@ -255,12 +333,71 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = rehome(&mut streams(&mut out, &mut err), &paths, "otel").await;
+        let code = remove_dog(
+            &mut streams(&mut out, &mut err),
+            &paths,
+            "otel",
+            Removal::Delete,
+        )
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         let written = std::fs::read_to_string(&paths.daemon_config).unwrap();
         let cfg = shep_core::config::DaemonConfig::load(Some(&written), &|_| None).unwrap();
         assert!(cfg.daemon.enabled_dogs.is_empty());
         assert!(!cfg.daemon.adopted_dogs.contains_key("otel"));
+    }
+
+    /// The two verbs are one removal, so the only thing a script can tell them
+    /// apart by is the `command` its envelope carries. Asserted as a pair: a
+    /// build that spells both `delete` leaves one arm wrong, and a build that
+    /// routes `rehome` through `delete`'s row type fails the shape assertion.
+    #[tokio::test]
+    async fn each_removal_answers_under_its_own_command() {
+        for (removal, expected) in [(Removal::Delete, "delete"), (Removal::Rehome, "rehome")] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = ShepPaths::resolve(&|_| None, dir.path());
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            let mut streams = streams(&mut out, &mut err);
+            streams.fmt = Format::Json;
+
+            let code = remove_dog(&mut streams, &paths, "otel", removal).await;
+
+            assert_eq!(code, ExitCode::Success, "{expected}: {err:?}");
+            let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(json["command"], expected, "{json}");
+            assert_eq!(json["data"]["name"], "otel", "{json}");
+        }
+    }
+
+    /// A built-in dog has no adoption to forget, so the refusal is the whole
+    /// verb: `shep.toml` is not opened, and the name is not struck from
+    /// `enabled_dogs` on the way to saying no.
+    #[tokio::test]
+    async fn a_removal_refuses_a_built_in_dog_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ShepPaths::resolve(&|_| None, dir.path());
+        ShepToml::try_edit(&paths.daemon_config, |seed| seed.enable_dog("metrics")).unwrap();
+
+        for removal in [Removal::Delete, Removal::Rehome] {
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            let code =
+                remove_dog(&mut streams(&mut out, &mut err), &paths, "metrics", removal).await;
+
+            assert_eq!(code, ExitCode::InvalidConfig, "{removal:?}");
+            assert!(
+                String::from_utf8(err)
+                    .unwrap()
+                    .contains(&shep_daemon::dogs::built_in_dog_refusal("metrics")),
+                "{removal:?} must name the verb that does exist"
+            );
+            let written = std::fs::read_to_string(&paths.daemon_config).unwrap();
+            assert!(
+                written.contains("metrics"),
+                "{removal:?} refused, so it changed nothing: {written}"
+            );
+        }
     }
 }

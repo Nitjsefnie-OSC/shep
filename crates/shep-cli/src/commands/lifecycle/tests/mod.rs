@@ -22,6 +22,7 @@ use shep_core::selector::ProcessSelector;
 
 use crate::cli::{Format, ResetMode, SelectorArgs, StartArgs, StockArgs};
 use crate::commands::lifecycle::configure::{applied_line, mapped_interpreter};
+use crate::commands::lifecycle::operational::delete_sheep;
 use crate::commands::lifecycle::operational::restart_within;
 use crate::commands::lifecycle::resolve::{TargetError, evaluate_js_flockfile, split_assignments};
 use crate::commands::lifecycle::respawn::unique_names;

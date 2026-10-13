@@ -363,7 +363,7 @@ async fn a_selector_reaches_the_wire_in_its_compiled_form() {
                 Verb::Stop => stop(&client, &mut streams, &args).await,
                 Verb::Restart => restart(&client, &mut streams, &paths, &args).await,
                 Verb::Reload => reload(&client, &mut streams, &args).await,
-                Verb::Delete => delete(&client, &mut streams, &args).await,
+                Verb::Delete => delete_sheep(&client, &mut streams, &args).await,
             };
             let sent = envelopes.recv().await.unwrap();
             assert_eq!(sent.body, expected_body, "verb={verb:?} input={input}");

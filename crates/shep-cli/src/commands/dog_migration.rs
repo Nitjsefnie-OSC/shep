@@ -122,11 +122,11 @@ pub(crate) fn migrate_dog_sections(paths: &ShepPaths) -> Result<Vec<String>, Dog
 /// Whether `dogs.toml` holds a section for `name`. A missing file is
 /// `Ok(false)`.
 ///
-/// `shep rehome`'s only interest in this file: it forgets the adoption and
-/// leaves the settings, so the answer decides whether there is anything to
-/// tell the operator it kept. Takes no lock and writes nothing, so a
-/// section appearing or vanishing under the read changes a notice, never a
-/// file.
+/// `shep delete <dog>` and the hidden `shep rehome`'s only interest in this
+/// file: they forget the adoption and leave the settings, so the answer
+/// decides whether there is anything to tell the operator it kept. Takes no
+/// lock and writes nothing, so a section appearing or vanishing under the
+/// read changes a notice, never a file.
 ///
 /// # Errors
 /// [`DogMigrationError::ReadDogs`] if the file exists and could not be

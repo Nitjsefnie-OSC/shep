@@ -146,7 +146,17 @@ pub enum Commands {
     /// The swaps themselves are reported on the bus either way, under
     /// process.reload, process.reloaded and process.reload_abandoned.
     Reload(SelectorArgs),
-    /// Delete one or more sheep from the flock.
+    /// Delete one or more sheep, or one or more dogs, from the flock, for
+    /// good.
+    ///
+    /// A dog's name takes the dog's path: it is stopped, deregistered, and
+    /// struck from `[daemon] enabled_dogs`, `[daemon] adopted_dogs` and
+    /// `[daemon] channel_dogs` in `shep.toml`, so the next boot does not
+    /// bring it back. Its `[<name>]` table in `dogs.toml` stays, as it does
+    /// through `shep disable`, and the verb says so. A built-in dog is
+    /// refused, by the shepherd: `shep disable metrics` is the verb that
+    /// exists for one. A sweep (`all`, a fold, a `/regex/`) is the flock, and
+    /// a dog is not in it.
     Delete(SelectorArgs),
     /// Set how many instances one app runs — the stocking rate.
     ///
@@ -200,7 +210,7 @@ pub enum Commands {
     /// naming `shep enable`, and `all`, a fold or a regex pass it by. Naming
     /// it still reaches `stop`, `delete`, `describe` and `signal`. A dog's
     /// own configuration in `dogs.toml` survives a disable/enable cycle;
-    /// `shep rehome` forgets the adoption as well.
+    /// `shep delete` forgets the adoption as well.
     Disable(DisableArgs),
     /// Vet a binary shep has never seen and register it as a dog: writes
     /// `[daemon] adopted_dogs` and `[daemon] enabled_dogs` in `shep.toml`,
@@ -222,15 +232,13 @@ pub enum Commands {
     /// passing `args` through untouched — a second invocation mode from
     /// the one the shepherd itself uses to supervise it.
     Adopt(AdoptArgs),
-    /// Forget where an adopted dog's binary lived: stops it if a shepherd
-    /// is running, and removes it from `[daemon] enabled_dogs`,
-    /// `[daemon] adopted_dogs` and `[daemon] channel_dogs`.
+    /// Hidden: `shep delete <name>` is the verb that removes a dog.
     ///
-    /// Its `[<name>]` table in `dogs.toml` stays, as it does through a
-    /// `shep disable`: those settings are the operator's, so adopting the
-    /// same dog again finds them waiting. Delete that table by hand to be
-    /// rid of them. Only the adoption differs from `disable`, so recovery
-    /// is a fresh `shep adopt <path>` rather than an `enable`.
+    /// `shep rehome <name>` runs that same removal and keeps its own
+    /// `"command": "rehome"` reply, so a script written against it keeps
+    /// working. It is absent from `--help`, and there is no `uninstall`
+    /// alias for it.
+    #[command(hide = true)]
     Rehome(DogArgs),
     /// Describe one sheep in detail.
     ///
@@ -560,7 +568,7 @@ mod tests {
         let lookout = cmd.find_subcommand("lookout").unwrap();
         assert_eq!(lookout.get_visible_aliases().collect::<Vec<_>>(), ["dash"]);
 
-        for hidden in ["thatlldo", "daemon", "dog"] {
+        for hidden in ["thatlldo", "daemon", "dog", "rehome"] {
             assert!(
                 cmd.find_subcommand(hidden).unwrap().is_hide_set(),
                 "{hidden} must stay hidden from --help"
@@ -581,7 +589,6 @@ mod tests {
             "enable",
             "disable",
             "adopt",
-            "rehome",
             "ping",
             "kill",
             "save",
