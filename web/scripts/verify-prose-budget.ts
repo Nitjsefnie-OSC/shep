@@ -125,7 +125,10 @@ export const BUDGETS: Record<string, number> = {
   // line, what a build without the feature does with `otlp_endpoint`, and
   // the measured binary size #292 asked for. All of it is operator-facing
   // surface for a shipped feature, not prose to trim back out.
-  dogs: 3650, // 3641
+  // Raised again from 3650 for the "Channel samples" section: the grammar and
+  // caps a sheep's own samples are held to, and the refusal counter. New
+  // content rather than a correction.
+  dogs: 3900, // 3881
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
@@ -154,7 +157,10 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim
   // back out.
-  "shepherd-channel": 1890, // 1804
+  // Raised from 1890 for the "Metrics" section, which says where a `metric`
+  // line turns up and what the dog refuses. New content rather than a
+  // correction.
+  "shepherd-channel": 2060, // 2051
   "from-pm2": 1720, // 1659
   "boot-order": 1670, // 1586
   "talking-to-a-sheep": 1620, // 1534

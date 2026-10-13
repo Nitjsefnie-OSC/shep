@@ -228,9 +228,10 @@ bound to `127.0.0.1:9615` by default:
 bind = "127.0.0.1:9615"
 ```
 
-Nothing here accumulates between scrapes — every request rebuilds the
-reading from a fresh `ListFlock` and a fresh host sample, so there is no
-stale-cache window and no state a slow scraper could hold open.
+The flock and host series are rebuilt per scrape, from a fresh `ListFlock`
+and a fresh host sample. The channel samples are not. The dog keeps the last
+sample per sender, name and label set until that sender stops or restarts, so
+a process that died never keeps reporting a value it stopped updating.
 
 | Metric | Meaning |
 |---|---|
@@ -246,6 +247,7 @@ stale-cache window and no state a slow scraper could hold open.
 | `shep_host_memory_used_bytes` | Memory in use on the host, as the platform reports it. |
 | `shep_host_processes` | Number of processes running on the host, the flock included. |
 | `shep_host_uptime_seconds` | Seconds since the host booted. |
+| `shep_channel_samples_refused_total` | Channel samples this dog refused, by reason. Absent until the first refusal. |
 
 A reference Grafana dashboard built against this exact metric set ships
 in `assets/grafana/`.
@@ -256,6 +258,39 @@ plenty of hosts a sheep's name is the name of an internal service.
 Widening `bind` to `0.0.0.0` (or any non-loopback address) is one config
 line away when you want it, but the metrics dog will not make that
 decision for you by shipping wide and asking you to lock it down.
+
+### Channel samples
+
+A sheep or a dog can send its own numbers on its shepherd channel, and the
+metrics dog keeps them and appends them to every scrape, after the groups
+above. See `docs/shepherd-channel.md` for what to write on fd 3.
+
+Your samples carry the same sender labels the built-in series carry: a sheep
+gets `sheep`, `id` and `fold`, a dog gets `dog` and `source`. Your own labels
+follow them.
+
+What the dog accepts, and what it refuses:
+
+| Rule | Refusal reason |
+|---|---|
+| A name matches `[a-zA-Z_:][a-zA-Z0-9_:]*` and is at most 128 bytes. | `invalid_name` |
+| A name does not start with `shep_`, which is the shepherd's own namespace. | `reserved_name` |
+| A label name matches `[a-zA-Z_][a-zA-Z0-9_]*`, is at most 64 bytes, and does not start with `__`. | `invalid_label` |
+| A label is not named `sheep`, `id`, `fold`, `dog` or `source`, which the dog writes for you. | `reserved_label` |
+| At most 16 labels, a label value at most 256 bytes, help text at most 512 bytes. | `too_long` |
+| At most 256 series per sender. A new one is refused rather than an old one evicted. | `series_cap` |
+| A name keeps the kind its first sample set. `type` absent means gauge. | `type_conflict` |
+
+A refusal is counted in `shep_channel_samples_refused_total{reason="..."}` and
+printed once per sender and reason in the dog's own log, read with
+`shep bleats metrics`. A metric that never shows up is otherwise silent.
+
+A sender's samples go when it stops, exits, restarts, is deleted or errors. A
+reload frees what the drained instance sent, through that instance's own
+deregistration, and never the samples of the instance the reload put in its
+place. A scrape also drops a sender the flock no longer
+reports as online, or reports as an instance younger than the samples it is
+holding, which is what covers the events the dog never received.
 
 ### OTLP export
 
@@ -1066,8 +1101,8 @@ is yours to impose. Two calls do it:
   budget without coming back. Its clock runs only while the link is down,
   and it never resolves while the link is up, so it belongs in a
   `select!` arm beside whatever your dog does normally. For a dog that
-  touches its client only when something asks it to, like the metrics
-  dog, this is the only thing that will ever tell it.
+  touches its client only when something asks it to, a scrape server with
+  no subscription, this is the only thing that will ever tell it.
 - `connected_within(budget)` waits for the link to come back. Use it when
   you have something to re-arm.
 
