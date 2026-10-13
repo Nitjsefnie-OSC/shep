@@ -81,7 +81,10 @@ export const BUDGETS: Record<string, number> = {
   // and the page gained a section saying what the four figures are and why
   // a rate can read `-`.
   output: 3130, // 3111
-  dogs: 2980, // 2834
+  // Raised from 2980 on 2026-10-13 for the `log_match` rule: a new `on`
+  // value, its `stream` key, and the loss and secrets caveats are
+  // operator-facing surface, not prose to trim back out.
+  dogs: 3100, // 3059
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   secrets: 2080, // 1977

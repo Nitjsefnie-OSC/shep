@@ -302,6 +302,23 @@ for the next scheduled one. The two routes share one debounce record per
 subject, so an `Errored` seen by both the bus and the very next poll
 fires once, not twice.
 
+To alert on a line a sheep prints, add a `log_match` rule:
+
+```toml
+[[bark.rules]]
+on = "log_match"
+pattern = "FATAL|panicked at"
+stream = "err"
+sinks = ["oncall"]
+```
+
+`pattern` is a regex, unanchored, and cannot be empty. `stream` is `out`,
+`err` or `both` (the default). The first matching line per sheep per
+debounce window is the one sent; later ones in the window are dropped. The
+shepherd forwards log lines to bark only while a `log_match` rule exists,
+and bark can miss lines when a sheep outruns it: the poll cannot recover a
+line. The line goes to the sink as written, so it can carry a secret.
+
 Every fired alert is appended to `$SHEP_HOME/barks.jsonl`, a byte-capped
 ring (1MiB by default, `history_bytes`) that evicts the oldest record
 first and is the data `shep barks` reads. Two different processes append
