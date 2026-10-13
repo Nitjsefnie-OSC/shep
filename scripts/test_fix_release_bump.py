@@ -1,0 +1,642 @@
+"""Tests for scripts/fix-release-bump.py.
+
+Run them with:
+
+    python3 -m unittest discover --start-directory scripts
+
+The end-to-end case builds a throwaway repository whose history is the diamond
+release-plz under-walks, with a release branch cut the way release-plz cuts
+one, and a bare remote standing in for github.com. Nothing here touches the
+real repository or any remote.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPTS.parent
+
+_spec = importlib.util.spec_from_file_location("fix_release_bump", SCRIPTS / "fix-release-bump.py")
+fix = importlib.util.module_from_spec(_spec)
+sys.modules["fix_release_bump"] = fix
+_spec.loader.exec_module(fix)
+
+HEADER = (
+    "# Changelog\n"
+    "\n"
+    "All notable changes to this crate are documented in this file.\n"
+    "\n"
+    "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),\n"
+    "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n"
+    "\n"
+)
+
+RELEASE_BRANCH = "release-plz-2026-09-06T00-00-00Z"
+
+
+class Fixture(unittest.TestCase):
+    """A repository with a diamond in it, a release branch under it, and a remote."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.remote = self.tmp / "remote.git"
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        self.remote.mkdir()
+
+        self.git_init(cwd=self.remote, bare=True)
+        self.git_init(cwd=self.repo)
+        self.git("remote", "add", "origin", str(self.remote), cwd=self.repo)
+
+        for name in ("release-plz.toml", "release-plz-changelog.toml"):
+            (self.repo / name).write_text((REPO_ROOT / name).read_text())
+
+        self._write_manifests()
+        self._write_changelogs()
+        self.commit("feat(core): base work", date="2026-09-01T00:00:00")
+        self.base_sha = self.head()
+        self.git("tag", "shep-v0.13.0")
+        self.git("push", "-q", "origin", "HEAD:refs/heads/main")
+
+        # Two legs cut from the same base, merged in turn: the shape that
+        # sends release-plz's walk down one of them.
+        self.git("checkout", "-q", "-b", "leg-a")
+        self.write("crates/shep-daemon/src/dogs.rs", "pub fn at_rest() {}\n")
+        self.commit(
+            "feat(daemon)!: list every known dog at rest", date="2026-09-02T00:00:00"
+        )
+        leg_a = self.head()
+        self.git("checkout", "-q", "main")
+
+        self.git("checkout", "-q", "-b", "leg-b", "leg-a~1")
+        self.write("crates/shep-cli/src/lookout.rs", "pub fn remove_entry() {}\n")
+        self.commit(
+            "feat(cli): remove an entry from an array or map of tables",
+            date="2026-09-02T01:00:00",
+        )
+        self.git("checkout", "-q", "main")
+
+        # #807 squash-merged onto main, then #803 merged as a merge commit.
+        self.git("cherry-pick", leg_a)
+        self.amend_subject("feat(daemon)!: list every known dog at rest (#807)", "2026-09-03T00:00:00")
+        self.git(
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "Merge pull request #803 from shep-pm/leg-b",
+            "leg-b",
+            date="2026-09-04T00:00:00",
+        )
+        self.amend_subject("Merge pull request #803 from shep-pm/leg-b", "2026-09-04T00:00:00")
+
+        # The one commit release-plz's walk does reach: it sits on the leg the
+        # walk entered, past the merge it followed.
+        self.git("checkout", "-q", "-b", "leg-c")
+        self.write("crates/shep-daemon/src/secrets.rs", "pub fn refire() {}\n")
+        self.commit(
+            "feat(daemon): re-fire config.dog.<name> when secrets.json changes a value a dog names",
+            date="2026-09-05T00:00:00",
+        )
+        leg_c = self.head()
+        self.git("checkout", "-q", "main")
+        self.git("cherry-pick", leg_c)
+        self.amend_subject(
+            "feat(daemon): re-fire config.dog.<name> when secrets.json changes a value a dog names (#813)",
+            "2026-09-06T00:00:00",
+        )
+        self.main_head = self.head()
+        self.git("push", "-q", "origin", "HEAD:refs/heads/main")
+
+        self._write_release_branch()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    # Building it.
+
+    def git(self, *args: str, cwd: Path | None = None, date: str | None = None) -> str:
+        env = dict(os.environ)
+        if date:
+            # Commit dates are what the new section's own date comes from, so
+            # the fixture pins them rather than inheriting the clock.
+            env["GIT_AUTHOR_DATE"] = date
+            env["GIT_COMMITTER_DATE"] = date
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd or self.repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        ).stdout
+
+    def git_init(self, cwd: Path, bare: bool = False) -> None:
+        args = ["init", "-q", "--initial-branch=main"] + (["--bare"] if bare else [])
+        self.git(*args, cwd=cwd)
+        if not bare:
+            self.git("config", "user.name", "fixture", cwd=cwd)
+            self.git("config", "user.email", "fixture@example.invalid", cwd=cwd)
+
+    def write(self, path: str, text: str) -> None:
+        target = self.repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+
+    def commit(self, subject: str, date: str) -> None:
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", subject, date=date)
+
+    def amend_subject(self, subject: str, date: str) -> None:
+        self.git("commit", "-q", "--amend", "-m", subject, date=date)
+
+    def head(self, rev: str = "HEAD") -> str:
+        return self.git("rev-parse", rev).strip()
+
+    def remote_head(self, branch: str) -> str:
+        return self.git("rev-parse", branch, cwd=self.remote).strip()
+
+    def remote_file(self, branch: str, path: str) -> str:
+        return self.git("show", f"{branch}:{path}", cwd=self.remote)
+
+    def _write_manifests(self) -> None:
+        self.write(
+            "Cargo.toml",
+            '[workspace]\n'
+            'resolver = "3"\n'
+            'members = [\n'
+            '    "crates/shep-core",\n'
+            '    "crates/shep-daemon",\n'
+            '    "crates/shep-cli",\n'
+            '    "crates/shep-cli-redirect",\n'
+            ']\n'
+            '\n'
+            '[workspace.package]\n'
+            'version = "0.13.0"\n'
+            'edition = "2024"\n'
+            '\n'
+            '[workspace.dependencies]\n'
+            'shep-core = { path = "crates/shep-core", version = "0.13.0" }\n'
+            'shep-daemon = { path = "crates/shep-daemon", version = "0.13.0" }\n'
+            '# A third-party pin sitting at the same number as the workspace,\n'
+            '# which a release bump must leave alone.\n'
+            'lookalike = { version = "0.13.0", default-features = false }\n',
+        )
+        self.write(
+            "Cargo.lock",
+            'version 4\n'
+            '\n'
+            '[[package]]\n'
+            'name = "lookalike"\n'
+            'version = "0.13.0"\n'
+            '\n'
+            '[[package]]\n'
+            'name = "shep"\n'
+            'version = "0.13.0"\n'
+            '\n'
+            '[[package]]\n'
+            'name = "shep-cli"\n'
+            'version = "0.13.0"\n'
+            '\n'
+            '[[package]]\n'
+            'name = "shep-core"\n'
+            'version = "0.13.0"\n'
+            '\n'
+            '[[package]]\n'
+            'name = "shep-daemon"\n'
+            'version = "0.13.0"\n',
+        )
+        for directory, name in (
+            ("crates/shep-core", "shep-core"),
+            ("crates/shep-daemon", "shep-daemon"),
+            ("crates/shep-cli", "shep"),
+            ("crates/shep-cli-redirect", "shep-cli"),
+        ):
+            self.write(
+                f"{directory}/Cargo.toml",
+                "[package]\n"
+                f'name = "{name}"\n'
+                'description = "fixture"\n'
+                "version.workspace = true\n"
+                "edition.workspace = true\n",
+            )
+
+    def _write_changelogs(self) -> None:
+        for directory in ("crates/shep-core", "crates/shep-daemon", "crates/shep-cli"):
+            self.write(
+                f"{directory}/CHANGELOG.md",
+                HEADER + "## [Unreleased]\n\n## [0.13.0] - 2026-09-01\n\n### Added\n\n- Base work\n\n\n",
+            )
+
+    def _write_release_branch(self) -> None:
+        """The branch release-plz would have pushed: 0.13.1, and a changelog
+        that only carries the commit its walk reached."""
+        self.git("checkout", "-q", "-b", RELEASE_BRANCH)
+        manifest = (self.repo / "Cargo.toml").read_text()
+        manifest = manifest.replace('[workspace.package]\nversion = "0.13.0"', '[workspace.package]\nversion = "0.13.1"')
+        for member in ("shep-core", "shep-daemon"):
+            manifest = manifest.replace(
+                f'{member} = {{ path = "crates/{member}", version = "0.13.0" }}',
+                f'{member} = {{ path = "crates/{member}", version = "0.13.1" }}',
+            )
+        self.write("Cargo.toml", manifest)
+        lock = (self.repo / "Cargo.lock").read_text()
+        for member in ("shep", "shep-cli", "shep-core", "shep-daemon"):
+            lock = lock.replace(
+                f'name = "{member}"\nversion = "0.13.0"',
+                f'name = "{member}"\nversion = "0.13.1"',
+            )
+        self.write("Cargo.lock", lock)
+        for directory in ("crates/shep-core", "crates/shep-daemon", "crates/shep-cli"):
+            text = (self.repo / f"{directory}/CHANGELOG.md").read_text()
+            section = "## [0.13.1] - 2026-09-06\n\n"
+            if directory == "crates/shep-daemon":
+                section += (
+                    "### Added\n\n"
+                    "- Re-fire config.dog.<name> when secrets.json changes a value a dog names\n\n"
+                )
+            section += "\n"
+            self.write(f"{directory}/CHANGELOG.md", text.replace("## [Unreleased]\n\n", "## [Unreleased]\n\n" + section))
+        self.commit("chore: release v0.13.1", date="2026-09-06T01:00:00")
+        self.git("push", "-q", "origin", f"HEAD:refs/heads/{RELEASE_BRANCH}")
+        self.git("checkout", "-q", "main")
+
+    # Running the guard.
+
+    def run_guard(self, output: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "fix-release-bump.py"),
+                "--repo",
+                str(self.repo),
+                "--base-sha",
+                self.main_head,
+                "--branch",
+                RELEASE_BRANCH,
+                "--remote",
+                "origin",
+                "--output",
+                str(output),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def results(self, output: Path) -> dict[str, str]:
+        return dict(
+            line.split("=", 1)
+            for line in output.read_text().splitlines()
+            if "=" in line
+        )
+
+
+class TestVersion(unittest.TestCase):
+    """The bump a range implies, with no repository behind it."""
+    def test_a_breaking_commit_pre_one_point_zero_moves_the_minor(self) -> None:
+        commits = [fix.Commit(sha="x", date="2026-09-02", subject="feat(daemon)!: at rest", body="")]
+        self.assertEqual(fix.required_version((0, 13, 0), commits), (0, 14, 0))
+
+    def test_a_breaking_commit_from_one_point_zero_moves_the_major(self) -> None:
+        commits = [fix.Commit(sha="x", date="2026-09-02", subject="feat(daemon)!: at rest", body="")]
+        self.assertEqual(fix.required_version((1, 2, 3), commits), (2, 0, 0))
+
+    def test_a_breaking_footer_counts_as_a_break(self) -> None:
+        commits = [
+            fix.Commit(
+                sha="x",
+                date="2026-09-02",
+                subject="fix(daemon): widen the reply",
+                body="BREAKING CHANGE: the reply shape changed.\n",
+            )
+        ]
+        self.assertEqual(fix.required_version((0, 13, 0), commits), (0, 14, 0))
+
+    def test_a_feat_moves_the_minor_and_a_fix_the_patch(self) -> None:
+        feat = [fix.Commit(sha="x", date="2026-09-02", subject="feat(cli): a verb", body="")]
+        fix_commit = [fix.Commit(sha="y", date="2026-09-02", subject="fix(cli): a verb", body="")]
+        self.assertEqual(fix.required_version((0, 13, 0), feat), (0, 14, 0))
+        self.assertEqual(fix.required_version((0, 13, 0), fix_commit), (0, 13, 1))
+
+    def test_nothing_to_release_implies_no_bump(self) -> None:
+        self.assertIsNone(fix.required_version((0, 13, 0), []))
+
+
+class TestChangelogRules(Fixture):
+    def rules(self) -> fix.ChangelogRules:
+        return fix.load_changelog_rules(fix.Repo(self.repo))
+
+    def line_of(self, subject: str, body: str = "") -> str | None:
+        entry = fix.entry_for(
+            fix.Commit(sha="x", date="2026-09-02", subject=subject, body=body), self.rules()
+        )
+        return entry.line if entry else None
+
+    def test_skipped_types_leave_no_line(self) -> None:
+        for subject in (
+            "docs(daemon): a note",
+            "test(daemon): a case",
+            "ci: a workflow",
+            "chore: a tidy",
+            "style: a format",
+        ):
+            self.assertIsNone(self.line_of(subject), subject)
+
+    def test_a_breaking_commit_survives_its_own_skip(self) -> None:
+        self.assertEqual(
+            self.line_of("docs(daemon)!: the note is a contract"),
+            "- The note is a contract **(BREAKING)**",
+        )
+
+    def test_a_pure_move_leaves_no_line_but_a_real_refactor_does(self) -> None:
+        self.assertIsNone(self.line_of("refactor(lookout): split the scene tests out"))
+        self.assertEqual(
+            self.line_of("refactor(lookout): read the roll once per sweep"),
+            "- Read the roll once per sweep",
+        )
+
+    def test_an_unconventional_subject_leaves_no_line(self) -> None:
+        self.assertIsNone(self.line_of("Merge pull request #803 from shep-pm/leg-b"))
+        self.assertIsNone(self.line_of("revert: drop the verb"))
+
+    def test_a_pull_request_reference_is_not_part_of_the_line(self) -> None:
+        self.assertEqual(
+            self.line_of("feat(daemon)!: list every known dog at rest (#807)"),
+            "- List every known dog at rest **(BREAKING)**",
+        )
+
+    def test_groups_come_from_the_parsers(self) -> None:
+        rules = self.rules()
+        groups = {
+            subject: fix.entry_for(
+                fix.Commit(sha="x", date="2026-09-02", subject=subject, body=""), rules
+            ).group
+            for subject in (
+                "feat(cli): a",
+                "fix(cli): a",
+                "perf(cli): a",
+                "refactor(cli): a",
+                "chore: update Cargo.toml dependencies",
+            )
+        }
+        self.assertEqual(
+            groups,
+            {
+                "feat(cli): a": "Added",
+                "fix(cli): a": "Fixed",
+                "perf(cli): a": "Performance",
+                "refactor(cli): a": "Changed",
+                "chore: update Cargo.toml dependencies": "Internal",
+            },
+        )
+
+
+class TestSectionRewrite(unittest.TestCase):
+    def entry(self, group: str, line: str) -> fix.Entry:
+        return fix.Entry(group=group, line=line, sha="x")
+
+    def test_a_missing_entry_lands_under_its_group(self) -> None:
+        text = HEADER + "## [Unreleased]\n\n## [0.14.0] - 2026-09-06\n\n### Added\n\n- Kept line\n\n\n"
+        rewritten, added, _renamed = fix.rewrite_changelog(
+            text, [self.entry("Added", "- List every known dog at rest **(BREAKING)**")], "0.14.0", (0, 13, 0), "2026-09-06"
+        )
+        self.assertEqual(
+            rewritten,
+            HEADER
+            + "## [Unreleased]\n\n## [0.14.0] - 2026-09-06\n\n### Added\n\n"
+            "- Kept line\n- List every known dog at rest **(BREAKING)**\n\n\n",
+        )
+        self.assertEqual(len(added), 1)
+
+    def test_a_new_group_sorts_among_the_groups_already_there(self) -> None:
+        text = HEADER + "## [0.14.0] - 2026-09-06\n\n### Added\n\n- Kept line\n\n### Performance\n\n- Fast\n\n\n"
+        rewritten, _added, _renamed = fix.rewrite_changelog(
+            text, [self.entry("Fixed", "- Correct")], "0.14.0", (0, 13, 0), "2026-09-06"
+        )
+        self.assertEqual(
+            rewritten,
+            HEADER
+            + "## [0.14.0] - 2026-09-06\n\n### Added\n\n- Kept line\n\n"
+            "### Fixed\n\n- Correct\n\n### Performance\n\n- Fast\n\n\n",
+        )
+
+    def test_the_heading_moves_to_the_version_that_carries_the_range(self) -> None:
+        text = HEADER + "## [0.13.1] - 2026-09-06\n\n\n## [0.13.0] - 2026-09-01\n\n### Added\n\n- Old\n\n\n"
+        rewritten, added, renamed = fix.rewrite_changelog(
+            text, [self.entry("Added", "- New")], "0.14.0", (0, 13, 0), "2026-09-06"
+        )
+        self.assertIn("## [0.14.0] - 2026-09-06\n\n### Added\n\n- New\n\n\n", rewritten)
+        self.assertNotIn("0.13.1", rewritten)
+        self.assertTrue(renamed)
+        self.assertEqual(len(added), 1)
+
+    def test_an_empty_section_still_moves_to_the_new_version(self) -> None:
+        text = HEADER + "## [0.13.1] - 2026-09-06\n\n\n## [0.13.0] - 2026-09-01\n"
+        rewritten, added, renamed = fix.rewrite_changelog(
+            text, [], "0.14.0", (0, 13, 0), "2026-09-06"
+        )
+        self.assertEqual(renamed, True)
+        self.assertEqual(added, [])
+        self.assertIn("## [0.14.0] - 2026-09-06\n\n\n## [0.13.0]", rewritten)
+
+    def test_a_section_is_written_when_release_plz_wrote_none(self) -> None:
+        text = HEADER + "## [Unreleased]\n\n## [0.13.0] - 2026-09-01\n\n### Added\n\n- Old\n\n\n"
+        rewritten, added, _renamed = fix.rewrite_changelog(
+            text, [self.entry("Fixed", "- Correct")], "0.14.0", (0, 13, 0), "2026-09-06"
+        )
+        self.assertEqual(
+            rewritten,
+            HEADER
+            + "## [Unreleased]\n\n## [0.14.0] - 2026-09-06\n\n### Fixed\n\n- Correct\n\n\n"
+            "## [0.13.0] - 2026-09-01\n\n### Added\n\n- Old\n\n\n",
+        )
+        self.assertEqual(len(added), 1)
+
+    def test_a_line_already_under_an_older_heading_is_not_published_twice(self) -> None:
+        text = HEADER + "## [0.13.1] - 2026-09-06\n\n\n## [0.13.0] - 2026-09-01\n\n### Added\n\n- Old\n\n\n"
+        rewritten, added, renamed = fix.rewrite_changelog(
+            text, [self.entry("Added", "- Old")], "0.14.0", (0, 13, 0), "2026-09-06"
+        )
+        self.assertEqual(added, [])
+        self.assertTrue(renamed)
+        self.assertEqual(rewritten.count("- Old"), 1)
+        self.assertIn("## [0.14.0] - 2026-09-06\n\n\n## [0.13.0]", rewritten)
+
+    def test_a_squash_commit_and_the_commit_it_squashed_add_one_line(self) -> None:
+        text = HEADER + "## [0.14.0] - 2026-09-06\n\n\n"
+        _rewritten, added, _renamed = fix.rewrite_changelog(
+            text,
+            [self.entry("Added", "- Remove an entry"), self.entry("Added", "- Remove an entry")],
+            "0.14.0",
+            (0, 13, 0),
+            "2026-09-06",
+        )
+        self.assertEqual(len(added), 1)
+
+    def test_a_hand_written_section_body_is_inserted_into_not_rewritten(self) -> None:
+        text = HEADER + "## [0.14.0] - 2026-09-06\n\n### Added\n\n- Kept line\n  with its continuation\n\n\n"
+        rewritten, _added, _renamed = fix.rewrite_changelog(
+            text, [self.entry("Added", "- New")], "0.14.0", (0, 13, 0), "2026-09-06"
+        )
+        self.assertIn("- Kept line\n  with its continuation\n- New\n", rewritten)
+
+
+class TestManifestRewrite(unittest.TestCase):
+    MEMBERS = {"shep", "shep-core", "shep-daemon", "shep-cli"}
+
+    def test_both_manifest_places_move_and_a_third_party_pin_does_not(self) -> None:
+        text = (
+            "[workspace.package]\n"
+            'version = "0.13.1"\n'
+            "edition = \"2024\"\n"
+            'rust-version = "1.88"\n'
+            "\n"
+            "[workspace.dependencies]\n"
+            'shep-core = { path = "crates/shep-core", version = "0.13.1" }\n'
+            'lookalike = { version = "0.13.1", default-features = false }\n'
+        )
+        rewritten = fix.rewrite_manifest(text, "0.13.1", "0.14.0", self.MEMBERS)
+        self.assertEqual(
+            rewritten,
+            "[workspace.package]\n"
+            'version = "0.14.0"\n'
+            "edition = \"2024\"\n"
+            'rust-version = "1.88"\n'
+            "\n"
+            "[workspace.dependencies]\n"
+            'shep-core = { path = "crates/shep-core", version = "0.14.0" }\n'
+            'lookalike = { version = "0.13.1", default-features = false }\n',
+        )
+
+    def test_the_lockfile_moves_for_members_only(self) -> None:
+        text = (
+            "version 4\n\n"
+            "[[package]]\n"
+            'name = "lookalike"\n'
+            'version = "0.13.1"\n'
+            "\n"
+            "[[package]]\n"
+            'name = "shep-cli"\n'
+            'version = "0.13.1"\n'
+        )
+        rewritten = fix.rewrite_lock(text, "0.13.1", "0.14.0", self.MEMBERS)
+        self.assertIn('name = "lookalike"\nversion = "0.13.1"', rewritten)
+        self.assertIn('name = "shep-cli"\nversion = "0.14.0"', rewritten)
+
+
+class TestReleaseBranchRewrite(Fixture):
+    def test_the_branch_comes_out_at_the_version_that_carries_the_diamond(self) -> None:
+        output = self.tmp / "output.txt"
+        run = self.run_guard(output)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        results = self.results(output)
+        self.assertEqual(results["new_version"], "0.14.0")
+        self.assertEqual(results["old_version"], "0.13.1")
+        self.assertEqual(results["changed"], "true")
+
+        manifest = self.remote_file(RELEASE_BRANCH, "Cargo.toml")
+        self.assertIn('version = "0.14.0"', manifest)
+        self.assertIn('shep-core = { path = "crates/shep-core", version = "0.14.0" }', manifest)
+        self.assertIn('lookalike = { version = "0.13.0", default-features = false }', manifest)
+
+        lock = self.remote_file(RELEASE_BRANCH, "Cargo.lock")
+        self.assertIn('name = "shep"\nversion = "0.14.0"', lock)
+        self.assertIn('name = "shep-cli"\nversion = "0.14.0"', lock)
+        self.assertIn('name = "lookalike"\nversion = "0.13.0"', lock)
+
+    def test_every_commit_the_walk_missed_reaches_the_right_changelog(self) -> None:
+        output = self.tmp / "output.txt"
+        self.assertEqual(self.run_guard(output).returncode, 0)
+
+        daemon = self.remote_file(RELEASE_BRANCH, "crates/shep-daemon/CHANGELOG.md")
+        cli = self.remote_file(RELEASE_BRANCH, "crates/shep-cli/CHANGELOG.md")
+        core = self.remote_file(RELEASE_BRANCH, "crates/shep-core/CHANGELOG.md")
+
+        self.assertIn("- List every known dog at rest **(BREAKING)**", daemon)
+        self.assertIn("- Re-fire config.dog.<name> when secrets.json changes a value a dog names", daemon)
+        self.assertIn("- Remove an entry from an array or map of tables", cli)
+        self.assertNotIn("List every known dog", cli)
+        self.assertNotIn("Remove an entry", daemon)
+
+        # The bump is the workspace's, so a package with nothing to say still
+        # gets the heading the release actually carries.
+        self.assertIn("## [0.14.0] - 2026-09-06", core)
+        self.assertNotIn("0.13.1", daemon + cli + core)
+
+    def test_running_the_guard_again_changes_nothing(self) -> None:
+        output = self.tmp / "first.txt"
+        self.assertEqual(self.run_guard(output).returncode, 0)
+        after_first = self.remote_head(RELEASE_BRANCH)
+
+        second = self.tmp / "second.txt"
+        run = self.run_guard(second)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        results = self.results(second)
+        self.assertEqual(results["changed"], "false")
+        self.assertEqual(results["new_version"], "0.14.0")
+        self.assertEqual(self.remote_head(RELEASE_BRANCH), after_first)
+        self.assertIn("already accounts for every commit", run.stdout)
+
+    def test_main_is_left_alone(self) -> None:
+        before = self.remote_head("main")
+        self.assertEqual(self.run_guard(self.tmp / "output.txt").returncode, 0)
+        self.assertEqual(self.remote_head("main"), before)
+        self.assertEqual(self.remote_file("main", "Cargo.toml").count('version = "0.13.0"'), 4)
+
+
+class TestRefusals(Fixture):
+    def run_against(self, *extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "fix-release-bump.py"),
+                "--repo",
+                str(self.repo),
+                *extra,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_a_range_with_no_tag_reachable_refuses(self) -> None:
+        self.git("tag", "-d", "shep-v0.13.0")
+        run = self.run_against("--base-sha", self.main_head, "--head-sha", self.main_head)
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("No shep-v[0-9]* tag is reachable", run.stderr)
+
+    def test_a_range_named_by_hand_needs_no_tag(self) -> None:
+        self.git("tag", "-d", "shep-v0.13.0")
+        run = self.run_against(
+            "--base-sha",
+            self.main_head,
+            "--head-sha",
+            self.main_head,
+            "--since",
+            self.base_sha,
+            "--dry-run",
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("0.14.0 carries the range", run.stdout)
+
+    def test_a_branch_that_needs_nothing_reports_no_change(self) -> None:
+        # main carries the same version the release branch does, so the only
+        # thing to report is what the changelogs are missing.
+        run = self.run_against(
+            "--base-sha", self.main_head, "--head-sha", self.main_head, "--dry-run"
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("0.14.0 carries the range", run.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
