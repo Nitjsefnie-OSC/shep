@@ -39,6 +39,17 @@ impl<R: ProcessRunner> Actor<R> {
         // once per app. That walk carries every refusal back on
         // `Response::Reloading`, so a fold reloaded around a busy app is
         // still named at the operator rather than being a missing row.
+        if selector.is_exact() {
+            let names = matched
+                .iter()
+                .filter_map(|id| self.sheep.get(id))
+                .map(|slot| slot.entry.spec.config().name.as_str());
+            if let Err(refusal) = self.refuse_disabled(names) {
+                let _ = reply.send(Err(refusal));
+                return;
+            }
+        }
+
         let in_flight = matched.iter().find_map(|id| {
             let slot = self
                 .sheep
@@ -265,6 +276,16 @@ impl<R: ProcessRunner> Actor<R> {
         old_id: u32,
         mode: ReloadMode,
     ) -> Result<u32, String> {
+        // The last word on the mark for both orderings, ahead of anything the
+        // drainee or the id counter would be left holding if it refused.
+        if let Some(slot) = self.sheep.get(&old_id)
+            && self.is_disabled_id(old_id)
+        {
+            return Err(format!(
+                "{} is disabled; `shep enable` brings it back",
+                slot.entry.spec.config().name
+            ));
+        }
         // `Credentials` is `Copy`; reused, and re-resolved only when the config
         // being promoted is what changed `user` or `group`. A drainee is
         // running, so the seam finds a resolved identity and touches nothing.
