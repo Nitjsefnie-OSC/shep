@@ -85,9 +85,10 @@ jobs:
       # for a human to read. The middle one does not: release-plz's own walk
       # under-reads a diamond, so scripts/fix-release-bump.py writes what it
       # missed onto the release branch and pushes it, and a release PR that
-      # came out too small comes back correct instead of red. It writes to the
-      # release branch only, so nothing publishes: a release still waits for a
-      # human to merge.
+      # came out too small comes back correct instead of red. It fails only
+      # when it cannot read the branch, or cannot move the version it is being
+      # asked to report. It writes to the release branch only, so nothing
+      # publishes: a release still waits for a human to merge.
       - name: Guard the release PR's version and changelog
         id: guard
         if: ${{ steps.release-plz.outputs.prs_created == 'true' }}
@@ -192,24 +193,19 @@ jobs:
               --silent
             echo "::error::release PR #$PR_NUMBER could not be judged."
             echo "::error::Left open for a human: the script refuses rather than rewrite a"
-            echo "::error::branch it cannot read the range of commits behind."
+            echo "::error::branch it cannot read the range of commits behind, or write a version"
+            echo "::error::its manifests, dependency literals and lockfile do not carry."
             exit 1
           fi
 
           if [ "$changed" = true ]; then
-            # GitHub's own view of the pull request head lags the push by a
-            # moment, and the title edit and the diff below both read it.
-            for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-              if [ "$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$new_head" ]; then
-                break
-              fi
-              sleep 2
-            done
-
             # Keep whatever shape release-plz gave the title and move only the
             # number in it. The title is also what a squashed merge writes into
             # main's history, and the job's own `if` above reads that history
             # for the string `chore: release` to skip a release's own merge.
+            # Nothing here waits on GitHub noticing the push: the title edit
+            # names the pull request, and the diff below is read out of this
+            # step's own git objects.
             if [ "$old_version" != "$new_version" ]; then
               title="$(gh pr view "$PR_NUMBER" --json title --jq .title)"
               if printf '%s' "$title" | grep -qF "$old_version"; then
@@ -230,8 +226,20 @@ jobs:
           # changelog instead. It runs against the head the guard left the
           # branch at, which is the head a merge would publish.
           #
-          # Scoped to the new version's own added lines: `gh pr diff` prints
-          # every file in the PR, so a bullet added anywhere else would
+          # The diff is built here rather than asked of GitHub. The guard's own
+          # commit was created in this checkout, so both ends of the range are
+          # local, while `gh pr diff` answers from GitHub's view of a head it
+          # has not necessarily noticed yet: a step that pushed a moment ago can
+          # be handed the diff from before its own push, and a guard reading a
+          # stale diff is a guard that passed a branch it never looked at.
+          #
+          # `git diff` exits 0 whether or not it found a difference, so a
+          # non-zero status here is git saying it could not do the diff at all.
+          # The status is captured rather than left to the pipeline so that an
+          # empty diff and a failed one cannot read the same.
+          #
+          # Scoped to the new version's own added lines: the diff prints every
+          # changelog in the release, so a bullet added anywhere else would
           # otherwise pass a guard whose only question is the new section's
           # content.
           #
@@ -239,16 +247,25 @@ jobs:
           # template's `trim = true` strips it per line: dropping `trim`
           # later would otherwise stop every release here with no clear
           # signal why.
+          changelog_diff="$RUNNER_TEMP/release-changelog.diff"
+          diff_status=0
+          git diff --no-color "$base_sha" "$new_head" -- '*CHANGELOG.md' > "$changelog_diff" || diff_status=$?
+          if [ "$diff_status" -gt 1 ]; then
+            echo "::error::git could not diff $base_sha against $new_head (exit $diff_status)."
+            echo "::error::Refusing rather than judging a changelog this step cannot read. Re-run the job."
+            exit 1
+          fi
+
           bump_state=success
           bump_note="$new_version against every commit since the last release"
-          if ! gh pr diff "$PR_NUMBER" | awk '
+          if ! awk '
                 /^diff --git /                 { in_log = 0 }
                 /^\+\+\+ b\/.*CHANGELOG\.md$/  { in_log = 1; under_new = 0; next }
                 !in_log                        { next }
                 /^\+## \[/                     { under_new = 1; next }
                 under_new && /^\+[[:space:]]*[-*][[:space:]]/ { found = 1 }
                 END                            { exit !found }
-              '; then
+              ' "$changelog_diff"; then
             bump_state=failure
             bump_note="$new_version, but its new changelog section is empty"
           fi

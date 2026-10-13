@@ -407,8 +407,27 @@ def group_blocks(body: list[str]) -> list[tuple[str, int, int]]:
 
 
 # What a section release-plz's own template writes: blank lines, `### ` group
-# headings and `- ` entries, and nothing else.
-GENERATED_SHAPE = re.compile(r"^\s*$|^### |^- ")
+# headings and `- ` entries under a heading, and nothing else.
+TEMPLATE_LINE = re.compile(r"^\s*$|^### |^- ")
+
+
+def template_shaped(body: list[str]) -> bool:
+    """Whether a section body is only what the template writes.
+
+    An entry with no `### ` heading above it is not that shape. Parsing such a
+    body finds no groups, and writing the section back from those groups drops
+    the entry, so a body like that is only ever inserted into.
+    """
+    under_a_group = False
+    for line in body:
+        if line.startswith("### "):
+            under_a_group = True
+        elif line.startswith("- "):
+            if not under_a_group:
+                return False
+        elif not TEMPLATE_LINE.match(line):
+            return False
+    return True
 
 
 def parse_groups(body: list[str]) -> list[tuple[str, list[str]]]:
@@ -473,7 +492,7 @@ def complete_section(body: list[str], missing: list[Entry]) -> None:
     other body is only inserted into, never rewritten.
     """
     by_group = group_missing(missing)
-    if not all(GENERATED_SHAPE.match(line) for line in body):
+    if not template_shaped(body):
         for group in sorted(by_group):
             insert_into_body(body, group, by_group[group])
         return
@@ -494,19 +513,24 @@ def existing_entry_lines(lines: list[str]) -> set[str]:
     return {line.strip() for line in lines if line.startswith("- ")}
 
 
-def missing_entries(entries: list[Entry], published: set[str]) -> list[Entry]:
+def missing_entries(entries: list[Entry], present: set[str]) -> list[Entry]:
     """The entries this release still owes, in the order they were committed.
 
-    Two filters, both needed. A line already under an older heading is published
-    and re-publishing it would read as a change that is not one. And a squash
-    commit and the branch commit it squashed share a subject, so the same line
-    arrives twice through `--full-history` and is written once.
+    Two filters, both needed. A line already under this release's own heading is
+    written, and adding it twice would be the guard duplicating release-plz.
+    And a merge commit plus the branch commits it merged share a subject, so the
+    same line arrives twice through `--full-history` and is written once.
+
+    Nothing under an older heading is filtered: a change that was reverted and
+    landed again generates the same line as the one that was taken out, and it
+    is a real change in this release. Only this release's own section decides
+    what is already there.
     """
     missing: list[Entry] = []
     seen: set[str] = set()
     for entry in entries:
         key = entry.line.strip()
-        if key in published or key in seen:
+        if key in present or key in seen:
             continue
         seen.add(key)
         missing.append(entry)
@@ -535,10 +559,8 @@ def rewrite_changelog(
             target = position
             break
 
-    published = existing_entry_lines(text.splitlines())
-
     if target is None:
-        missing = missing_entries(entries, published)
+        missing = missing_entries(entries, set())
         if not missing:
             return text, [], False
         body: list[str] = ["\n"]
@@ -553,7 +575,7 @@ def rewrite_changelog(
         return render_sections(head, sections), missing, False
 
     heading, body = sections[target]
-    missing = missing_entries(entries, published)
+    missing = missing_entries(entries, existing_entry_lines(body))
     if missing:
         complete_section(body, missing)
     match = SECTION_HEADING.match(heading)
@@ -572,6 +594,11 @@ def render_sections(head: list[str], sections: list[tuple[str, list[str]]]) -> s
     return "".join(head) + "".join(heading + "".join(body) for heading, body in sections)
 
 
+def version_literal(old: str) -> re.Pattern[str]:
+    """`version = "<old>"`, tolerant of the spacing a hand-edited manifest has."""
+    return re.compile(r'version\s*=\s*"' + re.escape(old) + r'"')
+
+
 def rewrite_manifest(text: str, old: str, new: str, member_names: set[str]) -> str:
     """Bump `[workspace.package]` and the intra-workspace dependency literals.
 
@@ -580,21 +607,23 @@ def rewrite_manifest(text: str, old: str, new: str, member_names: set[str]) -> s
     other publishes a crate that asks for a workspace member that does not
     exist. Line-based, so every comment in the manifest survives.
     """
-    old_literal = f'version = "{old}"'
-    new_literal = f'version = "{new}"'
+    literal = version_literal(old)
+    moved = f'version = "{new}"'
     section = ""
     out: list[str] = []
     for line in text.splitlines(keepends=True):
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
-            section = stripped[1:-1]
-        if old_literal in line:
-            if section == "workspace.package":
-                line = line.replace(old_literal, new_literal)
-            elif section == "workspace.dependencies":
-                key = stripped.split("=", 1)[0].strip().split(" ")[0]
-                if key in member_names:
-                    line = line.replace(old_literal, new_literal)
+            # Whitespace inside the brackets is legal TOML, and tomllib reads
+            # `[ workspace.package ]` as the same table this script is asked to
+            # move, so it has to read it the same way.
+            section = stripped[1:-1].strip()
+        if section == "workspace.package" and stripped.startswith("version"):
+            line = literal.sub(moved, line, count=1)
+        elif section == "workspace.dependencies":
+            key = stripped.split("=", 1)[0].strip()
+            if key in member_names:
+                line = literal.sub(moved, line, count=1)
         out.append(line)
     return "".join(out)
 
@@ -605,8 +634,8 @@ def rewrite_lock(text: str, old: str, new: str, member_names: set[str]) -> str:
     Only members: a third-party package that happens to sit at the old version
     is not this release's to move.
     """
-    old_literal = f'version = "{old}"'
-    new_literal = f'version = "{new}"'
+    literal = version_literal(old)
+    moved = f'version = "{new}"'
     name = ""
     out: list[str] = []
     for line in text.splitlines(keepends=True):
@@ -615,10 +644,52 @@ def rewrite_lock(text: str, old: str, new: str, member_names: set[str]) -> str:
             name = ""
         elif stripped.startswith('name = "'):
             name = stripped[len('name = "') : -1]
-        elif stripped == old_literal and name in member_names:
-            line = line.replace(old_literal, new_literal)
+        elif name in member_names and literal.match(stripped):
+            line = literal.sub(moved, line, count=1)
         out.append(line)
     return "".join(out)
+
+
+def manifest_version_text(text: str) -> str | None:
+    """The version a manifest's `[workspace.package]` names, as TOML reads it."""
+    try:
+        value = tomllib.loads(text)["workspace"]["package"]["version"]
+    except (KeyError, TypeError, tomllib.TOMLDecodeError):
+        return None
+    return value if isinstance(value, str) else None
+
+
+def lock_versions(text: str, member_names: set[str]) -> dict[str, str]:
+    """The version each workspace member carries in a lockfile."""
+    found: dict[str, str] = {}
+    name = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "[[package]]":
+            name = ""
+        elif stripped.startswith('name = "'):
+            name = stripped[len('name = "') : -1]
+        elif name in member_names and stripped.startswith('version = "'):
+            found[name] = stripped[len('version = "') : -1]
+    return found
+
+
+def dependency_versions(text: str) -> dict[str, str]:
+    """The version each intra-workspace dependency literal names, as TOML reads it.
+
+    `cargo publish` drops a `path` and keeps the literal beside it, so a member
+    dependency left at the old version publishes a crate that asks for a workspace
+    member that release does not contain.
+    """
+    try:
+        dependencies = tomllib.loads(text)["workspace"].get("dependencies", {})
+    except (KeyError, TypeError, tomllib.TOMLDecodeError):
+        return {}
+    found: dict[str, str] = {}
+    for key, value in dependencies.items():
+        if isinstance(value, dict) and isinstance(value.get("version"), str):
+            found[key] = value["version"]
+    return found
 
 
 def manifest_version(repo: Repo, rev: str) -> tuple[int, int, int] | None:
@@ -626,11 +697,7 @@ def manifest_version(repo: Repo, rev: str) -> tuple[int, int, int] | None:
     raw = repo.show(rev, "Cargo.toml")
     if raw is None:
         return None
-    try:
-        version = tomllib.loads(raw)["workspace"]["package"]["version"]
-    except (KeyError, TypeError, tomllib.TOMLDecodeError):
-        return None
-    return parse_version(version)
+    return parse_version(manifest_version_text(raw) or "")
 
 
 def newest_date(commits: list[Commit], fallback: str) -> str:
@@ -777,6 +844,45 @@ def main(argv: list[str] | None = None) -> int:
     lock_text = repo.show(head_sha, "Cargo.lock") or ""
     manifest_new = rewrite_manifest(manifest_text, show_version(head_version), new_version_text, members)
     lock_new = rewrite_lock(lock_text, show_version(head_version), new_version_text, members)
+
+    if new_version != head_version:
+        # Report only a version the branch actually carries. A manifest that
+        # names its version in a shape the line rewriter cannot move would
+        # otherwise leave the pull request titled one version and built at
+        # another, which is the mistake this guard exists to catch.
+        carried = manifest_version_text(manifest_new)
+        if carried != new_version_text:
+            return refuse(
+                f"Cargo.toml at {head_sha} names its version in a shape this script\n"
+                f"cannot move: it reads {manifest_version_text(manifest_text) or 'nothing'}\n"
+                f"and the rewrite left {carried or 'nothing'}, not {new_version_text}.\n"
+                f"Refusing rather than pushing a branch titled {new_version_text} and\n"
+                f"built at {show_version(head_version)}."
+            )
+        stale = sorted(
+            name
+            for name, version in lock_versions(lock_new, members).items()
+            if version == show_version(head_version)
+        )
+        if stale:
+            return refuse(
+                f"Cargo.lock at {head_sha} still carries {show_version(head_version)} for\n"
+                f"{', '.join(stale)}, so the bump is incomplete. Refusing rather than\n"
+                "pushing a branch whose lockfile disagrees with its manifests."
+            )
+        pinned = sorted(
+            key
+            for key, version in dependency_versions(manifest_new).items()
+            if key in members and version == show_version(head_version)
+        )
+        if pinned:
+            return refuse(
+                f"Cargo.toml at {head_sha} still asks for {show_version(head_version)} of\n"
+                f"{', '.join(pinned)} in [workspace.dependencies], written in a shape this\n"
+                f"script cannot move. Refusing rather than publishing a crate that wants\n"
+                f"a workspace member {new_version_text} does not contain."
+            )
+
     changed = new_version != head_version or bool(plan) or manifest_new != manifest_text or lock_new != lock_text
 
     print(f"Range {since}..{args.base_sha}: {len(commits)} commit(s), both legs.")

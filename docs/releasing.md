@@ -205,6 +205,13 @@ release still waits for a human to merge it. release-plz rewrites the branch on
 every push to main, so the guard runs again each time and corrects it again,
 and a branch it already corrected is left alone.
 
+It refuses rather than push when it cannot read the branch, and when the version
+it worked out is not one it can actually write: after the rewrite it re-reads
+`[workspace.package]`, the `[workspace.dependencies]` literals and `Cargo.lock`
+with a TOML parser and refuses if any of them still names the old version. A
+release pull request titled one version and built at another is the mistake this
+guard exists to catch, so it is the one outcome the guard will not produce.
+
 `release-plz-pr.yml` runs it as the middle of that step's three guards. The
 other two still fail for a human: a release pull request that bumps no version,
 and one whose new changelog section is empty, are both shapes a person has to

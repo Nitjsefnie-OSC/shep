@@ -268,6 +268,17 @@ class Fixture(unittest.TestCase):
         self.commit("chore: release v0.13.1", date="2026-09-06T01:00:00")
         self.git("push", "-q", "origin", f"HEAD:refs/heads/{RELEASE_BRANCH}")
         self.git("checkout", "-q", "main")
+        self.release_head = self.remote_head(RELEASE_BRANCH)
+
+    def amend_release_branch(self, path: str, text: str) -> None:
+        """Put one file of the release branch in a different shape, as a commit
+        on top of it. That is what a hand edit on the branch looks like."""
+        self.git("checkout", "-q", RELEASE_BRANCH)
+        self.write(path, text)
+        self.commit("chore: hand edit on the release branch", date="2026-09-06T02:00:00")
+        self.git("push", "-q", "origin", f"HEAD:refs/heads/{RELEASE_BRANCH}")
+        self.git("checkout", "-q", "main")
+        self.release_head = self.remote_head(RELEASE_BRANCH)
 
     # Running the guard.
 
@@ -461,15 +472,26 @@ class TestSectionRewrite(unittest.TestCase):
         )
         self.assertEqual(len(added), 1)
 
-    def test_a_line_already_under_an_older_heading_is_not_published_twice(self) -> None:
+    def test_a_line_matching_an_older_release_still_lands_in_the_new_section(self) -> None:
+        """A change that was taken out and landed again generates the same line
+        as the one that was removed. It is a real change in this release, so the
+        guard writes it rather than reading the older heading as an answer."""
         text = HEADER + "## [0.13.1] - 2026-09-06\n\n\n## [0.13.0] - 2026-09-01\n\n### Added\n\n- Old\n\n\n"
         rewritten, added, renamed = fix.rewrite_changelog(
             text, [self.entry("Added", "- Old")], "0.14.0", (0, 13, 0), "2026-09-06"
         )
-        self.assertEqual(added, [])
+        self.assertEqual([entry.line for entry in added], ["- Old"])
         self.assertTrue(renamed)
-        self.assertEqual(rewritten.count("- Old"), 1)
-        self.assertIn("## [0.14.0] - 2026-09-06\n\n\n## [0.13.0]", rewritten)
+        self.assertIn("## [0.14.0] - 2026-09-06\n\n### Added\n\n- Old\n\n\n## [0.13.0]", rewritten)
+        self.assertEqual(rewritten.count("- Old"), 2)
+
+    def test_a_line_the_new_section_already_carries_is_not_written_twice(self) -> None:
+        text = HEADER + "## [0.14.0] - 2026-09-06\n\n### Added\n\n- Kept line\n\n\n"
+        rewritten, added, _renamed = fix.rewrite_changelog(
+            text, [self.entry("Added", "- Kept line")], "0.14.0", (0, 13, 0), "2026-09-06"
+        )
+        self.assertEqual(added, [])
+        self.assertEqual(rewritten, text)
 
     def test_a_squash_commit_and_the_commit_it_squashed_add_one_line(self) -> None:
         text = HEADER + "## [0.14.0] - 2026-09-06\n\n\n"
@@ -488,6 +510,18 @@ class TestSectionRewrite(unittest.TestCase):
             text, [self.entry("Added", "- New")], "0.14.0", (0, 13, 0), "2026-09-06"
         )
         self.assertIn("- Kept line\n  with its continuation\n- New\n", rewritten)
+
+    def test_entries_with_no_group_heading_above_them_are_kept(self) -> None:
+        """A body of bare entries parses as having no groups, so writing the
+        section back from its parsed groups would drop them. Such a body is not
+        the template's shape and is only ever inserted into."""
+        text = HEADER + "## [0.14.0] - 2026-09-06\n\n- A line with no group above it\n\n\n"
+        rewritten, added, _renamed = fix.rewrite_changelog(
+            text, [self.entry("Added", "- New")], "0.14.0", (0, 13, 0), "2026-09-06"
+        )
+        self.assertIn("- A line with no group above it\n", rewritten)
+        self.assertIn("### Added\n\n- New\n", rewritten)
+        self.assertEqual(len(added), 1)
 
 
 class TestManifestRewrite(unittest.TestCase):
@@ -531,6 +565,52 @@ class TestManifestRewrite(unittest.TestCase):
         rewritten = fix.rewrite_lock(text, "0.13.1", "0.14.0", self.MEMBERS)
         self.assertIn('name = "lookalike"\nversion = "0.13.1"', rewritten)
         self.assertIn('name = "shep-cli"\nversion = "0.14.0"', rewritten)
+
+    def test_spacing_and_bracket_whitespace_are_tolerated(self) -> None:
+        """tomllib reads these as the same tables and keys the guard is asked to
+        move, so the line rewriter has to read them the same way rather than
+        only the shape `cargo` writes."""
+        text = (
+            "[ workspace.package ]\n"
+            'version="0.13.1"\n'
+            "\n"
+            "[workspace.dependencies]\n"
+            'shep-core={path="crates/shep-core",version="0.13.1"}\n'
+        )
+        rewritten = fix.rewrite_manifest(text, "0.13.1", "0.14.0", self.MEMBERS)
+        self.assertEqual(fix.manifest_version_text(rewritten), "0.14.0")
+        self.assertIn('shep-core={path="crates/shep-core",version = "0.14.0"}', rewritten)
+
+    def test_a_version_key_this_script_cannot_move_is_left_for_the_refusal(self) -> None:
+        """A quoted key is valid TOML and tomllib reads it as `version`, while
+        this script's line matcher does not. The rewrite leaves it, and the check
+        that the branch carries the version it claims notices."""
+        text = '[workspace.package]\n"version" = "0.13.1"\n'
+        rewritten = fix.rewrite_manifest(text, "0.13.1", "0.14.0", self.MEMBERS)
+        self.assertEqual(rewritten, text)
+        self.assertEqual(fix.manifest_version_text(rewritten), "0.13.1")
+
+    def test_lock_versions_reports_members_only(self) -> None:
+        text = (
+            "[[package]]\n"
+            'name = "lookalike"\n'
+            'version = "0.13.1"\n'
+            "\n"
+            "[[package]]\n"
+            'name = "shep"\n'
+            'version = "0.13.1"\n'
+        )
+        self.assertEqual(fix.lock_versions(text, self.MEMBERS), {"shep": "0.13.1"})
+
+    def test_dependency_versions_reads_the_literals_cargo_publish_keeps(self) -> None:
+        text = (
+            "[workspace.dependencies]\n"
+            'shep-core = { path = "crates/shep-core", version = "0.13.1" }\n'
+            'lookalike = { version = "0.13.1", default-features = false }\n'
+        )
+        self.assertEqual(
+            fix.dependency_versions(text), {"shep-core": "0.13.1", "lookalike": "0.13.1"}
+        )
 
 
 class TestReleaseBranchRewrite(Fixture):
@@ -636,6 +716,43 @@ class TestRefusals(Fixture):
         )
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIn("0.14.0 carries the range", run.stdout)
+
+    def test_a_dependency_literal_the_rewriter_cannot_move_refuses(self) -> None:
+        """A quoted key is valid TOML, so cargo keeps the literal at the old
+        version and publishes a crate that wants a member this release does not
+        contain. The guard refuses rather than bumping around it."""
+        manifest = self.remote_file(RELEASE_BRANCH, "Cargo.toml").replace(
+            'shep-core = { path = "crates/shep-core", version = "0.13.1" }',
+            '"shep-core" = { path = "crates/shep-core", version = "0.13.1" }',
+        )
+        self.amend_release_branch("Cargo.toml", manifest)
+        run = self.run_against(
+            "--base-sha", self.main_head, "--branch", RELEASE_BRANCH, "--remote", "origin"
+        )
+        self.assertEqual(run.returncode, 1, run.stdout)
+        self.assertIn("[workspace.dependencies]", run.stderr)
+        self.assertEqual(self.remote_head(RELEASE_BRANCH), self.release_head)
+
+    def test_a_manifest_the_rewriter_cannot_move_refuses(self) -> None:
+        """A branch titled one version and built at another is the mistake this
+        guard exists to catch, so the guard refuses rather than reporting a
+        version it did not write."""
+        manifest = self.remote_file(RELEASE_BRANCH, "Cargo.toml").replace(
+            '[workspace.package]\nversion = "0.13.1"',
+            '[workspace.package]\n"version" = "0.13.1"',
+        )
+        self.amend_release_branch("Cargo.toml", manifest)
+        run = self.run_against(
+            "--base-sha",
+            self.main_head,
+            "--branch",
+            RELEASE_BRANCH,
+            "--remote",
+            "origin",
+        )
+        self.assertEqual(run.returncode, 1, run.stdout)
+        self.assertIn("cannot move", run.stderr)
+        self.assertEqual(self.remote_head(RELEASE_BRANCH), self.release_head)
 
 
 if __name__ == "__main__":
