@@ -67,6 +67,8 @@ mod dog_pane;
 #[cfg(test)]
 mod dog_pane_entries;
 #[cfg(test)]
+mod dog_pane_entry_add;
+#[cfg(test)]
 mod dog_pane_entry_removal;
 mod keys;
 mod lambs;

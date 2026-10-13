@@ -1,11 +1,15 @@
 use super::super::*;
 
 impl App {
-    /// The operator's `Enter` on the config pane. Six meanings, picked in
+    /// The operator's `Enter` on the config pane. Seven meanings, picked in
     /// this order:
     ///
     /// - The cursor is on a table of a dog's pane, or on a list of choices:
     ///   opens it if it is closed and closes it if it is open.
+    /// - The cursor is on `+ new` under an array or map of tables: adds an
+    ///   entry, at once to an array, and for a map through a text editor for
+    ///   its key, which switches [`InputMode::Text`] on. Behind the write
+    ///   gate, like an edit.
     /// - The cursor is on a name in a list of choices: toggles it, as
     ///   `space` does.
     /// - The cursor is on a sheep's `dogs` row: probes the dogs for the
@@ -24,6 +28,17 @@ impl App {
         if let Some(pane) = self.config_pane_mut()
             && pane.toggle_table()
         {
+            return Effect::None;
+        }
+        if self.config_pane().is_some_and(ConfigPane::cursor_on_new) {
+            if self.authorize_write().is_some()
+                && let Some(pane) = self.config_pane_mut()
+            {
+                pane.begin_new_entry();
+                if pane.typing().is_some() {
+                    self.mode = InputMode::Text;
+                }
+            }
             return Effect::None;
         }
         if let Some(probe) = self.dogs_row_effect() {

@@ -284,7 +284,10 @@ pub(super) fn apply_post_tick_scene(app: &mut App, which: Scene) {
                 }
             }
         }
-        Scene::DogEntries | Scene::DogEntriesNarrow | Scene::DogEntryTyping => {
+        Scene::DogEntries
+        | Scene::DogEntriesNarrow
+        | Scene::DogEntryTyping
+        | Scene::DogEntriesNew => {
             // The schema probe, then the shepherd's section, the way the
             // event loop opens a dog's pane. `clients` and its first entry
             // are opened with `→` the way an operator would, and the
@@ -302,16 +305,23 @@ pub(super) fn apply_post_tick_scene(app: &mut App, which: Scene) {
                     toml: entries_dog_section().into(),
                 }),
             });
-            let opened = if which == Scene::DogEntryTyping {
-                ["clients", "clients[1]"]
-            } else {
-                ["clients", "clients[0]"]
+            let opened = match which {
+                Scene::DogEntryTyping => vec!["clients", "clients[1]"],
+                Scene::DogEntriesNew => vec!["models"],
+                _ => vec!["clients", "clients[0]"],
             };
             for key in opened {
                 select_node(app, key);
                 app.update(Msg::Key(KeyPress::TabNext));
             }
-            if which == Scene::DogEntryTyping {
+            if which == Scene::DogEntriesNew {
+                // `Enter` on `+ new` under a map asks for the key.
+                select_node(app, "models[+]");
+                app.update(Msg::Key(KeyPress::Confirm));
+                for character in "gpt-5".chars() {
+                    app.update(Msg::Key(KeyPress::TextChar(character)));
+                }
+            } else if which == Scene::DogEntryTyping {
                 // `b-2` has no `name` yet; the editor opens empty on it.
                 select_node(app, "clients[1].name");
                 app.update(Msg::Key(KeyPress::Confirm));
@@ -764,6 +774,26 @@ mod tests {
             "{name_row:?}"
         );
         assert!(text.contains("FOCUSED  clients[1].name"), "{text}");
+        for credential in ["hunter2", "hunter3", "hunter4"] {
+            assert!(!text.contains(credential), "drew {credential}");
+        }
+    }
+
+    /// The key-editor scene shows `models` open onto `+ new`, the editor
+    /// labelled with the map it adds to and holding the typed key, and no
+    /// edit counted yet.
+    #[test]
+    #[cfg(unix)] // inherited, not measured per test: see the `build` module's docs
+    fn the_dog_entries_new_scene_draws_the_key_editor_on_the_plus_new_row() {
+        let text = render_text(&scene(Scene::DogEntriesNew).1);
+        let new_row = text
+            .lines()
+            .find(|line| line.starts_with('>'))
+            .expect("the cursor is on the + new row");
+        assert!(new_row.contains("+ new"), "{new_row:?}");
+        assert!(text.contains("new models key"), "{text}");
+        assert!(text.contains("gpt-5\u{258f}"), "{text}");
+        assert!(!text.contains("[1 edit"), "{text}");
         for credential in ["hunter2", "hunter3", "hunter4"] {
             assert!(!text.contains(credential), "drew {credential}");
         }

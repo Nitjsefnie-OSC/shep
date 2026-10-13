@@ -149,6 +149,19 @@ pub fn entries_dog_schema() -> serde_json::Value {
     })
 }
 
+/// [`entries_dog_schema`] with defaults on the items: a new client is
+/// enabled, with a secret `key` of `change-me`, and a new model has a
+/// `context` of 4096. No `name`, `id`, or `provider`.
+pub fn entries_dog_defaults_schema() -> serde_json::Value {
+    let mut schema = entries_dog_schema();
+    let defs = &mut schema["$defs"];
+    defs["Client"]["properties"]["enabled"] =
+        serde_json::json!({ "type": "boolean", "default": true });
+    defs["Client"]["properties"]["key"]["default"] = serde_json::json!("change-me");
+    defs["Model"]["properties"]["context"]["default"] = serde_json::json!(4096);
+    schema
+}
+
 /// The `[paddock]` section [`entries_dog_schema`] opens on: three clients,
 /// each holding a credential, and two models.
 pub fn entries_dog_section() -> String {
@@ -169,6 +182,27 @@ pub fn entries_dog_section() -> String {
 pub fn app_in_dog_pane_with_entries() -> App {
     let mut app = app_in_read_only_dog_pane_with_entries();
     app.set_control_for_tests(Control::Allowed);
+    app
+}
+
+/// [`app_in_dog_pane_with_entries`] over [`entries_dog_defaults_schema`], so a
+/// new entry holds the defaults it declares.
+pub fn app_in_dog_pane_with_entry_defaults() -> App {
+    let mut app = app_with(flock_of(3, 0), plain());
+    app.set_control_for_tests(Control::Allowed);
+    app.update(Msg::DogPane {
+        name: "paddock".to_string(),
+        adopted_path: None,
+        result: Ok(entries_dog_defaults_schema()),
+    });
+    app.update(Msg::Replied {
+        sent: Sent::DogSection {
+            name: "paddock".to_string(),
+        },
+        result: Ok(Response::DogSection {
+            toml: entries_dog_section().into(),
+        }),
+    });
     app
 }
 
@@ -211,6 +245,9 @@ pub fn select_node(app: &mut App, path: &str) {
                 .is_some_and(|entry| match &entry.body {
                     EntryBody::Node { path: at, .. } => at == path,
                     EntryBody::Leaf { field, .. } => field.key == path,
+                    EntryBody::New { field } => {
+                        format!("{}[+]", pane.fields().fields()[*field].key) == path
+                    }
                 }),
             PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => false,
         })

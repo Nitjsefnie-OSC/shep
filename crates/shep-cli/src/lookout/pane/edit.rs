@@ -44,6 +44,16 @@ pub struct PaneTyping {
     pub buffer: TextBox,
 }
 
+/// Whether `value` is `null` or an empty array or table.
+fn holds_nothing(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Array(items) => items.is_empty(),
+        Value::Object(map) => map.is_empty(),
+        _ => false,
+    }
+}
+
 /// Prints the key and never the buffer. See the type doc for why.
 /// Exact-string-tested below (`debug_names_no_value_on_a_pane_typing`).
 impl core::fmt::Debug for PaneTyping {
@@ -84,8 +94,9 @@ impl ConfigPane {
     /// silently, since the pane already holds nothing once this returns.
     #[must_use]
     pub(in crate::lookout) fn close(&mut self) -> Edits {
+        self.fold_entry_edits();
         let edits = core::mem::take(&mut self.edits);
-        self.removals = Default::default();
+        self.reshapes = Default::default();
         self.resync_entries();
         edits
     }
@@ -103,7 +114,7 @@ impl ConfigPane {
         if let Some(EditKey::Field(key)) = &undone
             && self.entries_field(key).is_some()
         {
-            self.restore_removal(key);
+            self.restore_reshape(key);
             self.resync_entries();
             self.retain_known_open();
         }
@@ -200,11 +211,13 @@ impl ConfigPane {
     /// An absent key and a `null` are the same fact here: the pane renders
     /// both as `(unset)`, so unsetting a field that is already unset is
     /// not a change.
+    ///
+    /// For an array or map of tables an empty one is the same fact too: an
+    /// entry added and removed again leaves the section as it was.
     fn stored_value_is(&self, key: &str, value: &Value) -> bool {
-        match self.stored_of(key) {
-            Some(stored) => stored == value,
-            None => value.is_null(),
-        }
+        let stored = self.stored_of(key).unwrap_or(&Value::Null);
+        stored == value
+            || (self.entries_field(key).is_some() && holds_nothing(stored) && holds_nothing(value))
     }
 
     /// `d` on the field list: restores the field under the cursor to its
@@ -358,6 +371,9 @@ impl ConfigPane {
     /// Files the buffer as an edit, typed to the field's kind, or hands
     /// back the reason it did not.
     ///
+    /// The editor `Enter` on a map's `+ new` row opens is not for a field: it
+    /// takes the key of the entry to add, see [`Self::apply_new_key`].
+    ///
     /// An empty buffer restores the field's default, through
     /// [`Self::default_for`] — the same value `d` files, and the same
     /// reasoning: `Enter` is an explicit apply, not an ambient one, so a
@@ -391,6 +407,9 @@ impl ConfigPane {
     #[must_use]
     pub fn apply_typing(&mut self) -> Option<Refusal> {
         let PaneTyping { key, buffer } = self.typing.take()?;
+        if let Some(field) = self.new_entry_field(&key) {
+            return self.apply_new_key(field, key, buffer);
+        }
         let field = self.field_of(&key).cloned();
         if let Some(refused) = field
             .as_ref()

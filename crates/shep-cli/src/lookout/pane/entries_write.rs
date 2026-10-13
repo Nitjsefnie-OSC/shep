@@ -1,17 +1,20 @@
 //! The dog pane's write for a whole-value change to an array or map of
-//! tables, which is what removing an entry files.
+//! tables, which is what removing an entry or adding one files.
 //!
 //! The change is applied to the tables the section already holds, never by
 //! rendering the new value: the tables that stay keep the comments and key
-//! order the operator wrote, and the ones that go leave with theirs. An entry
-//! the section lacks is not created, so a value with more tables than the
-//! section has is refused.
+//! order the operator wrote, and the ones that go leave with theirs. A table
+//! the section lacks is added after the last one it has, or creates the
+//! array or map when it has none. A table can only be added at the end of an
+//! array, so a value whose new tables are not its last ones is not written
+//! as given: they land at the end, and the write is refused when the section
+//! then reads differently from the value.
 
 use serde_json::{Map, Value};
 
 use super::super::field::Entries;
 use super::PathStep;
-use super::section_write::{Landed, remove_at, set_at, toml_cell};
+use super::section_write::{Landed, implicit_table, inline_child, remove_at, set_at, toml_cell};
 
 /// One leaf of an entry that differs, as the path inside the section to it
 /// and what it becomes, or [`None`] for removed.
@@ -20,8 +23,9 @@ type Change = (Vec<PathStep>, Option<Value>);
 /// Applies `new` as the whole value of the entries field at `path` in `doc`.
 ///
 /// [`Landed::Already`] when the section already holds `new`. [`Landed::Refused`]
-/// when `new` is not the shape `kind` holds, when it has an entry the section
-/// lacks, and when a changed leaf has no TOML type.
+/// when `new` is not the shape `kind` holds, when a changed leaf or an added
+/// table has no TOML type, and when the section would not read back as `new`
+/// once a table is added.
 pub(super) fn set_entries(
     doc: &mut toml_edit::DocumentMut,
     kind: Entries,
@@ -75,6 +79,12 @@ pub(super) fn set_entries(
     if !plan.removed.is_empty() && drop_entries(doc, path, &plan.removed) {
         landed = Landed::Changed;
     }
+    if !plan.added.is_empty() {
+        if !add_entries(doc, kind, path, &plan.added) || !reads_as(doc, path, new) {
+            return Landed::Refused;
+        }
+        landed = Landed::Changed;
+    }
     landed
 }
 
@@ -84,16 +94,19 @@ struct Plan {
     changes: Vec<Change>,
     /// The entries that go.
     removed: Vec<PathStep>,
+    /// The tables the section lacks, in the order they are written: each
+    /// with its key in a map, and [`None`] in an array.
+    added: Vec<(Option<String>, Value)>,
 }
 
 /// The entries of an array of tables, matched to the new ones.
 ///
 /// Content first: a held table identical to a new one is that one. What is
 /// left is matched by position, in order, and the new table's leaves that
-/// differ become [`Plan::changes`]. [`None`] when there are more new tables
-/// than held ones, or a held table is not a table.
+/// differ become [`Plan::changes`]. The new tables past the ones matched are
+/// [`Plan::added`]. [`None`] when a held table or a new one is not a table.
 fn plan_array(base: &[PathStep], held: &[Value], new: &[Value]) -> Option<Plan> {
-    let matched = align(held, new)?;
+    let (matched, added) = align(held, new);
     let mut changes = Vec::new();
     let mut removed = Vec::new();
     for (index, (table, pair)) in held.iter().zip(&matched).enumerate() {
@@ -106,7 +119,14 @@ fn plan_array(base: &[PathStep], held: &[Value], new: &[Value]) -> Option<Plan> 
             None => removed.push(PathStep::Index(index)),
         }
     }
-    Some(Plan { changes, removed })
+    if added.iter().any(|table| !table.is_object()) {
+        return None;
+    }
+    Some(Plan {
+        changes,
+        removed,
+        added: added.iter().map(|table| (None, table.clone())).collect(),
+    })
 }
 
 /// The entries of a map of tables, matched to the new ones by key.
@@ -127,23 +147,31 @@ fn plan_map(
             None => removed.push(PathStep::Key(key.clone())),
         }
     }
-    new.keys()
-        .all(|key| held.contains_key(key))
-        .then_some(Plan { changes, removed })
+    let mut added = Vec::new();
+    for (key, table) in new.iter().filter(|(key, _)| !held.contains_key(*key)) {
+        if !table.is_object() {
+            return None;
+        }
+        added.push((Some(key.clone()), table.clone()));
+    }
+    Some(Plan {
+        changes,
+        removed,
+        added,
+    })
 }
 
 /// For each of `held`, the new table it becomes, or [`None`] for one that
-/// goes. The new tables keep their order, and each is matched to a held one
-/// that comes later than the one before it.
+/// goes, and the new tables left over, which are to be added. The new tables
+/// keep their order: each is matched to a held one that comes later than the
+/// one before it, and the ones left over are the last of them.
 ///
 /// The match with the most keys in common wins, and a table identical to a
 /// new one outweighs any partial match. Where two held tables are equally
-/// good, the earlier stays and the later goes. [`None`] overall when `new` is
-/// longer than `held`.
-fn align<'a>(held: &[Value], new: &'a [Value]) -> Option<Vec<Option<&'a Value>>> {
-    if new.len() > held.len() {
-        return None;
-    }
+/// good, the earlier stays and the later goes. Where matching one more new
+/// table to a held one scores no better than adding it, it is matched, so a
+/// table edited down to nothing in common stays the table it was.
+fn align<'a>(held: &[Value], new: &'a [Value]) -> (Vec<Option<&'a Value>>, &'a [Value]) {
     // `best[i][j]`: the most the first `j` new tables score against the first
     // `i` held ones, or [`None`] when they cannot all be placed.
     let mut best = vec![vec![None::<usize>; new.len() + 1]; held.len() + 1];
@@ -157,8 +185,14 @@ fn align<'a>(held: &[Value], new: &'a [Value]) -> Option<Vec<Option<&'a Value>>>
             best[i][j] = skip.max(take);
         }
     }
+    let mut placed = new.len().min(held.len());
+    for count in (0..placed).rev() {
+        if best[held.len()][count] > best[held.len()][placed] {
+            placed = count;
+        }
+    }
     let mut matched = vec![None; held.len()];
-    let (mut i, mut j) = (held.len(), new.len());
+    let (mut i, mut j) = (held.len(), placed);
     while j > 0 {
         if i > j && best[i][j] == best[i - 1][j] {
             i -= 1;
@@ -168,7 +202,7 @@ fn align<'a>(held: &[Value], new: &'a [Value]) -> Option<Vec<Option<&'a Value>>>
         i -= 1;
         j -= 1;
     }
-    Some(matched)
+    (matched, new.get(placed..).unwrap_or_default())
 }
 
 /// How alike two tables are: each key they share with the same value counts
@@ -277,4 +311,165 @@ fn table_at<'a>(
         None => Some(table),
         Some((key, rest)) => table_at(table.get_mut(key)?.as_table_like_mut()?, rest),
     }
+}
+
+/// Adds the tables `added` to the entries field at `path` in `doc`, after the
+/// ones it holds, creating the field when the section lacks it. Reports
+/// whether they could all be added.
+///
+/// An array of tables takes a `[[x]]` per table, an array of inline tables an
+/// inline table, and a map the key as a `[x.name]` header or an inline table
+/// in the form the section already uses. A key that needs quoting is quoted.
+fn add_entries(
+    doc: &mut toml_edit::DocumentMut,
+    kind: Entries,
+    path: &[String],
+    added: &[(Option<String>, Value)],
+) -> bool {
+    let Some((last, parents)) = path.split_last() else {
+        return false;
+    };
+    let Some((parent, inline)) = ensure_table(doc.as_table_mut(), parents, false) else {
+        return false;
+    };
+    let item = parent.entry(last).or_insert(toml_edit::Item::None);
+    if item.is_none() {
+        *item = match (kind, inline) {
+            (Entries::Array, false) => {
+                toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new())
+            }
+            (Entries::Array, true) => {
+                toml_edit::Item::Value(toml_edit::Value::Array(toml_edit::Array::new()))
+            }
+            (Entries::Map, false) => implicit_table(),
+            (Entries::Map, true) => inline_child(),
+        };
+    }
+    match (kind, item) {
+        (Entries::Array, toml_edit::Item::ArrayOfTables(tables)) => {
+            for (_, value) in added {
+                let Some(table) = table_of(value) else {
+                    return false;
+                };
+                tables.push(table);
+            }
+            true
+        }
+        (Entries::Array, toml_edit::Item::Value(toml_edit::Value::Array(array))) => {
+            for (_, value) in added {
+                let Some(table) = inline_table_of(value) else {
+                    return false;
+                };
+                array.push(toml_edit::Value::InlineTable(table));
+            }
+            true
+        }
+        (Entries::Map, item) => {
+            let inline = item.is_inline_table();
+            // The space before the closing brace belongs to the last table,
+            // and moves to the new last one.
+            let tail = item.as_inline_table_mut().and_then(|map| {
+                let (_, last) = map.iter_mut().last()?;
+                let tail = last.decor().suffix().cloned();
+                last.decor_mut().set_suffix("");
+                tail
+            });
+            let Some(map) = item.as_table_like_mut() else {
+                return false;
+            };
+            for (key, value) in added {
+                let (Some(key), Some(cell)) = (
+                    key,
+                    if inline {
+                        inline_table_of(value).map(|table| {
+                            toml_edit::Item::Value(toml_edit::Value::InlineTable(table))
+                        })
+                    } else {
+                        table_of(value).map(toml_edit::Item::Table)
+                    },
+                ) else {
+                    return false;
+                };
+                map.insert(key, cell);
+            }
+            if let (Some(tail), Some(map)) = (tail, item.as_inline_table_mut())
+                && let Some((_, last)) = map.iter_mut().last()
+            {
+                last.decor_mut().set_suffix(tail);
+            }
+            true
+        }
+        (Entries::Array, _) => false,
+    }
+}
+
+/// The table `keys` name below `table`, creating any the section lacks, and
+/// whether it is an inline table. [`None`] when a step is something that is
+/// not a table.
+fn ensure_table<'a>(
+    table: &'a mut dyn toml_edit::TableLike,
+    keys: &[String],
+    inline: bool,
+) -> Option<(&'a mut dyn toml_edit::TableLike, bool)> {
+    let Some((key, rest)) = keys.split_first() else {
+        return Some((table, inline));
+    };
+    let entry = table.entry(key).or_insert(toml_edit::Item::None);
+    let nested_inline = if entry.is_none() {
+        *entry = if inline {
+            inline_child()
+        } else {
+            implicit_table()
+        };
+        inline
+    } else {
+        entry.is_inline_table()
+    };
+    ensure_table(entry.as_table_like_mut()?, rest, nested_inline)
+}
+
+/// `value`, an object, as a table with a header: a table inside it is one
+/// too. [`None`] for a leaf with no TOML type. A `null` leaf is left out.
+fn table_of(value: &Value) -> Option<toml_edit::Table> {
+    let mut table = toml_edit::Table::new();
+    for (key, value) in value.as_object()? {
+        match value {
+            Value::Null => {}
+            Value::Object(_) => {
+                table.insert(key, toml_edit::Item::Table(table_of(value)?));
+            }
+            _ => {
+                table.insert(key, toml_cell(value)?);
+            }
+        }
+    }
+    Some(table)
+}
+
+/// [`table_of`] as an inline table.
+fn inline_table_of(value: &Value) -> Option<toml_edit::InlineTable> {
+    let mut table = toml_edit::InlineTable::new();
+    for (key, value) in value.as_object()? {
+        match value {
+            Value::Null => {}
+            Value::Object(_) => {
+                table.insert(key, toml_edit::Value::InlineTable(inline_table_of(value)?));
+            }
+            _ => {
+                table.insert(key, toml_cell(value)?.into_value().ok()?);
+            }
+        }
+    }
+    Some(table)
+}
+
+/// Whether `doc` holds `new` at `path`.
+fn reads_as(doc: &toml_edit::DocumentMut, path: &[String], new: &Value) -> bool {
+    let Ok(read) = doc.to_string().parse::<toml::Table>() else {
+        return false;
+    };
+    let read = serde_json::to_value(read).unwrap_or(Value::Null);
+    path.iter()
+        .try_fold(&read, |at, key| at.as_object()?.get(key))
+        == Some(new)
 }

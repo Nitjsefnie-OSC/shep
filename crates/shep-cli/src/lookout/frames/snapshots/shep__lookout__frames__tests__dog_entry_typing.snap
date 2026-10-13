@@ -14,10 +14,10 @@ shep lookout   /home/ada/.shep                                                  
  ~     peers                  (unset)                                                                                                                           
        timeout                (unset)                                                                                                                           
      ▸ #2                                                                     entry                                                                             
+     + new                                                                                                                                                      
  ~ ▸ models                   2 entries                                                                                                                         
    retries                    3                                                                                                                                 
   shep publishes the change; paddock decides what to reload                                                                                                     
-                                                                                                                                                                
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 

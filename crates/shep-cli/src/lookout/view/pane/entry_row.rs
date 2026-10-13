@@ -1,5 +1,6 @@
-//! A row under an array or map of tables: an entry, a table in one, or one
-//! of its fields. Also a name in a checklist.
+//! A row under an array or map of tables: an entry, a table in one, one of
+//! its fields, or the `+ new` row that adds an entry. Also a name in a
+//! checklist.
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -15,7 +16,8 @@ pub(super) const ENTRY_LABEL: &str = "entry";
 
 /// Entry row `index`. An entry and a table in one open and close like any
 /// table. A field draws as any other field row does: locked fields in it read
-/// `~` and muted, and a secret reads `<set>`.
+/// `~` and muted, and a secret reads `<set>`. `+ new` holds no value and
+/// opens nothing, and is not muted: `Enter` on it acts.
 pub(super) fn entry_line(
     pane: &ConfigPane,
     index: usize,
@@ -30,6 +32,9 @@ pub(super) fn entry_line(
     };
     let EntryBody::Leaf { field, .. } = &row.body else {
         let label = match &row.body {
+            EntryBody::New { .. } => {
+                return choice_line(pane, PaneRow::Entry(index), selected, width, palette);
+            }
             EntryBody::Node { entry: true, .. } => ENTRY_LABEL,
             EntryBody::Node { .. } | EntryBody::Leaf { .. } => TABLE_LABEL,
         };
@@ -39,8 +44,9 @@ pub(super) fn entry_line(
     leaf_line(pane, field, &key, selected, width, palette, show_lands)
 }
 
-/// Name `item` of the checklist under field `field`, drawn as its
-/// `[x] name` text, indented to its depth. It is editable, so it is not muted.
+/// A row that is only its label, indented to its depth and not muted because
+/// `Enter` or `space` acts on it: a name in a checklist, drawn as its
+/// `[x] name` text, or an entries field's `+ new`.
 pub(super) fn choice_line(
     pane: &ConfigPane,
     row: PaneRow,
