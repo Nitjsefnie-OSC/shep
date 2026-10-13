@@ -38,6 +38,9 @@ Free on crates.io (verified 2026-08-07): `shep`, `shepd`, plus reserves `bleat`,
 | ad-hoc key/value store | kv store | **set** / **get** / **unset** — plain names, not themed | `shep set`, `shep get`, `shep unset` |
 | the store of credential values a config refers to | secrets manager | **secrets store** (plain, not themed): `$SHEP_HOME/secrets.json` | `shep secret set/get/unset/list`, `{{secret:NAME}}` |
 | a provider dog's own slice of the secrets store | none | **namespace** (plain, not themed, and a different concept from fold: a namespace keeps one provider dog's pushed values apart from another's, a fold groups sheep) | `{{secret:namespace/NAME}}`, `Request::PutSecrets` |
+| what a dog declares about itself before it runs: its settings, verbs, dependencies and the permissions it wants | none | **manifest** (plain) | the dog's probe answer, cached per binary |
+| one named thing a dog may do through the shepherd | capability | **permission** (plain, since it appears in refusals); a dog **declares** the permissions it wants in its manifest | "log-rotate declares `logs.read`, which you haven't granted" |
+| the permissions the operator has approved for one dog | allowlist | **grants** (plain); the operator **grants** a permission | a request outside a dog's grants is refused |
 | a marker a dog attaches to a sheep | deploy tag | **smit** (a farmer's paint mark on a sheep) | `ProcessInfo.smit`, the SMIT column in `shep flock`/lookout; shep stores and paints the string verbatim and never parses it |
 
 ## Usage rules (readability > theme)

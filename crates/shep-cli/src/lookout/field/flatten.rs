@@ -320,6 +320,37 @@ mod tests {
         assert!(domains.editable);
     }
 
+    /// A list of `Option<String>` under a nested table is one read-only
+    /// row, and a plain string list beside it stays a list row.
+    #[test]
+    fn a_nullable_item_list_under_a_nested_table_stays_one_read_only_row() {
+        let flat = flattened(&json!({
+            "$ref": "#/$defs/Settings",
+            "$defs": {
+                "Settings": {
+                    "type": "object",
+                    "properties": { "worker": { "$ref": "#/$defs/Worker" } },
+                },
+                "Worker": {
+                    "type": "object",
+                    "properties": {
+                        "maybe": {
+                            "type": "array",
+                            "items": { "type": ["string", "null"] },
+                        },
+                        "plain": { "type": "array", "items": { "type": "string" } },
+                    },
+                },
+            },
+        }));
+        let maybe = flat.fields.by_key("worker.maybe").unwrap();
+        assert_eq!(maybe.kind, FieldKind::Opaque);
+        assert!(!maybe.editable);
+        let plain = flat.fields.by_key("worker.plain").unwrap();
+        assert_eq!(plain.kind, FieldKind::List(ListItem::Text));
+        assert!(plain.editable);
+    }
+
     #[test]
     fn an_array_of_tables_stays_one_opaque_row() {
         let schema = json!({

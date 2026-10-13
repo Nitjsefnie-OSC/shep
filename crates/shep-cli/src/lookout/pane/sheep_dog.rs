@@ -161,6 +161,7 @@ fn write_at(table: &mut Map<String, Value>, path: &[String], value: &Value) {
 mod tests {
     use serde_json::json;
 
+    use super::super::Lock;
     use super::super::fixtures::field;
     use super::*;
     use crate::lookout::view::fixtures::{plain, render_all};
@@ -436,6 +437,23 @@ mod tests {
         pane.open_list();
         assert!(pane.list().is_none());
         assert!(pane.lock("hosts").is_some());
+    }
+
+    /// A list of `Option<String>` is one read-only row, so an edit
+    /// elsewhere cannot turn its stored `null` into `"null"`.
+    #[test]
+    fn a_list_with_a_null_item_is_read_only_and_keeps_its_null() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "aliases": { "type": "array", "items": { "type": ["string", "null"] } },
+            },
+        });
+        let stored = json!({ "aliases": ["a", null] });
+        let table = stored.as_object().cloned().expect("a table");
+        let pane = ConfigPane::sheep_dog("web".into(), "jobs".into(), &schema, table.clone());
+        assert_eq!(pane.lock("aliases"), Some(Lock::NoWidget));
+        assert_eq!(pane.edited_table_with(&Edits::default()), table);
     }
 
     /// A dog whose array item is an alias back to the array. The row opens

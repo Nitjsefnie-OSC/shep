@@ -45,6 +45,37 @@ pub(super) fn value_kind_of(schema: &Value) -> Option<ValueKind> {
     }
 }
 
+/// Whether `arm` is the `null` type alone, spelled `{"type": "null"}` or
+/// `{"type": ["null"]}`.
+fn is_null_arm(arm: &Value) -> bool {
+    match arm.get("type") {
+        Some(Value::String(t)) => t == "null",
+        Some(Value::Array(types)) => {
+            !types.is_empty() && types.iter().all(|t| t.as_str() == Some("null"))
+        }
+        _ => false,
+    }
+}
+
+/// Whether a value of `schema` may be `null`: a `type` list naming
+/// `"null"`, or an `anyOf` arm that is [`is_null_arm`], each read through
+/// a `$ref` first.
+///
+/// [`strip_nullable`] drops the arms this finds, so the two checks cannot
+/// disagree about what counts as null.
+fn allows_null(schema: &Value, defs: &Map<String, Value>) -> bool {
+    let schema = resolve(schema, defs);
+    let in_type = schema
+        .get("type")
+        .and_then(Value::as_array)
+        .is_some_and(|types| types.iter().any(|t| t.as_str() == Some("null")));
+    let in_arm = schema
+        .get("anyOf")
+        .and_then(Value::as_array)
+        .is_some_and(|arms| arms.iter().any(|arm| is_null_arm(resolve(arm, defs))));
+    in_type || in_arm || is_null_arm(schema)
+}
+
 /// `anyOf: [T, {type: null}]` is `T` with the field optional. Anything
 /// else is left as it was.
 fn strip_nullable<'a>(schema: &'a Value, defs: &'a Map<String, Value>) -> &'a Value {
@@ -53,7 +84,7 @@ fn strip_nullable<'a>(schema: &'a Value, defs: &'a Map<String, Value>) -> &'a Va
     };
     let non_null: Vec<&Value> = arms
         .iter()
-        .filter(|arm| arm.get("type").and_then(Value::as_str) != Some("null"))
+        .filter(|arm| !is_null_arm(resolve(arm, defs)))
         .collect();
     match non_null.as_slice() {
         [one] => resolve(one, defs),
@@ -103,6 +134,10 @@ pub(super) fn kind_of(schema: &Value, defs: &Map<String, Value>) -> FieldKind {
             .filter_map(Value::as_str)
             .map(str::to_owned)
             .collect();
+        // A choice with nothing to choose has no row worth drawing.
+        if values.is_empty() {
+            return FieldKind::Opaque;
+        }
         if names.len() == values.len() {
             return FieldKind::Choice(names);
         }
@@ -112,7 +147,11 @@ pub(super) fn kind_of(schema: &Value, defs: &Map<String, Value>) -> FieldKind {
         Some("integer") => FieldKind::Integer,
         Some("string") => FieldKind::Text,
         // An array of anything else stays `Opaque`, which is what keeps an
-        // array of nested objects read-only rather than half-editable.
+        // array of nested objects read-only rather than half-editable. So
+        // does one whose items can be `null`: the list sub-screen rebuilds
+        // each element as a string and would turn a stored `null` into
+        // `"null"`.
+        Some("array") if allows_null(items(schema), defs) => FieldKind::Opaque,
         Some("array") => match type_of(strip_nullable(resolve(items(schema), defs), defs)) {
             Some("string") => FieldKind::List(ListItem::Text),
             Some("integer") => FieldKind::List(ListItem::Integer),
@@ -428,6 +467,71 @@ mod tests {
         assert!(
             set.by_key("args").is_some_and(|f| f.editable),
             "an array is editable now"
+        );
+    }
+
+    /// An item that can be `null` is not a text or integer list: the
+    /// list sub-screen rebuilds every element as a string, so filing any
+    /// edit would turn a stored `null` into `"null"`.
+    #[test]
+    fn a_list_whose_items_can_be_null_is_opaque() {
+        let defs = props(json!({
+            "MaybeString": { "type": ["string", "null"] },
+            "MaybeInteger": { "type": ["integer", "null"] },
+        }));
+        let list = |items: Value| json!({ "type": "array", "items": items });
+        for (name, item, def) in [
+            ("string", "string", "MaybeString"),
+            ("integer", "integer", "MaybeInteger"),
+        ] {
+            let plain = list(json!({ "type": item }));
+            let expected = if item == "string" {
+                ListItem::Text
+            } else {
+                ListItem::Integer
+            };
+            assert_eq!(kind_of(&plain, &defs), FieldKind::List(expected), "{name}");
+            let nullable = [
+                json!({ "type": [item, "null"] }),
+                json!({ "anyOf": [{ "type": item }, { "type": "null" }] }),
+                json!({ "anyOf": [{ "type": item }, { "type": ["null"] }] }),
+                json!({ "$ref": format!("#/$defs/{def}") }),
+            ];
+            for items in nullable {
+                assert_eq!(
+                    kind_of(&list(items.clone()), &defs),
+                    FieldKind::Opaque,
+                    "{name} items {items}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_ref_to_a_def_that_is_any_of_null_is_nullable() {
+        let defs = props(json!({
+            "MaybeString": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        }));
+        let schema = json!({ "type": "array", "items": { "$ref": "#/$defs/MaybeString" } });
+        assert_eq!(kind_of(&schema, &defs), FieldKind::Opaque);
+    }
+
+    /// `schemars` spells a nullable arm as `{"type": ["null"]}` in some
+    /// versions (#592).
+    #[test]
+    fn strip_nullable_reduces_an_any_of_with_a_null_type_list_to_the_other_arm() {
+        let defs = Map::new();
+        let schema = json!({ "anyOf": [{ "type": "string" }, { "type": ["null"] }] });
+        assert_eq!(strip_nullable(&schema, &defs), &json!({ "type": "string" }));
+    }
+
+    #[test]
+    fn an_empty_enum_is_opaque_and_a_one_member_enum_is_a_choice() {
+        let defs = Map::new();
+        assert_eq!(kind_of(&json!({ "enum": [] }), &defs), FieldKind::Opaque);
+        assert_eq!(
+            kind_of(&json!({ "enum": ["only"] }), &defs),
+            FieldKind::Choice(vec!["only".into()])
         );
     }
 }
