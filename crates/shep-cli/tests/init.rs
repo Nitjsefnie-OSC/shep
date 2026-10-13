@@ -148,9 +148,14 @@ fn poll_online_sheep(home: &Path, deadline: Duration) -> serde_json::Value {
             .expect("run shep flock");
         if output.status.success()
             && let Ok(envelope) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
-            && envelope["data"][0]["status"] == "online"
+            && let Some(sheep) = envelope["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["dog"].is_null())
+            && sheep["status"] == "online"
         {
-            return envelope["data"][0].clone();
+            return sheep.clone();
         }
         if start.elapsed() >= deadline {
             panic!(

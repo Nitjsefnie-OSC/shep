@@ -32,5 +32,5 @@ pub use silent::{DOG_SILENCE_BUDGET, spawn_silent_dog_watch};
 // non-test build and in every Windows build.
 #[cfg_attr(any(not(test), not(unix)), allow(unused_imports))]
 pub(crate) use silent::{SilentDogs, check_silent_dogs};
-pub use spec::{DogError, DogSpec, dog_app, spawn_enabled_dogs};
+pub use spec::{DogError, DogSpec, dog_app, register_dogs_at_rest, spawn_enabled_dogs};
 pub use watch::spawn_dog_watch;

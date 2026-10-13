@@ -410,10 +410,11 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                     // asking which file the spawn resolved to.
                     let script = app.config().script.clone();
                     match ctx.supervisor.start_dog(app, spec.source).await {
-                        // `start_dog` is idempotent by name, so what comes
-                        // back is whatever already holds it. An unmarked entry
-                        // means a sheep holds it: nothing was spawned, so the
-                        // refusal has nothing to undo.
+                        // `start_dog` is idempotent by name for anything
+                        // not at rest, so what comes back is whatever
+                        // already holds it. An unmarked entry means a sheep
+                        // holds it: nothing was spawned, so the refusal has
+                        // nothing to undo.
                         Ok(info) if info.dog.is_none() => reply(Err(RpcError {
                             code: RpcErrorCode::InvalidConfig,
                             message: format!(
@@ -434,8 +435,8 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                             ctx.known_dogs.insert(&info.name);
                             // Wording is about the binary this shepherd
                             // resolved, not about a spawn having happened:
-                            // `start_dog` is idempotent by name, so this may
-                            // be a dog that was already running.
+                            // `start_dog` is idempotent by name for a dog that
+                            // is running, so this may be one that already was.
                             crate::dogs::narrate(
                                 &ctx.events,
                                 &info,

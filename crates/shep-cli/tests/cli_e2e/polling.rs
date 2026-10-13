@@ -118,7 +118,7 @@ pub(crate) fn poll_http_get(
 /// array. Panics on expiry, since a `None` would leave a running dog
 /// unregistered with the guard that exists to reap it.
 pub(crate) fn wait_for_dog_pid(home: &Path, name: &str) -> nix::unistd::Pid {
-    let flock = poll_flock_data(home, FLOCK_DEADLINE, |data| {
+    let flock = poll_flock_listing(home, FLOCK_DEADLINE, |data| {
         data.as_array().is_some_and(|entries| {
             entries
                 .iter()
@@ -183,8 +183,11 @@ pub(crate) fn bleats_no_follow_until(
     }
 }
 
-/// Runs `shep flock --format json` until `done` accepts the whole `data`
-/// array, or `deadline` expires, returning the last observation either way.
+/// Runs `shep flock --format json` until `done` accepts the sheep in `data`,
+/// or `deadline` expires, returning the last observation either way.
+///
+/// The dogs the shepherd lists at rest are not in the array `done` sees or the
+/// one returned: [`poll_flock_listing`] is the call that keeps them.
 ///
 /// Returning rather than panicking on expiry keeps the failure the caller's
 /// own assertion. The deadline is a parameter because the two real-clock cases
@@ -196,7 +199,17 @@ pub(crate) fn poll_flock_data(
     deadline: Duration,
     done: impl Fn(&serde_json::Value) -> bool,
 ) -> serde_json::Value {
-    poll_flock_until(home, deadline, false, done)
+    poll_flock_until(home, deadline, false, false, done)
+}
+
+/// [`poll_flock_data`] over the whole listing: the dogs, running or at rest,
+/// as well as the sheep.
+pub(crate) fn poll_flock_listing(
+    home: &Path,
+    deadline: Duration,
+    done: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    poll_flock_until(home, deadline, false, true, done)
 }
 
 /// [`poll_flock_data`] for the one case that signals a handover itself and
@@ -212,11 +225,14 @@ pub(crate) fn poll_flock_data_across_a_handover(
     deadline: Duration,
     done: impl Fn(&serde_json::Value) -> bool,
 ) -> serde_json::Value {
-    poll_flock_until(home, deadline, true, done)
+    poll_flock_until(home, deadline, true, false, done)
 }
 
 /// The loop the two above share. `tolerate_one_drop` lets one attempt fail
 /// with a connection the shepherd closed after accepting it.
+///
+/// `with_dogs` keeps the dogs the listing carries; without it `data` is the
+/// sheep alone.
 ///
 /// A tolerated attempt costs a retry and nothing else: it consults neither
 /// `done` nor `deadline`. The retry can land after `deadline` by one poll
@@ -226,6 +242,7 @@ pub(crate) fn poll_flock_until(
     home: &Path,
     deadline: Duration,
     tolerate_one_drop: bool,
+    with_dogs: bool,
     done: impl Fn(&serde_json::Value) -> bool,
 ) -> serde_json::Value {
     let start = Instant::now();
@@ -245,7 +262,11 @@ pub(crate) fn poll_flock_until(
         assert_success(&output);
         let envelope: serde_json::Value = serde_json::from_slice(&output.stdout)
             .unwrap_or_else(|e| panic!("flock stdout was not JSON: {e}"));
-        let data = envelope["data"].clone();
+        let data = if with_dogs {
+            envelope["data"].clone()
+        } else {
+            serde_json::Value::Array(sheep_rows(&envelope["data"]))
+        };
         if done(&data) || start.elapsed() >= deadline {
             return data;
         }
@@ -261,14 +282,35 @@ pub(crate) fn closed_by_a_handover(output: &Output) -> bool {
     stderr.contains(DROPPED_REPLY) || stderr.contains(DROPPED_HANDSHAKE)
 }
 
+/// The sheep among a `flock` envelope's `data`, in listing order.
+///
+/// The shepherd lists every dog it knows, running or not, so a fresh home's
+/// listing opens with `bark` and `metrics`.
+pub(crate) fn sheep_rows(data: &serde_json::Value) -> Vec<serde_json::Value> {
+    data.as_array()
+        .into_iter()
+        .flatten()
+        .filter(|row| row["dog"].is_null())
+        .cloned()
+        .collect()
+}
+
 /// [`poll_flock_data`] for the single-sheep cases: waits [`FLOCK_DEADLINE`]
 /// and hands `done`, and the caller, that one sheep's `ProcessInfo` rather
-/// than the array around it.
+/// than the array around it. The dogs in the listing are not that sheep.
 pub(crate) fn poll_flock(
     home: &Path,
     done: impl Fn(&serde_json::Value) -> bool,
 ) -> serde_json::Value {
-    poll_flock_data(home, FLOCK_DEADLINE, |data| done(&data[0]))[0].clone()
+    let first = |data: &serde_json::Value| {
+        sheep_rows(data)
+            .into_iter()
+            .next()
+            .unwrap_or(serde_json::Value::Null)
+    };
+    first(&poll_flock_data(home, FLOCK_DEADLINE, |data| {
+        done(&first(data))
+    }))
 }
 
 /// Runs `shep --format json describe <name>` until its lamb tree is non-empty

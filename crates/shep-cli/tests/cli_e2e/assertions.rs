@@ -135,6 +135,9 @@ pub(crate) fn assert_envelope_matches_fixture(
                 String::from_utf8_lossy(&output.stdout)
             )
         });
+    // The listing carries the dogs at rest beside the sheep; the fixture is
+    // the sheep's.
+    envelope["data"] = serde_json::Value::Array(sheep_rows(&envelope["data"]));
     {
         let data = envelope["data"]
             .as_array()

@@ -7,6 +7,7 @@
 //! over one that would not start.
 
 use core::fmt;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use shep_core::config::template::RenderError;
@@ -170,13 +171,52 @@ pub fn dog_app(spec: &DogSpec, paths: &ShepPaths) -> Result<ResolvedApp, DogErro
     normalize(config).map_err(|err| DogError::Config(err.to_string()))
 }
 
+/// Registers every dog in `known` and `enabled` at rest, so the flock lists
+/// it whether or not it runs.
+///
+/// A dog outside `enabled` is registered `Stopped` and disabled; one in it is
+/// registered `Stopped` all the same, for [`spawn_enabled_dogs`] to start.
+/// A dog already registered under its name, running or a sheep, is left as it
+/// is. Entries land in the order given, `enabled` first, so a dog's id does
+/// not depend on which of two lists named it.
+///
+/// Never fails the boot, for [`spawn_enabled_dogs`]'s reason: a dog that
+/// cannot be assembled is warned about and left out.
+pub async fn register_dogs_at_rest(
+    known: &[DogSpec],
+    enabled: &[DogSpec],
+    paths: &ShepPaths,
+    supervisor: &SupervisorHandle,
+) {
+    let mut seen = BTreeSet::new();
+    let mut dogs = Vec::new();
+    for spec in enabled.iter().chain(known) {
+        if !seen.insert(spec.name.as_str()) {
+            continue;
+        }
+        match dog_app(spec, paths) {
+            Ok(app) => dogs.push((app, spec.source.clone())),
+            Err(err) => tracing::warn!(dog = %spec.name, %err, "a dog was not listed"),
+        }
+    }
+    let disabled: BTreeSet<String> = known
+        .iter()
+        .map(|spec| spec.name.clone())
+        .filter(|name| !enabled.iter().any(|spec| spec.name == *name))
+        .collect();
+    if let Err(err) = supervisor.register_dogs_at_rest(dogs, disabled).await {
+        tracing::warn!(%err, "the dogs were not listed");
+    }
+}
+
 /// Starts every dog in `specs`, warning and carrying on for each one that
 /// will not start.
 ///
 /// Never fails the boot: a dog that cannot be spawned is a monitoring gap, and
 /// refusing to bring the flock up over it turns that gap into an outage.
-/// [`SupervisorHandle::start_dog`] is idempotent by name, so an `Ok` reply
-/// carrying no `dog` means a sheep already held the name and nothing started.
+/// [`SupervisorHandle::start_dog`] is idempotent by name for a dog that runs,
+/// so an `Ok` reply carrying no `dog` means a sheep already held the name and
+/// nothing started.
 pub async fn spawn_enabled_dogs(
     specs: &[DogSpec],
     paths: &ShepPaths,

@@ -62,6 +62,9 @@ struct SpawnedProc {
     /// the identity a spawn actually carried rather than merely that a
     /// spawn happened.
     credentials: Option<Credentials>,
+    /// The program this spawn was asked to run, copied off
+    /// [`SpawnSpec::program`], read back via [`ScriptedRunner::spawned_program`].
+    program: String,
 }
 
 /// The pid [`ScriptedRunner`] gives the first proc it spawns; each later
@@ -262,6 +265,20 @@ impl ScriptedRunner {
     #[track_caller]
     pub fn spawned_as(&self, spawn_index: usize) -> Option<Credentials> {
         self.spawned.lock().unwrap()[spawn_index].credentials
+    }
+
+    /// The program the spawn at `spawn_index` was asked to run.
+    ///
+    /// The fake runs nothing, so this is how a test tells which of two
+    /// registrations of one name a spawn came from.
+    ///
+    /// # Panics
+    ///
+    /// If `spawn_index` is out of range.
+    #[must_use]
+    #[track_caller]
+    pub fn spawned_program(&self, spawn_index: usize) -> String {
+        self.spawned.lock().unwrap()[spawn_index].program.clone()
     }
 
     /// How many spawns this runner has been asked for.
@@ -650,6 +667,7 @@ impl ProcessRunner for ScriptedRunner {
             resumes,
             stdin_lines,
             credentials: spec.credentials,
+            program: spec.program.clone(),
         });
         drop(spawned);
 
