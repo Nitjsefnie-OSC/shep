@@ -292,6 +292,21 @@ impl ConfigPane {
             .map(|table| table.path.clone())
             .collect();
         self.open.extend(above);
+        let entries: Vec<String> = self
+            .entries
+            .node_paths()
+            .filter(|path| key.starts_with(&format!("{path}.")))
+            .map(str::to_owned)
+            .collect();
+        self.open.extend(entries);
+        let fields: Vec<String> = self
+            .fields
+            .fields()
+            .iter()
+            .filter(|field| key.starts_with(&format!("{}[", field.key)))
+            .map(|field| field.key.clone())
+            .collect();
+        self.open.extend(fields);
     }
 
     pub(super) fn is_open(&self, row: PaneRow) -> bool {

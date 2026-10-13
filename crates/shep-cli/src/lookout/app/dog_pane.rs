@@ -65,49 +65,13 @@ impl App {
         }
         match result {
             Ok(Response::DogSection { toml }) => {
-                // Everything a refresh has to carry across, read before the
-                // rebuild replaces the pane: see `Self::on_sheep_config`,
-                // which states the argument for each. A dog pane has no env
-                // sub-screen, so its view, its open tables, its list
-                // sub-screen and its edits carry across.
-                let carried = self.config_pane().map(|pane| pane.view().clone());
-                let carried_list = self
-                    .config_pane()
-                    .and_then(ConfigPane::list)
-                    .map(|list| (list.key().to_owned(), list.view().clone()));
-                // The tables the operator opened or closed ride along with
-                // the cursor, which is an index into the rows they shape.
-                let carried_open = self.config_pane().map(|pane| pane.open_tables().clone());
-                let carried_edits = self
-                    .config_pane()
-                    .map(|pane| pane.edits().clone())
-                    .unwrap_or_default();
-                let mut pane = ConfigPane::dog(
-                    probe.name,
-                    probe.adopted_path,
-                    probe.schema,
-                    toml.as_str().to_owned(),
-                );
-                pane.adopt_edits(carried_edits);
-                if let Some(open) = carried_open {
-                    pane.adopt_open_tables(&open);
+                let dropped = self.rebuild_dog_pane(probe, toml.as_str());
+                if dropped > 0 {
+                    self.notice = Some(Notice {
+                        text: format!("{name}: {}", moved_entries(dropped)),
+                        grave: true,
+                    });
                 }
-                if let Some(carried) = carried {
-                    pane.adopt_view(carried);
-                }
-                if let Some((key, carried)) = carried_list {
-                    pane.adopt_list_view(&key, carried);
-                }
-                // The settings screen is what a dog pane opens over, and this
-                // one assignment is what closes it: `Body` holds one
-                // variant, so the pane replaces it once there is something
-                // to look at.
-                self.body = Body::ConfigPane(pane);
-                self.release_text_mode_if_unowned();
-                // Same as `Self::open_or_refresh_config_pane`: an overlay
-                // open when this reply landed must not survive the body
-                // change under it.
-                self.keymap_open = false;
             }
             Ok(_unrecognised) => {
                 self.notice = Some(Notice {
@@ -131,6 +95,52 @@ impl App {
             }
         }
         Effect::None
+    }
+
+    /// Replaces the open pane with one over `toml`, and returns how many of
+    /// its edits the new section took no further. See
+    /// [`ConfigPane::adopt_edits_from`].
+    ///
+    /// Everything a refresh has to carry across is read before the rebuild
+    /// replaces the pane: see `Self::on_sheep_config`, which states the
+    /// argument for each. A dog pane has no env sub-screen, so its view, its
+    /// open tables, its list sub-screen and its edits carry across.
+    pub(super) fn rebuild_dog_pane(&mut self, probe: DogProbe, toml: &str) -> usize {
+        let carried = self.config_pane().map(|pane| pane.view().clone());
+        let carried_list = self
+            .config_pane()
+            .and_then(ConfigPane::list)
+            .map(|list| (list.key().to_owned(), list.view().clone()));
+        // The tables the operator opened or closed ride along with the
+        // cursor, which is an index into the rows they shape.
+        let carried_open = self.config_pane().map(|pane| pane.open_tables().clone());
+        let mut pane = ConfigPane::dog(
+            probe.name,
+            probe.adopted_path,
+            probe.schema,
+            toml.to_owned(),
+        );
+        let dropped = self
+            .config_pane()
+            .map_or(0, |previous| pane.adopt_edits_from(previous));
+        if let Some(open) = carried_open {
+            pane.adopt_open_tables(&open);
+        }
+        if let Some(carried) = carried {
+            pane.adopt_view(carried);
+        }
+        if let Some((key, carried)) = carried_list {
+            pane.adopt_list_view(&key, carried);
+        }
+        // The settings screen is what a dog pane opens over, and this one
+        // assignment is what closes it: `Body` holds one variant, so the pane
+        // replaces it once there is something to look at.
+        self.body = Body::ConfigPane(pane);
+        self.release_text_mode_if_unowned();
+        // Same as `Self::open_or_refresh_config_pane`: an overlay open when
+        // this reply landed must not survive the body change under it.
+        self.keymap_open = false;
+        dropped
     }
 
     /// One `Request::SetDogConfig` reply.
@@ -183,6 +193,15 @@ impl App {
                 Effect::None
             }
         }
+    }
+}
+
+/// What the notice says of edits a refresh dropped.
+pub(super) fn moved_entries(dropped: usize) -> String {
+    if dropped == 1 {
+        "1 edit under an entry that moved in the file was dropped".to_owned()
+    } else {
+        format!("{dropped} edits under entries that moved in the file were dropped")
     }
 }
 

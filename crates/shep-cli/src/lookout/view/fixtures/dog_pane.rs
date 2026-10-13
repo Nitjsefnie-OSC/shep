@@ -114,7 +114,8 @@ pub fn app_in_dog_pane_with_a_nested_table() -> App {
 }
 
 /// A paddock-shaped dog: a `clients` array whose entries carry a secret
-/// `key` beside a `name` or an `id`, a `models` map, and a scalar.
+/// `key` beside a `name` or an `id`, a list of their own `peers`, a `models`
+/// map, and a scalar.
 pub fn entries_dog_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -133,6 +134,7 @@ pub fn entries_dog_schema() -> serde_json::Value {
                     "id": { "type": "string" },
                     "key": { "type": "string", "x-shep-secret": true },
                     "name": { "type": "string" },
+                    "peers": { "type": "array", "items": { "$ref": "#/$defs/Client" } },
                     "timeout": { "type": "integer" },
                 },
             },
@@ -185,7 +187,7 @@ pub fn app_in_dog_pane_with_entries() -> App {
 
 /// Walks the open dog pane's cursor onto the row that opens and closes at
 /// the open-set key `path`: a nested table, an array or map of tables, or
-/// one of their entries.
+/// one of their entries. A field inside an entry is found by its row key.
 ///
 /// Panics if no such row is drawn, which is a fixture bug rather than a
 /// failure the test is about.
@@ -198,9 +200,12 @@ pub fn select_node(app: &mut App, path: &str) {
         .position(|row| match *row {
             PaneRow::Field(index) => pane.fields().fields()[index].key == path,
             PaneRow::Table(index) => pane.table_path(index) == Some(path),
-            PaneRow::Entry(index) => pane.entry_row(index).is_some_and(
-                |entry| matches!(&entry.body, EntryBody::Node { path: at, .. } if at == path),
-            ),
+            PaneRow::Entry(index) => pane
+                .entry_row(index)
+                .is_some_and(|entry| match &entry.body {
+                    EntryBody::Node { path: at, .. } => at == path,
+                    EntryBody::Leaf { field, .. } => field.key == path,
+                }),
             PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => false,
         })
         .unwrap_or_else(|| panic!("no node {path} is drawn"));

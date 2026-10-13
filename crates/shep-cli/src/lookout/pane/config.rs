@@ -14,10 +14,12 @@ use shep_core::config::{ApplyGroup, apply_group, reaches_running};
 use shep_core::protocol::SheepConfigView;
 
 use super::super::edits::{EditKey, Edits};
-use super::super::field::{FieldKind, FieldSet, Flattened, Outline, flatten_values, flattened};
+use super::super::field::{
+    Field, FieldKind, FieldSet, Flattened, Outline, flatten_values, flattened,
+};
 use super::super::viewport::Viewport;
 use super::entries::{EntryBody, EntryRows};
-use super::fields::{entries_text, render_json, resolved_display, sheep_fields};
+use super::fields::{entries_text, render_json, resolved_by_kind, resolved_display, sheep_fields};
 use super::sheep_dog::SheepDogTable;
 
 // Link-only (IR-32): the unit grammars a row's resolved display goes
@@ -237,19 +239,46 @@ impl ConfigPane {
     /// than for a generic third.
     #[must_use]
     pub fn cursor_lock(&self) -> Option<(&str, Lock)> {
-        let index = match self.cursor()? {
-            PaneRow::Field(index) => index,
-            PaneRow::Entry(index) => {
-                return match &self.entries.row(index)?.body {
-                    EntryBody::Leaf { field, .. } => Some((field.key.as_str(), Lock::NoWidget)),
-                    EntryBody::Node { .. } => None,
-                };
-            }
-            PaneRow::Choice { field, .. } => field,
+        let field = match self.cursor()? {
+            PaneRow::Field(index) => self.fields.fields().get(index)?,
+            PaneRow::Entry(index) => match &self.entries.row(index)?.body {
+                EntryBody::Leaf { field, .. } => field,
+                EntryBody::Node { .. } => return None,
+            },
+            PaneRow::Choice { field, .. } => self.fields.fields().get(field)?,
             PaneRow::Table(_) | PaneRow::Env(_) | PaneRow::AddEnv => return None,
         };
-        let field = self.fields.fields().get(index)?;
         self.lock(&field.key).map(|lock| (field.key.as_str(), lock))
+    }
+
+    /// The field under the cursor, for a row that holds a value: a config
+    /// field, or a field inside an entry, whose key is its full path.
+    pub(in crate::lookout) fn cursor_field(&self) -> Option<&Field> {
+        match self.cursor()? {
+            PaneRow::Field(index) => self.fields.fields().get(index),
+            PaneRow::Entry(index) => match &self.entries.row(index)?.body {
+                EntryBody::Leaf { field, .. } => Some(field),
+                EntryBody::Node { .. } => None,
+            },
+            PaneRow::Table(_) | PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => None,
+        }
+    }
+
+    /// The field filed under `key`: one of [`Self::fields`], or a field
+    /// inside an entry.
+    pub(super) fn field_of(&self, key: &str) -> Option<&Field> {
+        self.fields
+            .by_key(key)
+            .or_else(|| self.entries.leaf(key).map(|leaf| leaf.field))
+    }
+
+    /// What the target holds for `key`, or [`None`] for a key it holds
+    /// nothing for. A field inside an entry reads [`Value::Null`] when the
+    /// entry lacks it.
+    pub(super) fn stored_of(&self, key: &str) -> Option<&Value> {
+        self.values
+            .get(key)
+            .or_else(|| self.entries.leaf(key).map(|leaf| leaf.stored))
     }
 
     /// The kind of widget the row under the cursor wants, or [`None`] for
@@ -317,6 +346,9 @@ impl ConfigPane {
         if let Some(text) = self.checklist_text(key, self.values.get(key)) {
             return text;
         }
+        if let Some(EntryBody::Leaf { text, .. }) = self.entries.leaf_body(key) {
+            return text.clone();
+        }
         self.values
             .get(key)
             .map_or_else(|| render_json(&Value::Null), render_json)
@@ -335,7 +367,7 @@ impl ConfigPane {
         let raw = self
             .checklist_text(key, Some(value.as_value()))
             .unwrap_or_else(|| render_json(value.as_value()));
-        Some(resolved_display(&self.fields, key, &raw))
+        Some(self.resolved(key, &raw))
     }
 
     /// [`Self::value`], resolved through its own grammar for a
@@ -344,7 +376,14 @@ impl ConfigPane {
     /// convention for.
     #[must_use]
     pub fn display_value(&self, key: &str) -> String {
-        resolved_display(&self.fields, key, &self.value(key))
+        self.resolved(key, &self.value(key))
+    }
+
+    fn resolved(&self, key: &str, raw: &str) -> String {
+        match self.entries.leaf(key) {
+            Some(leaf) => resolved_by_kind(leaf.field.value_kind, raw),
+            None => resolved_display(&self.fields, key, raw),
+        }
     }
 
     /// What changing `key` costs.
@@ -377,6 +416,18 @@ impl ConfigPane {
         }
         if key == "dogs" && matches!(self.target, PaneTarget::Sheep { .. }) {
             return Some(Lock::SubScreen);
+        }
+        if let Some(leaf) = self.entries.leaf(key) {
+            let edits_here = matches!(self.target, PaneTarget::Dog { .. })
+                && matches!(
+                    leaf.field.kind,
+                    FieldKind::Bool
+                        | FieldKind::Integer
+                        | FieldKind::Text
+                        | FieldKind::Choice(_)
+                        | FieldKind::Suggested(_)
+                );
+            return (!edits_here || !leaf.field.editable).then_some(Lock::NoWidget);
         }
         match self.fields.by_key(key) {
             Some(field) if !field.editable => Some(Lock::NoWidget),
@@ -471,6 +522,29 @@ impl ConfigPane {
     /// keyboard back when that happens.
     pub(in crate::lookout) fn adopt_edits(&mut self, previous: Edits) {
         self.edits = previous;
+    }
+
+    /// [`Self::adopt_edits`] from `previous`, less every edit filed under an
+    /// array entry this pane no longer holds at the same position, which is
+    /// how many it dropped.
+    ///
+    /// An array entry is named by its place in the array, so after another
+    /// writer inserts or removes one, the same key names a different entry,
+    /// and the edit would be written into it.
+    pub(in crate::lookout) fn adopt_edits_from(&mut self, previous: &Self) -> usize {
+        let mut kept = previous.edits.clone();
+        let mut dropped = 0;
+        for (key, _) in previous.edits.iter() {
+            let EditKey::Field(name) = key else {
+                continue;
+            };
+            if !previous.entries.names_same_entry(name, &self.entries) {
+                kept.remove(key);
+                dropped += 1;
+            }
+        }
+        self.edits = kept;
+        dropped
     }
 }
 

@@ -116,10 +116,16 @@ pub(crate) fn sheep_fields(config: &AppConfig) -> (FieldSet, Map<String, Value>)
 /// operator's spelling and survives as written, so a `60s` on disk is never
 /// redrawn as the `1m` its own `Display` would canonicalize it to.
 pub(crate) fn resolved_display(fields: &FieldSet, key: &str, raw: &str) -> String {
+    resolved_by_kind(fields.by_key(key).and_then(|field| field.value_kind), raw)
+}
+
+/// [`resolved_display`] for a field whose [`ValueKind`] the caller already
+/// holds.
+pub(super) fn resolved_by_kind(kind: Option<ValueKind>, raw: &str) -> String {
     if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
         return raw.to_owned();
     }
-    match fields.by_key(key).and_then(|field| field.value_kind) {
+    match kind {
         Some(ValueKind::MemSize) => raw
             .parse::<MemSize>()
             .map_or_else(|_| raw.to_owned(), |_| format!("{raw} B")),
