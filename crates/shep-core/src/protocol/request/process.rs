@@ -261,6 +261,16 @@ pub struct ProcessInfo {
     /// neither `PROTOCOL_VERSION` nor `SCHEMA_VERSION` moves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reload_deadline_ms: Option<u64>,
+    /// `Some(true)` when the sheep's app is disabled: stopped, and refused a
+    /// spawn until `shep enable`. `None` otherwise, which also covers a peer
+    /// daemon that predates the field.
+    ///
+    /// Beside [`Self::status`] rather than a [`ProcStatus`] variant: that enum
+    /// is closed, so an older peer could not decode a new one. A disabled row
+    /// keeps `status: "stopped"`. Never `Some(false)`, so the key is absent
+    /// from every row that is not disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
 }
 
 /// Orders one flock listing the way every operator-facing surface presents
@@ -315,6 +325,7 @@ impl ProcessInfo {
                 max_memory: None,
                 level_rules: Vec::new(),
                 reload_deadline_ms: None,
+                disabled: None,
             },
         }
     }
@@ -474,6 +485,12 @@ impl ProcessInfoBuilder {
         self
     }
 
+    /// Sets whether the sheep's app is disabled; `None` when it is not.
+    pub fn disabled(mut self, disabled: Option<bool>) -> Self {
+        self.info.disabled = disabled;
+        self
+    }
+
     /// Finishes the row.
     #[must_use]
     pub fn build(self) -> ProcessInfo {
@@ -529,6 +546,9 @@ pub(super) fn sample_info() -> ProcessInfo {
         // serialized shape of a real one is pinned on its own, by
         // `a_reload_deadline_is_absent_from_the_wire_until_a_reload_sets_one`.
         reload_deadline_ms: None,
+        // `None` so the key is absent from the pinned bytes; its serialized
+        // shape is pinned by `a_disabled_flag_is_absent_from_the_wire_until_set`.
+        disabled: None,
     }
 }
 
@@ -806,6 +826,24 @@ mod tests {
         assert_eq!(back.reload_deadline_ms, Some(16_000));
     }
 
+    /// A disabled sheep stays `stopped` on the wire and gains a key beside it;
+    /// every other row is the bytes it always was.
+    #[test]
+    fn a_disabled_flag_is_absent_from_the_wire_until_set() {
+        let plain = ProcessInfo::builder(1, "web", ProcStatus::Stopped).build();
+        let json = serde_json::to_string(&plain).expect("serialize");
+        assert!(!json.contains("disabled"), "{json}");
+
+        let parked = ProcessInfo::builder(1, "web", ProcStatus::Stopped)
+            .disabled(Some(true))
+            .build();
+        let json = serde_json::to_string(&parked).expect("serialize");
+        assert!(json.contains(r#""status":"stopped""#), "{json}");
+        assert!(json.contains(r#""disabled":true"#), "{json}");
+        let back: ProcessInfo = serde_json::from_str(&json).expect("round trip");
+        assert_eq!(back.disabled, Some(true));
+    }
+
     #[test]
     fn an_older_daemons_process_info_still_decodes() {
         // Every additive field, asserted off one payload. A payload written
@@ -816,6 +854,7 @@ mod tests {
         let info: ProcessInfo = serde_json::from_str(older).expect("an older payload decodes");
         assert_eq!(info.max_memory, None);
         assert_eq!(info.reload_deadline_ms, None);
+        assert_eq!(info.disabled, None);
     }
 
     #[test]

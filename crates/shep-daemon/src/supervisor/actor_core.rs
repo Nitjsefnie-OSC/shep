@@ -78,6 +78,7 @@ impl<R: ProcessRunner> Actor<R> {
             // After every message rather than in each handler, so no path
             // that registers, deletes or edits a sheep can forget it.
             self.announce_dog_tables(&mut announced);
+            self.prune_disabled();
             if should_break {
                 break;
             }
@@ -265,13 +266,16 @@ impl<R: ProcessRunner> Actor<R> {
                 if self.shutting_down {
                     send_reply(ReplyKind::Info(reply), Err(SupervisorError::EngineStopped));
                 } else {
-                    self.begin_manual(
-                        selector,
-                        ManualKind::Restart,
-                        origin,
-                        ReplyKind::Info(reply),
-                    );
+                    self.restart_unless_disabled(&selector, origin, ReplyKind::Info(reply));
                 }
+                false
+            }
+            Command::Disable { selector, reply } => {
+                self.handle_disable(&selector, reply);
+                false
+            }
+            Command::Enable { selector, reply } => {
+                self.handle_enable(&selector, reply);
                 false
             }
             Command::ExtraRestart {
@@ -355,6 +359,11 @@ impl<R: ProcessRunner> Actor<R> {
         policy: BatchPolicy,
         gate: &BTreeSet<String>,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
+        // Before any app is registered, so a disabled one costs the batch
+        // nothing but the refusal. A dog is never marked.
+        if dog.is_none() {
+            self.refuse_disabled(apps.iter().map(|app| app.config().name.as_str()))?;
+        }
         // One sequence rather than two: a zip against `apps` misaligns the
         // moment a failure is skipped.
         let mut ready: Vec<(ResolvedApp, Option<Credentials>)> = Vec::with_capacity(apps.len());

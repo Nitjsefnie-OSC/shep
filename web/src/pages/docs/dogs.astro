@@ -77,6 +77,14 @@ const dogLogDemo = `2026-09-02T14:22:31.412+02:00 [shep] shep started this dog; 
     <h2 id="turning-one-on">Turning one on</h2>
     <VerbSignature verb="enable" usage="shep enable <name>">
       <p>
+        <code>enable</code> and <code>disable</code> also take a sheep's
+        name, which is{" "}
+        <a href="/docs/lifecycle#what-stays-what-goes-the-muster-roll">
+          a different verb
+        </a>
+        . What follows is the dog half.
+      </p>
+      <p>
         Writes <code>shep.toml</code> first, then starts the dog now if a
         shepherd is listening. Run it with nothing listening and it still
         exits 0: the config says the dog belongs, and the next shepherd
@@ -235,11 +243,14 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
       listener, or ask for its own restart. The frame says that the section
       changed and nothing about what is in it. Bark subscribes and swaps in
       place, since sinks and rules are pure data with no OS resource
-      attached. Two things publish today: the boot that moves a section out
-      of <code>shep.toml</code>, and a write from{" "}
+      attached. Three things publish today: the boot that moves a section out
+      of <code>shep.toml</code>, a write from{" "}
       <a href="/docs/lookout">the dog config pane</a>, which is why an edit
-      made there reaches a running bark without bouncing it. A hand edit
-      still needs the stop and start above.
+      made there reaches a running bark without bouncing it, and a provider
+      dog's push that changes a value the section names with{" "}
+      <code>{"{{secret:namespace/KEY}}"}</code>. Re-pushing the same values
+      publishes nothing. A hand edit still needs the stop and start
+      above.
     </p>
     <Callout variant="careful">
       A dog that restarts itself on a config change has to say so in its own

@@ -80,6 +80,12 @@ pub enum RpcErrorCode {
     /// This means the verb itself is unknown here, and the remedy is a
     /// newer shepherd rather than a different selector.
     Unsupported,
+    /// A spawn was refused because the app is disabled.
+    ///
+    /// The remedy is a different verb, `shep enable`, so the message names
+    /// it. A client built before this code decodes it as
+    /// [`Self::Unrecognized`].
+    Disabled,
     /// A code this build has not been taught.
     ///
     /// Only ever produced by decoding: an unrecognized string falls through
@@ -98,7 +104,7 @@ impl RpcErrorCode {
     /// crate, which would swallow a variant added here and never updated
     /// there (`crates/shep-cli/src/exit.rs` maps every code to an exit
     /// status).
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::NotFound,
         Self::InvalidConfig,
         Self::SpawnFailed,
@@ -106,6 +112,7 @@ impl RpcErrorCode {
         Self::Internal,
         Self::DeadlineExceeded,
         Self::Unsupported,
+        Self::Disabled,
     ];
 
     /// The [`crate::exit`] code a process stopping on this refusal exits
@@ -121,6 +128,7 @@ impl RpcErrorCode {
             Self::Internal | Self::Unrecognized => exit::INTERNAL,
             Self::DeadlineExceeded => exit::DEADLINE_EXCEEDED,
             Self::Unsupported => exit::UNSUPPORTED,
+            Self::Disabled => exit::USAGE,
         }
     }
 
@@ -140,6 +148,7 @@ impl RpcErrorCode {
             Self::Internal => Self::ALL[4],
             Self::DeadlineExceeded => Self::ALL[5],
             Self::Unsupported => Self::ALL[6],
+            Self::Disabled => Self::ALL[7],
             // `Unrecognized` is decode-only and never appears in `ALL`;
             // treat it as `Internal` would be treated.
             Self::Unrecognized => Self::ALL[4],
@@ -171,10 +180,22 @@ mod tests {
             RpcErrorCode::Internal,
             RpcErrorCode::DeadlineExceeded,
             RpcErrorCode::Unsupported,
+            RpcErrorCode::Disabled,
         ] {
             let json = serde_json::to_string(&code).unwrap();
             assert_eq!(serde_json::from_str::<RpcErrorCode>(&json).unwrap(), code);
         }
+    }
+
+    /// This CLI reads the fix as a different verb, so the refusal is a usage
+    /// error rather than the `Internal` an older client gives an unknown code.
+    #[test]
+    fn a_disabled_refusal_exits_usage() {
+        assert_eq!(RpcErrorCode::Disabled.exit_code(), crate::exit::USAGE);
+        assert_eq!(
+            serde_json::to_string(&RpcErrorCode::Disabled).unwrap(),
+            r#""disabled""#
+        );
     }
 
     /// The fallback absorbs an unknown STRING, not an unknown TYPE. A number

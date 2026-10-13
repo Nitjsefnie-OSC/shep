@@ -377,6 +377,54 @@ impl SupervisorHandle {
         rx.await.map_err(|_| SupervisorError::EngineStopped)?
     }
 
+    /// Disables the app of every sheep matching `selector` and stops it.
+    ///
+    /// The mark belongs to the app, so a selector that matched one instance
+    /// disables all of them. Every returned row carries
+    /// [`ProcessInfo::disabled`] as `Some(true)`.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::NotFound`]: nothing matched.
+    /// - [`SupervisorError::EngineStopped`]: the actor is gone.
+    pub(crate) async fn disable(
+        &self,
+        selector: ProcessSelector,
+    ) -> Result<Vec<ProcessInfo>, SupervisorError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Command(Command::Disable { selector, reply }))
+            .await
+            .map_err(|_| SupervisorError::EngineStopped)?;
+        let mut infos = rx.await.map_err(|_| SupervisorError::EngineStopped)??;
+        for info in &mut infos {
+            info.disabled = Some(true);
+        }
+        Ok(infos)
+    }
+
+    /// Clears the disabled mark on the app of every sheep matching `selector`
+    /// and starts it.
+    ///
+    /// Answers with the instances it started, which is empty when every
+    /// matched app was not disabled.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::NotFound`]: nothing matched.
+    /// - [`SupervisorError::EngineStopped`]: the actor is gone.
+    pub(crate) async fn enable(
+        &self,
+        selector: ProcessSelector,
+    ) -> Result<Vec<ProcessInfo>, SupervisorError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Command(Command::Enable { selector, reply }))
+            .await
+            .map_err(|_| SupervisorError::EngineStopped)?;
+        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+    }
+
     /// Restarts every sheep matching `selector`, resetting its restart budget.
     ///
     /// Declares `CommandOrigin::Operator`: nothing may take the sheep off it

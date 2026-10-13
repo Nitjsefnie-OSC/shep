@@ -68,6 +68,23 @@ pub(crate) enum Command {
         /// Answers once every matched sheep is terminal.
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     },
+    /// Marks the app of every sheep matching `selector` disabled and stops
+    /// it.
+    Disable {
+        /// Which sheep; widened to each match's whole app.
+        selector: ProcessSelector,
+        /// Answers once every instance of each app is terminal.
+        reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
+    },
+    /// Clears the disabled mark on the app of every sheep matching
+    /// `selector` and starts it.
+    Enable {
+        /// Which sheep; widened to each match's whole app.
+        selector: ProcessSelector,
+        /// Answers with the instances it started, empty when no matched app
+        /// was disabled.
+        reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
+    },
     /// Restarts every sheep matching `selector`.
     Restart {
         /// Which sheep.

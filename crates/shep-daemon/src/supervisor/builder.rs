@@ -137,6 +137,7 @@ impl<R: ProcessRunner> SupervisorBuilder<R> {
             registry: ExtrasRegistry::default(),
             reloads: HashMap::new(),
             smits: Smits::new(),
+            disabled: BTreeSet::new(),
         }
     }
 }

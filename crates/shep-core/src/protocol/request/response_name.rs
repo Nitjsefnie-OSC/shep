@@ -29,6 +29,8 @@ impl Response {
             Self::DogConfigSet { .. } => "DogConfigSet",
             Self::SecretsPut { .. } => "SecretsPut",
             Self::Stopped(_) => "Stopped",
+            Self::Disabled(_) => "Disabled",
+            Self::Enabled(_) => "Enabled",
             Self::Restarted { .. } => "Restarted",
             Self::Reloading { .. } => "Reloading",
             Self::Scaled(_) => "Scaled",

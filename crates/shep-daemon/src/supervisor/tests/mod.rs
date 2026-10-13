@@ -144,12 +144,9 @@ fn test_actor(
         registry: ExtrasRegistry::default(),
         reloads: HashMap::new(),
         smits: Smits::new(),
+        disabled: BTreeSet::new(),
     }
 }
-
-// --- The readiness gate ---
-
-// --- Concurrency regression guards ---
 
 // --- `Stopping`: the drainee, against the guards it must never pass ---
 //
