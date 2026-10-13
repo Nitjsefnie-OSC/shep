@@ -192,7 +192,7 @@ pub fn dog_app(spec: &DogSpec, paths: &ShepPaths) -> Result<ResolvedApp, DogErro
 /// A dog outside `enabled` is registered `Stopped` and disabled; one in it is
 /// registered `Stopped` all the same, for [`spawn_enabled_dogs`] to start.
 /// A dog already registered under its name, running or a sheep, keeps its row
-/// and its mark, except for the one [`stop_unenabled_dogs`] takes back: a dog
+/// and its mark, except for the one `stop_unenabled_dogs` takes back: a dog
 /// this config does not enable that is still running. Entries land in the
 /// order given, `enabled` first, so a dog's id does not depend on which of two
 /// lists named it.
