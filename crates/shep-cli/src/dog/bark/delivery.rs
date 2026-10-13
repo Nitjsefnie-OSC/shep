@@ -84,6 +84,18 @@ pub(super) fn spawn_firings(firings: Vec<Firing>, delivery: &Delivery) {
 /// [`Delivery::append_lock`] covers only the [`barks::append`] call, a
 /// read-modify-rename against one file that several of these run at once.
 /// It does not replace `append`'s own cross-process `flock(2)`.
+///
+/// The append runs on `tokio`'s blocking pool rather than inline. Measured
+/// 2026-10-13 on an Apple Silicon mac (macOS 26.2) with
+/// `benches/benches/bark_append.rs` at commit `55a769f0`: a ring already
+/// at [`barks::DEFAULT_MAX_BYTES`] costs a median of 26.5 ms per append
+/// (slowest sample 31.4 ms), an empty ring a median of 8.0 ms (slowest
+/// 9.9 ms). Both sit far over the 1 ms that would have left the call
+/// inline, and the empty-ring figure says most of it is the two `fsync`s
+/// rather than the ring-sized rewrite. Inline on a one-worker runtime that
+/// is 27 ms of reading no bus frames. The [`Delivery::append_lock`] guard
+/// is still held across the `.await`, so this process's appends queue on
+/// one lock rather than parking blocking-pool threads on `flock(2)`.
 async fn deliver_and_record(firing: Firing, delivery: &Delivery) {
     let mut bark = firing.bark;
     let outcomes = join_all(firing.sinks.iter().map(|name| async {
@@ -110,9 +122,18 @@ async fn deliver_and_record(firing: Firing, delivery: &Delivery) {
     .await;
     bark.sinks = outcomes;
 
+    // Held across the `.await` below: the guard, not `flock(2)`, is where
+    // this process's appends queue, so at most one blocking-pool thread
+    // ever waits on the cross-process lock.
     let _guard = delivery.append_lock.lock().await;
-    if let Err(err) = barks::append(&delivery.barks_path, &bark, delivery.max_bytes) {
-        eprintln!("shep dog bark: could not record a fired bark: {err}");
+    let barks_path = Arc::clone(&delivery.barks_path);
+    let max_bytes = delivery.max_bytes;
+    match tokio::task::spawn_blocking(move || barks::append(&barks_path, &bark, max_bytes)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => eprintln!("shep dog bark: could not record a fired bark: {err}"),
+        // A panic in the pool thread, or a shutdown pool: the bark is lost
+        // either way, so it gets the same report as a failed append.
+        Err(err) => eprintln!("shep dog bark: could not record a fired bark: {err}"),
     }
 }
 
@@ -275,5 +296,81 @@ mod tests {
             "a second lock would let two appends race"
         );
         assert_eq!(*delivery.barks_path, barks_path);
+    }
+
+    /// Tests that wait out a real wall-clock hold of the ring file's lock.
+    /// The elapsed time is the point: a run that parked its tokio worker
+    /// would pass every assertion but this file's reason for existing.
+    mod slow {
+        use super::*;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        /// fails if the ring write parks the tokio worker instead of
+        /// waiting on the blocking pool.
+        ///
+        /// A plain OS thread holds the [`shep_core::file_lock::FileLock`]
+        /// `append` needs for 300 ms, so the append can only finish after
+        /// that hold. On a `current_thread` runtime with the call inline,
+        /// the single worker is parked for the whole hold and a task
+        /// ticking every 10 ms gets 0 or 1 ticks; on the blocking pool the
+        /// worker keeps running and gets roughly 30.
+        #[tokio::test(flavor = "current_thread")]
+        async fn a_ring_write_waiting_on_another_writer_leaves_the_worker_running() {
+            let dir = tempfile::tempdir().unwrap();
+            let barks_path = dir.path().join("barks.jsonl");
+
+            let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+            let lock_path = barks_path.clone();
+            let holder = std::thread::spawn(move || {
+                let guard = shep_core::file_lock::FileLock::acquire(&lock_path).unwrap();
+                locked_tx.send(()).unwrap();
+                std::thread::sleep(Duration::from_millis(300));
+                drop(guard);
+            });
+            // The hold must be real before the delivery starts, or the
+            // append wins the flock uncontended and the test measures a
+            // delivery nobody blocked.
+            while locked_rx.try_recv().is_err() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+
+            let delivery = Delivery {
+                sinks: Arc::new(BTreeMap::new()),
+                append_lock: Arc::new(Mutex::new(())),
+                barks_path: Arc::new(barks_path.clone()),
+                sink_timeout: Duration::from_secs(5),
+                max_bytes: barks::DEFAULT_MAX_BYTES,
+            };
+            // No sinks: everything left in `deliver_and_record` is the
+            // ring write.
+            let firing = gave_up_firing(&[]);
+
+            let ticks = Arc::new(AtomicUsize::new(0));
+            let ticking = {
+                let ticks = Arc::clone(&ticks);
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        ticks.fetch_add(1, Ordering::Relaxed);
+                    }
+                })
+            };
+
+            deliver_and_record(firing, &delivery).await;
+            ticking.abort();
+            holder.join().unwrap();
+
+            let counted = ticks.load(Ordering::Relaxed);
+            assert!(
+                counted >= 5,
+                "the worker ticked {counted} times during the 300 ms hold; \
+                 inline, the single worker is parked for the whole hold and \
+                 the count is 0 or 1"
+            );
+
+            let recorded = barks::read(&barks_path).unwrap();
+            assert_eq!(recorded.len(), 1, "the bark lands after the wait");
+            assert_eq!(recorded[0].subject, "web");
+        }
     }
 }
