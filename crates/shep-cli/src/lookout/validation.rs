@@ -737,8 +737,9 @@ mod tests {
         }
     }
 
-    /// The count is of characters, not bytes: an element the operator
-    /// spelled with an accent is one character long, not two.
+    /// The count is of characters, not bytes. `"ab\u{00e9}"` is four bytes
+    /// and three characters, so a byte count would have taken it and a
+    /// character count refuses it.
     #[test]
     fn a_min_length_counts_characters_and_not_bytes() {
         let bounds = Bounds {
@@ -746,15 +747,15 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            item_refusal("tags", ListItem::Text, &bounds, "caf\u{00e9}", false),
+            item_refusal("tags", ListItem::Text, &bounds, "abc\u{00e9}", false),
             None,
             "four characters, five bytes"
         );
-        let refused = item_refusal("tags", ListItem::Text, &bounds, "caf", false)
+        let refused = item_refusal("tags", ListItem::Text, &bounds, "ab\u{00e9}", false)
             .expect("three characters is under four");
         assert_eq!(
             refused.text,
-            "tags is \"caf\"; tags needs at least 4 characters"
+            "tags is \"ab\u{00e9}\"; tags needs at least 4 characters"
         );
     }
 
