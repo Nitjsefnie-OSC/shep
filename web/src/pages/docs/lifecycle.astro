@@ -314,8 +314,10 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
         <code>name:slot</code> exits 2 and names the app to type. A disabled
         app answers <code>start</code>, <code>restart</code> and{" "}
         <code>stock</code> with exit 2, and shows <code>disabled</code> in
-        STATUS. The mark is written to the muster roll, so it survives a
-        shepherd restart.
+        STATUS. The shepherd's own restarts leave it stopped and log the
+        drop: a <code>cron_restart</code> occurrence, a watch trigger, the
+        crash ladder, and memory and liveness restarts. The mark is written
+        to the muster roll, so it survives a shepherd restart.
       </p>
     </VerbSignature>
     <VerbSignature verb="enable" usage="shep enable <name>">

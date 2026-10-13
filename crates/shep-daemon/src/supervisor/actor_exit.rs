@@ -525,6 +525,10 @@ impl<R: ProcessRunner> Actor<R> {
             tracing::debug!(id, pid, "extra restart dropped: no such sheep");
             return;
         };
+        if self.is_disabled_id(id) {
+            tracing::info!(id, pid, "extra restart dropped: the app is disabled");
+            return;
+        }
         if slot.entry.pid != Some(pid) {
             tracing::debug!(
                 id,
