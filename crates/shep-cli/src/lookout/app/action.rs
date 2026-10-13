@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn the_confirm_is_pinned_to_the_id_it_was_armed_on() {
         let mut app = allowed();
-        app.set_filter("api".to_string());
+        app.set_filter(TextBox::from("api"));
         app.update(Msg::Key(KeyPress::Action(ActionVerb::Stop)));
         app.update(Msg::Snapshot {
             rows: vec![

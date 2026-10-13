@@ -15,6 +15,7 @@ use serde_json::Value;
 
 use super::super::edits::EditKey;
 use super::super::field::{Bounds, FieldKind, ListItem};
+use super::super::textbox::{TextBox, TextEdit};
 use super::super::validation::{Refusal, item_refusal};
 use super::super::viewport::Viewport;
 use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
@@ -55,7 +56,7 @@ pub struct ListPane {
     view: Viewport,
     /// `Some((Some(index), buffer))` on an element, `Some((None, buffer))`
     /// on the `+ new` row.
-    typing: Option<(Option<usize>, String)>,
+    typing: Option<(Option<usize>, TextBox)>,
 }
 
 impl ListPane {
@@ -134,10 +135,8 @@ impl ListPane {
     /// What is being typed: which element it is for ([`None`] on the `+
     /// new` row) and the buffer. [`None`] while no editor is open.
     #[must_use]
-    pub fn typing(&self) -> Option<(Option<usize>, &str)> {
-        self.typing
-            .as_ref()
-            .map(|(index, buffer)| (*index, buffer.as_str()))
+    pub fn typing(&self) -> Option<(Option<usize>, &TextBox)> {
+        self.typing.as_ref().map(|(index, buffer)| (*index, buffer))
     }
 
     /// Records the terminal's height, in rows of data.
@@ -198,23 +197,30 @@ impl ListPane {
             Some(ListRow::Item(index)) => self
                 .elements
                 .get(index)
-                .map(|element| (Some(index), element.clone())),
-            Some(ListRow::New) => Some((None, String::new())),
+                .map(|element| (Some(index), TextBox::from(element.as_str()))),
+            Some(ListRow::New) => Some((None, TextBox::new())),
             None => None,
         };
     }
 
-    /// Appends one typed character.
+    /// Inserts one typed character at the cursor.
     pub fn type_char(&mut self, typed: char) {
         if let Some((_, buffer)) = self.typing.as_mut() {
-            buffer.push(typed);
+            buffer.insert(typed);
         }
     }
 
-    /// Removes the last typed character.
+    /// Removes the character before the cursor.
     pub fn type_backspace(&mut self) {
         if let Some((_, buffer)) = self.typing.as_mut() {
-            buffer.pop();
+            buffer.backspace();
+        }
+    }
+
+    /// Moves the cursor or deletes, per `edit`.
+    pub fn edit_text(&mut self, edit: TextEdit) {
+        if let Some((_, buffer)) = self.typing.as_mut() {
+            buffer.edit(edit);
         }
     }
 
@@ -239,7 +245,11 @@ impl ListPane {
     /// item schema's `minLength`, `pattern`, `enum`, `minimum` or `maximum`
     /// turns down. Nothing is filed for it.
     pub fn apply_typing(&mut self) -> Result<Option<String>, Refusal> {
-        let Some((_, buffer)) = self.typing.clone() else {
+        let Some(buffer) = self
+            .typing
+            .as_ref()
+            .map(|(_, buffer)| buffer.as_str().to_owned())
+        else {
             return Ok(None);
         };
         if buffer.is_empty() {

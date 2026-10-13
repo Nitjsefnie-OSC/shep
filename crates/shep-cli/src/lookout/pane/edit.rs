@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use super::super::edits::{EditKey, Edits};
 use super::super::field::{Field, FieldKind};
+use super::super::textbox::{TextBox, TextEdit};
 use super::super::validation::{self, Refusal};
 use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
 
@@ -40,7 +41,7 @@ pub struct PaneTyping {
     /// this exists.
     pub key: String,
     /// What has been typed so far.
-    pub buffer: String,
+    pub buffer: TextBox,
 }
 
 /// Prints the key and never the buffer. See the type doc for why.
@@ -51,7 +52,7 @@ impl core::fmt::Debug for PaneTyping {
             f,
             "PaneTyping {{ key: {:?}, buffer: <{} chars> }}",
             self.key,
-            self.buffer.chars().count()
+            self.buffer.char_count()
         )
     }
 }
@@ -323,21 +324,28 @@ impl ConfigPane {
         };
         self.typing = Some(PaneTyping {
             key: field.key.clone(),
-            buffer: seed,
+            buffer: TextBox::from(seed),
         });
     }
 
-    /// Appends one typed character.
+    /// Inserts one typed character at the cursor.
     pub fn type_char(&mut self, typed: char) {
         if let Some(typing) = self.typing.as_mut() {
-            typing.buffer.push(typed);
+            typing.buffer.insert(typed);
         }
     }
 
-    /// Removes the last typed character.
+    /// Removes the character before the cursor.
     pub fn type_backspace(&mut self) {
         if let Some(typing) = self.typing.as_mut() {
-            typing.buffer.pop();
+            typing.buffer.backspace();
+        }
+    }
+
+    /// Moves the cursor or deletes, per `edit`.
+    pub fn edit_text(&mut self, edit: TextEdit) {
+        if let Some(typing) = self.typing.as_mut() {
+            typing.buffer.edit(edit);
         }
     }
 
@@ -380,7 +388,7 @@ impl ConfigPane {
         let field = self.fields.by_key(&key).cloned();
         if let Some(refused) = field
             .as_ref()
-            .and_then(|field| validation::refusal(field, &buffer))
+            .and_then(|field| validation::refusal(field, buffer.as_str()))
         {
             self.typing = Some(PaneTyping { key, buffer });
             return Some(refused);
@@ -548,7 +556,11 @@ mod tests {
         pane.move_to_key("max_restarts");
         pane.begin_typing();
         let typing = pane.typing().expect("the editor is open");
-        assert_eq!(typing.buffer, "32", "the editor opens on what is on screen");
+        assert_eq!(
+            typing.buffer.as_str(),
+            "32",
+            "the editor opens on what is on screen"
+        );
         pane.type_backspace();
         pane.type_backspace();
         for c in "40".chars() {
@@ -572,7 +584,7 @@ mod tests {
         for _ in 0..10 {
             pane.type_backspace();
         }
-        assert_eq!(pane.typing().expect("still open").buffer, "");
+        assert_eq!(pane.typing().expect("still open").buffer.as_str(), "");
         assert_eq!(pane.apply_typing(), None, "the field takes what was typed");
         assert_eq!(filed(&pane, "max_restarts"), Some(serde_json::json!(16)));
     }
@@ -592,7 +604,7 @@ mod tests {
         pane.move_to_key("cwd");
         pane.begin_typing();
         assert_eq!(
-            pane.typing().expect("the editor is open").buffer,
+            pane.typing().expect("the editor is open").buffer.as_str(),
             "/srv/web",
             "the editor opens on what is on screen"
         );
@@ -708,7 +720,7 @@ mod tests {
         pane.move_to_key("webhook");
         pane.begin_typing();
         assert_eq!(
-            pane.typing().expect("the editor is open").buffer,
+            pane.typing().expect("the editor is open").buffer.as_str(),
             "",
             "a secret seeds empty, however much the section holds"
         );

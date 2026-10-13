@@ -139,6 +139,7 @@ impl App {
             | KeyPress::FilterStart
             | KeyPress::TextChar(_)
             | KeyPress::TextBackspace
+            | KeyPress::TextEdit(_)
             | KeyPress::TextApply
             | KeyPress::TextAbandon
             | KeyPress::FoldView
@@ -218,6 +219,7 @@ impl App {
         match key {
             KeyPress::TextChar(typed) => list.type_char(typed),
             KeyPress::TextBackspace => list.type_backspace(),
+            KeyPress::TextEdit(edit) => list.edit_text(edit),
             KeyPress::TextApply => {
                 let applied = list.apply_typing();
                 if list.typing().is_none() {
@@ -265,6 +267,7 @@ impl App {
         match key {
             KeyPress::TextChar(typed) => pane.type_env_char(typed),
             KeyPress::TextBackspace => pane.type_env_backspace(),
+            KeyPress::TextEdit(edit) => pane.edit_env_text(edit),
             KeyPress::TextApply => {
                 pane.apply_env_typing();
                 self.mode = InputMode::Normal;

@@ -34,6 +34,7 @@ pub mod tail;
 pub mod term;
 #[cfg(test)]
 mod testing;
+pub mod textbox;
 pub mod theme;
 mod ui_event_loop;
 pub mod validation;

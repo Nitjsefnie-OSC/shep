@@ -583,6 +583,30 @@ esc/s close   j/k select   g… control enabled`;
       sentence saying it does not fit.
     </p>
 
+    <h2 id="editing-text">Editing text</h2>
+    <p>
+      Every text box (the filters, the config, environment, list and settings
+      editors, the secret writer) draws a cursor and scrolls sideways in a
+      narrow cell.
+    </p>
+    <ul>
+      <li>
+        <code>←</code>/<code>→</code> move a character,{" "}
+        <code>Alt-←</code>/<code>Alt-→</code> or <code>Alt-b</code>/
+        <code>Alt-f</code> a word, <code>Home</code>/<code>End</code> or{" "}
+        <code>Ctrl-a</code>/<code>Ctrl-e</code> to either end.
+      </li>
+      <li>
+        <code>Delete</code> erases forward, <code>Ctrl-w</code> or{" "}
+        <code>Alt-Backspace</code> the word behind, <code>Ctrl-u</code> and{" "}
+        <code>Ctrl-k</code> everything before or after the cursor.
+      </li>
+    </ul>
+    <p class="fine">
+      Bracketed paste inserts at the cursor with newlines and control
+      characters dropped. With no box open it does nothing.
+    </p>
+
     <h2 id="when-the-terminal-is-small">When the terminal is small</h2>
     <p>
       Panes drop before columns do, least-diagnostic-first: the detail pane
