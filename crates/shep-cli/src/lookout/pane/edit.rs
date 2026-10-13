@@ -108,7 +108,7 @@ impl ConfigPane {
     /// Files the opposite of what a bool holds, or the next name in a
     /// choice. Does nothing for a locked field, or for one no keystroke
     /// cycles ([`FieldKind::Text`], [`FieldKind::Integer`],
-    /// [`FieldKind::Map`], [`FieldKind::Opaque`]).
+    /// [`FieldKind::Map`], [`FieldKind::Opaque`], [`FieldKind::Entries`]).
     pub fn cycle(&mut self) {
         let Some(PaneRow::Field(index)) = self.cursor() else {
             return;
@@ -146,6 +146,7 @@ impl ConfigPane {
             | FieldKind::Integer
             | FieldKind::Map
             | FieldKind::List(_)
+            | FieldKind::Entries(_)
             | FieldKind::Opaque => return,
         };
         let key = field.key.clone();

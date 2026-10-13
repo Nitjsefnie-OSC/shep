@@ -13,6 +13,7 @@ use serde_json::{Map, Value};
 use super::super::edits::{EditKey, Edits};
 use super::super::field::{Flattened, flatten_values, flattened};
 use super::super::viewport::Viewport;
+use super::entries::EntryRows;
 use super::{ConfigPane, PaneEdit, PaneTarget};
 
 /// The table a [`ConfigPane::sheep_dog`] pane edits, and where each of its
@@ -59,8 +60,10 @@ impl ConfigPane {
             fields,
             paths,
             outline,
+            shapes,
         } = flattened(schema);
         let values = flatten_values(&table, &paths);
+        let entries = EntryRows::build(&fields, &paths, &values, shapes);
         Self {
             target: PaneTarget::SheepDog { sheep, dog },
             fields,
@@ -80,6 +83,7 @@ impl ConfigPane {
             section_paths: BTreeMap::new(),
             open: outline.top_level_paths(),
             outline: Arc::new(outline),
+            entries: Arc::new(entries),
         }
     }
 
@@ -126,6 +130,11 @@ impl ConfigPane {
         };
         self.values = flatten_values(&table, &state.paths);
         state.table = table;
+        self.entries = Arc::new(
+            self.entries
+                .rebuilt(&self.fields, &state.paths, &self.values),
+        );
+        self.retain_known_open();
         self.typing = None;
         if let Some(list) = self.list.take() {
             self.adopt_list_view(list.key(), list.view().clone());

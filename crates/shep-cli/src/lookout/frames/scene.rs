@@ -179,6 +179,13 @@ pub enum Scene {
     /// `hours` and `models.worker` tables, `models.worker.token` drawn
     /// `<set>`.
     SheepDogTable,
+    /// A paddock-shaped dog's pane at the design target: a `clients` array
+    /// and a `models` map each read as a count, `clients` opened onto its
+    /// entries and the first of them onto its fields, a credential drawn
+    /// `<set>`.
+    DogEntries,
+    /// The same pane at 88 columns, where the explanation panel is gone.
+    DogEntriesNarrow,
     /// The close dialog at the design size: two edits filed, one field
     /// already parked, the box centred over the dimmed editing pane.
     CloseDialog,
@@ -271,6 +278,8 @@ impl Scene {
             Self::SheepDogsList => "sheep_dogs_list",
             Self::SheepDogsRemove => "sheep_dogs_remove",
             Self::SheepDogTable => "sheep_dog_table",
+            Self::DogEntries => "dog_entries",
+            Self::DogEntriesNarrow => "dog_entries_narrow",
             Self::CloseDialog => "close_dialog",
             Self::CloseDialogFloor => "close_dialog_floor",
             Self::CloseDialogNarrow => "close_dialog_narrow",
@@ -444,6 +453,12 @@ impl Scene {
             Self::SheepDogTable => {
                 "Enter on jobs opens its table pane as a tree: hours and models open at the first level, models.worker opened onto token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame."
             }
+            Self::DogEntries => {
+                "A dog's pane over a paddock-shaped schema at 160x48: clients and models each read as a count and nothing more, clients is open onto alpha, b-2 and #2, named by name, then id, then their index, and alpha is open onto its fields, key drawn <set> with no credential on screen anywhere in the frame. Every row under an entry is read-only."
+            }
+            Self::DogEntriesNarrow => {
+                "The same pane at 88 columns: narrow enough that the explanation panel is gone, so the count, the entries and the read-only rows under them have the whole width."
+            }
             Self::CloseDialog => {
                 "esc pressed with cwd and err_file edited and listen_timeout already parked from before: the close dialog names both counts, boxed and centred at 160x48 over the dimmed editing pane."
             }
@@ -611,7 +626,11 @@ impl Scene {
             Self::SheepDogsRow
             | Self::SheepDogsList
             | Self::SheepDogsRemove
-            | Self::SheepDogTable => (160, 48),
+            | Self::SheepDogTable
+            | Self::DogEntries => (160, 48),
+            // 88: the same cut as `EditPaneNarrow`, short of the
+            // explanation panel's floor.
+            Self::DogEntriesNarrow => (88, 48),
             // 160: the design target. The box is 86 interior plus a border
             // cell each side, so (160 - 88) / 2 = 36 dimmed columns each
             // side of it.
@@ -718,6 +737,8 @@ impl Scene {
             | Self::SheepDogsList
             | Self::SheepDogsRemove
             | Self::SheepDogTable
+            | Self::DogEntries
+            | Self::DogEntriesNarrow
             | Self::CloseDialog
             | Self::CloseDialogFloor
             | Self::CloseDialogNarrow
@@ -746,7 +767,7 @@ mod tests {
     /// which is the form a reader sees.
     #[test]
     fn the_gallery_preamble_counts_the_scenes_it_has() {
-        const NUMBERS: [(usize, &str); 29] = [
+        const NUMBERS: [(usize, &str); 31] = [
             (34, "thirty-four"),
             (35, "thirty-five"),
             (36, "thirty-six"),
@@ -776,6 +797,8 @@ mod tests {
             (60, "sixty"),
             (61, "sixty-one"),
             (62, "sixty-two"),
+            (63, "sixty-three"),
+            (64, "sixty-four"),
         ];
         let spelled = NUMBERS
             .iter()
@@ -888,7 +911,9 @@ mod tests {
             Scene::SheepDogsRow => Some(Scene::SheepDogsList),
             Scene::SheepDogsList => Some(Scene::SheepDogsRemove),
             Scene::SheepDogsRemove => Some(Scene::SheepDogTable),
-            Scene::SheepDogTable => Some(Scene::CloseDialog),
+            Scene::SheepDogTable => Some(Scene::DogEntries),
+            Scene::DogEntries => Some(Scene::DogEntriesNarrow),
+            Scene::DogEntriesNarrow => Some(Scene::CloseDialog),
             Scene::CloseDialog => Some(Scene::CloseDialogFloor),
             Scene::CloseDialogFloor => Some(Scene::CloseDialogNarrow),
             Scene::CloseDialogNarrow => Some(Scene::CloseDialogParked),

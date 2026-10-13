@@ -20,7 +20,9 @@ use crate::lookout::frames::fixtures::{
 };
 use crate::lookout::frames::scene::Scene;
 use crate::lookout::secrets::{SecretRow, SecretsModel, Source};
-use crate::lookout::view::fixtures::select_field;
+use crate::lookout::view::fixtures::{
+    entries_dog_schema, entries_dog_section, select_field, select_node,
+};
 use crate::secret_readers::Reader;
 use crate::style::{StyleLevel, StyleSource};
 
@@ -281,6 +283,31 @@ pub(super) fn apply_post_tick_scene(app: &mut App, which: Scene) {
                     _ => {}
                 }
             }
+        }
+        Scene::DogEntries | Scene::DogEntriesNarrow => {
+            // The schema probe, then the shepherd's section, the way the
+            // event loop opens a dog's pane. `clients` and its first entry
+            // are opened with `→` the way an operator would, and the
+            // cursor is left on the entry's credential.
+            app.update(Msg::DogPane {
+                name: "paddock".to_string(),
+                adopted_path: None,
+                result: Ok(entries_dog_schema()),
+            });
+            app.update(Msg::Replied {
+                sent: Sent::DogSection {
+                    name: "paddock".to_string(),
+                },
+                result: Ok(Response::DogSection {
+                    toml: entries_dog_section().into(),
+                }),
+            });
+            for key in ["clients", "clients[0]"] {
+                select_node(app, key);
+                app.update(Msg::Key(KeyPress::TabNext));
+            }
+            app.update(Msg::Key(KeyPress::SelectDown));
+            app.update(Msg::Key(KeyPress::SelectDown));
         }
         Scene::CloseDialog
         | Scene::CloseDialogFloor
@@ -673,6 +700,39 @@ mod tests {
         );
         assert!(!table.contains(TOKEN), "{table:?}");
         assert!(!table.contains(LEGACY_CREDENTIAL), "{table:?}");
+    }
+
+    /// The entries scenes read an array and a map of tables as counts,
+    /// open `clients` onto its entries and draw no credential, at either
+    /// width.
+    #[test]
+    #[cfg(unix)] // inherited, not measured per test: see the `build` module's docs
+    fn the_dog_entries_scenes_count_name_and_mask() {
+        for which in [Scene::DogEntries, Scene::DogEntriesNarrow] {
+            let text = render_text(&scene(which).1);
+            for drawn in [
+                "3 entries",
+                "2 entries",
+                "\u{25be} clients",
+                "\u{25b8} models",
+                "alpha",
+                "b-2",
+                "#2",
+            ] {
+                assert!(text.contains(drawn), "{which:?} lacks {drawn}: {text:?}");
+            }
+            let key_row = text
+                .lines()
+                .find(|line| line.starts_with('>'))
+                .expect("the cursor is on the credential's own row");
+            assert!(
+                key_row.contains("key") && key_row.contains("<set>"),
+                "{which:?}: {key_row:?}"
+            );
+            for credential in ["hunter2", "hunter3", "hunter4"] {
+                assert!(!text.contains(credential), "{which:?} drew {credential}");
+            }
+        }
     }
 
     /// Each close-dialog scene draws the border its width allows, and the

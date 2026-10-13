@@ -43,8 +43,22 @@ pub enum FieldKind {
     /// `type: array` of a shape the editor can parse back. Opens a list
     /// sub-screen.
     List(ListItem),
+    /// An array or a map of tables with named properties. Read-only: the
+    /// row reads as a count and opens to its entries.
+    Entries(Entries),
     /// Anything else, including a nested object. Read-only, shown as JSON.
     Opaque,
+}
+
+/// What holds the tables of a [`FieldKind::Entries`] field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Entries {
+    /// `type: array` whose `items` resolve to an object with `properties`.
+    /// Entries are told apart by position.
+    Array,
+    /// `type: object` whose `additionalProperties` resolve to an object with
+    /// `properties`. Entries are told apart by key.
+    Map,
 }
 
 /// What an array's elements are, so the editor can parse one back.
@@ -258,7 +272,7 @@ fn field_from(key: &str, schema: &Value, defs: &Map<String, Value>) -> Field {
         (FieldKind::Text, Some(names)) if !names.is_empty() => FieldKind::Suggested(names),
         (kind, _) => kind,
     };
-    let editable = kind != FieldKind::Opaque;
+    let editable = !matches!(kind, FieldKind::Opaque | FieldKind::Entries(_));
     let example = init
         .and_then(|i| i.get("example"))
         .and_then(Value::as_str)

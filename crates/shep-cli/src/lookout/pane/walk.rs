@@ -111,7 +111,12 @@ impl ConfigPane {
     pub(in crate::lookout) fn field_rows(&self) -> Vec<PaneRow> {
         self.rows()
             .into_iter()
-            .filter(|row| matches!(row, PaneRow::Field(_) | PaneRow::Table(_)))
+            .filter(|row| {
+                matches!(
+                    row,
+                    PaneRow::Field(_) | PaneRow::Table(_) | PaneRow::Entry(_)
+                )
+            })
             .collect()
     }
 
@@ -163,7 +168,7 @@ impl ConfigPane {
         self.open_down_to(key);
         if let Some(row_index) = self.rows().iter().position(|row| match row {
             PaneRow::Field(field_index) => self.fields.fields()[*field_index].key == key,
-            PaneRow::Table(_) | PaneRow::Env(_) | PaneRow::AddEnv => false,
+            PaneRow::Table(_) | PaneRow::Entry(_) | PaneRow::Env(_) | PaneRow::AddEnv => false,
         }) {
             let len = self.rows().len();
             self.view.move_to(row_index, len);

@@ -128,3 +128,61 @@ pub(super) fn tree_section() -> String {
 pub(super) fn tree_pane() -> ConfigPane {
     ConfigPane::dog("tree".into(), None, tree_schema(), tree_section())
 }
+
+/// A paddock-shaped dog: a `clients` array whose entries carry a secret
+/// `key` beside a `name` or an `id`, a nested `limits` table and a list of
+/// their own `peers`, a `models` map, and a scalar after them.
+pub(super) fn entries_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "clients": { "type": "array", "items": { "$ref": "#/$defs/Client" } },
+            "models": {
+                "type": "object",
+                "additionalProperties": { "$ref": "#/$defs/Model" },
+            },
+            "retries": { "type": "integer" },
+        },
+        "$defs": {
+            "Client": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "key": { "type": "string", "x-shep-secret": true },
+                    "limits": {
+                        "type": "object",
+                        "properties": { "rate": { "type": "integer" } },
+                    },
+                    "name": { "type": "string" },
+                    "peers": { "type": "array", "items": { "$ref": "#/$defs/Client" } },
+                },
+            },
+            "Model": {
+                "type": "object",
+                "properties": {
+                    "context": { "type": "integer" },
+                    "provider": { "type": "string" },
+                },
+            },
+        },
+    })
+}
+
+/// [`entries_schema`]'s section: three clients, the first named, the second
+/// with only an id and the third with neither, and two models.
+pub(super) fn entries_section() -> String {
+    concat!(
+        "retries = 3\n",
+        "[[clients]]\nname = \"alpha\"\nkey = \"hunter2\"\n[clients.limits]\nrate = 5\n",
+        "[[clients]]\nid = \"b-2\"\nkey = \"hunter3\"\n",
+        "[[clients]]\nkey = \"hunter4\"\n",
+        "[models.small]\nprovider = \"local\"\ncontext = 4096\n",
+        "[models.large]\nprovider = \"remote\"\n",
+    )
+    .to_owned()
+}
+
+/// [`entries_schema`] over [`entries_section`].
+pub(super) fn entries_pane() -> ConfigPane {
+    ConfigPane::dog("paddock".into(), None, entries_schema(), entries_section())
+}
