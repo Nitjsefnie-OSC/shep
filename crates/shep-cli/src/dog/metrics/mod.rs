@@ -1,21 +1,31 @@
 //! The metrics dog: [`MetricsConfig`], [`run`], and the data types
-//! [`exposition::render`] turns into Prometheus text.
+//! [`exposition::render`] turns into Prometheus text and the `otel`
+//! feature's exporter turns into an OTLP payload.
 //!
 //! [`Reading`] is a snapshot, not a running total: nothing accumulates
 //! across scrapes, so there is no state to leak between requests and no
 //! `Mutex` for a slow scraper to hold. [`run`] polls `Request::ListFlock`
 //! and the handshake fresh on every `/metrics` request; nothing here is
-//! cached or refreshed on a timer.
+//! cached or refreshed on a timer. [`collect_reading`] is that poll, and
+//! both the scrape server and the OTLP exporter call it.
 
 pub mod exposition;
 
-use std::net::SocketAddr;
+mod config;
+
+// The whole of the `otel` feature. A build without it compiles none of
+// this, and refuses a config that asks for export instead.
+#[cfg(feature = "otel")]
+mod otlp;
+
+pub use config::MetricsConfig;
+
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Deserialize;
 use shep_client::ReconnectingClient;
-use shep_client::dogs::{Stop, dog_config};
+use shep_client::RequestError;
+use shep_client::dogs::Stop;
 use shep_core::protocol::ProcessInfo;
 use sysinfo::{MemoryRefreshKind, ProcessRefreshKind, RefreshKind, System};
 use tokio::net::{TcpListener, TcpStream};
@@ -30,49 +40,16 @@ use crate::http::{self, HttpError};
 /// open indefinitely.
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// `[dog.metrics]`.
-///
-/// `deny_unknown_fields`: a misspelled key must be a startup error naming
-/// it, not a dog silently serving on a port the operator did not choose.
-///
-/// `dog_config` carries no `#[shep(secret)]`, because an address is not a
-/// credential. The derive is still what lets `config_schema` publish this
-/// section, and a config type with nothing to mark still wants the impl.
-#[dog_config]
-#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields, default)]
-pub struct MetricsConfig {
-    /// Where to listen. Loopback by default; binding wider is explicit.
-    ///
-    /// A metrics endpoint carries every sheep's name, and on many hosts a
-    /// sheep's name is the name of an internal service. `0.0.0.0:9615` is
-    /// available to an operator who wants it and is never the default —
-    /// this dog will not widen its own exposure as a side effect of being
-    /// enabled.
-    pub bind: SocketAddr,
-}
+/// What a `[dog.metrics]` section that asks for OTLP export gets on a build
+/// compiled without the `otel` feature. Naming the feature is the point: a
+/// dog that exports nothing and says nothing looks healthy.
+#[cfg(not(feature = "otel"))]
+const OTLP_FEATURE_REFUSAL: &str = concat!(
+    "`otlp_endpoint` is set, but this build has no `otel` feature and exports nothing; ",
+    "install it with `cargo install shep --features otel`",
+);
 
-impl Default for MetricsConfig {
-    fn default() -> Self {
-        Self {
-            bind: SocketAddr::from(([127, 0, 0, 1], 9615)),
-        }
-    }
-}
-
-#[cfg(test)]
-impl MetricsConfig {
-    /// A config bound to `port` on loopback. [`Default`] pins `9615`; a
-    /// test that binds a real socket passes `0` so the OS assigns one.
-    fn default_on_port(port: u16) -> Self {
-        Self {
-            bind: SocketAddr::from(([127, 0, 0, 1], port)),
-        }
-    }
-}
-
-/// What the shepherd and the host looked like when the exposition was
-/// rendered.
+/// What the shepherd and the host looked like when the reading was taken.
 #[derive(Debug, Default)]
 pub struct Reading {
     /// Every registered entry, sheep and dogs alike, as `ListFlock`
@@ -145,6 +122,34 @@ pub(crate) async fn sample_host_off_worker() -> Option<HostReading> {
         .unwrap_or_default()
 }
 
+/// Asks the shepherd for the flock and pairs that answer with the
+/// handshake's own version and pid, plus a host sample.
+///
+/// The one reading both paths take: [`handle_connection`] renders it as
+/// Prometheus text and the OTLP exporter encodes it as a POST body, so a
+/// collector and a scraper see the same numbers.
+///
+/// # Errors
+/// - [`RequestError`], as [`ReconnectingClient::list_flock`] gives it: the
+///   shepherd did not answer the listing.
+pub(crate) async fn collect_reading(client: &ReconnectingClient) -> Result<Reading, RequestError> {
+    let flock = client.list_flock().await?;
+    // Read the daemon from the generation that just answered `ListFlock`.
+    // `ReconnectingClient::daemon` reports the daemon answering now, so two
+    // reads either side of a handover could publish one daemon's version
+    // beside another's pid.
+    let ack = client.daemon();
+    Ok(Reading {
+        flock,
+        daemon_version: ack.daemon_version,
+        daemon_pid: ack.pid,
+        // The host sample is the one blocking step between two awaits here,
+        // so it goes to the blocking pool rather than stalling this worker
+        // for the length of the process-table walk.
+        host: sample_host_off_worker().await,
+    })
+}
+
 /// Runs the metrics dog until it is signalled.
 ///
 /// Binds [`MetricsConfig::bind`] and serves until `SIGINT` or `SIGTERM`,
@@ -159,12 +164,28 @@ pub(crate) async fn sample_host_off_worker() -> Option<HostReading> {
 /// `DaemonUnreachable`.
 ///
 /// A refused bind is fatal: a dog running but bound to nothing looks
-/// healthy from the outside.
+/// healthy from the outside. So is a refused OTLP endpoint: it takes
+/// `InvalidConfig`, the same code a bad `bind` takes.
 pub async fn run(runtime: DogRuntime) -> ExitCode {
     let config = match runtime.config::<MetricsConfig>() {
         Ok(config) => config,
         Err(err) => {
             eprintln!("shep dog metrics: {err}; see `shep dogs`");
+            return ExitCode::InvalidConfig;
+        }
+    };
+    // The OTLP keys are read once, here, like `bind`. A section that asks
+    // for export on a build that cannot do it is refused rather than run.
+    #[cfg(not(feature = "otel"))]
+    if config.otlp_endpoint.is_some() {
+        eprintln!("shep dog metrics: {OTLP_FEATURE_REFUSAL}");
+        return ExitCode::InvalidConfig;
+    }
+    #[cfg(feature = "otel")]
+    let exporter = match otlp::exporter_for(&config) {
+        Ok(exporter) => exporter,
+        Err(err) => {
+            eprintln!("shep dog metrics: {err}");
             return ExitCode::InvalidConfig;
         }
     };
@@ -177,6 +198,13 @@ pub async fn run(runtime: DogRuntime) -> ExitCode {
     };
     let mut stop = Stop::on_stop_signals();
     let client = Arc::new(runtime.into_client());
+    // The exporter runs beside the scrape server on its own task, sharing
+    // its client, and is never awaited: a failing export is a log line in
+    // this dog's own log, never a reason for it to exit.
+    #[cfg(feature = "otel")]
+    if let Some(exporter) = exporter {
+        let _exporter_task = otlp::spawn(exporter, Arc::clone(&client));
+    }
     tokio::select! {
         () = stop.wait() => ExitCode::Success,
         () = accept_forever(listener, Arc::clone(&client)) => ExitCode::Success,
@@ -234,8 +262,8 @@ async fn handle_connection(mut stream: TcpStream, client: Arc<ReconnectingClient
         return;
     }
 
-    let flock = match client.list_flock().await {
-        Ok(flock) => flock,
+    let reading = match collect_reading(&client).await {
+        Ok(reading) => reading,
         // A failed `ListFlock` answers 503, not a 200 with nothing in it:
         // a scraper reads that as a real empty flock, where a 503 is
         // `up == 0` for this target.
@@ -250,22 +278,6 @@ async fn handle_connection(mut stream: TcpStream, client: Arc<ReconnectingClient
             return;
         }
     };
-
-    // Read once, from the generation that just answered `ListFlock`.
-    // `ReconnectingClient::daemon` reports the daemon answering now, so two
-    // reads either side of a handover could publish one daemon's version
-    // beside another's pid.
-    //
-    // The host sample is the one blocking step between two awaits here, so
-    // it goes to the blocking pool rather than stalling this worker for
-    // the length of the process-table walk.
-    let ack = client.daemon();
-    let reading = Reading {
-        flock,
-        daemon_version: ack.daemon_version,
-        daemon_pid: ack.pid,
-        host: sample_host_off_worker().await,
-    };
     let body = exposition::render(&reading);
     let _: Result<(), HttpError> = http::write_response(
         &mut stream,
@@ -278,6 +290,7 @@ async fn handle_connection(mut stream: TcpStream, client: Arc<ReconnectingClient
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
     use std::time::Duration;
 
     use shep_client::testing::{
@@ -290,33 +303,9 @@ mod tests {
 
     use super::*;
 
-    /// `deny_unknown_fields` becomes `additionalProperties: false`;
-    /// `default` drops `required` and puts the real default beside the key.
-    #[test]
-    fn the_metrics_schema_offers_the_port_it_would_bind_and_refuses_unknown_keys() {
-        let schema = shep_client::dogs::config_schema::<MetricsConfig>();
-        let schema = schema.as_value();
-
-        assert_eq!(
-            schema.get("additionalProperties"),
-            Some(&serde_json::Value::Bool(false)),
-            "`deny_unknown_fields` is what catches a misspelled key"
-        );
-        assert_eq!(
-            schema.get("required"),
-            None,
-            "`default` on the type makes every key optional"
-        );
-        assert_eq!(
-            schema.pointer("/properties/bind/default"),
-            Some(&serde_json::Value::String("127.0.0.1:9615".to_owned())),
-            "the default is loopback, and a pane shows the port rather than a blank"
-        );
-    }
-
     /// A minimal, online sheep fixture, enough for the exposition to name
     /// it in a `sheep="..."` label.
-    fn sample_info(name: &str) -> ProcessInfo {
+    pub(super) fn sample_info(name: &str) -> ProcessInfo {
         ProcessInfo::builder(1, name, ProcStatus::Online)
             .pid(Some(4242))
             .uptime_ms(1_000)
@@ -415,13 +404,13 @@ mod tests {
     /// by `client`. Aborts its serving task on drop, so a dog left
     /// listening past its own test cannot hold a port for the rest of the
     /// binary's run.
-    struct RunningDog {
+    pub(super) struct RunningDog {
         addr: SocketAddr,
         handle: JoinHandle<()>,
     }
 
     impl RunningDog {
-        fn addr(&self) -> SocketAddr {
+        pub(super) fn addr(&self) -> SocketAddr {
             self.addr
         }
     }
@@ -435,7 +424,10 @@ mod tests {
     /// Binds `config.bind` (port `0` in every test below, never a fixed
     /// one), reads back the OS-assigned address, and serves `client` on it
     /// in the background.
-    async fn serve_on_free_port(client: ReconnectingClient, config: MetricsConfig) -> RunningDog {
+    pub(super) async fn serve_on_free_port(
+        client: ReconnectingClient,
+        config: MetricsConfig,
+    ) -> RunningDog {
         let listener = TcpListener::bind(config.bind).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = tokio::spawn(accept_forever(listener, Arc::new(client)));
@@ -446,7 +438,7 @@ mod tests {
     /// response text: status line, headers and body together. Every
     /// read/write is wrapped in a generous timeout, so a hang here is a bug
     /// in the dog under test, not a reason to hang the suite.
-    async fn scrape(addr: SocketAddr, path: &str) -> String {
+    pub(super) async fn scrape(addr: SocketAddr, path: &str) -> String {
         let mut stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
             .await
             .expect("connect must not hang")
@@ -488,18 +480,6 @@ mod tests {
             "the second scrape must see the second listing: {second}"
         );
         assert_eq!(daemon.list_flock_count(), 2, "one ListFlock per scrape");
-    }
-
-    #[test]
-    fn the_default_bind_is_loopback() {
-        assert_eq!(
-            MetricsConfig::default().bind,
-            "127.0.0.1:9615".parse::<SocketAddr>().unwrap()
-        );
-        // An empty section resolves to that same default, not to
-        // `0.0.0.0`, which a `Default` derived on `SocketAddr` would give.
-        let parsed: MetricsConfig = toml::from_str("").unwrap();
-        assert_eq!(parsed, MetricsConfig::default());
     }
 
     /// `cut_on_next_request` makes the shepherd read exactly one envelope
@@ -623,5 +603,56 @@ mod tests {
             1,
             "one ListFlock for the one scrape"
         );
+    }
+}
+
+/// The half of this dog that only exists when the `otel` feature is off.
+///
+/// Its own module, with its own imports, so a build with the feature on
+/// compiles none of it and reports no unused import.
+#[cfg(all(test, not(feature = "otel")))]
+mod otlp_off_tests {
+    use std::time::Duration;
+
+    use shep_client::testing::{sample_ack, serve_one_request};
+    use shep_core::protocol::{Request, Response};
+
+    use crate::exit::ExitCode;
+
+    /// A `[dog.metrics]` section that asks for OTLP export must refuse on a
+    /// build that cannot do it. Fails if the dog starts anyway, exporting
+    /// nothing while `shep list` reports it online, which is the failure
+    /// mode this refusal exists to avoid.
+    #[tokio::test]
+    async fn an_endpoint_without_the_feature_refuses_to_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+        let response = Response::DogSection {
+            toml: "otlp_endpoint = \"http://127.0.0.1:4318\"\n"
+                .to_string()
+                .into(),
+        };
+        let handle = serve_one_request(&socket, sample_ack(), response).await;
+        let paths = crate::dog::tests::test_paths(dir.path(), socket);
+        let dog = tokio::spawn(crate::dog::run_dog("metrics", paths));
+
+        // The dog reached the socket and asked for its section, which is
+        // what makes the wait below one for a refusal rather than a hope.
+        let envelope = tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("the dog must reach the wire")
+            .unwrap();
+        assert_eq!(
+            envelope.body,
+            Request::DogConfigResolved {
+                name: "metrics".to_string()
+            }
+        );
+
+        let code = tokio::time::timeout(Duration::from_secs(10), dog)
+            .await
+            .expect("a refused config is an exit, not a hang")
+            .unwrap();
+        assert_eq!(code, ExitCode::InvalidConfig);
     }
 }
