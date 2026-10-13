@@ -197,7 +197,12 @@ fn min_length_refusal(key: &str, bounds: &Bounds, typed: &str, shown: &str) -> O
 /// The refusal lists the allowed set because an `enum` is the one rule an
 /// operator can satisfy by copying from it.
 fn enum_refusal(key: &str, bounds: &Bounds, value: &Value, shown: &str) -> Option<Refusal> {
-    if bounds.choices.is_empty() || bounds.choices.iter().any(|choice| choice == value) {
+    if bounds.choices.is_empty()
+        || bounds
+            .choices
+            .iter()
+            .any(|choice| choice_taken(choice, value))
+    {
         return None;
     }
     let allowed: Vec<String> = bounds.choices.iter().map(choice_text).collect();
@@ -207,6 +212,24 @@ fn enum_refusal(key: &str, bounds: &Bounds, value: &Value, shown: &str) -> Optio
             allowed.join(", ")
         ),
     })
+}
+
+/// Whether `value` is the `enum` member `choice` names.
+///
+/// Numbers compare by value, not by the spelling the schema used:
+/// `serde_json` holds `1` and `1.0` as two different numbers, and JSON
+/// Schema means one of them. Comparing the two `Value`s refused a `1` a dog
+/// published as `enum: [1.0]`. Two integers are compared as `i64`, so a set
+/// of them is not collapsed through an `f64` that cannot name every `i64`
+/// near its ends.
+fn choice_taken(choice: &Value, value: &Value) -> bool {
+    match (choice.as_i64(), value.as_i64()) {
+        (Some(written), Some(typed)) => written == typed,
+        _ => match (choice.as_f64(), value.as_f64()) {
+            (Some(written), Some(typed)) => written == typed,
+            _ => choice == value,
+        },
+    }
 }
 
 /// One `enum` member as the operator reads it: bare for a string, compact
@@ -702,6 +725,42 @@ mod tests {
             let refused = item_refusal("tags", item, bounds, refused, false).expect(rule);
             assert_eq!(refused.text, sentence, "{rule}");
         }
+    }
+
+    /// An `enum` member a schema wrote with a decimal point is the number
+    /// the pane parsed, and a `Value` comparison says otherwise:
+    /// `serde_json` keeps `1` and `1.0` as two numbers, and JSON Schema
+    /// means one of them. A dog publishing `enum: [1.0, 2.0]` for a
+    /// `Vec<i64>` had its own values refused.
+    #[test]
+    fn an_enum_number_written_with_a_decimal_point_still_takes_the_integer() {
+        let bounds = Bounds {
+            choices: vec![serde_json::json!(1.0), serde_json::json!(2.0)],
+            ..Default::default()
+        };
+        for typed in ["1", "2"] {
+            assert_eq!(
+                item_refusal("levels", ListItem::Integer, &bounds, typed, false),
+                None,
+                "{typed} is the value the schema wrote"
+            );
+        }
+        let refused = item_refusal("levels", ListItem::Integer, &bounds, "3", false)
+            .expect("3 is not in the set");
+        assert_eq!(
+            refused.text,
+            "levels is \"3\"; levels takes one of 1.0, 2.0"
+        );
+
+        // The other direction holds: a set holding a fraction does not take
+        // the whole number beside it.
+        let halves = Bounds {
+            choices: vec![serde_json::json!(1.5)],
+            ..Default::default()
+        };
+        let refused =
+            item_refusal("levels", ListItem::Integer, &halves, "1", false).expect("1 is not 1.5");
+        assert_eq!(refused.text, "levels is \"1\"; levels takes one of 1.5");
     }
 
     /// The one thing an integer list refuses even with no bounds on its
