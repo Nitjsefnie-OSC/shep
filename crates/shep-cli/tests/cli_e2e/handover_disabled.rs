@@ -56,7 +56,7 @@ fn a_disabled_sheep_stays_disabled_across_a_daemon_reload() {
         sheep_named(data, "parked")["status"] == "stopped"
     });
     let row = sheep_named(&parked_before, "parked");
-    assert_eq!(row["disabled"], true, "{parked_before}");
+    assert_eq!(row["disabled"].as_bool(), Some(true), "{parked_before}");
 
     let reloaded = shep(home)
         .arg("daemon")
@@ -81,7 +81,7 @@ fn a_disabled_sheep_stays_disabled_across_a_daemon_reload() {
     );
     let parked = sheep_named(&after, "parked");
     assert_eq!(parked["status"], "stopped", "{after}");
-    assert_eq!(parked["disabled"], true, "{after}");
+    assert_eq!(parked["disabled"].as_bool(), Some(true), "{after}");
     assert!(parked["pid"].is_null(), "{after}");
 
     // The successor's guard, not just its listing row: a mark that only
@@ -103,7 +103,7 @@ fn a_disabled_sheep_stays_disabled_across_a_daemon_reload() {
     });
     let parked = sheep_named(&still, "parked");
     assert_eq!(parked["status"], "stopped", "{still}");
-    assert_eq!(parked["disabled"], true, "{still}");
+    assert_eq!(parked["disabled"].as_bool(), Some(true), "{still}");
 
     graceful_kill(home);
 }
