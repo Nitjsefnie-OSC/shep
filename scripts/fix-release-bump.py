@@ -36,10 +36,11 @@ already took, and it measures "more" the way release-plz does. Measured
 2026-10-13 across this repository's own 74 tag transitions: every minor bump
 carries a breaking commit, and every range with a `feat` and no break came out
 a patch. release-plz bumps a pre-1.0 feature to the patch unless
-`features_always_increment_minor` asks otherwise, and this repository's
-`release-plz.toml` does not ask. A guard that read a feature as a minor would
-rewrite a correct feature release PR on every push to main, and a maintainer
-who merged it would publish a needless semver break.
+`features_always_increment_minor` asks otherwise for a package the feature
+reached, read per package with the package's own value over the workspace one,
+and this repository's `release-plz.toml` does not ask. A guard that read a
+feature as a minor would rewrite a correct feature release PR on every push to
+main, and a maintainer who merged it would publish a needless semver break.
 
 Usage:
 
@@ -232,22 +233,50 @@ def apply_bump(base: tuple[int, int, int], level: str) -> tuple[int, int, int]:
     return (major, minor, patch + 1)
 
 
-def features_increment_minor(repo: Repo) -> bool:
-    """Whether release-plz.toml asks a feature to move the minor.
+def feature_flags(repo: Repo, packages: list[Package]) -> dict[str, bool]:
+    """Whether a feature moves the minor, worked out per release-enabled package.
 
-    release-plz leaves this false, which is what this repository's file leaves
-    it at. Read from `[workspace]` and from every `[[package]]`, since a shared
-    version takes the largest bump any package inside it asks for.
+    release-plz reads `features_always_increment_minor` under `[workspace]` and
+    under each `[[package]]`, and a package's own value overrides the workspace
+    one. A package named without the key, or not named at all, takes the
+    workspace value, and release-plz's default for both is false. This
+    repository sets it nowhere, so every package lands on false and a pre-1.0
+    feature is a patch.
     """
     try:
         config = tomllib.loads((repo.path / "release-plz.toml").read_text())
     except (OSError, tomllib.TOMLDecodeError):
-        return False
-    if config.get("workspace", {}).get("features_always_increment_minor") is True:
-        return True
+        return dict.fromkeys((package.name for package in packages), False)
+    workspace = config.get("workspace", {})
+    default = (
+        workspace.get("features_always_increment_minor") is True
+        if isinstance(workspace, dict)
+        else False
+    )
+    named: dict[str, bool] = {}
+    for entry in config.get("package", []):
+        if (
+            isinstance(entry, dict)
+            and isinstance(entry.get("name"), str)
+            and "features_always_increment_minor" in entry
+        ):
+            named[entry["name"]] = entry["features_always_increment_minor"] is True
+    return {package.name: named.get(package.name, default) for package in packages}
+
+
+def features_move_the_minor(
+    packages: list[Package], flags: dict[str, bool], feat_packages: set[str]
+) -> bool:
+    """Whether a feature reached a package that asks a feature to move the minor.
+
+    One shared version takes the largest bump any package inside it asks for, so
+    a package that overrides a workspace `true` back to false holds the release
+    at a patch only while every feature in the range stayed off it.
+    """
     return any(
-        isinstance(package, dict) and package.get("features_always_increment_minor") is True
-        for package in config.get("package", [])
+        flags.get(package.name, False)
+        for package in packages
+        if package.name in feat_packages
     )
 
 
@@ -258,9 +287,9 @@ def required_bump(
 
     A break moves the minor pre-1.0 and the major from 1.0. A `feat` moves the
     minor only where release-plz would: from 1.0, or pre-1.0 with
-    `features_always_increment_minor` set. Everything else is a patch, which is
-    what a pre-1.0 feature is here. None when no commit left in the range
-    implies a bump at all.
+    `features_always_increment_minor` true for a package the feature reached.
+    Everything else is a patch, which is what a pre-1.0 feature is here. None
+    when no commit left in the range implies a bump at all.
     """
     if not commits:
         return None
@@ -879,7 +908,23 @@ def main(argv: list[str] | None = None) -> int:
         if any(touches(commit, package.directory) for package in packages)
     ]
 
-    want = required_bump(base_version, releasable, features_increment_minor(repo))
+    want = required_bump(
+        base_version,
+        releasable,
+        features_move_the_minor(
+            packages,
+            feature_flags(repo, packages),
+            {
+                package.name
+                for package in packages
+                if any(
+                    commit.commit_type == "feat"
+                    for commit in releasable
+                    if touches(commit, package.directory)
+                )
+            },
+        ),
+    )
     taken = bump_taken(base_version, head_version)
     # Only ever a raise: the bump release-plz picked from the history it could
     # see stands unless the leg it never crossed asks for a larger one.

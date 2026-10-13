@@ -194,8 +194,11 @@ branch and pushes:
   literals and in `Cargo.lock`, raised only when the whole range implies a
   larger bump than the one release-plz took, and measured by release-plz's own
   rule: a break moves the minor from 0.x and the major from 1.0, a `feat` moves
-  the minor from 1.0 or where `features_always_increment_minor` asks, and a
-  pre-1.0 `feat` is a patch
+  the minor from 1.0, or pre-1.0 where `features_always_increment_minor` is
+  true for a package the feature reached, and a pre-1.0 `feat` is a patch. The
+  option is worked out per package, a package's own value over the `[workspace]`
+  one, and one shared version takes the largest bump any package it reached asks
+  for
 - the changelog line each commit owes each package, written under the heading
   release-plz already wrote for that release, grouped and filtered by
   `release-plz-changelog.toml` the way release-plz would have written it, a
@@ -215,7 +218,9 @@ three releases this repository shipped, `0.12.0` to `0.12.1`, `0.12.3` to
 `0.12.4` and `0.12.4` to `0.12.5`, each a patch that shipped `### Added`
 entries, the script reports the number the release already carries and moves
 nothing. Replayed against `0.6.1` to `0.6.2`, where a break did ship as a
-patch, it reports 0.7.0.
+patch, it reports 0.7.0. `release-plz.toml` sets
+`features_always_increment_minor` nowhere, so every package sits on
+release-plz's default.
 
 It refuses rather than push when it cannot read the branch, and when the version
 it worked out is not one it can actually write: after the rewrite it re-reads

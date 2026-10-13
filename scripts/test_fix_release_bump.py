@@ -764,7 +764,96 @@ class TestFeatureReleaseStands(Fixture):
 
     def test_release_plz_toml_leaves_a_feature_at_a_patch(self) -> None:
         """The option the bump rule reads, read off the real config file."""
-        self.assertFalse(fix.features_increment_minor(fix.Repo(self.repo)))
+        repo = fix.Repo(self.repo)
+        flags = fix.feature_flags(repo, fix.release_packages(repo))
+        self.assertTrue(flags)
+        self.assertFalse(any(flags.values()))
+
+
+WORKSPACE_TRUE = "[workspace]\nfeatures_always_increment_minor = true\n\n"
+SHEP_CLI_HELD = '[[package]]\nname = "shep-cli"\nrelease = false\n'
+DAEMON_FALSE = '[[package]]\nname = "shep-daemon"\nfeatures_always_increment_minor = false\n'
+SHEP_FALSE = '[[package]]\nname = "shep"\nfeatures_always_increment_minor = false\n'
+
+
+class TestFeatureFlagOverrides(Fixture):
+    """`features_always_increment_minor` read per package, the package over the workspace.
+
+    The fixture's range carries features into crates/shep-daemon and
+    crates/shep-cli, the crate named `shep`, and carries no break.
+    """
+
+    breaks = False
+
+    def configure(self, text: str) -> None:
+        """Put a release-plz.toml in front of the guard, as main carries it."""
+        self.write("release-plz.toml", text)
+
+    def flags(self) -> dict[str, bool]:
+        repo = fix.Repo(self.repo)
+        return fix.feature_flags(repo, fix.release_packages(repo))
+
+    def run_with(self, text: str) -> dict[str, str]:
+        self.configure(text)
+        output = self.tmp / "output.txt"
+        run = self.run_guard(output)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        return self.results(output)
+
+    def test_a_workspace_true_reaches_a_package_that_names_nothing(self) -> None:
+        self.configure(WORKSPACE_TRUE + SHEP_CLI_HELD)
+        self.assertEqual(
+            self.flags(), {"shep": True, "shep-core": True, "shep-daemon": True}
+        )
+
+    def test_a_package_false_overrides_a_workspace_true(self) -> None:
+        self.configure(WORKSPACE_TRUE + DAEMON_FALSE + SHEP_CLI_HELD)
+        self.assertEqual(
+            self.flags(), {"shep": True, "shep-core": True, "shep-daemon": False}
+        )
+
+    def test_a_workspace_that_names_nothing_leaves_every_package_at_false(self) -> None:
+        self.configure(SHEP_CLI_HELD)
+        self.assertEqual(
+            self.flags(), {"shep": False, "shep-core": False, "shep-daemon": False}
+        )
+
+    def test_a_workspace_true_moves_a_feature_release_to_the_minor(self) -> None:
+        self.assertEqual(self.run_with(WORKSPACE_TRUE + SHEP_CLI_HELD)["new_version"], "0.14.0")
+
+    def test_every_feature_package_overriding_a_workspace_true_holds_the_patch(self) -> None:
+        results = self.run_with(WORKSPACE_TRUE + DAEMON_FALSE + SHEP_FALSE + SHEP_CLI_HELD)
+        self.assertEqual(results["new_version"], "0.13.1")
+        self.assertNotIn("0.14.0", self.remote_file(RELEASE_BRANCH, "Cargo.toml"))
+
+    def test_one_true_package_carries_the_release_a_feature_reached(self) -> None:
+        results = self.run_with(WORKSPACE_TRUE + DAEMON_FALSE + SHEP_CLI_HELD)
+        self.assertEqual(results["new_version"], "0.14.0")
+
+
+class TestFeatureFlagChoice(unittest.TestCase):
+    """Which package decides, once the flags and the feats are known."""
+
+    PACKAGES = [
+        fix.Package(name="shep-core", directory="crates/shep-core", changelog="c"),
+        fix.Package(name="shep-daemon", directory="crates/shep-daemon", changelog="c"),
+    ]
+
+    def test_a_feature_that_reached_only_a_false_package_holds_the_patch(self) -> None:
+        flags = {"shep-core": True, "shep-daemon": False}
+        self.assertFalse(
+            fix.features_move_the_minor(self.PACKAGES, flags, {"shep-daemon"})
+        )
+
+    def test_a_feature_that_reached_a_true_package_moves_the_minor(self) -> None:
+        flags = {"shep-core": True, "shep-daemon": False}
+        self.assertTrue(
+            fix.features_move_the_minor(self.PACKAGES, flags, {"shep-daemon", "shep-core"})
+        )
+
+    def test_a_true_package_no_feature_reached_decides_nothing(self) -> None:
+        flags = {"shep-core": True, "shep-daemon": False}
+        self.assertFalse(fix.features_move_the_minor(self.PACKAGES, flags, set()))
 
 
 class TestRefusals(Fixture):
