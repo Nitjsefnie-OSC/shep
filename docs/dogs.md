@@ -109,6 +109,10 @@ and separate from `shep.toml`, and they never travel through the dog's
 environment. Instead the dog connects to the socket and asks for its own
 section over the wire (`Request::DogConfig`), the daemon reads the file
 fresh for every such request rather than serving a copy it cached at boot.
+A credential need not sit in that file: a string value may be
+`{{secret:KEY}}` or `{{secret:namespace/KEY}}`, and a dog that asks with
+`Request::DogConfigResolved` receives the value, while `DogConfig` serves the
+reference as written. `dogs.toml` is never rewritten by either.
 
 **Editing `[<name>]` in `dogs.toml` does not reach a dog that is already
 running.** A running dog asked for its section once, at startup, and
@@ -388,7 +392,14 @@ The wire a third-party dog speaks is the same client protocol
 every other client of this daemon: connect to the Unix socket at
 `$SHEP_HOME/run/shep.sock`, send `Hello`, wait for `HelloAck`, then send
 `Request::DogConfig { name }` to fetch your own `[<name>]` section as
-opaque text — parse it however your own config shape wants. Shep sets two
+opaque text — parse it however your own config shape wants. Send
+`Request::DogConfigResolved { name }` instead to get the same section with
+each `{{secret:...}}` reference replaced by its value, resolved in the
+shepherd's `[daemon] environment` and then the `all` slot; `DogConfig` still
+gives the text as written, which is what an editor must read, since writing a
+resolved section back would put the credential into `dogs.toml`. A reference
+that cannot resolve fails the request with `InvalidConfig`, naming the
+section, the key path and the reference, never a value. Shep sets two
 variables of its own on a dog: `$SHEP_HOME`, which is how it finds that
 socket in the first place, and `$SHEP_DOG_NAME`, which is the `name` to put
 in that request. No `[<name>]` value ever rides along beside them, for

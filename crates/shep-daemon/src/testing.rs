@@ -526,11 +526,11 @@ pub(crate) fn harness_with_runner(
             pid: 4242,
             shutdown: Arc::new(shutdown),
             stats: Arc::clone(&stats),
-            // Nothing read, which is what a platform `sysinfo` cannot see
-            // answers too. A test that needs a reading assigns its own
-            // `HostState::fixed` over this one.
+            // Nothing read, as when `sysinfo` cannot see the platform. A test
+            // that needs a reading assigns its own `HostState::fixed`.
             host: crate::host::HostState::fixed(None),
             provider_secrets,
+            host_environment: crate::supervisor::DEFAULT_ENVIRONMENT.to_string(),
         },
         _dir: dir,
         _events_rx: events_rx,

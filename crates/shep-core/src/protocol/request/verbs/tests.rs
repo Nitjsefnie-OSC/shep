@@ -474,8 +474,34 @@ fn request_wire_snapshots() {
                 table: None,
             },
         ),
+        // Paired with the `dog_config` row (11): they differ by their
+        // `kind` alone.
+        envelope(
+            38,
+            Request::DogConfigResolved {
+                name: "bark".to_string(),
+            },
+        ),
     ];
     insta::assert_json_snapshot!("request_wire_v11", requests);
+}
+
+#[test]
+fn dog_config_resolved_serializes_as_its_own_kind() {
+    assert_eq!(
+        serde_json::to_string(&Request::DogConfigResolved {
+            name: "bark".to_string()
+        })
+        .unwrap(),
+        r#"{"kind":"dog_config_resolved","name":"bark"}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&Request::DogConfig {
+            name: "bark".to_string()
+        })
+        .unwrap(),
+        r#"{"kind":"dog_config","name":"bark"}"#
+    );
 }
 
 #[test]

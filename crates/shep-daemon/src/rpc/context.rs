@@ -152,6 +152,13 @@ pub struct RpcContext {
     /// read per spawn by the supervisor actor. One registry, two owners,
     /// for the reason `stats` above gives.
     pub(crate) provider_secrets: Arc<ProviderSecrets>,
+    /// The environment a dog's `{{secret:...}}` references resolve in, from
+    /// `[daemon] environment`.
+    ///
+    /// The supervisor holds the same name for the sheep it spawns. A dog
+    /// has no environment of its own to override it with, so this is the
+    /// only one `Request::DogConfigResolved` ever reads in.
+    pub(crate) host_environment: String,
 }
 
 /// Where a muster roll landed and what it recorded.

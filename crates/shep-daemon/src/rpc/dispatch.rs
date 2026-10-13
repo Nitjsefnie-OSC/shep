@@ -21,6 +21,7 @@ use crate::supervisor::{BatchPolicy, ConnId};
 
 use super::batch::{duplicate_name, persists, staged_plan};
 use super::context::{Outcome, RpcContext, budget};
+use super::dog_secrets::resolved_section;
 use super::enrichment::{
     dog_staleness, handover_refusal, with_dog_contact, with_lambs, with_live_stats,
 };
@@ -379,6 +380,10 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 message: err.to_string(),
                 daemon_version: None,
             })),
+        },
+        Request::DogConfigResolved { name } => match resolved_section(ctx, &name) {
+            Ok(toml) => reply(Ok(Response::DogSection { toml })),
+            Err(err) => reply(Err(err)),
         },
         Request::EnableDog { name, source } => {
             let spec = DogSpec { name, source };
