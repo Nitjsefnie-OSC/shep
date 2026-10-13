@@ -87,6 +87,12 @@ import Callout from "../../components/docs/Callout.astro";
       names this exact command as the fix.
     </Callout>
     <p class="fine">
+      An older <code>shep</code> re-running{" "}
+      <code>shep start &lt;Flockfile&gt;</code> gets the shepherd's refusal on
+      a disabled sheep's row and stops there, so the rest of the file does
+      not start.
+    </p>
+    <p class="fine">
       <code>shep start &lt;Flockfile&gt;</code> used to be the one verb that
       did not refuse cleanly across that skew: applying a Flockfile to a
       running flock is additive, so the protocol number did not move for
