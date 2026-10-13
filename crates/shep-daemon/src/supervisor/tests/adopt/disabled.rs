@@ -66,3 +66,34 @@ async fn an_adopted_sheep_keeps_the_disabled_mark() {
         [("api", Some(true)), ("job", Some(true)), ("web", None)]
     );
 }
+
+/// The half of the downgrade the Upgrading page has to get right: a carried row
+/// with no process is installed as a stopped slot and the successor spawns
+/// nothing for it. A spawn would report `STAND_IN_SPAWN_PID`, and the `Online`
+/// transition that arms a watch or a schedule never happens, so a parked sheep
+/// crosses the handover down and simply stops being refused.
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn an_adopted_parked_sheep_is_installed_stopped_and_left_down() {
+    let dir = tempfile::tempdir().unwrap();
+    let (events, _rx) = crate::bus::test_bus(64);
+    let sup = SupervisorBuilder::new(AdoptingRunner, test_paths(&dir), events)
+        .spawn_adopted(
+            vec![without_handles(
+                carried("parked", 0, None, |entry| {
+                    entry.status = ProcStatus::Stopped
+                })
+                .with_disabled(true),
+            )],
+            counters(1),
+            Vec::new(),
+        )
+        .expect("a carried flock installs");
+
+    let listed = sup.list().await;
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    let row = &listed[0];
+    assert_eq!(row.status, ProcStatus::Stopped, "{row:?}");
+    assert_eq!(row.pid, None, "a spawn would report {STAND_IN_SPAWN_PID}");
+    assert_eq!(row.disabled, Some(true), "{row:?}");
+}
