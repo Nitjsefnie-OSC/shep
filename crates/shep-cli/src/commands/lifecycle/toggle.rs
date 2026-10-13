@@ -71,7 +71,22 @@ pub(crate) async fn toggle(
         }
         Err(code) => return code,
     };
-    toggle_sheep(&client, streams, verb, name).await
+    toggle_sheep(&client, streams, verb, name, &known_dogs(paths)).await
+}
+
+/// Every dog the daemon config can resolve: the built-ins, then the adopted
+///
+/// An unreadable config lists the built-ins alone, as [`names_a_dog`] reads
+/// it as no adoptions.
+fn known_dogs(paths: &ShepPaths) -> Vec<String> {
+    let adopted = ShepToml::read_only(&paths.daemon_config)
+        .map(|cfg| cfg.adopted_dog_names())
+        .unwrap_or_default();
+    crate::dog::BUILT_IN_DOGS
+        .iter()
+        .map(|dog| (*dog).to_string())
+        .chain(adopted)
+        .collect()
 }
 
 /// Whether `name` is a built-in dog, an adopted one or one already enabled
@@ -93,11 +108,15 @@ fn names_a_dog(paths: &ShepPaths, name: &str) -> bool {
 /// An app name, a fold, a regex or `all` is sent as typed: the shepherd owns
 /// what a sweep reaches. An id or `name:slot` is refused here, naming the
 /// app, so an operator never marks a whole app by naming one instance of it.
+///
+/// `dogs` is every name a dog answers to. A name that matches nothing is
+/// refused with them listed, since a mistyped dog is the usual cause.
 pub(crate) async fn toggle_sheep(
     client: &Client,
     streams: &mut Streams<'_>,
     verb: Toggle,
     name: &str,
+    dogs: &[String],
 ) -> ExitCode {
     let selector = match parse_selector(streams, name) {
         Ok(selector) => selector,
@@ -117,6 +136,7 @@ pub(crate) async fn toggle_sheep(
         }
         sweep_or_name => SelectorSpec::from(&sweep_or_name),
     };
+    let names_one_app = matches!(spec, SelectorSpec::Name(_));
     let response = match client.request(verb.request(spec)).await {
         Ok(response) => response,
         Err(RequestError::Rpc(err)) if err.code == RpcErrorCode::Unsupported => {
@@ -126,6 +146,11 @@ pub(crate) async fn toggle_sheep(
                 crate::version_guard::VERSION_SKEW_REMEDY
             );
             return streams.fail(ExitCode::Unsupported, &message);
+        }
+        Err(RequestError::Rpc(err))
+            if names_one_app && !dogs.is_empty() && err.code == RpcErrorCode::NotFound =>
+        {
+            return streams.fail(ExitCode::NotFound, &naming_the_dogs(&err.message, dogs));
         }
         Err(err) => return client_error(streams, &err),
     };
@@ -153,6 +178,13 @@ pub(crate) async fn toggle_sheep(
         }
         _ => unexpected_response(streams),
     }
+}
+
+/// The shepherd's `NotFound` words, followed by the dogs a mistyped name
+/// could have meant
+pub(super) fn naming_the_dogs(said: &str, dogs: &[String]) -> String {
+    let quoted: Vec<String> = dogs.iter().map(|dog| format!("{dog:?}")).collect();
+    format!("{said}; the dogs are {}", dogs::join_with_and(&quoted))
 }
 
 /// Refuses an instance selector with the command that would work

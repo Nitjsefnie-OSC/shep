@@ -103,7 +103,7 @@ pub enum Sent {
     Dog {
         /// The dog's name.
         name: String,
-        /// `true` to start it, `false` to stop and deregister it.
+        /// `true` to start it, `false` to stop it and keep it listed as disabled.
         enable: bool,
         /// Where the binary comes from, exactly as the config write
         /// answered.

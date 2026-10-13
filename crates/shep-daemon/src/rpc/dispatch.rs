@@ -13,7 +13,6 @@ use shep_core::config::{NormalizeError, ResolvedApp, normalize_all};
 use shep_core::protocol::{
     Envelope, PROTOCOL_VERSION, Reply, Request, Response, RpcError, RpcErrorCode, SheepApplied,
 };
-use shep_core::selector::ProcessSelector;
 
 use crate::bus::TopicFilter;
 use crate::dogs::DogSpec;
@@ -452,15 +451,13 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 }
             }
         }
-        // Through `delete` with an exact `Name` selector: disabling a dog
-        // reuses the stop-then-deregister path every sheep takes rather than
-        // opening a second way to end a supervised process.
-        Request::DisableDog { name } => {
-            match ctx.supervisor.delete(ProcessSelector::Name(name)).await {
-                Ok(ids) => reply(Ok(Response::Deleted(ids))),
-                Err(err) => reply(Err(rpc_error(&err))),
-            }
-        }
+        // Stops the dog and leaves it registered, marked disabled, so the
+        // flock still lists it. Answers `Deleted` all the same: it is the
+        // only reply an older CLI accepts for this request.
+        Request::DisableDog { name } => match ctx.supervisor.disable_dog(name).await {
+            Ok(ids) => reply(Ok(Response::Deleted(ids))),
+            Err(err) => reply(Err(rpc_error(&err))),
+        },
         Request::Subscribe { topics } => match TopicFilter::new(&topics) {
             Ok(filter) => Outcome::Subscribe {
                 reply: Reply {

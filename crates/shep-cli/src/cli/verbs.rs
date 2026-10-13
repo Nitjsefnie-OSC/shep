@@ -184,11 +184,14 @@ pub enum Commands {
     /// sheep that is not disabled is left alone and the verb says so. A dog
     /// is named, and writes the config either way and exits 0 with no
     /// shepherd running -- it comes up with the next one. `shep muster` is
-    /// the only verb that autostarts a shepherd; this is not it.
+    /// the only verb that autostarts a shepherd; this is not it. A name that
+    /// is neither a sheep nor a dog exits 3 and lists the dogs, or 5 with no
+    /// shepherd running.
     Enable(EnableArgs),
     /// Stop a sheep and refuse to start it again until `shep enable`, or turn
     /// a dog off. A dog is removed from `[daemon] enabled_dogs` and stopped
-    /// now if a shepherd is running.
+    /// now if a shepherd is running, and `shep flock` still lists it,
+    /// disabled.
     ///
     /// A sheep needs a running shepherd, and takes a name, a `fold:`, a
     /// `/regex/` or `all`; a sweep never reaches a dog. An id or `name:slot`

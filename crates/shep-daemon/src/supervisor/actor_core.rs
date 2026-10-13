@@ -291,6 +291,10 @@ impl<R: ProcessRunner> Actor<R> {
                 self.handle_disable(&selector, reply);
                 false
             }
+            Command::DisableDog { name, reply } => {
+                self.handle_disable_dog(&name, reply);
+                false
+            }
             Command::Enable { selector, reply } => {
                 self.handle_enable(&selector, reply);
                 false
@@ -350,13 +354,18 @@ impl<R: ProcessRunner> Actor<R> {
             .map(|(id, slot)| {
                 (
                     *id,
-                    is_at_rest(&slot.entry),
+                    is_at_rest(&slot.entry) || self.is_parked_dog(&slot.entry),
                     to_info(&slot.entry, &self.smits),
                 )
             });
         let at_rest = match held {
             Some((id, true, _)) => Some(id),
-            Some((_, false, info)) => return Ok(info),
+            Some((_, false, info)) => {
+                // A disable still stopping this dog is the operator's earlier
+                // word, and the enable is the later one.
+                self.cancel_dog_disable(&name);
+                return Ok(info);
+            }
             None => None,
         };
         // Cleared whether or not the spawn lands: the operator's word is

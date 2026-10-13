@@ -27,7 +27,8 @@ impl App {
         let verb = if enable { "enable" } else { "disable" };
         let prefix = format!("{verb} {name}");
         // `EnableDog` answers `Response::DogStarted`; `DisableDog` answers
-        // `Response::Deleted`, the same reply `Delete` gives.
+        // `Response::Deleted`, the reply an older CLI accepts, though the dog
+        // stays registered.
         match result {
             Ok(Response::DogStarted(_)) if enable => {
                 self.notice = Some(Notice {
@@ -37,7 +38,9 @@ impl App {
             }
             Ok(Response::Deleted(_)) if !enable => {
                 self.notice = Some(Notice {
-                    text: format!("{prefix}: the shepherd stopped and deregistered it"),
+                    text: format!(
+                        "{prefix}: the shepherd stopped it, and it stays listed as disabled"
+                    ),
                     grave: false,
                 });
             }
@@ -128,7 +131,7 @@ impl App {
         let text = if enable {
             format!("enable {name}? it starts now, no reload")
         } else {
-            format!("disable {name}? it stops now and is deregistered")
+            format!("disable {name}? it stops now and stays listed as disabled")
         };
         settings.pending = Some(Pending::DogArmed {
             edit: DogEdit { name, enable },
@@ -153,11 +156,11 @@ mod tests {
     }
 
     #[test]
-    fn disabling_says_it_deregisters() {
+    fn disabling_says_it_stays_listed() {
         let mut app = fixtures::app_in_settings_on_enabled_dog("otel");
         let _ = app.update(Msg::Key(KeyPress::Cycle));
         let text = app.settings().unwrap().pending().unwrap().text.to_string();
-        assert!(text.contains("deregistered"), "got: {text}");
+        assert!(text.contains("stays listed as disabled"), "got: {text}");
     }
 
     /// One message still yields one effect.
@@ -273,10 +276,10 @@ mod tests {
         );
     }
 
-    /// `DisableDog` answers `Response::Deleted`, the reply `Delete` gives. The
-    /// sentence names the deregistration, since the confirm is gone by now.
+    /// `DisableDog` answers `Response::Deleted`, though the dog stays
+    /// registered. The sentence says so, since the confirm is gone by now.
     #[test]
-    fn a_landed_disable_names_the_deregistration() {
+    fn a_landed_disable_says_the_dog_stays_listed() {
         let (mut app, sent) = armed_and_sent_dog("otel");
         app.update(Msg::Replied {
             sent,
@@ -284,7 +287,7 @@ mod tests {
         });
         assert_eq!(
             app.notice().map(ToString::to_string).as_deref(),
-            Some("disable otel: the shepherd stopped and deregistered it")
+            Some("disable otel: the shepherd stopped it, and it stays listed as disabled")
         );
         assert!(!app.notice().unwrap().is_grave());
     }
