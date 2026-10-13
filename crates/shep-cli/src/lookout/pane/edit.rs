@@ -12,7 +12,7 @@ use super::super::edits::{EditKey, Edits};
 use super::super::field::{Field, FieldKind};
 use super::super::textbox::{TextBox, TextEdit};
 use super::super::validation::{self, Refusal};
-use super::{ConfigPane, PaneEdit, PaneTarget};
+use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
 
 // Link-only (IR-32): the env editor this one is never open beside, and
 // the group a structural field carries.
@@ -106,10 +106,14 @@ impl ConfigPane {
     }
 
     /// Files the opposite of what a bool holds, or the next name in a
-    /// choice. Does nothing for a locked field, or for one no keystroke
+    /// choice, or a name of a checklist toggled. Does nothing for a locked field, or for one no keystroke
     /// cycles ([`FieldKind::Text`], [`FieldKind::Integer`],
     /// [`FieldKind::Map`], [`FieldKind::Opaque`], [`FieldKind::Entries`]).
     pub fn cycle(&mut self) {
+        if let Some(PaneRow::Choice { field, item }) = self.cursor() {
+            self.toggle_choice(field, item);
+            return;
+        }
         let Some(field) = self.cursor_field() else {
             return;
         };

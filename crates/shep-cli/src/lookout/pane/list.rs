@@ -14,7 +14,7 @@
 use serde_json::Value;
 
 use super::super::edits::EditKey;
-use super::super::field::{Bounds, FieldKind, ListItem};
+use super::super::field::{Bounds, Field, FieldKind, ListItem};
 use super::super::textbox::{TextBox, TextEdit};
 use super::super::validation::{Refusal, item_refusal};
 use super::super::viewport::Viewport;
@@ -94,8 +94,8 @@ impl ListPane {
 
     /// What the elements are, for the editor that parses one back.
     #[must_use]
-    pub fn item(&self) -> ListItem {
-        self.item
+    pub fn item(&self) -> &ListItem {
+        &self.item
     }
 
     /// Whether the field is a secret: what masks an element's value on the
@@ -258,7 +258,7 @@ impl ListPane {
         }
         if let Some(refused) = item_refusal(
             &self.key,
-            self.item,
+            &self.item,
             &self.item_bounds,
             &buffer,
             self.secret,
@@ -331,9 +331,9 @@ fn array_elements(value: &Value) -> Vec<String> {
 /// the daemon refuses it by name instead of this guessing a number. Only
 /// reachable for an element the config itself carried, since
 /// [`ListPane::apply_typing`] refuses to arm one an operator typed.
-fn list_value(item: ListItem, elements: &[String]) -> Value {
+fn list_value(item: &ListItem, elements: &[String]) -> Value {
     let element = |text: &String| match item {
-        ListItem::Text => Value::String(text.clone()),
+        ListItem::Text | ListItem::Choice(_) => Value::String(text.clone()),
         ListItem::Integer => text
             .parse::<i64>()
             .map_or_else(|_| Value::String(text.clone()), Value::from),
@@ -371,6 +371,19 @@ impl ConfigPane {
         self.list.as_deref_mut()
     }
 
+    /// The items `field`'s list sub-screen edits, or [`None`] when the field
+    /// is not a list it opens for. A list of choices the pane does not draw
+    /// as a checklist, a flat pane's or a secret one, is typed as text.
+    fn sub_screen_item(&self, field: &Field) -> Option<ListItem> {
+        match &field.kind {
+            FieldKind::List(item @ (ListItem::Text | ListItem::Integer)) => Some(item.clone()),
+            FieldKind::List(ListItem::Choice(_)) if !self.drawn_as_checklist(field) => {
+                Some(ListItem::Text)
+            }
+            _ => None,
+        }
+    }
+
     /// Opens the list sub-screen over the array field under the cursor.
     /// Does nothing on any other row.
     pub(in crate::lookout) fn open_list(&mut self) {
@@ -380,7 +393,7 @@ impl ConfigPane {
         let Some(field) = self.fields.fields().get(index) else {
             return;
         };
-        let FieldKind::List(item) = field.kind else {
+        let Some(item) = self.sub_screen_item(field) else {
             return;
         };
         let key = field.key.clone();
@@ -500,7 +513,7 @@ impl ConfigPane {
             return Ok(());
         };
         if matches!(self.target(), PaneTarget::Dog { .. })
-            && list.item() == ListItem::Integer
+            && *list.item() == ListItem::Integer
             && let Some(odd) = elements.iter().find(|text| text.parse::<i64>().is_err())
         {
             let key = list.key();
@@ -536,7 +549,7 @@ impl ConfigPane {
         let Some(field) = self.fields.by_key(key) else {
             return;
         };
-        let FieldKind::List(item) = field.kind else {
+        let Some(item) = self.sub_screen_item(field) else {
             return;
         };
         let item_bounds = field.bounds.items.as_deref().cloned().unwrap_or_default();

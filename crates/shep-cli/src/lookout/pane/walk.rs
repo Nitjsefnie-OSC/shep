@@ -116,7 +116,10 @@ impl ConfigPane {
             .filter(|row| {
                 matches!(
                     row,
-                    PaneRow::Field(_) | PaneRow::Table(_) | PaneRow::Entry(_)
+                    PaneRow::Field(_)
+                        | PaneRow::Table(_)
+                        | PaneRow::Entry(_)
+                        | PaneRow::Choice { .. }
                 )
             })
             .collect()
@@ -182,7 +185,7 @@ impl ConfigPane {
             PaneRow::Entry(entry) => self.entries.row(*entry).is_some_and(
                 |row| matches!(&row.body, EntryBody::Leaf { field, .. } if field.key == key),
             ),
-            PaneRow::Table(_) | PaneRow::Env(_) | PaneRow::AddEnv => false,
+            PaneRow::Table(_) | PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => false,
         }) {
             let len = self.rows().len();
             self.view.move_to(row_index, len);
