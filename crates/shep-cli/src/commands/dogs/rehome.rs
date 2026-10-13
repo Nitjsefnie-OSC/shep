@@ -9,10 +9,11 @@ use crate::commands::dog_migration;
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::shep_toml::ShepToml;
 use crate::exit::ExitCode;
-use crate::output::{DogActionRow, Streams, emit, write_outcome};
+use crate::output::Streams;
 
 use super::{
-    DISABLED_STATUS, NO_SHEPHERD_DISABLE_STATUS, adopted_source, connect_or_absent, fail_config,
+    DISABLED_STATUS, NO_SHEPHERD_DISABLE_STATUS, adopted_source, connect_or_absent,
+    emit_dog_action, fail_config,
 };
 
 /// `shep rehome <name>`: stops an adopted dog and forgets where its binary
@@ -62,14 +63,14 @@ async fn rehome_after_config(
     client: Option<&Client>,
 ) -> ExitCode {
     let Some(client) = client else {
-        let row = DogActionRow::new(name, source, NO_SHEPHERD_DISABLE_STATUS, false);
-        return write_outcome(emit(
-            &mut *streams.out,
-            streams.fmt,
+        return emit_dog_action(
+            streams,
             "rehome",
-            row,
-            streams.style,
-        ));
+            name,
+            source,
+            NO_SHEPHERD_DISABLE_STATUS,
+            false,
+        );
     };
     match client
         .request(Request::DisableDog {
@@ -78,14 +79,7 @@ async fn rehome_after_config(
         .await
     {
         Ok(Response::Deleted(_ids)) => {
-            let row = DogActionRow::new(name, source, DISABLED_STATUS, true);
-            write_outcome(emit(
-                &mut *streams.out,
-                streams.fmt,
-                "rehome",
-                row,
-                streams.style,
-            ))
+            emit_dog_action(streams, "rehome", name, source, DISABLED_STATUS, true)
         }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
@@ -100,17 +94,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Format;
-
-    /// A dog verb's streams under `--format table`; a test reading a
-    /// JSON field sets `fmt` itself.
-    fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        }
-    }
+    use crate::commands::dogs::test_support::streams;
 
     /// Both places a dog's own settings can sit: a `[dog.otel]` an
     /// un-migrated `shep.toml` still carries, and the `[otel]` in

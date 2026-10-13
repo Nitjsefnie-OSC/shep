@@ -10,10 +10,11 @@ use shep_core::protocol::{DogSource, Request, Response};
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::shep_toml::{ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
-use crate::output::{DogActionRow, Streams, emit, write_outcome};
+use crate::output::Streams;
 
 use super::{
-    DISABLED_STATUS, NO_SHEPHERD_DISABLE_STATUS, connect_or_absent, dog_source, fail_config,
+    DISABLED_STATUS, NO_SHEPHERD_DISABLE_STATUS, connect_or_absent, dog_source, emit_dog_action,
+    fail_config,
 };
 
 /// `disable`'s config half: which [`DogSource`] `name` resolved to, and the
@@ -57,14 +58,14 @@ async fn disable_after_config(
     client: Option<&Client>,
 ) -> ExitCode {
     let Some(client) = client else {
-        let row = DogActionRow::new(name, source.clone(), NO_SHEPHERD_DISABLE_STATUS, false);
-        return write_outcome(emit(
-            &mut *streams.out,
-            streams.fmt,
+        return emit_dog_action(
+            streams,
             "disable",
-            row,
-            streams.style,
-        ));
+            name,
+            source.clone(),
+            NO_SHEPHERD_DISABLE_STATUS,
+            false,
+        );
     };
     // `Response::Deleted`, the same reply `Delete` gives: disabling
     // deregisters exactly as `Delete` does.
@@ -74,16 +75,14 @@ async fn disable_after_config(
         })
         .await
     {
-        Ok(Response::Deleted(_ids)) => {
-            let row = DogActionRow::new(name, source.clone(), DISABLED_STATUS, true);
-            write_outcome(emit(
-                &mut *streams.out,
-                streams.fmt,
-                "disable",
-                row,
-                streams.style,
-            ))
-        }
+        Ok(Response::Deleted(_ids)) => emit_dog_action(
+            streams,
+            "disable",
+            name,
+            source.clone(),
+            DISABLED_STATUS,
+            true,
+        ),
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
     }
@@ -96,17 +95,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Format;
-
-    /// A dog verb's streams under `--format table`; a test reading a
-    /// JSON field sets `fmt` itself.
-    fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        }
-    }
+    use crate::commands::dogs::test_support::streams;
 
     #[test]
     fn disable_in_config_removes_the_name_and_keeps_the_adoption() {
