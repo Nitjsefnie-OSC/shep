@@ -115,6 +115,17 @@ import Callout from "../../components/docs/Callout.astro";
       reason the rename did. Reloading first is still the whole fix either
       way.
     </p>
+
+    <h2 id="going-back">Going back to an older version</h2>
+    <p class="fine">
+      An older <code>shep</code> reads no <a href="/docs/lifecycle">disabled</a>
+      marks out of a handover blob or a flock file. A parked sheep stays down
+      and loses its guard: <code>start</code>, <code>restart</code> and
+      <code>stock</code> stop refusing it, a sweep or a re-run Flockfile starts
+      it, and nothing holds it down after that. <code>shep flock</code> stops
+      saying <code>disabled</code>. Run <code>shep disable</code> again after
+      going back.
+    </p>
   </article>
 </DocsLayout>
 

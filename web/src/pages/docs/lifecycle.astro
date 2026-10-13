@@ -320,7 +320,8 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
         replacement spawns. The shepherd's own restarts leave it stopped and
         log the drop: a <code>cron_restart</code> occurrence, a watch trigger,
         the crash ladder, and memory and liveness restarts. The mark is
-        written to the muster roll, so it survives a shepherd restart.
+        written to the muster roll and carried through a handover, so it
+        survives a shepherd restart and <code>shep daemon reload</code>.
       </p>
       <p>
         Re-running <code>shep start Flockfile.toml</code> passes a disabled
