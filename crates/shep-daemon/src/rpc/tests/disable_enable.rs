@@ -253,3 +253,94 @@ async fn a_start_after_enable_is_accepted_again() {
 
     assert!(reply.result.is_ok(), "{reply:?}");
 }
+
+/// Fails if the staged walk hands a disabled app to the supervisor by name:
+/// an exact selector is refused, and `restart all` would exit non-zero over
+/// an app the operator parked on purpose.
+#[tokio::test(start_paused = true)]
+async fn a_sweep_restart_passes_a_disabled_app_by_without_refusing_it() {
+    let h = harness(vec![ProcScript::never_exits(); 3]);
+    start(&h, 1, AppConfig::minimal("api", "./srv")).await;
+    start(&h, 2, AppConfig::minimal("worker", "./srv")).await;
+    disable(&h, 3, by_name("api")).await.result.unwrap();
+
+    let reply = reply_of(
+        dispatch(
+            envelope(
+                4,
+                Request::Restart {
+                    selector: SelectorSpec::All,
+                },
+            ),
+            &h.ctx,
+        )
+        .await,
+    );
+
+    let Ok(Response::Restarted { accepted, refused }) = reply.result else {
+        panic!("expected Restarted, got {reply:?}")
+    };
+    assert!(refused.is_empty(), "nothing was refused: {refused:?}");
+    let names: Vec<&str> = accepted.iter().map(|info| info.name.as_str()).collect();
+    assert_eq!(names, ["worker"]);
+    let flock = list_flock(&h.ctx, 5).await;
+    assert_eq!(flock[0].name, "api");
+    assert_eq!(flock[0].status, ProcStatus::Stopped);
+}
+
+/// Fails if an exit carrying an operator `Restart` marker respawns without
+/// reading the mark: the disable's stop rode that marker and the app comes
+/// back online while marked disabled.
+#[tokio::test(start_paused = true)]
+async fn disabling_during_a_restart_in_flight_leaves_the_app_stopped() {
+    let h = harness(vec![
+        ProcScript::ignores_signals(),
+        ProcScript::never_exits(),
+    ]);
+    start(&h, 1, AppConfig::minimal("api", "./srv")).await;
+
+    // Straight to the supervisor: `dispatch` lists the flock first, which
+    // would let the disable reach the actor ahead of the restart.
+    let (restarted, disabled) = tokio::join!(
+        h.ctx
+            .supervisor
+            .restart(shep_core::selector::ProcessSelector::Name(
+                "api".to_string()
+            )),
+        disable(&h, 2, by_name("api")),
+    );
+
+    restarted.expect("the restart in flight is answered");
+    let Ok(Response::Disabled(infos)) = disabled.result else {
+        panic!("expected Disabled")
+    };
+    assert_eq!(infos[0].status, ProcStatus::Stopped);
+    let flock = list_flock(&h.ctx, 4).await;
+    assert_eq!(flock[0].status, ProcStatus::Stopped);
+    assert_eq!(flock[0].disabled, Some(true));
+}
+
+/// Fails if an enable rides the stop a disable already started: the mark is
+/// cleared and the app ends up stopped, with `Enabled` claiming success.
+#[tokio::test(start_paused = true)]
+async fn enabling_during_a_disable_in_flight_starts_the_app() {
+    let h = harness(vec![
+        ProcScript::ignores_signals(),
+        ProcScript::never_exits(),
+    ]);
+    start(&h, 1, AppConfig::minimal("api", "./srv")).await;
+
+    let (disabled, enabled) = tokio::join!(
+        disable(&h, 2, by_name("api")),
+        enable(&h, 3, by_name("api")),
+    );
+
+    assert!(disabled.result.is_ok());
+    let Ok(Response::Enabled(infos)) = enabled.result else {
+        panic!("expected Enabled")
+    };
+    assert_eq!(infos[0].status, ProcStatus::Online);
+    let flock = list_flock(&h.ctx, 4).await;
+    assert_eq!(flock[0].status, ProcStatus::Online);
+    assert_eq!(flock[0].disabled, None);
+}

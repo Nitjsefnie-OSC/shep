@@ -54,6 +54,17 @@ impl<R: ProcessRunner> Actor<R> {
             .filter(|name| self.disabled.remove(name))
             .collect();
         let ids = self.ids_of_apps(&cleared);
+        // A stop a disable already started owns the next exit, and the
+        // restart below would ride it. The enable is the later word.
+        for slot in self.sheep.values_mut() {
+            let stopping = slot.manual.is_some_and(|m| m.kind == ManualKind::Stop);
+            if stopping && cleared.contains(&slot.entry.spec.config().name) {
+                slot.manual = Some(PendingManual {
+                    kind: ManualKind::Restart,
+                    origin: CommandOrigin::Operator,
+                });
+            }
+        }
         self.begin_manual_ids(
             ids,
             ManualKind::Restart,
@@ -171,7 +182,7 @@ impl<R: ProcessRunner> Actor<R> {
             .map(|slot| slot.entry.spec.config().name.clone())
     }
 
-    fn is_disabled_id(&self, id: u32) -> bool {
+    pub(super) fn is_disabled_id(&self, id: u32) -> bool {
         self.sheep
             .get(&id)
             .is_some_and(|slot| self.disabled.contains(&slot.entry.spec.config().name))
