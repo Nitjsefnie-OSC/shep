@@ -129,7 +129,9 @@ fn toml_cell(value: &Value) -> Option<toml_edit::Item> {
             }
         }
         Value::String(text) => Some(toml_edit::value(text.as_str())),
-        Value::Array(elements) => toml_array(elements).map(toml_edit::Item::from),
+        Value::Array(elements) => {
+            toml_array(elements).map(|array| toml_edit::Item::Value(toml_edit::Value::Array(array)))
+        }
         Value::Null | Value::Object(_) => None,
     }
 }
