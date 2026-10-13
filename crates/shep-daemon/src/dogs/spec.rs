@@ -221,16 +221,16 @@ mod tests {
     use crate::testing::test_paths;
 
     /// `current_exe` cannot safely be made to return `" (deleted)"`, so this
-    /// drives `crate::handover::resolve_target`, which `builtin_program`
-    /// delegates to. Unix only, because `handover` is.
+    /// hands `DogError::NoBinary` the refusal `shep_handover::exec_target`
+    /// gives for it, which `builtin_program` delegates to. The crate's own
+    /// tests drive the resolution; this pins what a dog's operator reads.
     #[cfg(unix)]
     #[test]
     fn a_deleted_inode_answer_from_current_exe_never_becomes_a_dogs_script() {
-        let refusal = crate::handover::resolve_target(
-            [None, Some(PathBuf::from("/opt/shep/shep (deleted)"))],
-            None,
-        )
-        .unwrap_err();
+        let refusal = std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no binary to exec: /opt/shep/shep (deleted) (names a deleted inode, not a file)",
+        );
         let err = DogError::NoBinary(refusal);
         assert_eq!(
             err.to_string(),

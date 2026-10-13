@@ -1,6 +1,6 @@
 //! Fixtures and helpers shared by this module's tests.
 
-use super::super::{CarriedFds, CarriedSheep, Handover, fds};
+use super::super::{CarriedFds, CarriedSheep, Handover};
 use super::adopt_descriptors::adopt;
 use crate::handover::VERSION;
 use crate::privilege::SpawnIdentity;
@@ -156,13 +156,13 @@ pub(super) fn open_fd_count() -> usize {
 /// naming one descriptor twice stops naming it twice here.
 ///
 /// Closes every duplicate it holds, unless [`Self::release`] is called
-/// first: `fds::duplicate_raw` hands back a bare number with no owner,
+/// first: `sys::duplicate_fd` hands back a bare number with no owner,
 /// and a `Handover` holding it closes nothing on drop.
 struct Duplicates(Vec<RawFd>);
 
 impl Duplicates {
     fn of(&mut self, fd: RawFd) -> io::Result<RawFd> {
-        let duplicate = fds::duplicate_raw(fd)?;
+        let duplicate = crate::sys::duplicate_fd(fd)?;
         self.0.push(duplicate);
         Ok(duplicate)
     }

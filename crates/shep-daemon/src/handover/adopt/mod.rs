@@ -1,9 +1,8 @@
 //! Rebuilding a successor's Rust-side objects around descriptors it did not
 //! open.
 //!
-//! Every descriptor named here crossed an `execve`: the predecessor cleared
-//! `FD_CLOEXEC` on it (see [`super::fds`]) and wrote its number into the
-//! blob. Nothing here opens a file, binds a socket or creates a pipe.
+//! Every descriptor named here crossed an `execve`: the predecessor carried
+//! it through `shep-handover` and wrote its number into the blob. Nothing here opens a file, binds a socket or creates a pipe.
 //! `O_APPEND` and the pidfile's `flock` are properties of the open file
 //! description, so wrapping keeps both: reopening a log would leave a
 //! `copytruncate` rotator a sparse hole, and re-acquiring the lock would open

@@ -10,32 +10,35 @@
 //! holds a `Child` for an adopted pid, and an exec replaces the image rather
 //! than the process, so those pids are still its children. Each wait arms
 //! its own multiplexed `SIGCHLD` stream before its first look.
+//!
+//! `shep-handover` does the waiting. What stays here is the replay: a status
+//! can be taken once, and the supervisor may ask again.
 
 use std::collections::HashMap;
 use std::io;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
-use nix::errno::Errno;
-use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
-use nix::unistd::Pid;
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::OnceCell;
 
 use crate::runner::ExitOutcome;
 
 /// Waits on the pids a successor adopted, targeted and never wildcard.
 ///
 /// One reaper serves a whole adopted flock; [`AdoptedReaper::wait`] takes
-/// `&self`, so several waits can be in flight at once, one per sheep.
+/// `&self`, so several waits can be in flight at once, one per sheep. The
+/// waiting itself is [`shep_handover::wait_for_child`]'s.
 ///
 /// `Debug` is derived: pids and exit statuses only, no environment value.
 #[derive(Debug, Default)]
 pub struct AdoptedReaper {
-    /// Statuses already taken from the kernel, by pid.
+    /// The status of each pid waited on, once taken from the kernel.
     ///
     /// A status can be collected once, so a second wait would meet `ECHILD`
     /// and lose it. Remembering replays the first answer instead, which is
-    /// what `crate::runner::RunningProcess::wait` already promises.
-    observed: Mutex<HashMap<i32, ExitOutcome>>,
+    /// what `crate::runner::RunningProcess::wait` already promises. A cell
+    /// rather than a bare outcome, so two waits on one pid share the one
+    /// `waitpid` instead of racing for it.
+    observed: Mutex<HashMap<u32, Arc<OnceCell<ExitOutcome>>>>,
 }
 
 impl AdoptedReaper {
@@ -57,103 +60,19 @@ impl AdoptedReaper {
     ///   this reaper never took its status, so the exit is gone.
     /// - Any other `waitpid` errno, or a failure to arm `SIGCHLD`, as-is.
     pub async fn wait(&self, pid: u32) -> io::Result<ExitOutcome> {
-        let pid = targeted(pid)?;
-        let mut sigchld = signal(SignalKind::child())?;
-        loop {
-            if let Some(outcome) = self.look(pid)? {
-                return Ok(outcome);
-            }
-            if sigchld.recv().await.is_none() {
-                return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    format!("the SIGCHLD stream closed while waiting for adopted pid {pid}"),
-                ));
-            }
-        }
-    }
-
-    /// One non-blocking look at `pid`, replaying a status already taken.
-    ///
-    /// The lock spans the `waitpid` call, so two concurrent waits on one pid
-    /// cannot have one take the status while the other sits between its own
-    /// `ECHILD` and this map. Nothing awaits while it is held, and `WNOHANG`
-    /// never blocks.
-    fn look(&self, pid: i32) -> io::Result<Option<ExitOutcome>> {
-        let mut observed = self.observed.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(outcome) = observed.get(&pid) {
-            return Ok(Some(*outcome));
-        }
-        match wait_once(pid) {
-            Ok(Some(outcome)) => {
-                observed.insert(pid, outcome);
-                Ok(Some(outcome))
-            }
-            Ok(None) => Ok(None),
-            Err(Errno::ECHILD) => Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!(
-                    "adopted pid {pid} is not a child of this process, so its exit status is lost"
-                ),
-            )),
-            Err(errno) => Err(io::Error::from_raw_os_error(errno as i32)),
-        }
-    }
-}
-
-/// Checks that `pid` names one process and converts it for `waitpid`.
-///
-/// # Errors
-///
-/// [`io::ErrorKind::InvalidInput`] for zero, which `waitpid` reads as this
-/// process's whole group, and for anything too large to be an `i32`.
-fn targeted(pid: u32) -> io::Result<i32> {
-    let pid = i32::try_from(pid).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("pid {pid} is too large to wait on"),
-        )
-    })?;
-    if pid == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "pid 0 is a group-wide wait, not an adopted sheep",
-        ));
-    }
-    Ok(pid)
-}
-
-/// One `waitpid(pid, WNOHANG)`, retried past `EINTR`.
-///
-/// `Ok(None)` means the pid is still running. Reporting `EINTR` as that
-/// would send the caller back to sleep on a `SIGCHLD` that may already have
-/// been the last one.
-fn wait_once(pid: i32) -> Result<Option<ExitOutcome>, Errno> {
-    loop {
-        match waitpid(Pid::from_raw(pid), Some(WaitPidFlag::WNOHANG)) {
-            Ok(status) => return Ok(outcome_of(status)),
-            Err(Errno::EINTR) => continue,
-            Err(errno) => return Err(errno),
-        }
-    }
-}
-
-/// Maps one `waitpid` return into the daemon's own [`ExitOutcome`].
-///
-/// A code and a signal are different fields and stay that way:
-/// `crates/shep-cli/src/output/rows.rs`'s `exit_cell` renders one or the
-/// other. `Stopped` and `Continued` need `WUNTRACED`/`WCONTINUED`, which
-/// nothing here passes; they map to "not an exit" rather than to a panic.
-fn outcome_of(status: WaitStatus) -> Option<ExitOutcome> {
-    match status {
-        WaitStatus::Exited(_, code) => Some(ExitOutcome {
-            code: Some(code),
-            signal: None,
-        }),
-        WaitStatus::Signaled(_, sig, _core_dumped) => Some(ExitOutcome {
-            code: None,
-            signal: Some(sig as i32),
-        }),
-        _ => None,
+        let cell = {
+            let mut observed = self.observed.lock().unwrap_or_else(PoisonError::into_inner);
+            Arc::clone(observed.entry(pid).or_default())
+        };
+        cell.get_or_try_init(|| async {
+            let exit = shep_handover::wait_for_child(pid).await?;
+            Ok(ExitOutcome {
+                code: exit.code,
+                signal: exit.signal,
+            })
+        })
+        .await
+        .copied()
     }
 }
 
@@ -173,7 +92,7 @@ mod tests {
     use nix::sys::signal::{self, Signal};
     use nix::unistd::Pid;
 
-    use super::{AdoptedReaper, outcome_of};
+    use super::AdoptedReaper;
     use crate::runner::ExitOutcome;
 
     /// A child spawned the way an adopted sheep reaches a successor: through
@@ -335,36 +254,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn two_waits_on_one_pid_share_the_one_status() {
+        let child = adopted("sleep 0.2; exit 8");
+        let pid = child.id();
+        let reaper = AdoptedReaper::new();
+        let (first, second) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(reaper.wait(pid), reaper.wait(pid))
+        })
+        .await
+        .expect("both waits answered within the budget");
+        let expected = ExitOutcome {
+            code: Some(8),
+            signal: None,
+        };
+        assert_eq!(first.expect("the first wait saw the exit"), expected);
+        assert_eq!(second.expect("the second wait saw the same exit"), expected);
+    }
+
+    #[tokio::test]
     async fn pid_zero_is_refused_rather_than_becoming_a_group_wide_wait() {
         let reaper = AdoptedReaper::new();
         let error = reaper.wait(0).await.expect_err("pid 0 is refused");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
-    }
-
-    #[test]
-    fn a_code_and_a_signal_are_never_collapsed_into_one_another() {
-        assert_eq!(
-            outcome_of(nix::sys::wait::WaitStatus::Exited(Pid::from_raw(7), 3)),
-            Some(ExitOutcome {
-                code: Some(3),
-                signal: None
-            })
-        );
-        assert_eq!(
-            outcome_of(nix::sys::wait::WaitStatus::Signaled(
-                Pid::from_raw(7),
-                Signal::SIGTERM,
-                false
-            )),
-            Some(ExitOutcome {
-                code: None,
-                signal: Some(15)
-            })
-        );
-        assert_eq!(
-            outcome_of(nix::sys::wait::WaitStatus::StillAlive),
-            None,
-            "still alive is not an exit"
-        );
     }
 }
