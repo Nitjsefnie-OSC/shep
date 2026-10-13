@@ -305,6 +305,7 @@ impl App {
             | KeyPress::FilterStart
             | KeyPress::TextChar(_)
             | KeyPress::TextBackspace
+            | KeyPress::TextEdit(_)
             | KeyPress::TextApply
             | KeyPress::TextAbandon
             | KeyPress::StepUp
@@ -487,6 +488,7 @@ impl App {
         match key {
             KeyPress::TextChar(typed) => pane.type_char(typed),
             KeyPress::TextBackspace => pane.type_backspace(),
+            KeyPress::TextEdit(edit) => pane.edit_text(edit),
             KeyPress::TextApply => {
                 let refused = pane.apply_typing();
                 // `apply_typing` keeps the editor open on a buffer the

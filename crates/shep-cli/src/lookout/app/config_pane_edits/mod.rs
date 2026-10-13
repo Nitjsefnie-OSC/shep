@@ -6,4 +6,6 @@ mod confirm_field;
 mod cycle_field;
 mod dispatch_writes;
 mod file_edit;
+#[cfg(test)]
+mod paste;
 mod restore_default;

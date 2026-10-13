@@ -723,16 +723,16 @@ fn body_from(
             )));
         } else if let Some((field, buffer)) = settings.typing() {
             // The cursor is a character, not a style: the ANSI gallery
-            // renders foregrounds only, so a reversed cell would come out
-            // unstyled.
+            // renders foregrounds only.
             lines.push(Line::default());
             lines.push(Line::from(Span::styled(
                 format!(
                     "  {}",
                     fit(
-                        &format!(
-                            "editing {}: {buffer}\u{258f}   enter applies   esc cancels",
-                            field_label(*field)
+                        &buffer.line(
+                            &format!("editing {}: ", field_label(*field)),
+                            "   enter applies   esc cancels",
+                            table_width,
                         ),
                         table_width,
                     )

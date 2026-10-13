@@ -33,7 +33,7 @@ impl App {
             let Some(SettingsRow::Scalar(field)) = settings.cursor() else {
                 return Effect::None;
             };
-            let buffer = settings.text_seed(field).to_string();
+            let buffer = TextBox::from(settings.text_seed(field));
             settings.pending = Some(Pending::Typing { field, buffer });
             self.mode = InputMode::Text;
             return Effect::None;

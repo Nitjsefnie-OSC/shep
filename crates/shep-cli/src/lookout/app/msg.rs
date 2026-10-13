@@ -59,6 +59,10 @@ pub enum KeyPress {
     TextChar(char),
     /// `Backspace` in whichever text field is open.
     TextBackspace,
+    /// A cursor move or deletion in whichever text field is open: the arrows,
+    /// `Home`/`End`, `Delete`, the word moves and the kill keys. See
+    /// [`TextEdit`] for which key is which.
+    TextEdit(TextEdit),
     /// `Enter` in whichever text field is open: apply and leave.
     TextApply,
     /// `Esc` in whichever text field is open: abandon the edit and leave.
@@ -183,6 +187,32 @@ pub enum KeyPress {
     Continue,
 }
 
+/// The text of a bracketed paste.
+///
+/// `Debug` is redacted (IR-41): the paste may be a secret headed for the
+/// secrets pane's writer, and `Msg` derives `Debug`.
+#[derive(Clone)]
+pub struct Pasted(String);
+
+impl Pasted {
+    /// Wraps the text a terminal delivered.
+    #[must_use]
+    pub fn new(text: String) -> Self {
+        Self(text)
+    }
+
+    /// The pasted text.
+    pub(super) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl core::fmt::Debug for Pasted {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Pasted(<{} bytes>)", self.0.len())
+    }
+}
+
 /// Everything that can change the dashboard.
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -221,6 +251,10 @@ pub enum Msg {
     },
     /// One key.
     Key(KeyPress),
+    /// A bracketed paste. Inserted at the cursor of the open text box, with
+    /// newlines and other control characters dropped; ignored while no box
+    /// is open.
+    Paste(Pasted),
     /// The 1s heartbeat. `now` is what advances every running sheep's uptime.
     Tick {
         /// The current instant, read by the caller.

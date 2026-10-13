@@ -89,11 +89,11 @@ pub(super) fn list_line(
                         .unwrap_or_else(|| "(unset)".to_owned());
                     mask_secret(secret, raw)
                 },
-                |buffer| format!("{buffer}\u{258f}"),
+                |buffer| buffer.drawn(value_w),
             ),
         ),
         Some(ListRow::New) => match typed {
-            Some(buffer) => (String::new(), format!("{buffer}\u{258f}")),
+            Some(buffer) => (String::new(), buffer.drawn(value_w)),
             None => (String::new(), "+ new".to_owned()),
         },
         None => return Line::default(),
