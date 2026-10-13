@@ -3,7 +3,7 @@
 
 use shep_client::Client;
 use shep_core::paths::ShepPaths;
-use shep_core::protocol::{DogSource, Request, Response};
+use shep_core::protocol::{DogSource, Request, Response, SelectorSpec};
 
 use crate::commands::dog_migration;
 use crate::commands::rpc::{client_error, unexpected_response};
@@ -53,9 +53,9 @@ pub async fn rehome(streams: &mut Streams<'_>, paths: &ShepPaths, name: &str) ->
 }
 
 /// `rehome`'s daemon half; see enable_after_config for the split and
-/// for what `client: None` means. Sends the same `DisableDog` request
-/// `disable` does: [`rehome`] has already erased the registration `disable`
-/// leaves alone.
+/// for what `client: None` means. Sends `Delete` by name: `DisableDog` leaves
+/// the dog registered at rest, and [`rehome`] has erased the registration
+/// that entry was listed under.
 async fn rehome_after_config(
     streams: &mut Streams<'_>,
     name: &str,
@@ -73,8 +73,8 @@ async fn rehome_after_config(
         );
     };
     match client
-        .request(Request::DisableDog {
-            name: name.to_string(),
+        .request(Request::Delete {
+            selector: SelectorSpec::Name(name.to_string()),
         })
         .await
     {
@@ -237,8 +237,8 @@ mod tests {
         let sent = envelopes.recv().await.unwrap();
         assert_eq!(
             sent.body,
-            Request::DisableDog {
-                name: "otel".to_string(),
+            Request::Delete {
+                selector: SelectorSpec::Name("otel".to_string()),
             }
         );
     }
