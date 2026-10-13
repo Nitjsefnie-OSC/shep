@@ -414,6 +414,7 @@ mod tests {
         let roll = FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
             app: config,
             instances_running: 1,
+            disabled: false,
         }]);
         std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
         // The pair the dog has pushed is production; staging is still to come.
@@ -484,6 +485,7 @@ mod tests {
                 .map(|app| shep_daemon::snapshot::SavedApp {
                     app,
                     instances_running: 1,
+                    disabled: false,
                 })
                 .collect(),
         );
@@ -554,6 +556,7 @@ mod tests {
         let roll = FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
             app: config,
             instances_running: 1,
+            disabled: false,
         }]);
         std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
         std::fs::write(&paths.secrets, b"{not json").unwrap();

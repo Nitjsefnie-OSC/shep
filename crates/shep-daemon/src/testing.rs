@@ -169,14 +169,12 @@ pub(crate) async fn sorted_status(handle: &SupervisorHandle) -> Vec<(String, Pro
 /// The rolls whose instance counts a test is actually about build their own
 /// `SavedApp` entries and go through [`FlockSnapshot::with_apps`].
 pub(crate) fn roll_of(apps: Vec<AppConfig>) -> FlockSnapshot {
-    FlockSnapshot::with_apps(
-        apps.into_iter()
-            .map(|app| SavedApp {
-                app,
-                instances_running: 1,
-            })
-            .collect(),
-    )
+    let saved = apps.into_iter().map(|app| SavedApp {
+        app,
+        instances_running: 1,
+        disabled: false,
+    });
+    FlockSnapshot::with_apps(saved.collect())
 }
 
 // The tempdir root is `$SHEP_HOME` with no extra nesting: `sun_path` caps a
