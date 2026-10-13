@@ -4,6 +4,7 @@ members = [
     "crates/shep-channel",
     "crates/shep-core",
     "crates/shep-daemon",
+    "crates/shep-handover",
     "crates/shep-client",
     "crates/shep-macros",
     "crates/shep-cli",
@@ -38,6 +39,7 @@ shep-core = { path = "crates/shep-core", version = "0.12.5" }
 shep-daemon = { path = "crates/shep-daemon", version = "0.12.5" }
 shep-client = { path = "crates/shep-client", version = "0.12.5" }
 shep-macros = { path = "crates/shep-macros", version = "0.12.5" }
+shep-handover = { path = "crates/shep-handover", version = "0.12.5" }
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
