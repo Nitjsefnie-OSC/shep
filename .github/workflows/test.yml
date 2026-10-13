@@ -372,6 +372,7 @@ jobs:
       # so the opt-out needs its own leg. `cargo test`, not `check`: the
       # doctest broke under this feature set too, and only a test run reads it.
       - run: cargo test -p shep-client --locked --no-default-features
+        if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.result != 'success' || github.event_name == 'workflow_dispatch' }}
       # `otel`, the metrics dog's OTLP exporter, is off by default and every
       # other leg here passes `--all-features`. This is the only run of the
       # build an operator installs, and the only place its refusal of an
