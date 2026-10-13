@@ -87,6 +87,29 @@ impl<R: ProcessRunner> Actor<R> {
     /// `Restart`, `false` for the crash loop and every restart the daemon
     /// raised itself. Callers pass `origin == CommandOrigin::Operator`.
     pub(super) fn respawn(&mut self, id: u32, manually: bool) -> ProcessInfo {
+        // The last word on the mark, under every door that reaches a respawn:
+        // the crash ladder's timer, an extra's report, a manual restart's
+        // exit. The doors that can tell an operator from the daemon answer
+        // before this (`restart_unless_disabled`), so what arrives here is
+        // dropped whoever asked, and left stopped.
+        if self.is_disabled_id(id) {
+            let slot = self.sheep.get(&id).expect("respawn: unknown id");
+            tracing::info!(
+                id,
+                sheep = %slot.entry.spec.config().name,
+                manually,
+                "respawn dropped: the app is disabled"
+            );
+            // A ladder timer that fires for it leaves nothing waiting behind.
+            if slot.entry.status == ProcStatus::WaitingRestart
+                && let Some(info) =
+                    self.apply_immediate(id, ManualKind::Stop, CommandOrigin::Automatic)
+            {
+                return info;
+            }
+            let slot = self.sheep.get(&id).expect("respawn: unknown id");
+            return to_info(&slot.entry, &self.smits);
+        }
         // Before the identity below is read, since a promoted `user` or `group`
         // is what clears it. Here rather than in the `Restart` arms: every door
         // a replacement child comes through passes through this one.
