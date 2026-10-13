@@ -115,7 +115,7 @@ pub(super) async fn run_group(
             ) => {
                 // A restart touches no log files, starts no reload, scales
                 // nothing and registers no batch, names no dog, field or
-                // override, so none of these nine can arrive here. Named
+                // override, so none of these ten can arrive here. Named
                 // rather than swept into a catch-all, so a variant this path
                 // can produce still fails to compile.
                 tracing::warn!(name, %err, "watch-triggered restart reported an unrelated failure");

@@ -192,9 +192,29 @@ async fn an_older_shepherd_is_told_to_upgrade() {
     );
 }
 
-/// fails if the shepherd's `Disabled` refusal stops exiting 2.
+/// fails if the shepherd's `Disabled` refusal stops exiting 2 or loses the
+/// `shep enable` it names.
 #[tokio::test]
-async fn the_shepherds_refusal_keeps_its_exit_code_and_message() {
+async fn a_disabled_refusal_exits_usage_and_names_shep_enable() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, _daemon) = fake_client_replying_err(
+        &path,
+        RpcErrorCode::Disabled,
+        "api is disabled; run `shep enable api`",
+    )
+    .await;
+
+    let (code, _printed, said) =
+        toggle_against(&client, Toggle::Disable, "api", Format::Table).await;
+
+    assert_eq!(code, ExitCode::Usage, "{said}");
+    assert!(said.contains("shep enable api"), "{said}");
+}
+
+/// fails if an unknown name loses its own exit code and the shepherd's words.
+#[tokio::test]
+async fn an_unknown_name_keeps_its_exit_code_and_message() {
     let dir = tempfile::tempdir().unwrap();
     let path = shep_client::testing::control_address(dir.path());
     let (client, _daemon) =
