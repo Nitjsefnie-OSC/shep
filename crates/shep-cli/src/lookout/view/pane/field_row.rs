@@ -327,6 +327,7 @@ pub(super) fn type_label(field: &Field) -> &'static str {
         FieldKind::Map => "map",
         FieldKind::List(_) => "list",
         FieldKind::Entries(_) => "entries",
+        FieldKind::Union(_) => "union",
         FieldKind::Opaque => "opaque",
     }
 }

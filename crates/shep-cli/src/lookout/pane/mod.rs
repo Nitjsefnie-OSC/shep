@@ -20,6 +20,8 @@
 
 mod choices;
 mod config;
+#[cfg(test)]
+mod config_tests;
 mod dogs;
 mod edit;
 mod entries;
@@ -39,6 +41,9 @@ mod section_write_entries;
 mod sheep_dog;
 mod tree;
 mod types;
+mod union;
+#[cfg(test)]
+mod union_tests;
 mod walk;
 
 pub use config::{ConfigPane, ReloadKind};

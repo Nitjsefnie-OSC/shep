@@ -7,9 +7,9 @@ These are real frames, rendered headlessly through ratatui's TestBackend by
 
 Nothing here is a mockup.
 
-frames.ansi renders all sixty-six scenes through the same coloured
+frames.ansi renders all sixty-seven scenes through the same coloured
 palette the pinned `.snap` tests use; read it with `less -R`. frames.txt
-renders the same sixty-six scenes through the flattened NO_COLOR palette
+renders the same sixty-seven scenes through the flattened NO_COLOR palette
 instead, the one an operator with $NO_COLOR set or a 16-colour terminal
 actually gets. The two files are deliberately different pictures of the
 same dashboard, not one file with the colour removed.
@@ -1708,6 +1708,58 @@ shep lookout   /home/ada/.shep                                                  
        model                  small                                                                                                                             
 >      token                  <set>                                                                                                                             
   shep publishes the change; jobs decides what to reload                                                                                                        
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit   control enabled
+
+=== sheep_dog_union  (160x48) ===
+Enter on kelpie opens its table pane over a recorded copy of its schema, skills opened onto one union per step: implement reads kind = path and is open onto its kind row and its path, review reads kind = plugin and is closed, and retro reads (unset). The cursor is on path, and the explanation panel names it and carries the blurb of the path arm.
+
+shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
+                                                                                                                                                                
+  api › kelpie  (dog table)                                                                                                                                     
+   ▾ skills                                                                   table      FOCUSED  skills.implement.path  text                                   
+     ▾ implement              kind = path                                                 The skill folder, from the repo root.                                 
+       kind                   path                                                                                                                              
+>      path                   skills/mine                                                 A skill kept in the repo.                                             
+     ▸ retro                  (unset)                                                                                                                           
+     ▸ review                 kind = plugin                                               now     skills/mine                                                   
+                                                                                          default (none)                                                        
+                                                                                          example (none)                                                        
+  shep publishes the change; kelpie decides what to reload                                                                                                      
+                                                                                                                                                                
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 

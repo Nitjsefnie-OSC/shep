@@ -14,6 +14,7 @@ use super::super::edits::{EditKey, Edits};
 use super::super::field::{Flattened, flatten_values, flattened};
 use super::super::viewport::Viewport;
 use super::entries::EntryRows;
+use super::union::arm_fields;
 use super::{ConfigPane, PaneEdit, PaneTarget};
 
 /// The table a [`ConfigPane::sheep_dog`] pane edits, and where each of its
@@ -64,6 +65,7 @@ impl ConfigPane {
         } = flattened(schema);
         let values = flatten_values(&table, &paths);
         let entries = EntryRows::build(&fields, &paths, &values, shapes);
+        let arms = Arc::new(arm_fields(&fields));
         Self {
             target: PaneTarget::SheepDog { sheep, dog },
             fields,
@@ -81,6 +83,7 @@ impl ConfigPane {
             section: None,
             dog_table: Some(Box::new(SheepDogTable { paths, table })),
             reshapes: Arc::default(),
+            arms,
             section_paths: Arc::default(),
             open: outline.top_level_paths(),
             outline: Arc::new(outline),

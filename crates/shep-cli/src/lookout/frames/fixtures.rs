@@ -696,6 +696,36 @@ pub(super) fn dogs_probe() -> Vec<SheepDogEntry> {
     ]
 }
 
+/// The probe answer of the `kelpie` scenes: one dog, carrying the recorded
+/// copy of shep-kelpie's own `--schema` answer.
+pub(super) fn kelpie_probe() -> Vec<SheepDogEntry> {
+    vec![SheepDogEntry {
+        name: "kelpie".to_string(),
+        adopted_path: Some(PathBuf::from("/opt/kelpie")),
+        schema: Some(crate::lookout::testing::kelpie_sheep_schema()),
+    }]
+}
+
+/// `api`'s config for the `kelpie` scenes: [`edit_pane_config_view`]'s own
+/// fields, plus a `kelpie` table that sets two of the three steps.
+pub(super) fn kelpie_config_view() -> SheepConfigView {
+    let mut view = edit_pane_config_view();
+    view.config.dogs.insert(
+        "kelpie".to_string(),
+        json!({
+            "skills": {
+                "implement": { "kind": "path", "path": "skills/mine" },
+                "review": { "kind": "plugin", "plugin": "superpowers", "skill": "code-review" },
+            },
+        })
+        .as_object()
+        .cloned()
+        .expect("an object")
+        .into(),
+    );
+    view
+}
+
 /// `api`'s config for the dogs sub-screen and per-sheep table scenes:
 /// [`edit_pane_config_view`]'s own fields, plus [`jobs_table`] and a
 /// `legacy` table naming a credential in a plain URL, so the sub-screen has

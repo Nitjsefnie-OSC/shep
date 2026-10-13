@@ -44,6 +44,10 @@ impl App {
         if self.authorize_write().is_none() {
             return Effect::None;
         }
+        if let Some(text) = self.config_pane().and_then(ConfigPane::cursor_refusal) {
+            self.notice = Some(Notice { text, grave: true });
+            return Effect::None;
+        }
         if let Some(pane) = self.config_pane_mut() {
             pane.file_default();
         }

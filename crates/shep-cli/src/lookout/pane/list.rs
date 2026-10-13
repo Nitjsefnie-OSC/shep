@@ -387,10 +387,12 @@ impl ConfigPane {
     /// Opens the list sub-screen over the array field under the cursor.
     /// Does nothing on any other row.
     pub(in crate::lookout) fn open_list(&mut self) {
-        let Some(PaneRow::Field(index)) = self.cursor() else {
-            return;
+        let field = match self.cursor() {
+            Some(PaneRow::Field(index)) => self.fields.fields().get(index),
+            Some(row @ PaneRow::Arm { .. }) => self.arm_field(row),
+            _ => None,
         };
-        let Some(field) = self.fields.fields().get(index) else {
+        let Some(field) = field else {
             return;
         };
         let Some(item) = self.sub_screen_item(field) else {
@@ -419,7 +421,11 @@ impl ConfigPane {
     /// the right seed for a field nothing is filed for: see
     /// [`Self::filed_elements_of`].
     fn elements_of(&self, key: &str) -> Vec<String> {
-        self.values.get(key).map(array_elements).unwrap_or_default()
+        self.values
+            .get(key)
+            .or_else(|| self.arm_value(key))
+            .map(array_elements)
+            .unwrap_or_default()
     }
 
     /// `key`'s array as the operator has it: the elements of whatever is
@@ -546,7 +552,7 @@ impl ConfigPane {
     /// the operator's filed set, and the sub-screen has to keep showing the
     /// set.
     pub(in crate::lookout) fn adopt_list_view(&mut self, key: &str, view: Viewport) {
-        let Some(field) = self.fields.by_key(key) else {
+        let Some(field) = self.field_of(key) else {
             return;
         };
         let Some(item) = self.sub_screen_item(field) else {

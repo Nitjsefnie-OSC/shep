@@ -99,6 +99,7 @@ pub fn select_env_key(app: &mut App, key: &str) {
             | crate::lookout::pane::PaneRow::Table(_)
             | crate::lookout::pane::PaneRow::Entry(_)
             | crate::lookout::pane::PaneRow::Choice { .. }
+            | crate::lookout::pane::PaneRow::Arm { .. }
             | crate::lookout::pane::PaneRow::AddEnv => false,
         })
         .unwrap_or_else(|| panic!("no env key named {key}"));
@@ -273,6 +274,7 @@ pub fn select_field(app: &mut App, key: &str) {
                 crate::lookout::pane::PaneRow::Field(_)
                 | crate::lookout::pane::PaneRow::Entry(_)
                 | crate::lookout::pane::PaneRow::Choice { .. }
+                | crate::lookout::pane::PaneRow::Arm { .. }
                 | crate::lookout::pane::PaneRow::Env(_)
                 | crate::lookout::pane::PaneRow::AddEnv => false,
             })
@@ -294,6 +296,7 @@ fn row_of(app: &App, key: &str) -> Option<usize> {
         crate::lookout::pane::PaneRow::Table(_)
         | crate::lookout::pane::PaneRow::Entry(_)
         | crate::lookout::pane::PaneRow::Choice { .. }
+        | crate::lookout::pane::PaneRow::Arm { .. }
         | crate::lookout::pane::PaneRow::Env(_)
         | crate::lookout::pane::PaneRow::AddEnv => false,
     })
