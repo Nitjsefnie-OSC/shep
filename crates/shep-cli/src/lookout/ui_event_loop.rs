@@ -1,5 +1,5 @@
 use super::MIN_REDRAW;
-use super::app::{App, Body, Effect, Msg, RevealedValue, RowKey, Sent};
+use super::app::{App, Body, Effect, InputMode, Msg, Pasted, RevealedValue, RowKey, Sent};
 use super::batch_dispatch::{enable_refusal_message, send_batch};
 use super::wiring::HEARTBEAT;
 use futures_util::future::BoxFuture;
@@ -183,6 +183,11 @@ where
             } => break,
             event = events.next(), if !keys_done => match event {
                 Some(Ok(crossterm::event::Event::Resize(..))) => Some(Msg::Resize),
+                // Only while a box is open; elsewhere a paste is nothing, and
+                // the reducer would say so too.
+                Some(Ok(crossterm::event::Event::Paste(text))) => {
+                    (app.mode() == InputMode::Text).then(|| Msg::Paste(Pasted::new(text)))
+                }
                 Some(Ok(event)) => super::input::map_key(&event, app.mode()).map(Msg::Key),
                 // A key source that has ended, or has started erroring. Both
                 // conditions are permanent, and both retire this arm: one

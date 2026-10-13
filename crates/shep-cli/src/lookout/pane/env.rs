@@ -8,6 +8,7 @@
 
 use shep_core::protocol::EnvValue;
 
+use super::super::textbox::{TextBox, TextEdit};
 use super::{ConfigPane, PaneEdit, PaneRow};
 
 // Link-only (IR-32): the field editor this one is never open beside.
@@ -28,7 +29,7 @@ use super::PaneTyping;
 #[derive(Clone, PartialEq, Eq)]
 pub struct EnvTyping {
     key: Option<String>,
-    buffer: String,
+    buffer: TextBox,
 }
 
 /// Prints whether a key is under edit and never the key or the buffer.
@@ -40,7 +41,7 @@ impl core::fmt::Debug for EnvTyping {
             f,
             "EnvTyping {{ key: {}, buffer: <{} chars> }}",
             self.key.is_some(),
-            self.buffer.chars().count()
+            self.buffer.char_count()
         )
     }
 }
@@ -56,7 +57,7 @@ impl EnvTyping {
 
     /// What has been typed so far.
     #[must_use]
-    pub fn buffer(&self) -> &str {
+    pub fn buffer(&self) -> &TextBox {
         &self.buffer
     }
 }
@@ -88,27 +89,34 @@ impl ConfigPane {
         self.env_typing = match self.cursor() {
             Some(PaneRow::Env(index)) => Some(EnvTyping {
                 key: self.env_keys.get(index).cloned(),
-                buffer: String::new(),
+                buffer: TextBox::new(),
             }),
             Some(PaneRow::AddEnv) => Some(EnvTyping {
                 key: None,
-                buffer: String::new(),
+                buffer: TextBox::new(),
             }),
             Some(PaneRow::Field(_) | PaneRow::Table(_)) | None => None,
         };
     }
 
-    /// Appends one typed character.
+    /// Inserts one typed character at the cursor.
     pub fn type_env_char(&mut self, typed: char) {
         if let Some(typing) = self.env_typing.as_mut() {
-            typing.buffer.push(typed);
+            typing.buffer.insert(typed);
         }
     }
 
-    /// Removes the last typed character.
+    /// Removes the character before the cursor.
     pub fn type_env_backspace(&mut self) {
         if let Some(typing) = self.env_typing.as_mut() {
-            typing.buffer.pop();
+            typing.buffer.backspace();
+        }
+    }
+
+    /// Moves the cursor or deletes, per `edit`.
+    pub fn edit_env_text(&mut self, edit: TextEdit) {
+        if let Some(typing) = self.env_typing.as_mut() {
+            typing.buffer.edit(edit);
         }
     }
 
@@ -130,9 +138,12 @@ impl ConfigPane {
             return;
         };
         let (key, value) = match key {
-            Some(key) => (key, (!buffer.is_empty()).then_some(buffer)),
+            Some(key) => (
+                key,
+                (!buffer.is_empty()).then(|| buffer.as_str().to_owned()),
+            ),
             None => {
-                let Some((key, value)) = buffer.split_once('=') else {
+                let Some((key, value)) = buffer.as_str().split_once('=') else {
                     return;
                 };
                 if key.is_empty() {
@@ -298,7 +309,7 @@ mod tests {
         pane.move_to_key("env");
         pane.begin_typing();
         let typing = pane.typing().expect("the editor is open");
-        assert_eq!(typing.buffer, "staging");
+        assert_eq!(typing.buffer.as_str(), "staging");
     }
 
     /// The buffer on `+ add a key` is the whole `KEY=value`, secret

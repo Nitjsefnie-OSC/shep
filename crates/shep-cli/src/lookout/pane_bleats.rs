@@ -8,6 +8,9 @@ use regex::Regex;
 use super::app::RowKey;
 use super::level::{Classifier, Level};
 use super::tail::{Stream, TailLine};
+use super::textbox::TextBox;
+
+mod match_edit;
 
 /// Which filter axis was most recently turned on.
 ///
@@ -346,7 +349,6 @@ impl Filters {
 /// pane describes a single sheep for as long as it is open. Also holds the
 /// filters an operator has stacked on top of that sheep's feed, and, while
 /// the match box is open, what the match axis held before the edit began.
-///
 /// `Debug` is derived. A row key, a filter set and a snapshot of typed
 /// search text carry no env, no path and no argument vector.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,7 +358,7 @@ pub struct BleatsPane {
     /// `Some` while the match box owns `InputMode::Text`; the match axis's
     /// text as it stood before this edit started, so [`Self::abandon_match_edit`]
     /// can restore it. `None` the rest of the time.
-    match_snapshot: Option<Option<String>>,
+    match_snapshot: Option<match_edit::MatchEdit>,
     /// How many surviving lines back from the newest one the view is
     /// scrolled, counting **filtered** lines (what [`Self::visible`]
     /// returns), not raw ones. `0` is the newest surviving line, the tail;
@@ -458,41 +460,6 @@ impl BleatsPane {
     /// never set.
     pub fn set_match(&mut self, text: String) {
         self.filters.set_match(text);
-    }
-
-    /// Opens the match box, remembering the match axis's current text so
-    /// [`Self::abandon_match_edit`] can restore it.
-    pub fn begin_match_edit(&mut self) {
-        self.match_snapshot = Some(self.filters.match_text().map(str::to_string));
-    }
-
-    /// The match box's live buffer while it is open, or `None` when it is
-    /// not.
-    ///
-    /// The status bar needs both facts and the buffer alone cannot carry
-    /// them: an empty box and a closed box both read as an empty matcher.
-    /// `Some("")` is a box open over nothing typed yet.
-    #[must_use]
-    pub fn match_editing(&self) -> Option<&str> {
-        self.match_snapshot
-            .as_ref()
-            .map(|_| self.filters.match_text().unwrap_or(""))
-    }
-
-    /// Ends the match box, keeping whatever [`Self::set_match`] already
-    /// applied on the way in: `TextChar` and `TextBackspace` narrow the
-    /// axis live, so there is nothing left for this to write.
-    pub fn commit_match_edit(&mut self) {
-        self.match_snapshot = None;
-    }
-
-    /// Restores the match axis to what [`Self::begin_match_edit`] saw,
-    /// discarding whatever was typed since. A no-op if the match box was
-    /// never opened.
-    pub fn abandon_match_edit(&mut self) {
-        if let Some(previous) = self.match_snapshot.take() {
-            self.set_match(previous.unwrap_or_default());
-        }
     }
 
     /// The lines from `lines` that survive every filter axis currently set.
@@ -917,88 +884,6 @@ mod tests {
         assert_eq!(pane.filters().match_text(), None);
         assert!(pane.filters().match_ranges("pool").is_empty());
         assert!(pane.filters().is_empty(), "no axis is set");
-    }
-
-    /// Abandoning an edit restores what the axis held before it, compiled:
-    /// the regex that was there has to work again, not merely have its text
-    /// back.
-    #[test]
-    fn abandoning_an_edit_restores_the_earlier_matcher_compiled() {
-        let mut pane = BleatsPane::new(RowKey::Sheep(9));
-        pane.set_match("/po+l/".to_string());
-
-        pane.begin_match_edit();
-        pane.set_match("kennel".to_string());
-        assert_eq!(pane.filters().match_kind(), Some(MatchKind::Literal));
-
-        pane.abandon_match_edit();
-        assert_eq!(pane.filters().match_kind(), Some(MatchKind::Regex));
-        assert_eq!(pane.filters().match_text(), Some("/po+l/"));
-        assert_eq!(
-            pane.filters().match_ranges("pol and pool"),
-            vec![(0, 3), (8, 12)],
-            "the restored regex matches, rather than being a dead string"
-        );
-    }
-
-    /// The mirror, and the one a stale matcher survives: abandoning back to
-    /// a literal must not leave the regex typed during the edit compiled and
-    /// still matching.
-    #[test]
-    fn abandoning_an_edit_back_to_a_literal_drops_the_regex_typed_during_it() {
-        let mut pane = BleatsPane::new(RowKey::Sheep(9));
-        pane.set_match("po+l".to_string());
-
-        pane.begin_match_edit();
-        pane.set_match("/po+l/".to_string());
-        pane.abandon_match_edit();
-
-        assert_eq!(pane.filters().match_kind(), Some(MatchKind::Literal));
-        assert!(
-            pane.filters().match_ranges("pool").is_empty(),
-            "the abandoned regex must not still be matching"
-        );
-        assert_eq!(pane.filters().match_ranges("po+l"), vec![(0, 4)]);
-    }
-
-    /// Abandoning an edit that began with no axis set clears it again,
-    /// rather than keeping whatever was typed before the escape.
-    #[test]
-    fn abandoning_an_edit_that_began_unset_leaves_the_axis_unset() {
-        let mut pane = BleatsPane::new(RowKey::Sheep(9));
-        pane.begin_match_edit();
-        pane.set_match("/po+l/".to_string());
-        pane.abandon_match_edit();
-
-        assert_eq!(pane.filters().match_text(), None);
-        assert!(pane.filters().is_empty());
-    }
-
-    /// Abandon with no edit open is a no-op: the axis keeps what it has.
-    #[test]
-    fn abandoning_with_no_edit_open_leaves_the_axis_alone() {
-        let mut pane = BleatsPane::new(RowKey::Sheep(9));
-        pane.set_match("/po+l/".to_string());
-        pane.abandon_match_edit();
-
-        assert_eq!(pane.filters().match_kind(), Some(MatchKind::Regex));
-        assert_eq!(pane.filters().match_ranges("pool"), vec![(0, 4)]);
-    }
-
-    /// Committing keeps what was typed during the edit, compiled as its own
-    /// text rather than as the text the edit started from.
-    #[test]
-    fn committing_an_edit_keeps_the_matcher_typed_during_it() {
-        let mut pane = BleatsPane::new(RowKey::Sheep(9));
-        pane.set_match("pool".to_string());
-
-        pane.begin_match_edit();
-        pane.set_match("/po+l/".to_string());
-        pane.commit_match_edit();
-
-        assert_eq!(pane.filters().match_kind(), Some(MatchKind::Regex));
-        assert_eq!(pane.filters().match_ranges("pol"), vec![(0, 3)]);
-        assert_eq!(pane.match_editing(), None, "the box is closed");
     }
 
     /// esc spending the match chip clears the matcher, not only the chip:

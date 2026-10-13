@@ -835,7 +835,7 @@ mod tests {
         pane.move_to_key("db.password");
         pane.begin_typing();
         assert_eq!(
-            pane.typing().expect("the editor is open").buffer,
+            pane.typing().expect("the editor is open").buffer.as_str(),
             "",
             "a secret seeds empty, at any depth"
         );
