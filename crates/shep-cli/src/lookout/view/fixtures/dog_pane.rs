@@ -112,6 +112,56 @@ pub fn app_in_dog_pane_with_a_nested_table() -> App {
     app
 }
 
+/// A dog whose schema holds a string list with an item pattern, an integer
+/// list, a secret list and a map.
+pub fn list_dog_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "hosts": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 3, "pattern": "^[a-z.]+$" },
+            },
+            "keys": {
+                "type": "array",
+                "items": { "type": "string" },
+                "x-shep-secret": true,
+            },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+            "ports": { "type": "array", "items": { "type": "integer" } },
+        },
+    })
+}
+
+/// The `[watch]` section [`list_dog_schema`] opens on: a comment above each
+/// list, so a write that re-rendered the section would lose them.
+pub fn list_dog_section() -> String {
+    "# who to ping\nhosts = [\"a.example\", \"b.example\"]\n# the api keys\nkeys = [\"sk-live-51Hx9Qa\"]\nports = [80, 443]\n"
+        .to_string()
+}
+
+/// A dashboard with the `watch` dog's config pane open over
+/// [`list_dog_section`], opened the way the event loop opens one. The
+/// control gate is open.
+pub fn app_in_dog_pane_with_lists() -> App {
+    let mut app = app_with(flock_of(3, 0), plain());
+    app.set_control_for_tests(Control::Allowed);
+    app.update(Msg::DogPane {
+        name: "watch".to_string(),
+        adopted_path: None,
+        result: Ok(list_dog_schema()),
+    });
+    app.update(Msg::Replied {
+        sent: Sent::DogSection {
+            name: "watch".to_string(),
+        },
+        result: Ok(Response::DogSection {
+            toml: list_dog_section().into(),
+        }),
+    });
+    app
+}
+
 /// [`app_in_dog_pane`] with two edits filed, driven by real key presses:
 /// `poll` typed, then `history_bytes` typed.
 ///

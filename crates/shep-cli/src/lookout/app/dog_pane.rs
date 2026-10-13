@@ -68,9 +68,13 @@ impl App {
                 // Everything a refresh has to carry across, read before the
                 // rebuild replaces the pane: see `Self::on_sheep_config`,
                 // which states the argument for each. A dog pane has no env
-                // sub-screen or list sub-screen, so only its view, its open
-                // tables and its edits carry across.
+                // sub-screen, so its view, its open tables, its list
+                // sub-screen and its edits carry across.
                 let carried = self.config_pane().map(|pane| pane.view().clone());
+                let carried_list = self
+                    .config_pane()
+                    .and_then(ConfigPane::list)
+                    .map(|list| (list.key().to_owned(), list.view().clone()));
                 // The tables the operator opened or closed ride along with
                 // the cursor, which is an index into the rows they shape.
                 let carried_open = self.config_pane().map(|pane| pane.open_tables().clone());
@@ -90,6 +94,9 @@ impl App {
                 }
                 if let Some(carried) = carried {
                     pane.adopt_view(carried);
+                }
+                if let Some((key, carried)) = carried_list {
+                    pane.adopt_list_view(&key, carried);
                 }
                 // The settings screen is what a dog pane opens over, and this
                 // one assignment is what closes it: `Body` holds one
@@ -658,5 +665,43 @@ mod tests {
         let effect = app.update(Msg::Key(KeyPress::TabPrev));
         assert_eq!(effect, Effect::None);
         assert_eq!(app.config_pane().expect("open").cursor(), before);
+    }
+
+    /// `r` re-reads the section and the sub-screen comes back over the
+    /// refreshed pane at the cursor it had, showing what the operator has
+    /// filed rather than what the section holds.
+    #[test]
+    fn a_re_read_keeps_an_open_list_at_its_cursor_with_the_filed_elements() {
+        let mut app = fixtures::app_in_dog_pane_with_lists();
+        pane_to(&mut app, "hosts");
+        app.update(Msg::Key(KeyPress::Confirm));
+        app.update(Msg::Key(KeyPress::SelectLast));
+        app.update(Msg::Key(KeyPress::Edit));
+        for typed in "c.example".chars() {
+            app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        app.update(Msg::Key(KeyPress::TextApply));
+        app.update(Msg::Key(KeyPress::SelectUp));
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Refresh)) else {
+            panic!("r re-reads the section");
+        };
+        app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: fixtures::list_dog_section().into(),
+            }),
+        });
+        let list = app
+            .config_pane()
+            .expect("still open")
+            .list()
+            .expect("the sub-screen rides across the refresh");
+        assert_eq!(list.key(), "hosts");
+        assert_eq!(
+            list.elements(),
+            ["a.example", "b.example", "c.example"],
+            "the filed array, not the section's"
+        );
+        assert_eq!(list.cursor(), Some(crate::lookout::pane::ListRow::Item(1)));
     }
 }

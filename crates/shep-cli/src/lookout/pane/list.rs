@@ -505,7 +505,6 @@ impl ConfigPane {
 
 #[cfg(test)]
 mod tests {
-    use super::super::Lock;
     use super::super::fixtures::{filed, web_with_args};
     use super::*;
 
@@ -831,18 +830,5 @@ mod tests {
             filed(&pane, "stop_exit_codes"),
             Some(serde_json::json!([2, 143]))
         );
-    }
-
-    /// A dog's write replaces its whole section, and `edited_section_with`
-    /// refuses an array rather than write JSON text as a TOML string, so the
-    /// pane offers no editor for one.
-    #[test]
-    fn a_dogs_array_field_has_no_widget_here() {
-        let schema = serde_json::json!({
-            "properties": { "sinks": { "type": "array", "items": { "type": "string" } } }
-        });
-        let pane = ConfigPane::dog("bark".into(), None, schema, String::new());
-        assert!(!pane.fields().by_key("sinks").expect("declared").editable);
-        assert_eq!(pane.lock("sinks"), Some(Lock::NoWidget));
     }
 }
