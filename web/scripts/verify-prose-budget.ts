@@ -121,7 +121,11 @@ export const BUDGETS: Record<string, number> = {
   // with a refusal an operator has to be told about (an id or `name:slot`
   // exits 2, and `start`, `restart` and `stock` refuse a disabled app) are
   // operator-facing surface, not prose to trim back out.
-  lifecycle: 2190, // 2088
+  //
+  // Raised from 2190 on 2026-10-13 for the handover half of the same pair of
+  // verbs: the mark now survives `shep daemon reload`, and the recorded `2088`
+  // was 95 words stale before that sentence went in.
+  lifecycle: 2200, // 2194
   logs: 1900, // 1805
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim
@@ -147,7 +151,11 @@ export const BUDGETS: Record<string, number> = {
   containers: 560, // 526
   // Raised from 560 on 2026-10-13 for dog names: an upgrade must say a sheep
   // named after a built-in keeps its name.
-  upgrading: 610, // 604
+  //
+  // Raised from 610 the same day for "Going back to an older version": an
+  // operator has to be told a downgrade loses the disable marks and that
+  // `shep disable` is what to re-run. Nothing on the page was cut for it.
+  upgrading: 645, // 643
   kv: 550, // 519
   // Raised from 440 on 2026-09-21 for the prebuilt-binary download list,
   // which is new content rather than a correction. The page was sitting at
