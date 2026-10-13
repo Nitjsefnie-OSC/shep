@@ -271,6 +271,13 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
     let mut builder = SupervisorBuilder::new(runner, paths.clone(), events.clone())
         .extras(extras)
         .provider_secrets(Arc::clone(&provider_secrets));
+    // Cloned before the `take` below feeds the supervisor, and defaulted the
+    // way the builder defaults it, so a dog and a sheep that name no
+    // environment resolve in the same one.
+    let host_environment = options
+        .environment
+        .clone()
+        .unwrap_or_else(|| crate::supervisor::DEFAULT_ENVIRONMENT.to_string());
     if let Some(environment) = options.environment.take() {
         builder = builder.environment(environment);
     }
@@ -408,6 +415,7 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         // the machine whether the flock is empty or not.
         host: crate::host::HostState::real(),
         provider_secrets,
+        host_environment,
     };
 
     // 5. A failure is a `warn!` and the boot continues: only systemd's view

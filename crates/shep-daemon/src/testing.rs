@@ -531,6 +531,7 @@ pub(crate) fn harness_with_runner(
             // `HostState::fixed` over this one.
             host: crate::host::HostState::fixed(None),
             provider_secrets,
+            host_environment: crate::supervisor::DEFAULT_ENVIRONMENT.to_string(),
         },
         _dir: dir,
         _events_rx: events_rx,
