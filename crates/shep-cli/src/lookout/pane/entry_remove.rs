@@ -1,4 +1,5 @@
-//! Removing an entry from an array or map of tables, on the pane alone.
+//! Removing an entry from an array or map of tables, on the pane alone, and
+//! the whole-value filing that adding one shares.
 //!
 //! A removal files the entries row's whole new value, the way the list
 //! sub-screen files its whole array. The edits filed under the row's entries
@@ -17,15 +18,16 @@ use super::super::edits::EditKey;
 use super::super::field::{Entries, FieldKind};
 use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget, PathStep};
 
-/// What one entry removal took out of the pane, kept so `u` can give it
-/// back: the edits it folded into the whole value, the whole value it
-/// replaced, and which entries were open.
+/// What filing one whole value for an entries field took out of the pane,
+/// kept so `u` can give it back: the edits it folded into the whole value,
+/// the whole value it replaced, and which entries were open. An entry's
+/// removal and an entry's addition both file one.
 ///
 /// `Debug` is derived, safe because [`PaneEdit`]'s own `Debug` withholds its
 /// values (IR-41).
 #[derive(Debug, Clone)]
-pub(super) struct Removal {
-    /// The entries field the removal was filed for.
+pub(super) struct Reshape {
+    /// The entries field the whole value was filed for.
     key: String,
     /// The whole value that was filed for it before, if there was one.
     prior: Option<(PaneEdit, Option<ApplyGroup>)>,
@@ -86,30 +88,7 @@ impl ConfigPane {
         if !take_entry(&mut whole, &step) {
             return;
         }
-        let head = format!("{key}[");
-        let removal = Removal {
-            prior: self
-                .edits
-                .get(&EditKey::Field(key.clone()))
-                .map(|edit| (edit.edit().clone(), edit.impact())),
-            folded: self.drop_edits_under(&key),
-            open: self
-                .open
-                .iter()
-                .filter(|path| path.starts_with(&head))
-                .cloned()
-                .collect(),
-            key: key.clone(),
-        };
-        if matches!(step, PathStep::Index(_)) {
-            self.shift_open_entries(&key, &step);
-        }
-        self.file_field(key.clone(), whole);
-        if self.edits.get(&EditKey::Field(key)).is_some() {
-            Arc::make_mut(&mut self.removals).push(removal);
-        }
-        self.resync_entries();
-        self.retain_known_open();
+        self.file_whole(&key, whole, Some(&step));
         let left = self.entries.roots(field).map_or(0, <[usize]>::len);
         let land = match left {
             0 => PaneRow::Field(field),
@@ -120,6 +99,43 @@ impl ConfigPane {
                 .map_or(PaneRow::Field(field), |&root| PaneRow::Entry(root)),
         };
         self.move_to_row(land);
+    }
+
+    /// Files `whole` as the new value of the entries field `key`, and
+    /// rebuilds the rows over it. The edits filed under the field's entries
+    /// are folded into `whole` by the caller and dropped from the set here,
+    /// and what that took out is kept for [`Self::restore_reshape`].
+    ///
+    /// `gone` is the array entry `whole` lacks, whose open state goes with
+    /// it. A `whole` that is what the target holds files nothing, and drops
+    /// what is kept for `key`, since there is no edit left for `u` to undo.
+    pub(super) fn file_whole(&mut self, key: &str, whole: Value, gone: Option<&PathStep>) {
+        let head = format!("{key}[");
+        let reshape = Reshape {
+            prior: self
+                .edits
+                .get(&EditKey::Field(key.to_owned()))
+                .map(|edit| (edit.edit().clone(), edit.impact())),
+            folded: self.drop_edits_under(key),
+            open: self
+                .open
+                .iter()
+                .filter(|path| path.starts_with(&head))
+                .cloned()
+                .collect(),
+            key: key.to_owned(),
+        };
+        if let Some(gone) = gone {
+            self.shift_open_entries(key, gone);
+        }
+        self.file_field(key.to_owned(), whole);
+        if self.edits.get(&EditKey::Field(key.to_owned())).is_some() {
+            Arc::make_mut(&mut self.reshapes).push(reshape);
+        } else {
+            Arc::make_mut(&mut self.reshapes).retain(|held| held.key != key);
+        }
+        self.resync_entries();
+        self.retain_known_open();
     }
 
     /// [`Self::adopt_edits`] from `previous`, less every edit filed under an
@@ -161,6 +177,31 @@ impl ConfigPane {
         dropped
     }
 
+    /// Folds every edit filed under an entry of an entries field that also
+    /// has a whole value filed into that value, so a close writes the field
+    /// once. An entry the whole value adds has no place in the stored rows, so
+    /// its leaf edits could not be written on their own after the close
+    /// rebuilds them.
+    pub(super) fn fold_entry_edits(&mut self) {
+        let keys: Vec<String> = self
+            .fields
+            .fields()
+            .iter()
+            .filter(|field| matches!(field.kind, FieldKind::Entries(_)))
+            .map(|field| field.key.clone())
+            .filter(|key| self.edits.get(&EditKey::Field(key.clone())).is_some())
+            .collect();
+        for key in keys {
+            let Some(whole) = self.entries_value(&key) else {
+                continue;
+            };
+            if self.drop_edits_under(&key).is_empty() {
+                continue;
+            }
+            self.file_field(key, whole);
+        }
+    }
+
     /// Rebuilds the rows under every entries field over what the pane holds
     /// for it: the filed whole value where there is one, else the target's.
     pub(super) fn resync_entries(&mut self) {
@@ -190,7 +231,7 @@ impl ConfigPane {
     /// filed for it, else what the target holds, with every edit filed under
     /// one of its entries applied. [`None`] for a key that is not an entries
     /// field.
-    fn entries_value(&self, key: &str) -> Option<Value> {
+    pub(super) fn entries_value(&self, key: &str) -> Option<Value> {
         let (kind, path) = self.entries_field(key)?;
         let mut whole = match self
             .edits
@@ -245,21 +286,21 @@ impl ConfigPane {
         folded
     }
 
-    /// Gives back what the newest removal filed for the entries field `key`
-    /// took out, after `u` has dropped the whole value it filed: the whole
-    /// value it replaced, the edits it folded in, and the entries that were
-    /// open. Does nothing when no removal is held for `key`.
-    pub(super) fn restore_removal(&mut self, key: &str) {
-        let Some(at) = self.removals.iter().rposition(|removal| removal.key == key) else {
+    /// Gives back what the newest whole value filed for the entries field
+    /// `key` took out, after `u` has dropped the whole value it filed: the
+    /// whole value it replaced, the edits it folded in, and the entries that
+    /// were open. Does nothing when none is held for `key`.
+    pub(super) fn restore_reshape(&mut self, key: &str) {
+        let Some(at) = self.reshapes.iter().rposition(|held| held.key == key) else {
             return;
         };
-        let removal = Arc::make_mut(&mut self.removals).remove(at);
-        for (edit, impact) in removal.prior.into_iter().chain(removal.folded) {
+        let reshape = Arc::make_mut(&mut self.reshapes).remove(at);
+        for (edit, impact) in reshape.prior.into_iter().chain(reshape.folded) {
             self.edits.set(edit, impact);
         }
         let head = format!("{key}[");
         self.open.retain(|path| !path.starts_with(&head));
-        self.open.extend(removal.open);
+        self.open.extend(reshape.open);
     }
 
     /// Renames the open entries of the array `key` the way removing the entry

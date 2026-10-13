@@ -680,6 +680,21 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       the later one.
     </p>
     <p>
+      The last row under an open array or map of tables is{" "}
+      <code>+ new</code>, and <code>Enter</code> on it adds an entry. An array
+      appends one at once. A map asks for the key in a text editor: an empty
+      key gives up, a key the map already holds is refused by name with the
+      editor still open, and a key with a dot or a space is written quoted,
+      such as <code>[models."a.b"]</code>. The new entry holds each property
+      whose schema declares a default, and nothing else. Its row opens and the
+      cursor lands on its first field. Required fields are the dog's to check:
+      shep only checks that the section is TOML, so an entry missing one is
+      written as it stands. An add files like a removal, as one change to the
+      whole array or map, so <code>u</code> takes it back and adding then
+      removing the same entry writes nothing. <code>Esc</code> appends the new
+      table after the last existing one and leaves every comment where it is.
+    </p>
+    <p>
       Edits file into the same change set a sheep's pane uses, and{" "}
       <code>u</code> undoes them the same way; nothing reaches the dog's
       section until <code>Esc</code> closes the pane. A section edited

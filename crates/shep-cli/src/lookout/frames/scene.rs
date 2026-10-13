@@ -189,6 +189,10 @@ pub enum Scene {
     /// The same pane with the second client open and a new `name` half
     /// typed, the cursor drawn in the value.
     DogEntryTyping,
+    /// The same pane with `models` open onto its `+ new` row and the key
+    /// editor open on it, `gpt-5` typed, the cursor drawn in the status
+    /// bar.
+    DogEntriesNew,
     /// The close dialog at the design size: two edits filed, one field
     /// already parked, the box centred over the dimmed editing pane.
     CloseDialog,
@@ -284,6 +288,7 @@ impl Scene {
             Self::DogEntries => "dog_entries",
             Self::DogEntriesNarrow => "dog_entries_narrow",
             Self::DogEntryTyping => "dog_entry_typing",
+            Self::DogEntriesNew => "dog_entries_new",
             Self::CloseDialog => "close_dialog",
             Self::CloseDialogFloor => "close_dialog_floor",
             Self::CloseDialogNarrow => "close_dialog_narrow",
@@ -466,6 +471,9 @@ impl Scene {
             Self::DogEntryTyping => {
                 "The same pane at 160x48 with the b-2 client open and a name being typed into it: the value cell holds the typed text and the cursor, the explanation panel describes name, and the title band counts no edit until the text is applied."
             }
+            Self::DogEntriesNew => {
+                "Enter on the + new row under models: the key editor opens in the status bar, labelled new models key, with gpt-5 typed and the cursor after it. Nothing is filed until the key is applied, so the title band counts no edit. An empty key would abandon, and a key models already holds is refused with a sentence naming it."
+            }
             Self::CloseDialog => {
                 "esc pressed with cwd and err_file edited and listen_timeout already parked from before: the close dialog names both counts, boxed and centred at 160x48 over the dimmed editing pane."
             }
@@ -635,7 +643,8 @@ impl Scene {
             | Self::SheepDogsRemove
             | Self::SheepDogTable
             | Self::DogEntries
-            | Self::DogEntryTyping => (160, 48),
+            | Self::DogEntryTyping
+            | Self::DogEntriesNew => (160, 48),
             // 88: the same cut as `EditPaneNarrow`, short of the
             // explanation panel's floor.
             Self::DogEntriesNarrow => (88, 48),
@@ -748,6 +757,7 @@ impl Scene {
             | Self::DogEntries
             | Self::DogEntriesNarrow
             | Self::DogEntryTyping
+            | Self::DogEntriesNew
             | Self::CloseDialog
             | Self::CloseDialogFloor
             | Self::CloseDialogNarrow
@@ -776,7 +786,7 @@ mod tests {
     /// which is the form a reader sees.
     #[test]
     fn the_gallery_preamble_counts_the_scenes_it_has() {
-        const NUMBERS: [(usize, &str); 32] = [
+        const NUMBERS: [(usize, &str); 33] = [
             (34, "thirty-four"),
             (35, "thirty-five"),
             (36, "thirty-six"),
@@ -809,6 +819,7 @@ mod tests {
             (63, "sixty-three"),
             (64, "sixty-four"),
             (65, "sixty-five"),
+            (66, "sixty-six"),
         ];
         let spelled = NUMBERS
             .iter()
@@ -924,7 +935,8 @@ mod tests {
             Scene::SheepDogTable => Some(Scene::DogEntries),
             Scene::DogEntries => Some(Scene::DogEntriesNarrow),
             Scene::DogEntriesNarrow => Some(Scene::DogEntryTyping),
-            Scene::DogEntryTyping => Some(Scene::CloseDialog),
+            Scene::DogEntryTyping => Some(Scene::DogEntriesNew),
+            Scene::DogEntriesNew => Some(Scene::CloseDialog),
             Scene::CloseDialog => Some(Scene::CloseDialogFloor),
             Scene::CloseDialogFloor => Some(Scene::CloseDialogNarrow),
             Scene::CloseDialogNarrow => Some(Scene::CloseDialogParked),

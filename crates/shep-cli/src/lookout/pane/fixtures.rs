@@ -186,3 +186,55 @@ pub(super) fn entries_section() -> String {
 pub(super) fn entries_pane() -> ConfigPane {
     ConfigPane::dog("paddock".into(), None, entries_schema(), entries_section())
 }
+
+/// [`entries_schema`] with defaults on the items: a client defaults to
+/// enabled, with a secret `key` and a nested `limits` table of its own
+/// default `rate`; a model defaults its `context`. Neither names a `name`,
+/// `provider` or `burst`, which a new entry therefore lacks.
+pub(super) fn defaulted_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "clients": { "type": "array", "items": { "$ref": "#/$defs/Client" } },
+            "models": {
+                "type": "object",
+                "additionalProperties": { "$ref": "#/$defs/Model" },
+            },
+            "retries": { "type": "integer" },
+        },
+        "$defs": {
+            "Client": {
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean", "default": true },
+                    "key": { "type": "string", "x-shep-secret": true, "default": "change-me" },
+                    "limits": {
+                        "type": "object",
+                        "properties": {
+                            "burst": { "type": "integer" },
+                            "rate": { "type": "integer", "default": 5 },
+                        },
+                    },
+                    "name": { "type": "string" },
+                },
+            },
+            "Model": {
+                "type": "object",
+                "properties": {
+                    "context": { "type": "integer", "default": 4096 },
+                    "provider": { "type": "string" },
+                },
+            },
+        },
+    })
+}
+
+/// [`defaulted_schema`] over [`entries_section`].
+pub(super) fn defaulted_pane() -> ConfigPane {
+    ConfigPane::dog(
+        "paddock".into(),
+        None,
+        defaulted_schema(),
+        entries_section(),
+    )
+}

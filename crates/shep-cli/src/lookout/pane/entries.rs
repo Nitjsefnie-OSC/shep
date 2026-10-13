@@ -32,6 +32,10 @@ pub(super) struct EntryRows {
     roots: BTreeMap<usize, Vec<usize>>,
     /// The arena row of each [`EntryBody::Leaf`], by its key.
     leaves: BTreeMap<String, usize>,
+    /// The [`EntryBody::New`] row under each entries field, by the field's
+    /// index. It is not one of `roots`: it is no entry, and `d` and the
+    /// cursor's landing count entries only.
+    news: BTreeMap<usize, usize>,
     /// What the section holds for each entry, by the entry's path, which is
     /// the identity an edit under an array position is checked against.
     items: BTreeMap<String, Value>,
@@ -67,6 +71,12 @@ pub(in crate::lookout) enum EntryBody {
         /// Where the entry is in its entries field: its index in an array,
         /// its key in a map. [`None`] for a table inside an entry.
         step: Option<PathStep>,
+    },
+    /// The `+ new` row at the foot of an open entries field, which adds an
+    /// entry. Holds no value and does not open.
+    New {
+        /// The entries field it adds to, by its index in the pane's fields.
+        field: usize,
     },
     /// One of the item schema's own properties.
     Leaf {
@@ -141,6 +151,13 @@ impl EntryRows {
             };
             let roots = built.push_entries(&at, values.get(&field.key));
             built.roots.insert(index, roots);
+            built.news.insert(index, built.rows.len());
+            built.rows.push(EntryRow {
+                depth: at.depth,
+                label: NEW_LABEL.to_owned(),
+                body: EntryBody::New { field: index },
+                parent: PaneRow::Field(index),
+            });
         }
         built
     }
@@ -172,7 +189,7 @@ impl EntryRows {
                 at,
                 entry_len: *entry_len,
             }),
-            EntryBody::Node { .. } => None,
+            EntryBody::Node { .. } | EntryBody::New { .. } => None,
         }
     }
 
@@ -217,8 +234,46 @@ impl EntryRows {
     pub(super) fn node_paths(&self) -> impl Iterator<Item = &str> {
         self.rows.iter().filter_map(|row| match &row.body {
             EntryBody::Node { path, .. } => Some(path.as_str()),
-            EntryBody::Leaf { .. } => None,
+            EntryBody::Leaf { .. } | EntryBody::New { .. } => None,
         })
+    }
+
+    /// The `+ new` row under field `field`, or [`None`] when it is not an
+    /// entries field with a shape.
+    pub(super) fn new_row(&self, field: usize) -> Option<usize> {
+        self.news.get(&field).copied()
+    }
+
+    /// The entries field a `+ new` row adds to, or [`None`] when `row` is
+    /// not one.
+    pub(super) fn new_field(&self, row: usize) -> Option<usize> {
+        match self.rows.get(row)?.body {
+            EntryBody::New { field } => Some(field),
+            _ => None,
+        }
+    }
+
+    /// The entry row directly under field `field` that sits at `step`.
+    pub(super) fn entry_at(&self, field: usize, step: &PathStep) -> Option<usize> {
+        self.roots(field)?
+            .iter()
+            .copied()
+            .find(|&root| self.entry_place(root).is_some_and(|(_, held)| held == step))
+    }
+
+    /// What a new entry of the entries field `key` holds: each property of
+    /// the item schema that declares a `default`, a nested table as an
+    /// object of its own. [`None`] for a key that is not an entries field
+    /// with a shape.
+    pub(super) fn defaults(&self, key: &str) -> Option<Value> {
+        let shape = self.shapes.get(key)?;
+        let mut item = Map::new();
+        for field in shape.fields.fields() {
+            if let (Some(value), Some(path)) = (&field.default_value, shape.paths.get(&field.key)) {
+                put_default(&mut item, path, value.clone());
+            }
+        }
+        Some(Value::Object(item))
     }
 
     fn push_entries(&mut self, at: &Where<'_>, value: Option<&Value>) -> Vec<usize> {
@@ -406,6 +461,27 @@ struct Under<'a> {
     parent: PaneRow,
 }
 
+/// The row at the foot of an open entries field that adds an entry.
+pub(super) const NEW_LABEL: &str = "+ new";
+
+/// Sets `value` at `path` in `item`, making the tables on the way.
+fn put_default(item: &mut Map<String, Value>, path: &[String], value: Value) {
+    match path {
+        [] => {}
+        [last] => {
+            item.insert(last.clone(), value);
+        }
+        [first, rest @ ..] => {
+            if let Value::Object(table) = item
+                .entry(first.clone())
+                .or_insert_with(|| Value::Object(Map::new()))
+            {
+                put_default(table, rest, value);
+            }
+        }
+    }
+}
+
 /// `text` with each control character as a space, so a label an operator's
 /// data supplies cannot break the line it is drawn on.
 fn plain(text: &str) -> String {
@@ -470,7 +546,9 @@ mod tests {
         pane.rows()
             .into_iter()
             .filter_map(|row| match row {
-                PaneRow::Entry(index) => pane.entry_row(index).filter(|entry| entry.depth == 1),
+                PaneRow::Entry(index) => pane.entry_row(index).filter(|entry| {
+                    entry.depth == 1 && matches!(entry.body, EntryBody::Node { .. })
+                }),
                 _ => None,
             })
             .map(|entry| entry.label.clone())
@@ -536,7 +614,7 @@ mod tests {
             })
             .filter_map(|row| match &row.body {
                 EntryBody::Leaf { field, .. } => Some(field.secret),
-                EntryBody::Node { .. } => None,
+                EntryBody::Node { .. } | EntryBody::New { .. } => None,
             })
             .collect();
         assert_eq!(masked, [true, true]);
@@ -565,9 +643,9 @@ mod tests {
         pane.move_by(1);
         pane.open_table();
         let rows = pane.rows();
-        assert_eq!(rows.len(), 3, "clients, #0 and peers: {rows:?}");
-        let Some(PaneRow::Entry(peers)) = rows.last().copied() else {
-            panic!("the last row is peers: {rows:?}");
+        assert_eq!(rows.len(), 4, "clients, #0, peers and + new: {rows:?}");
+        let Some(PaneRow::Entry(peers)) = rows.get(2).copied() else {
+            panic!("the third row is peers: {rows:?}");
         };
         let peers = pane.entry_row(peers).expect("the row exists");
         assert!(

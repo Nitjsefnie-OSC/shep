@@ -70,6 +70,12 @@ impl ConfigPane {
             for &root in roots {
                 self.push_entry_row(root, rows);
             }
+            // Only a dog's own pane adds: a dog's table on a sheep is read-only.
+            if matches!(self.target, PaneTarget::Dog { .. })
+                && let Some(new) = self.entries.new_row(field)
+            {
+                rows.push(PaneRow::Entry(new));
+            }
         }
     }
 
@@ -156,7 +162,7 @@ impl ConfigPane {
             }
             PaneRow::Entry(index) => match &self.entries.row(index)?.body {
                 EntryBody::Node { path, .. } => Some(path),
-                EntryBody::Leaf { .. } => None,
+                EntryBody::Leaf { .. } | EntryBody::New { .. } => None,
             },
             PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => None,
         }

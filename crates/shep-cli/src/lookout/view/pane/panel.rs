@@ -213,6 +213,9 @@ fn panel_for_table(
     chip_line(path, TABLE_LABEL, palette, width)
 }
 
+/// The type label beside `+ new`'s chip.
+const NEW_PANEL_LABEL: &str = "adds an entry";
+
 /// The panel for a row under an array or map of tables: the chip with the
 /// row's label and its type, and nothing under it. An entry holds no value
 /// of its own. A field in one gets the panel any field does.
@@ -231,6 +234,7 @@ fn panel_for_entry(
     let label = match &row.body {
         EntryBody::Node { entry: true, .. } => ENTRY_LABEL,
         EntryBody::Node { .. } => TABLE_LABEL,
+        EntryBody::New { .. } => NEW_PANEL_LABEL,
         EntryBody::Leaf { .. } => return Vec::new(),
     };
     chip_line(&row.label, label, palette, width)

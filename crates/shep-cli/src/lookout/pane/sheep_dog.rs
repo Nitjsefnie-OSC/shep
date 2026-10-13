@@ -80,7 +80,7 @@ impl ConfigPane {
             dogs: None,
             section: None,
             dog_table: Some(Box::new(SheepDogTable { paths, table })),
-            removals: Arc::default(),
+            reshapes: Arc::default(),
             section_paths: Arc::default(),
             open: outline.top_level_paths(),
             outline: Arc::new(outline),
