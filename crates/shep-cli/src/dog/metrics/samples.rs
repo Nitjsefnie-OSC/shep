@@ -914,4 +914,44 @@ mod tests {
         assert_eq!(family.help.as_deref(), Some("Requests served."));
         assert_eq!(family.points.len(), 2);
     }
+
+    /// The counter the dog keeps of its own refusals is a family of its own,
+    /// carried in the same list as the retained samples. A test that reads
+    /// `snapshot` as "the samples" has to say so, which is what CI caught on
+    /// the feed's name assertion.
+    #[test]
+    fn the_refusal_counter_rides_in_the_snapshot_beside_the_samples() {
+        let store = SampleStore::new();
+        store.upsert(1, metric("bad name", 7.0));
+        store.upsert(1, metric("rps", 7.0));
+
+        let families = store.snapshot(&[sheep(1, "web")]);
+        let names: Vec<&str> = families.iter().map(|family| family.name.as_str()).collect();
+        assert_eq!(names, vec!["rps", REFUSED_TOTAL]);
+
+        let counter = families.iter().find(|f| f.name == REFUSED_TOTAL).unwrap();
+        assert_eq!(counter.kind, MetricType::Counter);
+        assert_eq!(counter.points.len(), 1);
+        assert_eq!(
+            counter.points[0].labels,
+            vec![("reason".into(), "invalid_name".into())]
+        );
+        assert_eq!(counter.points[0].value, 1.0, "one refusal, counted once");
+    }
+
+    /// The counter belongs to the dog rather than to a sender, so it survives
+    /// every clear and outlives an empty flock. "The snapshot is empty" is
+    /// therefore not the test for "no samples are held".
+    #[test]
+    fn the_refusal_counter_outlives_every_sample_and_every_clear() {
+        let store = SampleStore::new();
+        store.upsert(1, metric("bad name", 7.0));
+        store.upsert(1, metric("rps", 7.0));
+        store.clear(1);
+
+        let families = store.snapshot(&[sheep(1, "web")]);
+        assert_eq!(families.len(), 1);
+        assert_eq!(families[0].name, REFUSED_TOTAL);
+        assert!(store.snapshot(&[]).iter().any(|f| f.name == REFUSED_TOTAL));
+    }
 }

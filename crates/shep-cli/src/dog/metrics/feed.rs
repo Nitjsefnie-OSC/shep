@@ -139,6 +139,7 @@ mod tests {
 
     use super::super::Reading;
     use super::super::exposition;
+    use super::super::grammar::REFUSED_TOTAL;
     use super::*;
 
     /// How long a test waits for the feed to react to an event it pushed.
@@ -175,11 +176,27 @@ mod tests {
         }
     }
 
-    /// Waits until `store`'s snapshot over `flock` holds at least `want`
-    /// metric names, and returns them, or `None` when that never happened
-    /// inside `REACT_BUDGET`. Every caller asserts on a name that could not
-    /// have been there before the push it just made, so the wait is for a
-    /// transition and not for a state.
+    /// The metric names `store` holds for `flock`, minus the dog's own
+    /// [`REFUSED_TOTAL`].
+    ///
+    /// [`SampleStore::snapshot`] carries that counter beside the samples it
+    /// retained, and every wait below is about the samples. Reading the two as
+    /// one list is what made a test that had caused a refusal assert against an
+    /// extra name.
+    fn sample_names(store: &SampleStore, flock: &[ProcessInfo]) -> Vec<String> {
+        store
+            .snapshot(flock)
+            .iter()
+            .map(|family| family.name.clone())
+            .filter(|name| name != REFUSED_TOTAL)
+            .collect()
+    }
+
+    /// Waits until `store` holds at least `want` samples for `flock`, and
+    /// returns their metric names, or `None` when that never happened inside
+    /// `REACT_BUDGET`. Every caller asserts on a name that could not have been
+    /// there before the push it just made, so the wait is for a transition and
+    /// not for a state.
     async fn snapshot_reaching(
         store: &SampleStore,
         flock: &[ProcessInfo],
@@ -187,11 +204,7 @@ mod tests {
     ) -> Option<Vec<String>> {
         let started = tokio::time::Instant::now();
         loop {
-            let names: Vec<String> = store
-                .snapshot(flock)
-                .iter()
-                .map(|family| family.name.clone())
-                .collect();
+            let names = sample_names(store, flock);
             if names.len() >= want {
                 return Some(names);
             }
@@ -202,12 +215,14 @@ mod tests {
         }
     }
 
-    /// Waits until `store`'s snapshot over `flock` holds nothing, which every
-    /// caller calls only after asserting it held something.
+    /// Waits until `store` holds no samples for `flock`, which every caller
+    /// calls only after asserting it held some. The refusal counter is excluded
+    /// for the reason [`sample_names`] gives: it belongs to the dog rather than
+    /// to a sender, and no lifecycle event clears it.
     async fn snapshot_clears(store: &SampleStore, flock: &[ProcessInfo]) -> bool {
         let started = tokio::time::Instant::now();
         loop {
-            if store.snapshot(flock).is_empty() {
+            if sample_names(store, flock).is_empty() {
                 return true;
             }
             if started.elapsed() > REACT_BUDGET {
@@ -278,6 +293,38 @@ mod tests {
         assert_eq!(
             format!("{store:?}"),
             "SampleStore { senders: 0, series: 0, refused: 0 }"
+        );
+    }
+
+    /// The pure seam of [`snapshot_reaching`] and [`snapshot_clears`], so the
+    /// shape CI caught here is caught without a socket too: a refusal puts the
+    /// dog's own counter into `snapshot`, and a store that refused something
+    /// can still reach "no samples held".
+    #[test]
+    fn a_refusal_leaves_one_sample_name_and_still_empties_the_store() {
+        let store = SampleStore::new();
+        let flock = [sheep(1, "web")];
+
+        apply(&store, metric(1, "bad name", 7.0));
+        apply(&store, metric(1, "rps", 7.0));
+        assert_eq!(sample_names(&store, &flock), vec!["rps".to_string()]);
+        assert_eq!(
+            store
+                .snapshot(&flock)
+                .iter()
+                .map(|family| family.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["rps", REFUSED_TOTAL],
+            "the counter is the dog's own, not a sample"
+        );
+
+        apply(
+            &store,
+            process_event(ProcessEventKind::Stop, sheep(1, "web")),
+        );
+        assert!(
+            sample_names(&store, &flock).is_empty(),
+            "a store that refused something never reads as empty"
         );
     }
 
