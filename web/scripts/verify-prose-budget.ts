@@ -56,7 +56,11 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 4340 on 2026-09-30 for "Asking for the shepherd channel":
   // `shep-channel: true` is a new line a dog author has to be told about,
   // and the page had 15 words of headroom.
-  "writing-a-dog": 4450, // 4445
+  //
+  // Raised from 4450 on 2026-10-13 for `DogConfigResolved`: a dog author
+  // has to be told which request resolves a `{{secret:...}}` and which
+  // one still gives the text as written.
+  "writing-a-dog": 4470, // 4467
   overrides: 3380, // 3250
   // Raised from 3240 on 2026-09-27 for "A sheep's dogs row": the sub-screen
   // and the per-sheep table pane are new operator-facing surface, not

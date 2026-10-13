@@ -142,7 +142,10 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       <code>$SHEP_HOME/run/shep.sock</code>, send <code>Hello</code>, wait
       for <code>HelloAck</code>, then send{" "}
       <code>Request::DogConfig {"{"} name {"}"}</code> to fetch your own
-      section as opaque text. Shep sets two variables of its own on a dog:{" "}
+      section as opaque text. Send{" "}
+      <code>Request::DogConfigResolved {"{"} name {"}"}</code> instead to
+      have each <code>{'{{secret:...}}'}</code> replaced by its value;{" "}
+      <code>DogConfig</code> still gives the text as written. Shep sets two variables of its own on a dog:{" "}
       <code>$SHEP_HOME</code>, which is how it finds that socket in the first
       place, and <code>$SHEP_DOG_NAME</code>, which is the name to put in
       that request. No <code>[&lt;name&gt;]</code> value rides along
