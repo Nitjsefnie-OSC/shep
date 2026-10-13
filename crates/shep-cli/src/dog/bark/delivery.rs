@@ -329,9 +329,23 @@ mod tests {
             });
             // The hold must be real before the delivery starts, or the
             // append wins the flock uncontended and the test measures a
-            // delivery nobody blocked.
-            while locked_rx.try_recv().is_err() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
+            // delivery nobody blocked. The sender drops only when the
+            // holder's closure ends, so a disconnect before the message
+            // means the holder died before reporting the hold: take its
+            // panic rather than spin on a hold that will never come.
+            loop {
+                match locked_rx.try_recv() {
+                    Ok(()) => break,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        holder
+                            .join()
+                            .expect("the lock holder died before it reported the hold");
+                        unreachable!("a holder that ends cleanly sends before it disconnects");
+                    }
+                }
             }
 
             let delivery = Delivery {
