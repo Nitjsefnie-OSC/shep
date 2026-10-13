@@ -2,6 +2,7 @@
 //! transitions, not just that the registry can.
 
 use super::*;
+use crate::sweep::{LambSignal, LambSnapshot, LambSweep, SignalError};
 
 // `ProcessSelector::Name` matches a stopped sheep too, so a cron worker that
 // keeps its schedule brings back a sheep the user stopped.
@@ -163,10 +164,14 @@ fn backoff_app() -> shep_core::config::ResolvedApp {
 
 /// Each `list()` is a full round trip through the actor's mailbox, so this
 /// makes progress rather than merely observing it.
+///
+/// A round waits on the paused clock, not on `yield_now`: a stop's lamb walk
+/// runs on the blocking pool, and the runtime holds the clock still until it
+/// returns, where a yield would spend its rounds before the pool answers.
 async fn settle_into(supervisor: &SupervisorHandle, id: u32, status: ProcStatus) {
     let mut last = Vec::new();
     for _ in 0..200 {
-        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
         last = supervisor.list().await;
         if last
             .iter()
@@ -470,4 +475,56 @@ async fn the_actor_arms_the_liveness_loop_against_the_spawned_pid() {
             epoch: 1
         }
     );
+}
+
+/// A lamb sweep whose walk takes real time, as a stop's does on a busy host.
+struct SlowWalk(Arc<dyn LambSweep>);
+
+impl LambSweep for SlowWalk {
+    fn snapshot(&self, root_pid: u32) -> LambSnapshot {
+        std::thread::sleep(Duration::from_millis(100));
+        self.0.snapshot(root_pid)
+    }
+
+    fn last_snapshot(&self, root_pid: u32) -> Option<LambSnapshot> {
+        self.0.last_snapshot(root_pid)
+    }
+
+    fn survivors(&self, snapshot: &LambSnapshot) -> Vec<u32> {
+        self.0.survivors(snapshot)
+    }
+
+    fn descendants(&self, roots: &[u32]) -> LambSnapshot {
+        self.0.descendants(roots)
+    }
+
+    fn signal(&self, pid: u32, signal: LambSignal) -> Result<(), SignalError> {
+        self.0.signal(pid, signal)
+    }
+}
+
+// The cron restart stops the running sheep first, and that stop's lamb walk
+// runs on the blocking pool. `settle_into` must wait out a walk that takes
+// real time rather than spend its rounds before the pool answers.
+#[tokio::test(start_paused = true)]
+async fn a_respawn_waits_out_a_slow_lamb_walk_before_it_errors() {
+    let clock = Arc::new(TestClock::starting_at(dt("2026-01-01T00:00:00Z")));
+    let h = harness_with_extras(vec![ProcScript::never_exits()], |reports| Extras {
+        clock: Arc::clone(&clock) as Arc<dyn Clock>,
+        enforcer: Arc::new(RecordingEnforcer::default()),
+        lamb_sweep: Arc::new(SlowWalk(idle_sweep())),
+        max_cron_sleep: DEFAULT_MAX_CRON_SLEEP,
+        reports,
+        stats: idle_stats(),
+    });
+    h.ctx
+        .supervisor
+        .start(vec![app_with("web", |app| {
+            app.cron_restart = Some("0 * * * *".to_string());
+        })])
+        .await
+        .unwrap();
+
+    cross_one_hour().await;
+    settle_into(&h.ctx.supervisor, 0, ProcStatus::Errored).await;
 }
