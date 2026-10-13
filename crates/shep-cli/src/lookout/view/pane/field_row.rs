@@ -48,6 +48,21 @@ pub(super) fn field_line(
     let Some(field) = pane.fields().fields().get(index) else {
         return Line::default();
     };
+    let key = key_cell(pane, index, field);
+    leaf_line(pane, field, &key, selected, width, palette, show_lands)
+}
+
+/// A row that holds a value: a config field, or a field inside an entry.
+/// `key` is what the KEY cell draws after the flag.
+pub(super) fn leaf_line(
+    pane: &ConfigPane,
+    field: &Field,
+    key: &str,
+    selected: bool,
+    width: u16,
+    palette: Palette,
+    show_lands: bool,
+) -> Line<'static> {
     let (key_w, value_w, cost_w) = widths(body_width(width), show_lands);
     let flag = match (pane.is_pending(&field.key), pane.is_overridden(&field.key)) {
         (true, _) => '!',
@@ -88,10 +103,7 @@ pub(super) fn field_line(
         None => ' ',
     };
     let mut rest = String::from(lock);
-    rest.push_str(&fit(
-        &format!("{flag}{}", key_cell(pane, index, field)),
-        key_w,
-    ));
+    rest.push_str(&fit(&format!("{flag}{key}"), key_w));
     let cost_cell = (cost_w > 0).then(|| fit(pane.cost(&field.key).map_or("", cost_label), cost_w));
 
     // The selected row's own paint: a paper-2 ground the full width of the
@@ -132,7 +144,7 @@ pub(super) fn field_line(
         // Muting reinforces the glyph but carries no fact alone: a `plain`
         // palette renders muted as nothing, so style could not tell a
         // locked row from an editable one on its own.
-        let rest_style = if field.editable {
+        let rest_style = if field.editable && pane.lock(&field.key).is_none() {
             Style::default()
         } else {
             palette.muted()
@@ -280,10 +292,7 @@ pub(super) fn top_lines(pane: &ConfigPane, palette: Palette, width: u16) -> Vec<
     if panel_width(width).is_some() {
         return Vec::new();
     }
-    let Some(PaneRow::Field(index)) = pane.cursor() else {
-        return Vec::new();
-    };
-    let Some(field) = pane.fields().fields().get(index) else {
+    let Some(field) = pane.cursor_field() else {
         return Vec::new();
     };
     // Two columns for the indent this row draws with, the same budget

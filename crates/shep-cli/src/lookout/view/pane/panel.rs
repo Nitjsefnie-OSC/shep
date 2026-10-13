@@ -214,7 +214,7 @@ fn panel_for_table(
 
 /// The panel for a row under an array or map of tables: the chip with the
 /// row's label and its type, and nothing under it. An entry holds no value
-/// of its own, and the fields in one are read-only.
+/// of its own. A field in one gets the panel any field does.
 fn panel_for_entry(
     pane: &ConfigPane,
     index: usize,
@@ -224,10 +224,13 @@ fn panel_for_entry(
     let Some(row) = pane.entry_row(index) else {
         return Vec::new();
     };
+    if let EntryBody::Leaf { field, .. } = &row.body {
+        return panel_for_field(field, pane, palette, width);
+    }
     let label = match &row.body {
         EntryBody::Node { entry: true, .. } => ENTRY_LABEL,
         EntryBody::Node { .. } => TABLE_LABEL,
-        EntryBody::Leaf { field, .. } => type_label(field),
+        EntryBody::Leaf { .. } => return Vec::new(),
     };
     chip_line(&row.label, label, palette, width)
 }

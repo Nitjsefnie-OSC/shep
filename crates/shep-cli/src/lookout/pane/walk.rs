@@ -8,6 +8,8 @@
 use shep_core::config::GROUP_ORDER;
 
 use super::super::viewport::Viewport;
+#[cfg(test)]
+use super::entries::EntryBody;
 use super::{ConfigPane, PaneRow, PaneTarget};
 
 impl ConfigPane {
@@ -157,10 +159,19 @@ impl ConfigPane {
     /// no-op for a name no field carries.
     #[cfg(test)]
     pub(crate) fn move_to_key(&mut self, key: &str) {
-        let Some(field) = self.fields.by_key(key) else {
-            return;
+        // A field inside an entry takes the group of the entries field above
+        // it, whose key it starts with.
+        let group = match self.fields.by_key(key) {
+            Some(field) => field.group.clone(),
+            None if self.entries.leaf(key).is_some() => self
+                .fields
+                .fields()
+                .iter()
+                .filter(|field| key.starts_with(&format!("{}[", field.key)))
+                .find_map(|field| field.group.clone()),
+            None => return,
         };
-        if let Some(group) = field.group.clone()
+        if let Some(group) = group
             && let Some(index) = GROUP_ORDER.iter().position(|known| *known == group)
         {
             self.group = index;
@@ -168,7 +179,10 @@ impl ConfigPane {
         self.open_down_to(key);
         if let Some(row_index) = self.rows().iter().position(|row| match row {
             PaneRow::Field(field_index) => self.fields.fields()[*field_index].key == key,
-            PaneRow::Table(_) | PaneRow::Entry(_) | PaneRow::Env(_) | PaneRow::AddEnv => false,
+            PaneRow::Entry(entry) => self.entries.row(*entry).is_some_and(
+                |row| matches!(&row.body, EntryBody::Leaf { field, .. } if field.key == key),
+            ),
+            PaneRow::Table(_) | PaneRow::Env(_) | PaneRow::AddEnv => false,
         }) {
             let len = self.rows().len();
             self.view.move_to(row_index, len);
