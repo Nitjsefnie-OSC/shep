@@ -27,6 +27,7 @@ Free on crates.io (verified 2026-08-07): `shep`, `shepd`, plus reserves `bleat`,
 | freeze the running list | save | **save** | `shep save` writes the muster roll |
 | register a third-party plugin | install | **adopt** | `shep adopt <name> <path>`; `enable --exec` is a hidden alias |
 | drop a third-party plugin | uninstall | **rehome** | `shep rehome <name>` — unlike `disable`, it forgets the registration |
+| refuse a sheep or turn a dog on or off | disable/enable | **disable** / **enable**, general verbs for a sheep or a dog | `shep disable api` stops a sheep and refuses to start it until `shep enable api`; `shep enable metrics` turns a dog on. Straight verbs, not themed |
 | resurrect saved state | resurrect | **muster** | `shep muster` assembles the flock from the roll |
 | TUI dashboard | monit/dash | **lookout** | `shep lookout`; `shep dash` alias |
 | host machine | host | **the heft** (sheep bound to their hill) | subtle: docs + host-metrics naming |

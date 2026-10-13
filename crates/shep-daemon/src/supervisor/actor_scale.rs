@@ -104,6 +104,10 @@ impl<R: ProcessRunner> Actor<R> {
         let survivors: Vec<u32> = match count.cmp(&current) {
             Ordering::Equal => slots.iter().map(|(_, id)| *id).collect(),
             Ordering::Greater => {
+                if let Err(err) = self.refuse_disabled([name]) {
+                    let _ = reply.send(Err(err));
+                    return;
+                }
                 // Inside this arm, since it is the only one that spawns:
                 // resolving an identity for `Equal` or `Less` meant a lookup
                 // that could refuse a call using no credentials at all.

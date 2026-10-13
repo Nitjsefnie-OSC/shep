@@ -27,6 +27,9 @@ pub use secrets::*;
 pub(crate) use toolkit::*;
 
 #[cfg(test)]
+mod disabled_tests;
+
+#[cfg(test)]
 pub(crate) mod tests {
     use std::collections::BTreeSet;
 

@@ -159,6 +159,9 @@ pub(crate) fn plain_row(p: &ProcessInfo, slotted: bool) -> Vec<String> {
 /// Keyed on `dog` as well as `handshook`, so the silence rule holds here
 /// rather than resting on the daemon always sending a sheep `None`.
 pub(crate) fn reported(p: &ProcessInfo) -> Reported {
+    if p.disabled == Some(true) && p.status == ProcStatus::Stopped {
+        return Reported::Disabled;
+    }
     if p.dog.is_none() {
         return Reported::Live(p.status);
     }
@@ -177,13 +180,13 @@ pub(crate) fn silence_note(p: &ProcessInfo) -> Option<String> {
 /// The group's status: the shared word when every instance agrees, else a
 /// count per state. Plain text either way; see [`group_row`].
 pub(crate) fn group_status(group: &[ProcessInfo]) -> String {
-    let first = group[0].status;
-    if group.iter().all(|p| p.status == first) {
-        return first.to_string();
+    let first = reported(&group[0]);
+    if group.iter().all(|p| reported(p) == first) {
+        return first.word();
     }
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for p in group {
-        *counts.entry(p.status.to_string()).or_default() += 1;
+        *counts.entry(reported(p).word()).or_default() += 1;
     }
     counts
         .into_iter()
@@ -203,9 +206,9 @@ pub(crate) fn group_paint(header: &str, group: &[ProcessInfo], totals: &GroupTot
         // No `Reported::of`: a dog is never stocked to several instances,
         // so no group this branch can see has a handshake to report.
         "STATUS" => {
-            let first = group[0].status;
-            if group.iter().all(|p| p.status == first) {
-                Paint::Status(Reported::Live(first))
+            let first = reported(&group[0]);
+            if group.iter().all(|p| reported(p) == first) {
+                Paint::Status(first)
             } else {
                 Paint::Default
             }

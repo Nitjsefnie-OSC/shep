@@ -7,10 +7,10 @@
 //! are alias and visibility pins rather than grammar ones.
 
 use super::{
-    AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, DaemonArgs, DevArgs, DogArgs, DogsArgs,
-    EnableArgs, FlockArgs, FlushArgs, FoldArgs, ImportArgs, InitArgs, KvGetArgs, KvSetArgs,
-    KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs, SelectorArgs, ServeArgs,
-    SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs, TriggerArgs, WhisperArgs,
+    AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, DaemonArgs, DevArgs, DisableArgs, DogArgs,
+    DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, ImportArgs, InitArgs, KvGetArgs,
+    KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs, SelectorArgs,
+    ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs, TriggerArgs, WhisperArgs,
 };
 
 /// Every verb the binary understands.
@@ -173,20 +173,28 @@ pub enum Commands {
     /// index of dogs you could adopt instead of the ones this shepherd is
     /// running.
     Dogs(DogsArgs),
-    /// Turn on a registered dog: writes `[daemon] enabled_dogs` in
-    /// `shep.toml`, and starts it now if a shepherd is running.
+    /// Turn a sheep or a dog back on. A sheep named here has its disabled
+    /// mark cleared and is started; a dog is written into `[daemon]
+    /// enabled_dogs` in `shep.toml` and started now if a shepherd is running.
     ///
-    /// Writes the config either way and exits 0 even with no shepherd
-    /// running — the dog comes up with the next one. `shep muster` is the
-    /// only verb that autostarts a shepherd; this is not it.
+    /// A sheep needs a running shepherd, and takes its name only: an id or
+    /// `name:slot` is refused, since the mark belongs to the whole app. A
+    /// sheep that is not disabled is left alone and the verb says so. A dog
+    /// writes the config either way and exits 0 with no shepherd running --
+    /// it comes up with the next one. `shep muster` is the only verb that
+    /// autostarts a shepherd; this is not it.
     Enable(EnableArgs),
-    /// Turn off a registered dog: removes it from `[daemon] enabled_dogs`,
-    /// and stops it now if a shepherd is running.
+    /// Stop a sheep and refuse to start it again until `shep enable`, or turn
+    /// a dog off. A dog is removed from `[daemon] enabled_dogs` and stopped
+    /// now if a shepherd is running.
     ///
-    /// Leaves `[<name>]` in `dogs.toml` in place: the dog's own
-    /// configuration survives a disable/enable cycle. `shep rehome` leaves
-    /// it too, and forgets the adoption as well.
-    Disable(DogArgs),
+    /// A sheep needs a running shepherd, and takes its name only: an id or
+    /// `name:slot` is refused, since the mark belongs to the whole app.
+    /// While it is set, `start`, `restart` and `stock` refuse the sheep and
+    /// exit 2 naming `shep enable`. A dog's own configuration in `dogs.toml`
+    /// survives a disable/enable cycle; `shep rehome` forgets the adoption
+    /// as well.
+    Disable(DisableArgs),
     /// Vet a binary shep has never seen and register it as a dog: writes
     /// `[daemon] adopted_dogs` and `[daemon] enabled_dogs` in `shep.toml`,
     /// and starts it now if a shepherd is running.
