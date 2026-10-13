@@ -14,7 +14,7 @@ See what's up    flock describe bleats lookout fold barks
 Survive reboots  save muster startup unstartup
 Talk to a sheep  trigger signal whisper
 The shepherd     ping kill reopen flush set get unset secret
-Dogs and agents  dogs adopt rehome whistle
+Dogs and agents  dogs adopt whistle
 Foreground runs  runtime dev
 Coming from pm2  import
 Help             welcome init help completions style
@@ -695,7 +695,14 @@ Options:
   -V, --version
           Print version
 @@VERB:delete@@
-Delete one or more sheep from the flock
+Delete one or more sheep, or one or more dogs, from the flock, for good.
+
+A dog's name takes the dog's path: it is stopped, deregistered, and struck from `[daemon]
+enabled_dogs`, `[daemon] adopted_dogs` and `[daemon] channel_dogs` in `shep.toml`, so the next boot
+does not bring it back. Its `[<name>]` table in `dogs.toml` stays, as it does through `shep
+disable`, and the verb says so. A built-in dog is refused, by the shepherd: `shep disable metrics`
+is the verb that exists for one. A sweep (`all`, a fold, a `/regex/`) is the flock, and a dog is not
+in it.
 
 Usage: shep delete [OPTIONS] <SELECTORS>...
 
@@ -1015,7 +1022,7 @@ A sheep needs a running shepherd, and takes a name, a `fold:`, a `/regex/` or `a
 reaches a dog. An id or `name:slot` is refused, since the mark belongs to the whole app. While it is
 set, `start`, `restart` and `stock` refuse the sheep by name and exit 2 naming `shep enable`, and
 `all`, a fold or a regex pass it by. Naming it still reaches `stop`, `delete`, `describe` and
-`signal`. A dog's own configuration in `dogs.toml` survives a disable/enable cycle; `shep rehome`
+`signal`. A dog's own configuration in `dogs.toml` survives a disable/enable cycle; `shep delete`
 forgets the adoption as well.
 
 Usage: shep disable [OPTIONS] <NAME>
@@ -1104,63 +1111,6 @@ Options:
       --name <NAME>
           The dog's name, the `[<name>]` config key in `dogs.toml`. Defaults to the binary's file
           stem with a leading `shep-` stripped
-
-  -q, --quiet
-          Suppress non-essential output
-          
-          Currently narrows `bleats`' own notices (a dropped-events count, a daemon-shutdown notice,
-          ...): diagnostics distinct from a sheep's own line or a real error, both of which still
-          print regardless.
-
-      --style <STYLE>
-          How much this invocation dresses up its output: `full`, `plain`, or `bare`
-          
-          Wins over `$SHEP_STYLE` and `shep.toml`'s `[style] level`. Omit to let those decide; `shep
-          style` reports which one answered.
-
-          Possible values:
-          - full:  Sheep, boxes and colour
-          - plain: Boxes and colour, no sheep
-          - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
-
-      --home <HOME>
-          Talk to a different shepherd
-          
-          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
-          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
-          flock from every directory.
-          
-          [env: SHEP_HOME=]
-
-  -h, --help
-          Print help (see a summary with '-h')
-
-  -V, --version
-          Print version
-@@VERB:rehome@@
-Forget where an adopted dog's binary lived: stops it if a shepherd is running, and removes it from
-`[daemon] enabled_dogs`, `[daemon] adopted_dogs` and `[daemon] channel_dogs`.
-
-Its `[<name>]` table in `dogs.toml` stays, as it does through a `shep disable`: those settings are
-the operator's, so adopting the same dog again finds them waiting. Delete that table by hand to be
-rid of them. Only the adoption differs from `disable`, so recovery is a fresh `shep adopt <path>`
-rather than an `enable`.
-
-Usage: shep rehome [OPTIONS] <NAME>
-
-Arguments:
-  <NAME>
-          The dog's name, the `[<name>]` config key in `dogs.toml`
-
-Options:
-      --format <FORMAT>
-          Output format
-
-          Possible values:
-          - table: Human-readable columns (the default)
-          - json:  A versioned JSON envelope, one object per invocation
-          
-          [default: table]
 
   -q, --quiet
           Suppress non-essential output

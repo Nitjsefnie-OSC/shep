@@ -296,6 +296,13 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
         the ids it removed are named on stderr because their own rows are
         gone by the time anything could print them.
       </p>
+      <p>
+        A dog's name takes this verb too: it is struck from
+        <code>shep.toml</code>'s dog lists, so the next shepherd does not
+        bring it back, and its <code>dogs.toml</code> section stays. A
+        built-in dog is refused. <a href="/docs/dogs/">The dogs page</a>
+        has the rest.
+      </p>
     </VerbSignature>
     <CodeBlock>{deleteRemovesDemo}</CodeBlock>
     <p>
