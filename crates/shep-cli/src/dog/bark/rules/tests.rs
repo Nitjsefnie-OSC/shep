@@ -719,12 +719,12 @@ fn a_misspelled_log_match_field_is_refused_with_the_bad_key_named() {
     let err = toml::from_str::<Rule>(
         r#"
 on = "log_match"
-patern = "FATAL"
+pttaern = "FATAL"
 sinks = ["oncall"]
 "#,
     )
     .unwrap_err();
-    assert!(err.to_string().contains("patern"), "{err}");
+    assert!(err.to_string().contains("pttaern"), "{err}");
 }
 
 #[test]
@@ -756,8 +756,13 @@ fn a_log_match_rule_with_a_bad_pattern_is_refused_naming_the_rule() {
 
 #[test]
 fn an_oversized_pattern_is_refused() {
+    // The pattern `selector_spec_oversized_regex_is_rejected` uses: it
+    // overshoots 1 MiB by orders of magnitude, so a regex release that counts
+    // compiled size loosely (1.8 did) still refuses it, and it needs no
+    // Unicode feature the way a `\p{L}` repetition does.
+    let huge = format!("(a{}){{10000}}", "|b".repeat(100_000));
     let err = Rules::new(
-        vec![log_match_rule(r"\p{L}{1000}", LogStream::Both)],
+        vec![log_match_rule(&huge, LogStream::Both)],
         &one_sink("ops"),
     )
     .unwrap_err();
