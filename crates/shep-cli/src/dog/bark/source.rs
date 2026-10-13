@@ -34,6 +34,32 @@ pub trait EventSource: Send {
     /// exit differently, because a shepherd that never answered and one
     /// that answered and refused send an operator to different places.
     fn resubscribe(&mut self) -> impl Future<Output = Result<(), Resubscribe>> + Send;
+
+    /// The topics a handover would re-subscribe to: the last list
+    /// [`Self::set_topics`] accepted, or the one the source was built with.
+    #[cfg_attr(not(test), expect(dead_code, reason = "#341 is the first caller"))]
+    fn topics(&self) -> &[String];
+
+    /// Replaces the topics this source listens to, on the live connection.
+    ///
+    /// The shepherd replaces its filter with each `Subscribe`, so the old
+    /// stream is dropped for a new one. Frames still unread on the old one
+    /// are lost, so the caller reconciles against the flock afterwards.
+    /// Does nothing when `topics` equals the current list and the shepherd
+    /// is known to hold it. A handover after this resubscribes to the new
+    /// list, and one landing during the call is waited out like
+    /// [`Self::resubscribe`] waits it out.
+    ///
+    /// # Errors
+    /// [`Resubscribe`], bounded by the same budget as [`Self::resubscribe`].
+    /// On [`Resubscribe::Request`] the list and stream are unchanged. On
+    /// [`Resubscribe::Lost`] the request may have reached the shepherd, so
+    /// the list is the new one and the next call sends it again.
+    #[cfg_attr(not(test), expect(dead_code, reason = "#341 is the first caller"))]
+    fn set_topics(
+        &mut self,
+        topics: Vec<String>,
+    ) -> impl Future<Output = Result<(), Resubscribe>> + Send;
 }
 
 /// Why bark could not arm a fresh subscription.
@@ -149,6 +175,7 @@ pub(super) async fn subscribe(
     let events = ClientEvents {
         shepherd: Arc::clone(&shepherd),
         topics,
+        unsynced: false,
         stream,
     };
     Ok((events, shepherd))
@@ -167,6 +194,9 @@ pub(super) struct ClientEvents {
     /// would reconnect independently.
     shepherd: Arc<ClientShepherd>,
     topics: Vec<String>,
+    /// Set when a `Subscribe` for `topics` may or may not have reached the
+    /// shepherd, so equal lists no longer prove it holds them.
+    unsynced: bool,
     stream: EventStream,
 }
 
@@ -180,7 +210,37 @@ impl EventSource for ClientEvents {
             .map(|item| item.map_err(|lagged| lagged.count))
     }
 
+    fn topics(&self) -> &[String] {
+        &self.topics
+    }
+
+    async fn set_topics(&mut self, topics: Vec<String>) -> Result<(), Resubscribe> {
+        if topics == self.topics && !self.unsynced {
+            return Ok(());
+        }
+        let previous = core::mem::replace(&mut self.topics, topics);
+        let armed = self.arm().await;
+        match armed {
+            Ok(()) => {}
+            // The shepherd answered and said no, so it still filters on
+            // `previous`.
+            Err(Resubscribe::Request(_)) => self.topics = previous,
+            // The request may have landed before the budget ran out.
+            Err(Resubscribe::Lost(_)) => self.unsynced = true,
+        }
+        armed
+    }
+
     async fn resubscribe(&mut self) -> Result<(), Resubscribe> {
+        self.arm().await
+    }
+}
+
+impl ClientEvents {
+    /// Subscribes to `self.topics` on whatever shepherd is answering,
+    /// waiting out a handover for at most `SHEPHERD_RETURN_BUDGET`. A
+    /// success replaces the stream.
+    async fn arm(&mut self) -> Result<(), Resubscribe> {
         let started = tokio::time::Instant::now();
         // Every wait below is taken from this rather than from a value
         // computed earlier in the pass: `connected_within` and `subscribe`
@@ -222,6 +282,7 @@ impl EventSource for ClientEvents {
             match asked.await {
                 Ok(Ok(stream)) => {
                     self.stream = stream;
+                    self.unsynced = false;
                     return Ok(());
                 }
                 // The generation it was issued on had already gone. The
@@ -425,6 +486,156 @@ mod tests {
             "spent {waited:?} of the {SHEPHERD_RETURN_BUDGET:?} budget, so it retried a \
              refusal instead of keeping it"
         );
+    }
+
+    fn owned(topics: &[&str]) -> Vec<String> {
+        topics.iter().map(|topic| (*topic).to_owned()).collect()
+    }
+
+    /// Every `Subscribe` the fake shepherd read, with the generation that
+    /// read it.
+    fn subscribes(shepherds: &shep_client::testing::Handovers) -> Vec<(u32, Vec<String>)> {
+        shepherds
+            .envelopes()
+            .into_iter()
+            .filter_map(|(generation, envelope)| match envelope.body {
+                Request::Subscribe { topics } => Some((generation, topics)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A live adapter over a fake shepherd that has read its opening
+    /// `Subscribe` for `topics`.
+    async fn subscribed_to(
+        topics: &[&str],
+        handshakes: usize,
+    ) -> (
+        tempfile::TempDir,
+        shep_client::testing::Handovers,
+        ClientEvents,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+        let shepherds = fake_daemon_across_handovers(
+            &socket,
+            (0..handshakes)
+                .map(|_| Handshake::Accept(sample_ack()))
+                .collect(),
+        );
+        let client = ReconnectingClient::connect_as_dog(&socket, "bark")
+            .await
+            .unwrap();
+        let (events, _shepherd) = subscribe(client, "bark".to_owned(), owned(topics))
+            .await
+            .unwrap();
+        (dir, shepherds, events)
+    }
+
+    /// fails if `set_topics` does not tell the shepherd the new list, or
+    /// leaves the dog reading the stream the old filter fed.
+    #[tokio::test]
+    async fn set_topics_sends_a_second_subscribe_with_the_new_list() {
+        let (_dir, shepherds, mut events) = subscribed_to(&["process.*"], 1).await;
+        let new = owned(&["process.*", "config.dog.bark", "log.err"]);
+
+        events.set_topics(new.clone()).await.unwrap();
+
+        assert_eq!(
+            subscribes(&shepherds),
+            vec![(1, owned(&["process.*"])), (1, new.clone())],
+            "the shepherd replaces its filter with the last Subscribe it reads"
+        );
+        assert_eq!(events.topics(), new);
+        let pending = tokio::time::timeout(Duration::from_millis(250), events.next()).await;
+        assert!(
+            pending.is_err(),
+            "the swapped stream ended straight away, so it is the replaced one: {pending:?}"
+        );
+    }
+
+    /// fails if a handover re-sends the topics bark was built with instead
+    /// of the ones it last asked for.
+    #[tokio::test]
+    async fn set_topics_survives_a_handover() {
+        let (_dir, shepherds, mut events) = subscribed_to(&["process.*"], 2).await;
+        let new = owned(&["process.*", "log.err"]);
+        events.set_topics(new.clone()).await.unwrap();
+
+        shepherds.cut().await;
+        tokio::time::timeout(Duration::from_secs(10), events.resubscribe())
+            .await
+            .expect("a re-subscribe must not outlive its own budget")
+            .unwrap();
+
+        assert_eq!(
+            subscribes(&shepherds),
+            vec![(1, owned(&["process.*"])), (1, new.clone()), (2, new)],
+            "a handover after a reload must keep the reloaded topics"
+        );
+    }
+
+    /// fails if a `Subscribe` that meets a handover is reported as a failed
+    /// request, or the reload is lost to it.
+    #[tokio::test]
+    async fn set_topics_waits_out_a_handover_it_lands_on() {
+        let (_dir, shepherds, mut events) = subscribed_to(&["process.*"], 2).await;
+        let new = owned(&["process.*", "log.err"]);
+
+        shepherds.cut().await;
+        tokio::time::timeout(Duration::from_secs(10), events.set_topics(new.clone()))
+            .await
+            .expect("a set_topics must not outlive its own budget")
+            .unwrap();
+
+        assert_eq!(events.topics(), new);
+        let subscribed = subscribes(&shepherds);
+        assert_eq!(
+            subscribed.last(),
+            Some(&(2, new)),
+            "the successor must be told the new list: {subscribed:?}"
+        );
+    }
+
+    /// fails if an unchanged list costs the shepherd a request and the
+    /// dog its unread frames.
+    #[tokio::test]
+    async fn set_topics_with_the_unchanged_list_sends_nothing() {
+        let (_dir, shepherds, mut events) = subscribed_to(&["process.*", "log.err"], 1).await;
+
+        events
+            .set_topics(owned(&["process.*", "log.err"]))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            subscribes(&shepherds),
+            vec![(1, owned(&["process.*", "log.err"]))],
+            "only the opening Subscribe"
+        );
+    }
+
+    /// fails if a refused `Subscribe` is swallowed, or still moves the list
+    /// a later handover would re-send.
+    #[tokio::test]
+    async fn set_topics_keeps_the_old_list_when_the_shepherd_refuses() {
+        let (_dir, shepherds, mut events) = subscribed_to(&["process.*"], 1).await;
+        shepherds.refuse_next_subscribe(RpcError {
+            code: RpcErrorCode::Unsupported,
+            message: "this shepherd does not serve that topic".into(),
+            daemon_version: None,
+        });
+
+        let refused = events.set_topics(owned(&["log.err"])).await;
+
+        let Err(Resubscribe::Request(err)) = refused else {
+            panic!("expected a kept refusal, got {refused:?}");
+        };
+        assert!(
+            matches!(&err, RequestError::Rpc(rpc) if rpc.code == RpcErrorCode::Unsupported),
+            "the shepherd's own error must survive: {err:?}"
+        );
+        assert_eq!(events.topics(), owned(&["process.*"]));
     }
 
     /// Tests that wait out a real [`SHEPHERD_RETURN_BUDGET`]. Five seconds

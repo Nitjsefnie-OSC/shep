@@ -30,6 +30,15 @@ impl EventSource for broadcast::Receiver<BusEvent> {
         }
     }
 
+    /// A bare receiver has no filter to hold, so it has no topics.
+    fn topics(&self) -> &[String] {
+        &[]
+    }
+
+    async fn set_topics(&mut self, _topics: Vec<String>) -> Result<(), Resubscribe> {
+        Ok(())
+    }
+
     /// A bare receiver has no shepherd behind it to ask again, so this
     /// stands for the shepherd that never came back.
     async fn resubscribe(&mut self) -> Result<(), Resubscribe> {
@@ -57,6 +66,7 @@ pub(super) struct HandoverSource {
     /// budget's.
     refuses: Option<RpcErrorCode>,
     resubscribes: Arc<std::sync::atomic::AtomicU32>,
+    topics: Vec<String>,
 }
 
 impl HandoverSource {
@@ -96,6 +106,7 @@ impl HandoverSource {
                 when_gone,
                 refuses,
                 resubscribes: Arc::clone(&resubscribes),
+                topics: Vec::new(),
             },
             resubscribes,
         )
@@ -109,6 +120,15 @@ impl EventSource for HandoverSource {
             self.current = None;
         }
         next
+    }
+
+    fn topics(&self) -> &[String] {
+        &self.topics
+    }
+
+    async fn set_topics(&mut self, topics: Vec<String>) -> Result<(), Resubscribe> {
+        self.topics = topics;
+        Ok(())
     }
 
     async fn resubscribe(&mut self) -> Result<(), Resubscribe> {
