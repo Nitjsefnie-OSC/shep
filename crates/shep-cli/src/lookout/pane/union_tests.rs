@@ -356,3 +356,77 @@ fn an_unknown_tag_is_marked_on_the_screen() {
     assert!(text.contains("kind = gone (unknown)"), "{text}");
     assert!(text.contains("gone (unknown)"), "{text}");
 }
+
+#[test]
+fn a_tag_whose_required_field_has_no_default_holds_the_close_until_it_is_given() {
+    let mut pane = pane_over(json!({ "retro": { "kind": "none" } }));
+    assert_eq!(pane.incomplete_union(), None);
+    on_arm(&mut pane, "retro", 0);
+    pane.cycle();
+    assert_eq!(written(&pane)["retro"], json!({ "kind": "path" }));
+    let text = pane.incomplete_union().expect("path is missing");
+    assert_eq!(text, "path is required when kind is path; give it a value");
+
+    pane.move_by(1);
+    pane.begin_typing();
+    "skills/mine".chars().for_each(|c| pane.type_char(c));
+    assert_eq!(pane.apply_typing(), None);
+    assert_eq!(pane.incomplete_union(), None);
+}
+
+#[test]
+fn a_required_field_with_no_editor_is_not_told_to_be_given_a_value() {
+    let schema = json!({
+        "properties": {
+            "retro": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "kind": { "type": "string", "const": "blob" },
+                            "blob": {},
+                        },
+                        "required": ["kind", "blob"],
+                    },
+                ],
+            },
+        },
+    });
+    let table = json!({ "retro": { "kind": "blob", "blob": 1 } });
+    let Value::Object(table) = table else {
+        panic!("a table is an object");
+    };
+    let mut pane = ConfigPane::sheep_dog("web".into(), "kelpie".into(), &schema, table);
+    on_arm(&mut pane, "retro", 1);
+    assert_eq!(pane.lock("retro\u{1f}blob\u{1f}blob"), Some(Lock::NoWidget));
+    assert_eq!(pane.cursor_refusal(), None);
+    pane.file_default();
+    assert!(pane.edits().is_empty());
+}
+
+#[test]
+fn a_union_naming_the_key_separator_stays_opaque() {
+    let schema = json!({
+        "properties": {
+            "retro": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": { "kind": { "type": "string", "const": "a\u{1f}b" } },
+                        "required": ["kind"],
+                    },
+                ],
+            },
+        },
+    });
+    let pane = ConfigPane::sheep_dog("web".into(), "kelpie".into(), &schema, Map::new());
+    assert_eq!(pane.lock("retro"), Some(Lock::NoWidget));
+}
+
+#[test]
+fn an_ordinary_key_holding_the_separator_is_not_read_as_a_union_row() {
+    let mut pane = pane_over(json!({}));
+    let key = "x\u{1f}y".to_owned();
+    pane.file_field(key.clone(), json!("kept"));
+    assert_eq!(filed(&pane, &key), Some(json!("kept")));
+}

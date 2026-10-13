@@ -9,6 +9,11 @@ use serde_json::{Map, Value};
 use super::schema::{holds_secret, resolved};
 use super::{Field, FieldKind, field_from};
 
+/// The control character the pane joins a union's name, an arm's tag and a
+/// field's name with to key the rows under it. A union with a name that
+/// holds it would key two rows alike, so [`union_of`] reads it as no union.
+pub(crate) const KEY_SEP: char = '\u{1f}';
+
 /// A [`FieldKind::Union`]: the tag property's name and the arms it picks
 /// between, in the schema's order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +44,13 @@ impl Union {
         self.arms.iter().find(|arm| arm.tag == tag)
     }
 
+    /// The tag property, every arm's tag and every arm field's name.
+    fn names(&self) -> impl Iterator<Item = &str> {
+        core::iter::once(self.tag.as_str()).chain(self.arms.iter().flat_map(|arm| {
+            core::iter::once(arm.tag.as_str()).chain(arm.fields.iter().map(|f| f.key.as_str()))
+        }))
+    }
+
     /// Every arm's tag, in the schema's order.
     pub fn tags(&self) -> impl Iterator<Item = &str> {
         self.arms.iter().map(|arm| arm.tag.as_str())
@@ -55,7 +67,8 @@ impl Arm {
 
 /// `schema` as a [`Union`], or [`None`] when it is not one: no `oneOf`, an
 /// arm that is not an object, no property that every arm requires and holds
-/// a string `const` on, or two arms with the same tag. A union that reaches a
+/// a string `const` on, two arms with the same tag, or a name holding
+/// [`KEY_SEP`]. A union that reaches a
 /// secret is not one either: its row would have to mask a value it also
 /// names.
 pub(super) fn union_of(schema: &Value, defs: &Map<String, Value>) -> Option<Union> {
@@ -91,7 +104,9 @@ pub(super) fn union_of(schema: &Value, defs: &Map<String, Value>) -> Option<Unio
             required: required_of(arm),
         });
     }
-    Some(Union { tag, arms: built })
+    let union = Union { tag, arms: built };
+    let plain = union.names().all(|name| !name.contains(KEY_SEP));
+    plain.then_some(union)
 }
 
 /// The string `const` that `arm` holds on `name`, when `arm` is an object

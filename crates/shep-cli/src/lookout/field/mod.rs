@@ -17,6 +17,7 @@ mod union;
 
 pub use bounds::Bounds;
 pub(crate) use flatten::{Child, Flattened, Outline, flatten_values, flattened, segment};
+pub(crate) use union::KEY_SEP;
 pub use union::Union;
 
 use serde_json::{Map, Value};

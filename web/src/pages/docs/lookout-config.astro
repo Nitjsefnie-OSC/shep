@@ -611,7 +611,8 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       tag, such as <code>kind = path</code>, or <code>(unset)</code>. It opens
       to its tag and that tag's fields; <code>Space</code> on the tag row picks
       the next tag, with that tag's fields at their defaults. A required field
-      cannot be left empty, and <code>d</code> on the union's row clears it. A
+      cannot be left empty: <code>Esc</code> waits until each has a value, and
+      <code>d</code> on the union's row clears it. A
       tag no shape names reads as stored and marked <code>(unknown)</code>;
       only picking a tag changes it. The dog config pane leaves a union
       read-only.

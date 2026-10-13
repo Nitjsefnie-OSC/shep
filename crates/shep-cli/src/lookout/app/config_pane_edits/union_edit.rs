@@ -157,3 +157,28 @@ fn d_on_a_required_field_says_it_is_required_and_files_nothing() {
     assert!(notice.text.contains("path is required"), "{}", notice.text);
     assert!(app.config_pane().unwrap().edits().is_empty());
 }
+
+#[test]
+fn esc_holds_the_pane_while_a_picked_tag_lacks_a_field_it_requires() {
+    let mut app = app_on_retro();
+    open_and_walk(&mut app, 1);
+    press(&mut app, KeyPress::Cycle);
+    press(&mut app, KeyPress::Cycle);
+    assert_eq!(app.update(Msg::Key(KeyPress::Escape)), Effect::None);
+    let notice = app.notice().expect("the hold says why");
+    assert!(notice.grave);
+    assert!(notice.text.contains("path is required"), "{}", notice.text);
+    assert!(app.config_pane().is_some(), "the pane stays open");
+    assert_eq!(app.config_pane().unwrap().edits().len(), 1);
+
+    press(&mut app, KeyPress::SelectDown);
+    press(&mut app, KeyPress::Confirm);
+    for character in "skills/new".chars() {
+        press(&mut app, KeyPress::TextChar(character));
+    }
+    press(&mut app, KeyPress::TextApply);
+    assert_eq!(
+        closed_table(&mut app),
+        json!({ "retro": { "kind": "path", "path": "skills/new" } })
+    );
+}

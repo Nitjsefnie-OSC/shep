@@ -15,12 +15,9 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 
 use super::super::edits::EditKey;
-use super::super::field::{Bounds, Field, FieldKind, FieldSet, Union};
+use super::super::field::{Bounds, Field, FieldKind, FieldSet, KEY_SEP as SEP, Union};
 use super::fields::render_json;
 use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
-
-/// Splits the three parts of an [`arm_key`], and the two of a [`tag_key`].
-const SEP: char = '\u{1f}';
 
 /// What a union row says when it holds nothing.
 const UNSET: &str = "(unset)";
@@ -101,6 +98,9 @@ pub(super) fn arm_fields(fields: &FieldSet) -> BTreeMap<String, Field> {
         let FieldKind::Union(union) = &field.kind else {
             continue;
         };
+        if field.key.contains(SEP) {
+            continue;
+        }
         let key = tag_key(&field.key, &union.tag);
         rows.insert(
             key.clone(),
@@ -109,6 +109,7 @@ pub(super) fn arm_fields(fields: &FieldSet) -> BTreeMap<String, Field> {
                 kind: FieldKind::Choice(union.tags().map(str::to_owned).collect()),
                 default: None,
                 default_value: None,
+                value_kind: None,
                 bounds: Bounds::default(),
                 ..field.clone()
             },
@@ -129,6 +130,11 @@ pub(super) fn arm_fields(fields: &FieldSet) -> BTreeMap<String, Field> {
     rows
 }
 
+/// Why a field an arm requires cannot be left empty.
+fn required_text(tag: &str, arm: &str, field: &str) -> String {
+    format!("{field} is required when {tag} is {arm}; give it a value")
+}
+
 impl ConfigPane {
     /// Whether this pane opens a union to its rows and files edits to them:
     /// a dog's table on a sheep. A dog's own section is written by patching
@@ -137,14 +143,22 @@ impl ConfigPane {
         matches!(self.target, PaneTarget::SheepDog { .. })
     }
 
+    /// The place `key` names, or [`None`] for a key the `arms` cache does
+    /// not hold: an ordinary row's key is never read as a union's.
+    pub(super) fn place<'a>(&self, key: &'a str) -> Option<Place<'a>> {
+        self.arms
+            .contains_key(key)
+            .then(|| Place::of(key))
+            .flatten()
+    }
+
     /// Whether field `index` is a union drawn open-able.
     pub(super) fn is_union(&self, index: usize) -> bool {
         self.writes_unions()
-            && self
-                .fields
-                .fields()
-                .get(index)
-                .is_some_and(|field| matches!(field.kind, FieldKind::Union(_)))
+            && self.fields.fields().get(index).is_some_and(|field| {
+                matches!(&field.kind, FieldKind::Union(union)
+                    if self.arms.contains_key(&tag_key(&field.key, &union.tag)))
+            })
     }
 
     /// What is filed for `key`, else what the target holds.
@@ -196,7 +210,7 @@ impl ConfigPane {
     /// What a row under a union says, as the operator has it, for a key from
     /// [`tag_key`] or [`arm_key`]. [`None`] for any other key.
     pub(super) fn arm_text(&self, key: &str) -> Option<String> {
-        let place = Place::of(key)?;
+        let place = self.place(key)?;
         let union = self.union_of(place.union())?;
         let held = self.held(place.union(), union);
         Some(match (place, held) {
@@ -212,7 +226,7 @@ impl ConfigPane {
 
     /// The value of a row under a union, for [`Self::cycle`] to start from.
     pub(super) fn arm_value(&self, key: &str) -> Option<&Value> {
-        let place = Place::of(key)?;
+        let place = self.place(key)?;
         let union = self.union_of(place.union())?;
         match place {
             Place::Tag { .. } => self.effective(place.union())?.as_object()?.get(&union.tag),
@@ -294,7 +308,7 @@ impl ConfigPane {
     /// panel. [`None`] for any other key.
     #[must_use]
     pub(in crate::lookout) fn arm_description_of(&self, key: &str) -> Option<&str> {
-        let key = Place::of(key).map_or(key, Place::union);
+        let key = self.place(key).map_or(key, Place::union);
         let union = self.union_of(key)?;
         match self.held(key, union) {
             Held::Arm { arm, .. } => union.arms[arm].description.as_deref(),
@@ -306,7 +320,7 @@ impl ConfigPane {
     /// and its own name, since the key itself is not for reading.
     #[must_use]
     pub(in crate::lookout) fn shown_key(&self, key: &str) -> String {
-        match Place::of(key) {
+        match self.place(key) {
             None => key.to_owned(),
             Some(Place::Tag { union }) => format!(
                 "{union}.{}",
@@ -317,7 +331,9 @@ impl ConfigPane {
     }
 
     /// Files the union filed under `union` with tag `tag`: its table is
-    /// dropped for `{ kind = tag }` and each default of the arm.
+    /// dropped for `{ kind = tag }` and each default of the arm. A field the
+    /// arm requires and has no default for is left out until it is given,
+    /// and [`Self::incomplete_union`] holds the pane open until then.
     fn pick_tag(&mut self, union: &str, tag: &str) {
         let Some(shape) = self.union_of(union) else {
             return;
@@ -374,16 +390,34 @@ impl ConfigPane {
     /// The sentence that says why `key`, a field of an arm, cannot be left
     /// empty. [`None`] for a field that can be, and for any other key.
     pub(super) fn required_refusal(&self, key: &str) -> Option<String> {
-        let Some(Place::Field { union, arm, field }) = Place::of(key) else {
+        let Some(Place::Field { union, arm, field }) = self.place(key) else {
             return None;
         };
         let shape = self.union_of(union)?;
         let held = shape.arm(arm)?;
-        (held.requires(field) && self.arm_field_of(key)?.default_value.is_none()).then(|| {
-            format!(
-                "{field} is required when {} is {arm}; give it a value",
-                shape.tag
-            )
+        let member = self.arm_field_of(key)?;
+        (member.editable && held.requires(field) && member.default_value.is_none())
+            .then(|| required_text(&shape.tag, arm, field))
+    }
+
+    /// The sentence that says why the filed edits cannot be written: a
+    /// union among them holds an arm without a field the arm requires.
+    /// [`None`] when every filed union is whole.
+    #[must_use]
+    pub(in crate::lookout) fn incomplete_union(&self) -> Option<String> {
+        self.edits.iter().find_map(|(key, _)| {
+            let EditKey::Field(union) = key else {
+                return None;
+            };
+            let shape = self.union_of(union)?;
+            let Held::Arm { arm, object } = self.held(union, shape) else {
+                return None;
+            };
+            let arm = &shape.arms[arm];
+            arm.fields
+                .iter()
+                .find(|member| arm.requires(&member.key) && !object.contains_key(&member.key))
+                .map(|member| required_text(&shape.tag, &arm.tag, &member.key))
         })
     }
 
@@ -398,9 +432,12 @@ impl ConfigPane {
     /// or for one the arm requires puts back its default. Does nothing on
     /// the `kind` row, and where a required field has no default.
     pub(super) fn restore_arm_field(&mut self, key: &str) {
-        let Some(Place::Field { union, arm, field }) = Place::of(key) else {
+        let Some(Place::Field { union, arm, field }) = self.place(key) else {
             return;
         };
+        if self.arm_field_of(key).is_none_or(|member| !member.editable) {
+            return;
+        }
         let required = self
             .union_of(union)
             .and_then(|shape| shape.arm(arm))

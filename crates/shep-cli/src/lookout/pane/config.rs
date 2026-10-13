@@ -22,7 +22,6 @@ use super::entries::{EntryBody, EntryRows};
 use super::entry_remove::Reshape;
 use super::fields::{entries_text, render_json, resolved_by_kind, resolved_display, sheep_fields};
 use super::sheep_dog::SheepDogTable;
-use super::union::Place;
 
 // Link-only (IR-32): the unit grammars a row's resolved display goes
 // through, the field kind a locked row reports, and the group order this
@@ -450,7 +449,7 @@ impl ConfigPane {
         if key == "dogs" && matches!(self.target, PaneTarget::Sheep { .. }) {
             return Some(Lock::SubScreen);
         }
-        if let Some(place) = Place::of(key) {
+        if let Some(place) = self.place(key) {
             return self.lock(place.union()).or_else(|| {
                 self.arm_field_of(key)
                     .is_none_or(|field| !field.editable)
