@@ -19,8 +19,8 @@ cause on the topology rather than on the changelog config. Measured again
 (#807), and its changelogs listed none of #807, #803 or #812.
 
 `git log --full-history` prunes neither leg. This reads that range, works out
-the smallest version that carries everything in it and the changelog line each
-commit owes each package, and writes them onto the release branch: the version
+the bump the whole range implies and the changelog line each commit owes each
+package, and writes them onto the release branch: the version
 in the workspace manifest, the intra-workspace dependency versions, the
 lockfile, each new changelog heading and the entries that were missing under
 it. It writes to the release branch and nowhere else, so nothing publishes:
@@ -29,6 +29,17 @@ a release still waits for a human to merge the pull request.
 Unlike the check this replaces, it is not limited to breaking commits. A
 missing `feat` or `fix` line is a wrong changelog as well as a missing bump,
 and the same walk finds both.
+
+The bump it works out is release-plz's own rule and not a stricter one. It
+raises a bump only when the whole range implies more than the bump release-plz
+already took, and it measures "more" the way release-plz does. Measured
+2026-10-13 across this repository's own 74 tag transitions: every minor bump
+carries a breaking commit, and every range with a `feat` and no break came out
+a patch. release-plz bumps a pre-1.0 feature to the patch unless
+`features_always_increment_minor` asks otherwise, and this repository's
+`release-plz.toml` does not ask. A guard that read a feature as a minor would
+rewrite a correct feature release PR on every push to main, and a maintainer
+who merged it would publish a needless semver break.
 
 Usage:
 
@@ -190,25 +201,77 @@ def show_version(version: tuple[int, int, int]) -> str:
     return ".".join(str(part) for part in version)
 
 
-def required_version(
-    base: tuple[int, int, int], commits: list[Commit]
-) -> tuple[int, int, int] | None:
-    """The smallest version that carries every commit in the range.
+BUMP_LEVELS = {"patch": 0, "minor": 1, "major": 2}
 
-    Cargo treats a 0.x minor as its compatibility boundary, so pre-1.0 a break
-    moves the minor and 1.0 onward it moves the major. A `feat` moves the minor
-    and a `fix` the patch, which is the bump release-plz itself would have
-    picked had it walked the whole range. None when no commit left here implies
-    a bump at all, which is the changelog-only case a human decides.
+
+def bump_taken(base: tuple[int, int, int], target: tuple[int, int, int]) -> str | None:
+    """The bump level release-plz already took from the last tag to the release head.
+
+    None when it moved no number at all.
+    """
+    if target[0] != base[0]:
+        return "major"
+    if target[1] != base[1]:
+        return "minor"
+    if target[2] != base[2]:
+        return "patch"
+    return None
+
+
+def apply_bump(base: tuple[int, int, int], level: str) -> tuple[int, int, int]:
+    """The version a bump level produces from `base`.
+
+    Which level a range implies is `required_bump`'s call: pre-1.0 it sends a
+    break to `minor`, so a zero major never leaves zero here.
     """
     major, minor, patch = base
-    if any(commit.breaking for commit in commits):
-        return (major + 1, 0, 0) if major else (0, minor + 1, 0)
+    if level == "major":
+        return (major + 1, 0, 0)
+    if level == "minor":
+        return (major, minor + 1, 0)
+    return (major, minor, patch + 1)
+
+
+def features_increment_minor(repo: Repo) -> bool:
+    """Whether release-plz.toml asks a feature to move the minor.
+
+    release-plz leaves this false, which is what this repository's file leaves
+    it at. Read from `[workspace]` and from every `[[package]]`, since a shared
+    version takes the largest bump any package inside it asks for.
+    """
+    try:
+        config = tomllib.loads((repo.path / "release-plz.toml").read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    if config.get("workspace", {}).get("features_always_increment_minor") is True:
+        return True
+    return any(
+        isinstance(package, dict) and package.get("features_always_increment_minor") is True
+        for package in config.get("package", [])
+    )
+
+
+def required_bump(
+    base: tuple[int, int, int], commits: list[Commit], features_move_minor: bool
+) -> str | None:
+    """The bump level the whole range implies, measured as release-plz measures it.
+
+    A break moves the minor pre-1.0 and the major from 1.0. A `feat` moves the
+    minor only where release-plz would: from 1.0, or pre-1.0 with
+    `features_always_increment_minor` set. Everything else is a patch, which is
+    what a pre-1.0 feature is here. None when no commit left in the range
+    implies a bump at all.
+    """
     if not commits:
         return None
-    if any(commit.commit_type == "feat" for commit in commits):
-        return (major, minor + 1, 0) if major else (0, minor + 1, 0)
-    return (major, minor, patch + 1)
+    major, _minor, _patch = base
+    if any(commit.breaking for commit in commits):
+        return "major" if major else "minor"
+    if (
+        major >= 1 or features_move_minor
+    ) and any(commit.commit_type == "feat" for commit in commits):
+        return "minor"
+    return "patch"
 
 
 def load_changelog_rules(repo: Repo) -> ChangelogRules:
@@ -816,8 +879,16 @@ def main(argv: list[str] | None = None) -> int:
         if any(touches(commit, package.directory) for package in packages)
     ]
 
-    want = required_version(base_version, releasable)
-    new_version = max(head_version, want) if want else head_version
+    want = required_bump(base_version, releasable, features_increment_minor(repo))
+    taken = bump_taken(base_version, head_version)
+    # Only ever a raise: the bump release-plz picked from the history it could
+    # see stands unless the leg it never crossed asks for a larger one.
+    raise_to = (
+        apply_bump(base_version, want)
+        if want is not None and (taken is None or BUMP_LEVELS[want] > BUMP_LEVELS[taken])
+        else None
+    )
+    new_version = max(head_version, raise_to) if raise_to else head_version
     new_version_text = show_version(new_version)
     date = newest_date(releasable, "1970-01-01")
 
@@ -886,9 +957,13 @@ def main(argv: list[str] | None = None) -> int:
     changed = new_version != head_version or bool(plan) or manifest_new != manifest_text or lock_new != lock_text
 
     print(f"Range {since}..{args.base_sha}: {len(commits)} commit(s), both legs.")
-    print(f"Release branch proposes {show_version(head_version)}; {new_version_text} carries the range.")
+    proposed = show_version(head_version)
+    if new_version == head_version:
+        print(f"Release branch proposes {proposed}; the range asks for no larger bump.")
+    else:
+        print(f"Release branch proposes {proposed}; {new_version_text} carries the range.")
     for package, _text, added, renamed in plan:
-        moved = f", heading {show_version(head_version)} -> {new_version_text}" if renamed else ""
+        moved = f", heading {proposed} -> {new_version_text}" if renamed else ""
         print(f"{package.changelog}: +{len(added)} entr{'y' if len(added) == 1 else 'ies'}{moved}")
         for entry in added:
             print(f"  + [{entry.group}] {entry.line}")
@@ -917,7 +992,7 @@ def main(argv: list[str] | None = None) -> int:
         f"commit it is standing on for its own next ancestor, so on a diamond it goes\n"
         f"down one leg and never crosses to the other. {len(commits)} commit(s) sit in\n"
         f"{since}..{args.base_sha} under git log --full-history. The version here is\n"
-        f"the smallest that carries them, and the changelog lines added here are the\n"
+        f"the bump that whole range implies, and the changelog lines added here are the\n"
         f"ones that walk left out.\n"
     )
 

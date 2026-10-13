@@ -44,6 +44,10 @@ RELEASE_BRANCH = "release-plz-2026-09-06T00-00-00Z"
 class Fixture(unittest.TestCase):
     """A repository with a diamond in it, a release branch under it, and a remote."""
 
+    # The far leg's headline commit. A subclass that takes the `!` out holds the
+    # ordinary feature release a guard has no business touching.
+    breaks = True
+
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
@@ -70,9 +74,12 @@ class Fixture(unittest.TestCase):
         # sends release-plz's walk down one of them.
         self.git("checkout", "-q", "-b", "leg-a")
         self.write("crates/shep-daemon/src/dogs.rs", "pub fn at_rest() {}\n")
-        self.commit(
-            "feat(daemon)!: list every known dog at rest", date="2026-09-02T00:00:00"
+        at_rest = (
+            "feat(daemon)!: list every known dog at rest"
+            if self.breaks
+            else "feat(daemon): list every known dog at rest"
         )
+        self.commit(at_rest, date="2026-09-02T00:00:00")
         leg_a = self.head()
         self.git("checkout", "-q", "main")
 
@@ -86,7 +93,7 @@ class Fixture(unittest.TestCase):
 
         # #807 squash-merged onto main, then #803 merged as a merge commit.
         self.git("cherry-pick", leg_a)
-        self.amend_subject("feat(daemon)!: list every known dog at rest (#807)", "2026-09-03T00:00:00")
+        self.amend_subject(f"{at_rest} (#807)", "2026-09-03T00:00:00")
         self.git(
             "merge",
             "-q",
@@ -313,33 +320,66 @@ class Fixture(unittest.TestCase):
 
 class TestVersion(unittest.TestCase):
     """The bump a range implies, with no repository behind it."""
+
+    BREAK = [fix.Commit(sha="z", date="2026-09-02", subject="feat(daemon)!: at rest", body="")]
+    FEAT = [fix.Commit(sha="x", date="2026-09-02", subject="feat(cli): a verb", body="")]
+    FIX = [fix.Commit(sha="y", date="2026-09-02", subject="fix(cli): a verb", body="")]
+
     def test_a_breaking_commit_pre_one_point_zero_moves_the_minor(self) -> None:
-        commits = [fix.Commit(sha="x", date="2026-09-02", subject="feat(daemon)!: at rest", body="")]
-        self.assertEqual(fix.required_version((0, 13, 0), commits), (0, 14, 0))
+        self.assertEqual(fix.required_bump((0, 13, 0), self.BREAK, False), "minor")
 
     def test_a_breaking_commit_from_one_point_zero_moves_the_major(self) -> None:
-        commits = [fix.Commit(sha="x", date="2026-09-02", subject="feat(daemon)!: at rest", body="")]
-        self.assertEqual(fix.required_version((1, 2, 3), commits), (2, 0, 0))
+        self.assertEqual(fix.required_bump((1, 2, 3), self.BREAK, False), "major")
 
     def test_a_breaking_footer_counts_as_a_break(self) -> None:
         commits = [
             fix.Commit(
-                sha="x",
+                sha="z",
                 date="2026-09-02",
                 subject="fix(daemon): widen the reply",
                 body="BREAKING CHANGE: the reply shape changed.\n",
             )
         ]
-        self.assertEqual(fix.required_version((0, 13, 0), commits), (0, 14, 0))
+        self.assertEqual(fix.required_bump((0, 13, 0), commits, False), "minor")
 
-    def test_a_feat_moves_the_minor_and_a_fix_the_patch(self) -> None:
-        feat = [fix.Commit(sha="x", date="2026-09-02", subject="feat(cli): a verb", body="")]
-        fix_commit = [fix.Commit(sha="y", date="2026-09-02", subject="fix(cli): a verb", body="")]
-        self.assertEqual(fix.required_version((0, 13, 0), feat), (0, 14, 0))
-        self.assertEqual(fix.required_version((0, 13, 0), fix_commit), (0, 13, 1))
+    def test_a_pre_one_point_zero_feat_is_a_patch(self) -> None:
+        """release-plz's own rule, not a stricter one.
+
+        Measured across this repository's 74 tag transitions: every minor bump
+        carries a breaking commit, and every range with a `feat` and no break
+        came out a patch. A guard that read a feature as a minor would rewrite
+        a correct feature release PR on every push to main.
+        """
+        self.assertEqual(fix.required_bump((0, 13, 0), self.FEAT, False), "patch")
+        self.assertEqual(fix.required_bump((0, 13, 0), self.FEAT + self.FIX, False), "patch")
+
+    def test_a_feat_from_one_point_zero_moves_the_minor(self) -> None:
+        self.assertEqual(fix.required_bump((1, 2, 3), self.FEAT, False), "minor")
+
+    def test_features_always_increment_minor_is_honoured(self) -> None:
+        self.assertEqual(fix.required_bump((0, 13, 0), self.FEAT, True), "minor")
+
+    def test_a_fix_is_a_patch(self) -> None:
+        self.assertEqual(fix.required_bump((0, 13, 0), self.FIX, False), "patch")
 
     def test_nothing_to_release_implies_no_bump(self) -> None:
-        self.assertIsNone(fix.required_version((0, 13, 0), []))
+        self.assertIsNone(fix.required_bump((0, 13, 0), [], False))
+
+    def test_bump_taken_reads_the_number_release_plz_moved(self) -> None:
+        self.assertEqual(fix.bump_taken((0, 13, 0), (0, 13, 1)), "patch")
+        self.assertEqual(fix.bump_taken((0, 13, 0), (0, 14, 0)), "minor")
+        self.assertEqual(fix.bump_taken((0, 13, 0), (1, 0, 0)), "major")
+        self.assertIsNone(fix.bump_taken((0, 13, 0), (0, 13, 0)))
+
+    def test_apply_bump_leaves_a_zero_major_release_at_zero_major(self) -> None:
+        self.assertEqual(fix.apply_bump((0, 13, 0), "patch"), (0, 13, 1))
+        self.assertEqual(fix.apply_bump((0, 13, 0), "minor"), (0, 14, 0))
+        self.assertEqual(fix.apply_bump((1, 2, 3), "minor"), (1, 3, 0))
+        self.assertEqual(fix.apply_bump((0, 13, 0), "major"), (1, 0, 0))
+
+    def test_a_larger_level_ranks_above_a_smaller_one(self) -> None:
+        self.assertLess(fix.BUMP_LEVELS["patch"], fix.BUMP_LEVELS["minor"])
+        self.assertLess(fix.BUMP_LEVELS["minor"], fix.BUMP_LEVELS["major"])
 
 
 class TestChangelogRules(Fixture):
@@ -671,6 +711,60 @@ class TestReleaseBranchRewrite(Fixture):
         self.assertEqual(self.run_guard(self.tmp / "output.txt").returncode, 0)
         self.assertEqual(self.remote_head("main"), before)
         self.assertEqual(self.remote_file("main", "Cargo.toml").count('version = "0.13.0"'), 4)
+
+
+class TestFeatureReleaseStands(Fixture):
+    """The same diamond with the `!` taken out of the far leg.
+
+    release-plz proposed 0.13.1 for it and 0.13.1 is right: a pre-1.0 feature
+    is a patch. A guard that called a feature a minor would move this branch to
+    0.14.0 on every push to main.
+    """
+
+    breaks = False
+
+    def test_a_range_of_features_leaves_the_patch_release_plz_proposed(self) -> None:
+        output = self.tmp / "output.txt"
+        run = self.run_guard(output)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        results = self.results(output)
+        self.assertEqual(results["new_version"], "0.13.1")
+        self.assertEqual(results["old_version"], "0.13.1")
+        self.assertIn("asks for no larger bump", run.stdout)
+
+        manifest = self.remote_file(RELEASE_BRANCH, "Cargo.toml")
+        self.assertIn('[workspace.package]\nversion = "0.13.1"', manifest)
+        self.assertNotIn("0.14.0", manifest)
+        lock = self.remote_file(RELEASE_BRANCH, "Cargo.lock")
+        self.assertIn('name = "shep"\nversion = "0.13.1"', lock)
+        self.assertNotIn("0.14.0", lock)
+
+    def test_a_range_of_features_still_completes_the_changelog(self) -> None:
+        output = self.tmp / "output.txt"
+        self.assertEqual(self.run_guard(output).returncode, 0)
+
+        daemon = self.remote_file(RELEASE_BRANCH, "crates/shep-daemon/CHANGELOG.md")
+        cli = self.remote_file(RELEASE_BRANCH, "crates/shep-cli/CHANGELOG.md")
+        self.assertIn("- List every known dog at rest", daemon)
+        self.assertNotIn("**(BREAKING)**", daemon)
+        self.assertIn("- Remove an entry from an array or map of tables", cli)
+        self.assertIn("## [0.13.1] - 2026-09-06", daemon)
+        self.assertNotIn("0.14.0", daemon + cli)
+
+    def test_a_corrected_feature_branch_is_left_alone(self) -> None:
+        output = self.tmp / "first.txt"
+        self.assertEqual(self.run_guard(output).returncode, 0)
+        after_first = self.remote_head(RELEASE_BRANCH)
+
+        second = self.tmp / "second.txt"
+        run = self.run_guard(second)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(self.results(second)["changed"], "false")
+        self.assertEqual(self.remote_head(RELEASE_BRANCH), after_first)
+
+    def test_release_plz_toml_leaves_a_feature_at_a_patch(self) -> None:
+        """The option the bump rule reads, read off the real config file."""
+        self.assertFalse(fix.features_increment_minor(fix.Repo(self.repo)))
 
 
 class TestRefusals(Fixture):

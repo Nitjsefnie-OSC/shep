@@ -191,8 +191,11 @@ release pull request does not already account for, it writes onto the release
 branch and pushes:
 
 - the version, in `[workspace.package]`, in the `[workspace.dependencies]`
-  literals and in `Cargo.lock`, at the smallest one that carries the whole
-  range: a minor bump from 0.x when any commit is breaking
+  literals and in `Cargo.lock`, raised only when the whole range implies a
+  larger bump than the one release-plz took, and measured by release-plz's own
+  rule: a break moves the minor from 0.x and the major from 1.0, a `feat` moves
+  the minor from 1.0 or where `features_always_increment_minor` asks, and a
+  pre-1.0 `feat` is a patch
 - the changelog line each commit owes each package, written under the heading
   release-plz already wrote for that release, grouped and filtered by
   `release-plz-changelog.toml` the way release-plz would have written it, a
@@ -204,6 +207,15 @@ It writes to the release branch and nowhere else, so nothing publishes: the
 release still waits for a human to merge it. release-plz rewrites the branch on
 every push to main, so the guard runs again each time and corrects it again,
 and a branch it already corrected is left alone.
+
+The bump rule is release-plz's and not a stricter one. Measured across this
+repository's own 74 tag transitions, every minor bump carries a breaking commit
+and every range with a `feat` and no break came out a patch. Replayed against
+three releases this repository shipped, `0.12.0` to `0.12.1`, `0.12.3` to
+`0.12.4` and `0.12.4` to `0.12.5`, each a patch that shipped `### Added`
+entries, the script reports the number the release already carries and moves
+nothing. Replayed against `0.6.1` to `0.6.2`, where a break did ship as a
+patch, it reports 0.7.0.
 
 It refuses rather than push when it cannot read the branch, and when the version
 it worked out is not one it can actually write: after the rewrite it re-reads
@@ -220,7 +232,8 @@ decide which case they are.
 `scripts/test_fix_release_bump.py` builds a throwaway repository with a diamond
 in its history, a release branch cut the way release-plz cuts one, and a bare
 remote standing in for github.com, then asserts the branch comes back at 0.14.0
-with a changelog entry for every commit the walk missed. `manifests.yml` runs
+with a changelog entry for every commit the walk missed, and that the same
+fixture with the break taken out leaves 0.13.1 where it is. `manifests.yml` runs
 it.
 
 What the guard does not do: it does not fix the walk. The next release pull
