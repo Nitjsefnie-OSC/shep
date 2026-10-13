@@ -42,7 +42,7 @@ pub(super) fn list_lines(
     if body_budget == 0 {
         return lines;
     }
-    let secret = pane.fields().by_key(list.key()).is_some_and(|f| f.secret);
+    let secret = list.is_secret();
     let rows = list.rows();
     let cursor_row = list.view().cursor().min(rows.len().saturating_sub(1));
     lines.extend(scroll::to_cursor(

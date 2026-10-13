@@ -2,164 +2,29 @@
 //!
 //! Two sources, and the per-field one wins outright rather than merging:
 //! a field writing its own `accepts` gets those and none from the table.
-//! One rule beats merge semantics nobody can predict.
-//!
-//! The table lives here rather than beside the parsers because it is
-//! rendering copy. It is safe there only because its own tests feed every
-//! listed form back through the real parser. The per-field lists are backed
-//! one crate down, where shep-core hands `normalize` a value for every
-//! refusal it makes, and names the enforcer for the few decided at spawn.
+//! One rule beats merge semantics nobody can predict. The table itself is
+//! [`forms`], and the per-field lists are backed one crate down, where
+//! shep-core hands `normalize` a value for every refusal it makes, and
+//! names the enforcer for the few decided at spawn.
 //!
 //! [`refusal`] is the other half, and it is here rather than in the pane so
 //! that the sentence an operator reads and the check that stops the write
 //! are built from one table. A dog's section is written by the shepherd
 //! without being read, so there is no second gate behind this one.
+//! [`item_refusal`] is the same gate for one element of a list field,
+//! against the bounds its item schema published.
 
+#[cfg(test)]
+mod fixtures;
+mod forms;
+
+pub use forms::bullets;
+
+use serde_json::Value;
 use shep_core::values::{MemSize, UpDuration};
 
-use super::field::{Field, FieldKind, ValueKind};
-
-/// One line of the table: what to print, and the strings that prove it.
-///
-/// `Debug` is derived (IR-41): two `&'static str`s, no value from a live
-/// flock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Form {
-    /// What the panel prints.
-    pub text: &'static str,
-    /// Values the claim is checked against in this module's tests, one for
-    /// each form the text names.
-    pub examples: &'static [&'static str],
-}
-
-/// The forms an [`ValueKind::UpDuration`] field accepts.
-pub const DURATION_FORMS: &[Form] = &[
-    Form {
-        text: "500ms, 2s, 5m, 1h",
-        examples: &["500ms", "2s", "5m", "1h"],
-    },
-    Form {
-        text: "a bare number is milliseconds",
-        examples: &["250"],
-    },
-];
-
-/// The forms an [`ValueKind::UpDuration`] field refuses.
-pub const DURATION_REFUSALS: &[Form] = &[
-    Form {
-        text: "a negative",
-        examples: &["-1s"],
-    },
-    Form {
-        text: "a unit shep does not know",
-        examples: &["3 fortnights"],
-    },
-];
-
-/// The forms an [`ValueKind::MemSize`] field accepts.
-pub const MEMORY_FORMS: &[Form] = &[
-    Form {
-        text: "512M, 2G",
-        examples: &["512M", "2G"],
-    },
-    Form {
-        text: "a bare number is bytes",
-        examples: &["1048576"],
-    },
-];
-
-/// The forms a [`ValueKind::MemSize`] field refuses.
-///
-/// shep's grammar is `^\d+(G|M|K)?$`, so all three are spellings somebody
-/// writes who knows the size they mean. A negative is left out, unlike
-/// [`DURATION_REFUSALS`]: a duration refuses a sign by its own rule after
-/// parsing, where `-1` is only one more character the size grammar has no
-/// place for.
-pub const MEMORY_REFUSALS: &[Form] = &[
-    Form {
-        text: "a two-letter unit",
-        examples: &["10MB", "2GB"],
-    },
-    Form {
-        text: "a lowercase unit",
-        examples: &["512m", "2g"],
-    },
-    Form {
-        text: "a fraction",
-        examples: &["1.5G"],
-    },
-];
-
-/// The forms a [`FieldKind::Bool`] field accepts.
-///
-/// This table is not parser-backed: there is no `shep_core` grammar for a
-/// bool, so no test parses these examples.
-pub const BOOL_FORMS: &[Form] = &[Form {
-    text: "true or false",
-    examples: &["true", "false"],
-}];
-
-/// The forms a [`FieldKind::Integer`] field accepts.
-///
-/// This table is not parser-backed: there is no `shep_core` grammar for an
-/// integer, so no test parses these examples.
-pub const INTEGER_FORMS: &[Form] = &[Form {
-    text: "a whole number",
-    examples: &["3"],
-}];
-
-/// What a field's explanation panel prints under VALIDATION.
-///
-/// `Debug` is derived (IR-41): rendering copy, not a live value.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Bullets {
-    /// What the field accepts, one clause each.
-    pub accepts: Vec<String>,
-    /// What the field refuses, one clause each.
-    pub refuses: Vec<String>,
-}
-
-impl Bullets {
-    /// Whether there is nothing to show, in which case the panel draws no
-    /// VALIDATION heading rather than an empty one.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.accepts.is_empty() && self.refuses.is_empty()
-    }
-}
-
-/// The type table's forms for `field`, keyed on [`Field::value_kind`] first
-/// and [`Field::kind`] second.
-fn table_for(field: &Field) -> (&'static [Form], &'static [Form]) {
-    match field.value_kind {
-        Some(ValueKind::UpDuration) => return (DURATION_FORMS, DURATION_REFUSALS),
-        Some(ValueKind::MemSize) => return (MEMORY_FORMS, MEMORY_REFUSALS),
-        None => {}
-    }
-    match field.kind {
-        FieldKind::Bool => (BOOL_FORMS, &[]),
-        FieldKind::Integer => (INTEGER_FORMS, &[]),
-        _ => (&[], &[]),
-    }
-}
-
-/// The accepted and refused forms for `field`: its own `accepts`/`refuses`
-/// when it carries any, else the type table's. The per-field lists win
-/// outright rather than merging with the table.
-#[must_use]
-pub fn bullets(field: &Field) -> Bullets {
-    if !field.accepts.is_empty() || !field.refuses.is_empty() {
-        return Bullets {
-            accepts: field.accepts.clone(),
-            refuses: field.refuses.clone(),
-        };
-    }
-    let (accepts, refuses) = table_for(field);
-    Bullets {
-        accepts: accepts.iter().map(|f| f.text.to_owned()).collect(),
-        refuses: refuses.iter().map(|f| f.text.to_owned()).collect(),
-    }
-}
+use super::field::{Bounds, Field, FieldKind, ListItem, ValueKind};
+use forms::{DURATION_FORMS, Form, MEMORY_FORMS};
 
 /// What a refusal prints in place of a secret's value.
 ///
@@ -167,19 +32,19 @@ pub fn bullets(field: &Field) -> Bullets {
 /// operator reads one word for one idea rather than learning a second.
 pub const REDACTED: &str = "<set>";
 
-/// What may be printed for `typed`: [`REDACTED`] when the field carries a
-/// credential, the value itself otherwise.
+/// What may be printed for `typed`: [`REDACTED`] when `secret`, the value
+/// itself otherwise.
 ///
 /// Every sentence this module builds resolves its value here, so a refusal
 /// added later cannot echo a secret by forgetting to ask. The rule is one
-/// line and the reason it is a function is that it has two callers.
+/// line and the reason it is a function is that it has three callers.
 ///
 /// `pub(super)`: `ConfigPane::apply_typing` builds one refusal of its own
 /// through [`not_a_whole_number`], and has to resolve the value the same
 /// way.
 #[must_use]
-pub(super) fn shown_value<'a>(field: &Field, typed: &'a str) -> &'a str {
-    if field.secret { REDACTED } else { typed }
+pub(super) fn shown_value(secret: bool, typed: &str) -> &str {
+    if secret { REDACTED } else { typed }
 }
 
 /// Why a typed buffer was not filed, in the operator's words.
@@ -216,7 +81,8 @@ pub struct Refusal {
 ///
 /// [`None`] for everything else, which is most fields: a plain string with
 /// no pattern takes any string, and shep is not the authority on a dog's
-/// config beyond what that dog published.
+/// config beyond what that dog published. A list field's element is checked
+/// by [`item_refusal`] rather than here, against its item schema.
 ///
 /// Fails open on a `pattern` that does not compile. A dog that ships a
 /// broken regex has a bug in its schema, and refusing every value for that
@@ -238,9 +104,9 @@ pub fn refusal(field: &Field, typed: &str) -> Option<Refusal> {
     // this, not shep, so it is reachable rather than theoretical: a dog
     // publishing `pattern` or a `$ref` grammar on a field it also marks
     // `x-shep-secret` sends a credential straight through `pattern_refusal`.
-    let shown = shown_value(field, typed);
+    let shown = shown_value(field.secret, typed);
     if field.kind == FieldKind::Integer {
-        return integer_refusal(field, typed, shown);
+        return integer_refusal(&field.key, &field.bounds, typed, shown);
     }
     match field.value_kind {
         Some(ValueKind::UpDuration) => typed
@@ -251,7 +117,127 @@ pub fn refusal(field: &Field, typed: &str) -> Option<Refusal> {
             .parse::<MemSize>()
             .is_err()
             .then(|| refuse(&field.key, shown, "a size", MEMORY_FORMS)),
-        None => pattern_refusal(field, typed, shown),
+        None => pattern_refusal(
+            &field.key,
+            field.bounds.pattern.as_deref(),
+            &field.accepts,
+            typed,
+            shown,
+        ),
+    }
+}
+
+/// Why one typed element of a list field was not filed, in the operator's
+/// words.
+///
+/// The rules are the ones the item schema published, which is a different
+/// schema from the one the dog published about the array: `minLength`,
+/// `pattern` and `enum` for a string list, the schema's floor and ceiling
+/// for an integer one, and `enum` for both. An element with no rule on it
+/// is accepted, exactly as a scalar field its schema says nothing about is:
+/// shep is not the authority on a dog's config beyond what that dog
+/// published.
+///
+/// `secret` decides what the sentence may print, resolved here rather than
+/// per rule so a rule added later cannot echo a credential by forgetting to
+/// ask. A list the schema marks secret is rare rather than impossible: a
+/// dog's `Vec<String>` of tokens publishes `x-shep-secret` on its items.
+///
+/// Fails open on a `pattern` that does not compile, for [`refusal`]'s
+/// reason.
+///
+/// The empty buffer never reaches here: it is nothing to write, which is
+/// [`super::pane::ListPane::apply_typing`]'s own case.
+#[must_use]
+pub fn item_refusal(
+    key: &str,
+    item: ListItem,
+    bounds: &Bounds,
+    typed: &str,
+    secret: bool,
+) -> Option<Refusal> {
+    let shown = shown_value(secret, typed);
+    let value = match item {
+        ListItem::Integer => match integer_of(key, bounds, typed, shown) {
+            Ok(number) => {
+                if let Some(refused) = range_refusal(key, bounds, shown, number) {
+                    return Some(refused);
+                }
+                Value::from(number)
+            }
+            Err(refused) => return Some(refused),
+        },
+        ListItem::Text => {
+            if let Some(refused) = min_length_refusal(key, bounds, typed, shown) {
+                return Some(refused);
+            }
+            if let Some(refused) =
+                pattern_refusal(key, bounds.pattern.as_deref(), &[], typed, shown)
+            {
+                return Some(refused);
+            }
+            Value::String(typed.to_owned())
+        }
+    };
+    enum_refusal(key, bounds, &value, shown)
+}
+
+/// [`item_refusal`]'s `minLength` arm. The count is of characters, so an
+/// element with one accented letter is one character long rather than two.
+fn min_length_refusal(key: &str, bounds: &Bounds, typed: &str, shown: &str) -> Option<Refusal> {
+    let least = bounds.min_length?;
+    (typed.chars().count() < least).then(|| Refusal {
+        text: format!("{key} is \"{shown}\"; {key} needs at least {least} characters"),
+    })
+}
+
+/// [`item_refusal`]'s `enum` arm: the element as the JSON value it parsed
+/// to, against the values the schema wrote.
+///
+/// The refusal lists the allowed set because an `enum` is the one rule an
+/// operator can satisfy by copying from it.
+fn enum_refusal(key: &str, bounds: &Bounds, value: &Value, shown: &str) -> Option<Refusal> {
+    if bounds.choices.is_empty()
+        || bounds
+            .choices
+            .iter()
+            .any(|choice| choice_taken(choice, value))
+    {
+        return None;
+    }
+    let allowed: Vec<String> = bounds.choices.iter().map(choice_text).collect();
+    Some(Refusal {
+        text: format!(
+            "{key} is \"{shown}\"; {key} takes one of {}",
+            allowed.join(", ")
+        ),
+    })
+}
+
+/// Whether `value` is the `enum` member `choice` names.
+///
+/// Numbers compare by value, not by the spelling the schema used:
+/// `serde_json` holds `1` and `1.0` as two different numbers, and JSON
+/// Schema means one of them. Comparing the two `Value`s refused a `1` a dog
+/// published as `enum: [1.0]`. Two integers are compared as `i64`, so a set
+/// of them is not collapsed through an `f64` that cannot name every `i64`
+/// near its ends.
+fn choice_taken(choice: &Value, value: &Value) -> bool {
+    match (choice.as_i64(), value.as_i64()) {
+        (Some(written), Some(typed)) => written == typed,
+        _ => match (choice.as_f64(), value.as_f64()) {
+            (Some(written), Some(typed)) => written == typed,
+            _ => choice == value,
+        },
+    }
+}
+
+/// One `enum` member as the operator reads it: bare for a string, compact
+/// JSON for anything else.
+fn choice_text(choice: &Value) -> String {
+    match choice {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
     }
 }
 
@@ -260,21 +246,34 @@ pub fn refusal(field: &Field, typed: &str) -> Option<Refusal> {
 ///
 /// `shown` is what may be printed, which is `typed` for an ordinary field
 /// and [`REDACTED`] for a secret one. `typed` is still what gets parsed.
-fn integer_refusal(field: &Field, typed: &str, shown: &str) -> Option<Refusal> {
-    let key = &field.key;
-    // Ahead of the parse, because it is true of every value: a field whose
-    // schema admits no integer cannot be answered, and saying "starts at 3"
-    // to somebody who then types 3 and is told it "stops at 1" explains
-    // nothing.
-    if field.bounds.unsatisfiable {
-        return Some(Refusal {
+fn integer_refusal(key: &str, bounds: &Bounds, typed: &str, shown: &str) -> Option<Refusal> {
+    match integer_of(key, bounds, typed, shown) {
+        Ok(number) => range_refusal(key, bounds, shown, number),
+        Err(refused) => Some(refused),
+    }
+}
+
+/// `typed` as the whole number it names, or the sentence saying it names
+/// none.
+///
+/// The empty range is checked ahead of the parse, because it is true of
+/// every value: a field whose schema admits no integer cannot be answered,
+/// and saying "starts at 3" to somebody who then types 3 and is told it
+/// "stops at 1" explains nothing.
+fn integer_of(key: &str, bounds: &Bounds, typed: &str, shown: &str) -> Result<i64, Refusal> {
+    if bounds.unsatisfiable {
+        return Err(Refusal {
             text: format!("{key} takes no value: its schema asks for a range with nothing in it"),
         });
     }
-    let Ok(number) = typed.parse::<i64>() else {
-        return Some(not_a_whole_number(key, shown));
-    };
-    match (field.bounds.minimum, field.bounds.maximum) {
+    typed
+        .parse::<i64>()
+        .map_err(|_| not_a_whole_number(key, shown))
+}
+
+/// The floor and ceiling `bounds` sets on an integer already parsed.
+fn range_refusal(key: &str, bounds: &Bounds, shown: &str, number: i64) -> Option<Refusal> {
+    match (bounds.minimum, bounds.maximum) {
         (Some(min), _) if number < min => Some(Refusal {
             text: format!("{key} is \"{shown}\"; {key} starts at {min}"),
         }),
@@ -292,29 +291,34 @@ fn integer_refusal(field: &Field, typed: &str, shown: &str) -> Option<Refusal> {
 /// The field's own `accepts` is what the refusal names when it has any,
 /// since that is the spelling its author wrote for an operator. The raw
 /// pattern is the fallback, which is worse copy than a sentence and better
-/// than the silence it replaced.
-fn pattern_refusal(field: &Field, typed: &str, shown: &str) -> Option<Refusal> {
-    let pattern = field.bounds.pattern.as_deref()?;
-    let compiled = regex::Regex::new(pattern).ok()?;
+/// than the silence it replaced. A list's item schema has no `accepts` of
+/// its own, so [`item_refusal`] passes none.
+///
+/// Fails open on a `pattern` that does not compile: `.ok()?`.
+fn pattern_refusal(
+    key: &str,
+    pattern: Option<&str>,
+    accepts: &[String],
+    typed: &str,
+    shown: &str,
+) -> Option<Refusal> {
+    let compiled = regex::Regex::new(pattern?).ok()?;
     if compiled.is_match(typed) {
         return None;
     }
-    let takes = if field.accepts.is_empty() {
-        format!("it matches {pattern}")
+    let takes = if accepts.is_empty() {
+        format!("it matches {}", pattern?)
     } else {
-        field.accepts.join(", ")
+        accepts.join(", ")
     };
     Some(Refusal {
-        text: format!(
-            "{} is \"{shown}\", which it does not take; try {takes}",
-            field.key
-        ),
+        text: format!("{key} is \"{shown}\", which it does not take; try {takes}"),
     })
 }
 
 /// The refusal for a [`FieldKind::Integer`] buffer that is not a number.
 ///
-/// Not built from [`INTEGER_FORMS`] through [`refuse`], which would append
+/// Not built from [`forms::INTEGER_FORMS`] through [`refuse`], which would append
 /// "try a whole number" to a sentence that has just said "is not a whole
 /// number". The table's own text still draws the panel, where "a whole
 /// number" is the whole answer and reads correctly.
@@ -350,170 +354,24 @@ fn refuse(key: &str, shown: &str, what: &str, forms: &[Form]) -> Refusal {
 
 #[cfg(test)]
 mod tests {
+    use super::fixtures::text_field;
+    use super::forms::{DURATION_FORMS, DURATION_REFUSALS, MEMORY_FORMS};
     use super::*;
-    use shep_core::values::{MemSize, UpDuration};
-
-    /// The table is only safe away from the parsers because this test
-    /// feeds it back through them. Every accepted form must parse and
-    /// every refused form must not, so the table cannot go on claiming a
-    /// form the parser has stopped taking.
-    #[test]
-    fn every_accepted_duration_form_parses() {
-        for form in DURATION_FORMS {
-            for example in form.examples {
-                assert!(
-                    example.parse::<UpDuration>().is_ok(),
-                    "{} is listed as accepted but does not parse",
-                    example
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn every_refused_duration_form_fails_to_parse() {
-        for form in DURATION_REFUSALS {
-            for example in form.examples {
-                assert!(
-                    example.parse::<UpDuration>().is_err(),
-                    "{} is listed as refused but parses",
-                    example
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn every_accepted_memory_form_parses() {
-        for form in MEMORY_FORMS {
-            for example in form.examples {
-                assert!(
-                    example.parse::<MemSize>().is_ok(),
-                    "{} is listed as accepted but does not parse",
-                    example
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn every_refused_memory_form_fails_to_parse() {
-        for form in MEMORY_REFUSALS {
-            for example in form.examples {
-                assert!(
-                    example.parse::<MemSize>().is_err(),
-                    "{} is listed as refused but parses",
-                    example
-                );
-            }
-        }
-    }
-
-    /// How many forms a `text` names.
-    ///
-    /// Commas and the word "or", because `BOOL_FORMS` separates with the
-    /// second and a comma count alone reads "true or false" as one form.
-    fn forms_named(text: &str) -> usize {
-        text.split(',').flat_map(|part| part.split(" or ")).count()
-    }
-
-    /// Every form the text names has a corresponding example in examples,
-    /// since that is the hole being closed. A text may name several forms,
-    /// and every one of them has to be provable from the examples list.
-    #[test]
-    fn every_form_the_text_names_has_an_example() {
-        for (name, forms) in [
-            ("DURATION_FORMS", DURATION_FORMS),
-            ("DURATION_REFUSALS", DURATION_REFUSALS),
-            ("MEMORY_FORMS", MEMORY_FORMS),
-            ("MEMORY_REFUSALS", MEMORY_REFUSALS),
-            ("BOOL_FORMS", BOOL_FORMS),
-            ("INTEGER_FORMS", INTEGER_FORMS),
-        ] {
-            for form in forms {
-                assert!(
-                    forms_named(form.text) <= form.examples.len(),
-                    "{name}: text \"{}\" names {} forms but examples has only {}",
-                    form.text,
-                    forms_named(form.text),
-                    form.examples.len()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_field_with_its_own_accepts_replaces_the_type_table() {
-        let mut field = text_field("cwd");
-        field.value_kind = Some(ValueKind::UpDuration);
-        field.accepts = vec!["only this".to_owned()];
-        let bullets = bullets(&field);
-        assert_eq!(bullets.accepts, vec!["only this".to_owned()]);
-    }
-
-    #[test]
-    fn a_field_with_no_accepts_takes_the_type_table() {
-        let mut field = text_field("min_uptime");
-        field.value_kind = Some(ValueKind::UpDuration);
-        let bullets = bullets(&field);
-        assert!(bullets.accepts.len() > 1);
-    }
-
-    /// A plain string field the type table says nothing about renders no
-    /// VALIDATION heading rather than an empty one.
-    #[test]
-    fn a_plain_text_field_with_no_annotation_has_no_bullets() {
-        let bullets = bullets(&text_field("fold"));
-        assert!(bullets.is_empty());
-    }
-
-    /// The three arms of `table_for` that no other test reached: a bool
-    /// and an integer are keyed on `Field::kind` rather than on a
-    /// `value_kind`, and the size table's refusals are new. Every one of
-    /// them could have been swapped for the empty pair without failing
-    /// anything.
-    #[test]
-    fn every_type_table_reaches_the_panel() {
-        let cases = [
-            (FieldKind::Bool, None, BOOL_FORMS, &[] as &[Form]),
-            (FieldKind::Integer, None, INTEGER_FORMS, &[]),
-            (
-                FieldKind::Text,
-                Some(ValueKind::MemSize),
-                MEMORY_FORMS,
-                MEMORY_REFUSALS,
-            ),
-            (
-                FieldKind::Text,
-                Some(ValueKind::UpDuration),
-                DURATION_FORMS,
-                DURATION_REFUSALS,
-            ),
-        ];
-        for (kind, value_kind, accepts, refuses) in cases {
-            let mut field = text_field("max_memory");
-            field.kind = kind.clone();
-            field.value_kind = value_kind;
-            let bullets = bullets(&field);
-            let texts = |forms: &[Form]| -> Vec<String> {
-                forms.iter().map(|form| form.text.to_owned()).collect()
-            };
-            assert_eq!(bullets.accepts, texts(accepts), "{kind:?} accepts");
-            assert_eq!(bullets.refuses, texts(refuses), "{kind:?} refuses");
-        }
-    }
-
+    use shep_core::values::UpDuration;
     /// The one rule both refusal doors share. `ConfigPane::apply_typing`
     /// builds its own sentence for an integer it cannot convert, so the
     /// redaction cannot live inside [`refusal`] alone.
     #[test]
     fn the_shown_value_of_a_secret_is_the_marker_and_never_the_buffer() {
         let mut field = text_field("token");
-        assert_eq!(shown_value(&field, "sk_live_HUNTER2"), "sk_live_HUNTER2");
+        assert_eq!(
+            shown_value(field.secret, "sk_live_HUNTER2"),
+            "sk_live_HUNTER2"
+        );
         field.secret = true;
-        assert_eq!(shown_value(&field, "sk_live_HUNTER2"), REDACTED);
+        assert_eq!(shown_value(field.secret, "sk_live_HUNTER2"), REDACTED);
         assert!(
-            !not_a_whole_number(&field.key, shown_value(&field, "sk_live_HUNTER2"))
+            !not_a_whole_number(&field.key, shown_value(field.secret, "sk_live_HUNTER2"))
                 .text
                 .contains("HUNTER2")
         );
@@ -776,6 +634,273 @@ mod tests {
         assert_eq!(refusal(&text_field("cwd"), "!!! anything"), None);
     }
 
+    /// Every rule an item schema can publish, with the value it takes and
+    /// the one it turns down, and the whole sentence for the refused one.
+    ///
+    /// `minLength` is checked at exactly its bound, because a rule that
+    /// refused its own minimum would be a field nothing can be set to.
+    #[test]
+    fn every_item_rule_refuses_one_element_and_takes_the_next() {
+        let min_length = Bounds {
+            min_length: Some(3),
+            ..Default::default()
+        };
+        let pattern = Bounds {
+            pattern: Some("^[a-z]+$".to_owned()),
+            ..Default::default()
+        };
+        let words = Bounds {
+            choices: vec![serde_json::json!("ask"), serde_json::json!("auto")],
+            ..Default::default()
+        };
+        let numbers = Bounds {
+            choices: vec![
+                serde_json::json!(1),
+                serde_json::json!(2),
+                serde_json::json!(3),
+            ],
+            ..Default::default()
+        };
+        let range = Bounds {
+            minimum: Some(1),
+            maximum: Some(64),
+            ..Default::default()
+        };
+        let cases = [
+            (
+                "minLength",
+                ListItem::Text,
+                &min_length,
+                "abc",
+                "ab",
+                "tags is \"ab\"; tags needs at least 3 characters",
+            ),
+            (
+                "pattern",
+                ListItem::Text,
+                &pattern,
+                "abc",
+                "Ab1",
+                "tags is \"Ab1\", which it does not take; try it matches ^[a-z]+$",
+            ),
+            (
+                "enum",
+                ListItem::Text,
+                &words,
+                "auto",
+                "never",
+                "tags is \"never\"; tags takes one of ask, auto",
+            ),
+            (
+                "integer enum",
+                ListItem::Integer,
+                &numbers,
+                "2",
+                "4",
+                "tags is \"4\"; tags takes one of 1, 2, 3",
+            ),
+            (
+                "minimum",
+                ListItem::Integer,
+                &range,
+                "1",
+                "0",
+                "tags is \"0\"; tags starts at 1",
+            ),
+            (
+                "maximum",
+                ListItem::Integer,
+                &range,
+                "64",
+                "65",
+                "tags is \"65\"; tags stops at 64",
+            ),
+        ];
+        for (rule, item, bounds, accepted, refused, sentence) in cases {
+            assert_eq!(
+                item_refusal("tags", item, bounds, accepted, false),
+                None,
+                "{rule}: {accepted} is the value the rule takes"
+            );
+            let refused = item_refusal("tags", item, bounds, refused, false).expect(rule);
+            assert_eq!(refused.text, sentence, "{rule}");
+        }
+    }
+
+    /// An `enum` member a schema wrote with a decimal point is the number
+    /// the pane parsed, and a `Value` comparison says otherwise:
+    /// `serde_json` keeps `1` and `1.0` as two numbers, and JSON Schema
+    /// means one of them. A dog publishing `enum: [1.0, 2.0]` for a
+    /// `Vec<i64>` had its own values refused.
+    #[test]
+    fn an_enum_number_written_with_a_decimal_point_still_takes_the_integer() {
+        let bounds = Bounds {
+            choices: vec![serde_json::json!(1.0), serde_json::json!(2.0)],
+            ..Default::default()
+        };
+        for typed in ["1", "2"] {
+            assert_eq!(
+                item_refusal("levels", ListItem::Integer, &bounds, typed, false),
+                None,
+                "{typed} is the value the schema wrote"
+            );
+        }
+        let refused = item_refusal("levels", ListItem::Integer, &bounds, "3", false)
+            .expect("3 is not in the set");
+        assert_eq!(
+            refused.text,
+            "levels is \"3\"; levels takes one of 1.0, 2.0"
+        );
+
+        // The other direction holds: a set holding a fraction does not take
+        // the whole number beside it.
+        let halves = Bounds {
+            choices: vec![serde_json::json!(1.5)],
+            ..Default::default()
+        };
+        let refused =
+            item_refusal("levels", ListItem::Integer, &halves, "1", false).expect("1 is not 1.5");
+        assert_eq!(refused.text, "levels is \"1\"; levels takes one of 1.5");
+    }
+
+    /// The one thing an integer list refuses even with no bounds on its
+    /// items, and the sentence the scalar editor already uses for it.
+    #[test]
+    fn an_integer_element_that_is_not_a_number_is_refused_out_loud() {
+        let bounds = Bounds::default();
+        let refused = item_refusal("stop_exit_codes", ListItem::Integer, &bounds, "lots", false)
+            .expect("lots is not a number");
+        assert_eq!(
+            refused.text,
+            "stop_exit_codes is \"lots\", which is not a whole number shep accepts"
+        );
+        assert_eq!(
+            item_refusal("stop_exit_codes", ListItem::Integer, &bounds, "-1", false),
+            None,
+            "a negative exit code is a whole number"
+        );
+    }
+
+    /// A list whose items are a plain string, which is every list the
+    /// Flockfile schema publishes today. Nothing is refused, and the gate
+    /// is not shep's chance to invent a grammar for a dog's array.
+    #[test]
+    fn a_list_with_no_item_rules_refuses_nothing() {
+        let bounds = Bounds::default();
+        for typed in ["a", "!!! anything", ""] {
+            assert_eq!(
+                item_refusal("args", ListItem::Text, &bounds, typed, false),
+                None,
+                "{typed}"
+            );
+        }
+    }
+
+    /// The count is of characters, not bytes. `"ab\u{00e9}"` is four bytes
+    /// and three characters, so a byte count would have taken it and a
+    /// character count refuses it.
+    #[test]
+    fn a_min_length_counts_characters_and_not_bytes() {
+        let bounds = Bounds {
+            min_length: Some(4),
+            ..Default::default()
+        };
+        assert_eq!(
+            item_refusal("tags", ListItem::Text, &bounds, "abc\u{00e9}", false),
+            None,
+            "four characters, five bytes"
+        );
+        let refused = item_refusal("tags", ListItem::Text, &bounds, "ab\u{00e9}", false)
+            .expect("three characters is under four");
+        assert_eq!(
+            refused.text,
+            "tags is \"ab\u{00e9}\"; tags needs at least 4 characters"
+        );
+    }
+
+    /// A dog that ships a broken regex in its item schema has a bug in its
+    /// schema, and the list editor fails open on it for [`refusal`]'s
+    /// reason: refusing every element would lock an operator out of a
+    /// setting over somebody else's typo.
+    #[test]
+    fn a_list_pattern_that_does_not_compile_refuses_nothing() {
+        let broken = ["^[", "a-z"].concat();
+        assert!(
+            regex::Regex::new(&broken).is_err(),
+            "the fixture must be a pattern regex really refuses"
+        );
+        let bounds = Bounds {
+            pattern: Some(broken),
+            ..Default::default()
+        };
+        assert_eq!(
+            item_refusal("tags", ListItem::Text, &bounds, "ab", false),
+            None,
+            "a pattern that does not compile bounds nothing"
+        );
+    }
+
+    /// A list of credentials reaches a refusal the same two doors a scalar
+    /// does, and neither may print the element: the list sub-screen draws
+    /// what is typed, and this sentence is the one place a value typed into
+    /// it would be repeated.
+    #[test]
+    fn a_secret_lists_refusal_names_the_marker_and_never_the_element() {
+        const CREDENTIAL: &str = "tok_HUNTER2";
+        let pattern = Bounds {
+            pattern: Some("^sk-".to_owned()),
+            ..Default::default()
+        };
+        let refused = item_refusal("tokens", ListItem::Text, &pattern, CREDENTIAL, true)
+            .expect("the pattern refuses it");
+        assert_eq!(
+            refused.text,
+            "tokens is \"<set>\", which it does not take; try it matches ^sk-"
+        );
+
+        let min_length = Bounds {
+            min_length: Some(32),
+            ..Default::default()
+        };
+        let refused = item_refusal("tokens", ListItem::Text, &min_length, CREDENTIAL, true)
+            .expect("too short");
+        assert!(!refused.text.contains(CREDENTIAL), "{}", refused.text);
+        assert!(refused.text.contains("<set>"), "{}", refused.text);
+
+        let choices = Bounds {
+            choices: vec![serde_json::json!("ask"), serde_json::json!("auto")],
+            ..Default::default()
+        };
+        let refused = item_refusal("tokens", ListItem::Text, &choices, CREDENTIAL, true)
+            .expect("not a member");
+        assert!(!refused.text.contains(CREDENTIAL), "{}", refused.text);
+
+        let range = Bounds {
+            minimum: Some(1000),
+            ..Default::default()
+        };
+        let refused =
+            item_refusal("pins", ListItem::Integer, &range, "7", true).expect("below the floor");
+        assert_eq!(refused.text, "pins is \"<set>\"; pins starts at 1000");
+    }
+
+    /// The control on the test above: an element of a list that is not a
+    /// credential is quoted back, since redacting everything would pass
+    /// that test while making every refusal useless.
+    #[test]
+    fn an_ordinary_element_is_still_quoted_back() {
+        let bounds = Bounds {
+            pattern: Some("^eu-".to_owned()),
+            ..Default::default()
+        };
+        assert!(
+            item_refusal("regions", ListItem::Text, &bounds, "Europe", false)
+                .expect("refused")
+                .text
+                .contains("Europe"),
+        );
+    }
+
     /// A [`ValueKind::UpDuration`] field built the way a dog's schema
     /// spells an optional one: `anyOf: [{$ref}, {type: null}]`, with the
     /// grammar in `$defs`.
@@ -796,26 +921,5 @@ mod tests {
             .by_key("max_age")
             .expect("the schema declares max_age")
             .clone()
-    }
-
-    /// A `Field` built by hand, [`FieldKind::Text`] and every new member
-    /// empty, so a test only sets the one thing it means to check.
-    fn text_field(key: &str) -> Field {
-        Field {
-            key: key.to_owned(),
-            help: key.to_owned(),
-            group: None,
-            kind: FieldKind::Text,
-            value_kind: None,
-            default: None,
-            default_value: None,
-            secret: false,
-            editable: true,
-            example: None,
-            accepts: Vec::new(),
-            refuses: Vec::new(),
-            neighbours: Vec::new(),
-            bounds: crate::lookout::field::Bounds::default(),
-        }
     }
 }

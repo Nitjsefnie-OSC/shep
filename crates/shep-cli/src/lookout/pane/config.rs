@@ -67,8 +67,10 @@ pub struct ConfigPane {
     pub(super) env_typing: Option<EnvTyping>,
     /// The open list sub-screen. Never open at the same time as
     /// [`Self::env_typing`]: each opens on a row of its own kind, and
-    /// `Escape` closes whichever is up before the pane.
-    pub(super) list: Option<ListPane>,
+    /// `Escape` closes whichever is up before the pane. `Box`, like
+    /// [`Self::dogs`]: one is open at a time, and inline it would put a
+    /// whole sub-screen in every move of the pane.
+    pub(super) list: Option<Box<ListPane>>,
     /// The open dogs sub-screen, over a sheep's `dogs` row. Never open at
     /// the same time as [`Self::list`] or an editor: it opens only on a
     /// field list with nothing else up.

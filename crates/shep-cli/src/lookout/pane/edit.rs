@@ -400,7 +400,7 @@ impl ConfigPane {
                 Err(_) => {
                     let shown = field
                         .as_ref()
-                        .map_or(text, |field| validation::shown_value(field, text));
+                        .map_or(text, |field| validation::shown_value(field.secret, text));
                     let refused = validation::not_a_whole_number(&key, shown);
                     self.typing = Some(PaneTyping { key, buffer });
                     return Some(refused);

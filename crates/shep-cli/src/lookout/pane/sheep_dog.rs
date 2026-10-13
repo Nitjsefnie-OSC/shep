@@ -465,6 +465,37 @@ mod tests {
         assert_eq!(pane.edited_table_with(&Edits::default()), table);
     }
 
+    /// A dog whose array item is an alias back to the array. The row opens
+    /// rather than taking the process down with it: the schema is a third
+    /// party's, and `bounds_of` ends its item walk at a schema already on
+    /// the path, an alias included.
+    #[test]
+    fn a_dog_whose_item_aliases_back_to_its_array_still_opens_its_pane() {
+        let schema = json!({
+            "$ref": "#/$defs/Tree",
+            "$defs": {
+                "Tree": {
+                    "type": "object",
+                    "properties": { "branches": { "$ref": "#/$defs/Branches" } },
+                },
+                "Branches": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/Branch" },
+                    "minLength": 1,
+                },
+                "Branch": { "$ref": "#/$defs/Branches" },
+            },
+        });
+        let pane = ConfigPane::sheep_dog("web".into(), "jobs".into(), &schema, Map::new());
+        let bounds = &pane
+            .fields()
+            .by_key("branches")
+            .expect("the row is there")
+            .bounds;
+        assert_eq!(bounds.min_length, Some(1));
+        assert!(bounds.items.is_some(), "the item bounds are read");
+    }
+
     #[test]
     fn no_edit_gives_back_the_table_as_it_came() {
         assert_eq!(
