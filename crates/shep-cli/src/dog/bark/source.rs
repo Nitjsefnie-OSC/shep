@@ -37,7 +37,6 @@ pub trait EventSource: Send {
 
     /// The topics a handover would re-subscribe to: the last list
     /// [`Self::set_topics`] accepted, or the one the source was built with.
-    #[cfg_attr(not(test), expect(dead_code, reason = "#341 is the first caller"))]
     fn topics(&self) -> &[String];
 
     /// Replaces the topics this source listens to, on the live connection.
@@ -55,7 +54,6 @@ pub trait EventSource: Send {
     /// On [`Resubscribe::Request`] the list and stream are unchanged. On
     /// [`Resubscribe::Lost`] the request may have reached the shepherd, so
     /// the list is the new one and the next call sends it again.
-    #[cfg_attr(not(test), expect(dead_code, reason = "#341 is the first caller"))]
     fn set_topics(
         &mut self,
         topics: Vec<String>,

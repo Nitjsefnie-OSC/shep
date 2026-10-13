@@ -89,6 +89,16 @@ pub fn run_loop<E: EventSource, F: FlockSource, C: ConfigSource>(
         let mut poll_interval = poll_timer(poll_period);
         let mut pacing = LagPacing::default();
 
+        // Log lines name a sheep by id, so the names are read once up
+        // front. Not a reconcile: that would fire `gave_up` for a sheep
+        // already errored earlier than it fires without a log rule.
+        if !rules.log_topics().is_empty() {
+            match flock.flock().await {
+                Ok(snapshot) => rules.learn(&snapshot),
+                Err(err) => eprintln!("shep dog bark: could not read the flock's names: {err}"),
+            }
+        }
+
         loop {
             tokio::select! {
                 () = stop.wait() => break ExitCode::Success,
@@ -109,13 +119,7 @@ pub fn run_loop<E: EventSource, F: FlockSource, C: ConfigSource>(
                                 reconcile(&flock, &mut rules, &delivery).await;
                                 pacing.polled();
                             }
-                            Err(failed) => {
-                                eprintln!("shep dog bark: {failed}");
-                                break match &failed {
-                                    Resubscribe::Lost(lost) => ExitCode::from(lost),
-                                    Resubscribe::Request(err) => ExitCode::from(err),
-                                };
-                            }
+                            Err(failed) => break exit_for(&failed),
                         },
                         // Matched on the variant rather than on the dog's
                         // name: the subscription already narrows this to
@@ -130,12 +134,27 @@ pub fn run_loop<E: EventSource, F: FlockSource, C: ConfigSource>(
                                 // per-subject debounce: carrying it over
                                 // a renumbered rule set would key state on
                                 // an index that moved.
+                                let mut next_rules = next_rules;
+                                next_rules.take_names_from(&mut rules);
                                 rules = next_rules;
                                 if next.poll.as_duration() != poll_period {
                                     poll_period = next.poll.as_duration();
                                     poll_interval = poll_timer(poll_period);
                                 }
                                 eprintln!("shep dog bark: reloaded [bark] from dogs.toml");
+                                // The reload may have added or dropped the
+                                // rules that read logs, and the shepherd
+                                // forwards a line only to a subscriber that
+                                // asked for its topic.
+                                let wanted = wanted_topics(&events, &rules);
+                                if wanted != events.topics() {
+                                    if let Err(failed) = events.set_topics(wanted).await {
+                                        break exit_for(&failed);
+                                    }
+                                    // Frames unread on the old stream are gone.
+                                    reconcile(&flock, &mut rules, &delivery).await;
+                                    pacing.polled();
+                                }
                             }
                         }
                         Some(Ok(event)) => {
@@ -162,6 +181,32 @@ pub fn run_loop<E: EventSource, F: FlockSource, C: ConfigSource>(
                 }
             }
         }
+    }
+}
+
+/// The topics `rules` need on top of what `events` already holds: its
+/// non-log topics, then the log ones the rules read.
+///
+/// Derived from the source rather than passed in, so the loop has one list
+/// of base topics, the one the subscription was built with.
+fn wanted_topics<E: EventSource>(events: &E, rules: &Rules) -> Vec<String> {
+    let mut topics: Vec<String> = events
+        .topics()
+        .iter()
+        .filter(|topic| !topic.starts_with("log."))
+        .cloned()
+        .collect();
+    topics.extend(rules.log_topics());
+    topics
+}
+
+/// Reports why bark cannot keep its subscription and the exit code that
+/// ends the dog.
+fn exit_for(failed: &Resubscribe) -> ExitCode {
+    eprintln!("shep dog bark: {failed}");
+    match failed {
+        Resubscribe::Lost(lost) => ExitCode::from(lost),
+        Resubscribe::Request(err) => ExitCode::from(err),
     }
 }
 
@@ -248,6 +293,9 @@ fn now_ms() -> u64 {
         .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod log_match_tests;
 
 #[cfg(test)]
 mod tests {
