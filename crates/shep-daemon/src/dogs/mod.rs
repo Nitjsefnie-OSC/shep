@@ -10,6 +10,7 @@ mod config;
 mod contacts;
 mod narrate;
 mod refusals;
+mod secrets;
 mod silent;
 mod spec;
 #[cfg(test)]
@@ -21,6 +22,7 @@ pub use config::{dog_section, set_dog_section};
 pub use contacts::{Contact, PeerContacts};
 pub(crate) use narrate::{narrate, narrate_by_name};
 pub use refusals::{DogRefusals, Refusal, record_refused_dog};
+pub use secrets::{StoreFault, resolve_section, section_references, store_unreadable};
 pub(crate) use silent::silent_dogs;
 pub use silent::{DOG_SILENCE_BUDGET, spawn_silent_dog_watch};
 // Only server.rs's handshake test names these, and it is `#[cfg(unix)]`

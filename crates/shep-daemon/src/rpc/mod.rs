@@ -40,6 +40,8 @@ use dispatch::with_deadline;
 
 mod batch;
 
+mod dog_secrets;
+
 mod enrichment;
 
 mod error;

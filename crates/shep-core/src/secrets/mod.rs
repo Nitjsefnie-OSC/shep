@@ -22,6 +22,6 @@ pub use provider::{
     NamespaceTable, NamespaceValues, PROVIDER_CACHE_VERSION, ProviderCache, PushedPairs,
     provider_cache_on_disk,
 };
-pub use refs::{SecretRef, namespaces_of, references, sealed_keys};
+pub use refs::{SecretRef, namespaces_of, references, references_in, sealed_keys};
 pub use resolve_mod::{Resolution, SecretView};
 pub use store::{all, get, is_name, set, unset};
