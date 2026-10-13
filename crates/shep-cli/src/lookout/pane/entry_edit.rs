@@ -49,7 +49,11 @@ fn pane() -> ConfigPane {
 fn at(key: &str) -> ConfigPane {
     let mut pane = pane();
     pane.move_to_key(key);
-    assert_eq!(cursor_key(&pane).as_deref(), Some(key), "the cursor is there");
+    assert_eq!(
+        cursor_key(&pane).as_deref(),
+        Some(key),
+        "the cursor is there"
+    );
     pane
 }
 
@@ -80,7 +84,10 @@ fn a_text_field_in_an_entry_is_typed_and_filed_under_its_full_path() {
     type_out(&mut pane, "x");
     assert_eq!(pane.apply_typing(), None);
     assert_eq!(filed(&pane, "clients[1].name"), Some(json!("betax")));
-    assert_eq!(pane.edited_value("clients[1].name").as_deref(), Some("betax"));
+    assert_eq!(
+        pane.edited_value("clients[1].name").as_deref(),
+        Some("betax")
+    );
     assert_eq!(pane.edits().len(), 1);
 }
 
@@ -148,7 +155,10 @@ fn an_empty_buffer_unsets_the_field_in_the_entry() {
 fn a_list_and_a_count_in_an_entry_stay_read_only() {
     for key in ["clients[0].tags", "clients[0].peers"] {
         let mut pane = at(key);
-        assert_eq!(pane.cursor_lock().map(|(_, lock)| lock), Some(Lock::NoWidget));
+        assert_eq!(
+            pane.cursor_lock().map(|(_, lock)| lock),
+            Some(Lock::NoWidget)
+        );
         pane.begin_typing();
         pane.cycle();
         pane.file_default();
@@ -170,7 +180,10 @@ fn a_secret_in_an_entry_reads_as_set_seeds_empty_and_never_prints_a_refused_valu
     assert!(!refusal.text.contains("hunter2"), "{}", refusal.text);
     assert!(pane.edits().is_empty());
     let debug = format!("{pane:?}");
-    assert!(!debug.contains("hunter2") && !debug.contains("sk-old"), "{debug}");
+    assert!(
+        !debug.contains("hunter2") && !debug.contains("sk-old"),
+        "{debug}"
+    );
 }
 
 #[test]
@@ -200,9 +213,15 @@ fn the_per_sheep_table_keeps_its_entries_read_only() {
     pane.open_table();
     pane.move_by(1);
     let Some(PaneRow::Entry(_)) = pane.cursor() else {
-        panic!("the cursor is on a row under the entry: {:?}", pane.cursor());
+        panic!(
+            "the cursor is on a row under the entry: {:?}",
+            pane.cursor()
+        );
     };
-    assert_eq!(pane.cursor_lock().map(|(_, lock)| lock), Some(Lock::NoWidget));
+    assert_eq!(
+        pane.cursor_lock().map(|(_, lock)| lock),
+        Some(Lock::NoWidget)
+    );
     pane.begin_typing();
     pane.cycle();
     pane.file_default();

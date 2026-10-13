@@ -252,7 +252,7 @@ impl ConfigPane {
 
     /// The field under the cursor, for a row that holds a value: a config
     /// field, or a field inside an entry, whose key is its full path.
-    pub(super) fn cursor_field(&self) -> Option<&Field> {
+    pub(in crate::lookout) fn cursor_field(&self) -> Option<&Field> {
         match self.cursor()? {
             PaneRow::Field(index) => self.fields.fields().get(index),
             PaneRow::Entry(index) => match &self.entries.row(index)?.body {

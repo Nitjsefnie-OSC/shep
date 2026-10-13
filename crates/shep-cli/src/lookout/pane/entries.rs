@@ -15,8 +15,8 @@ use serde_json::{Map, Value};
 use super::super::field::{
     Child, Entries, Field, FieldKind, FieldSet, Flattened, flatten_values, segment,
 };
-use super::{PaneRow, PathStep};
 use super::fields::{entries_text, render_json};
+use super::{PaneRow, PathStep};
 
 /// Every row under an [`FieldKind::Entries`] field of one pane.
 ///

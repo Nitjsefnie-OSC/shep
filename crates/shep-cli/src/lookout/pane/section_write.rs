@@ -207,9 +207,8 @@ fn set_at(
         return Landed::Refused;
     };
     if let Some((PathStep::Index(at), after)) = rest.split_first() {
-        let Some((entry, entry_inline)) = table
-            .get_mut(key)
-            .and_then(|array| element_at(array, *at))
+        let Some((entry, entry_inline)) =
+            table.get_mut(key).and_then(|array| element_at(array, *at))
         else {
             return Landed::Refused;
         };
@@ -245,7 +244,13 @@ fn set_at(
     let Some(nested) = entry.as_table_like_mut() else {
         return Landed::Refused;
     };
-    set_at(nested, rest, existing.saturating_sub(1), cell, nested_inline)
+    set_at(
+        nested,
+        rest,
+        existing.saturating_sub(1),
+        cell,
+        nested_inline,
+    )
 }
 
 /// Removes the leaf `path` names, and nothing above it.
@@ -261,10 +266,7 @@ fn remove_at(table: &mut dyn toml_edit::TableLike, path: &[PathStep], existing: 
         return Landed::Refused;
     };
     if let Some((PathStep::Index(at), after)) = rest.split_first() {
-        let Some((entry, _)) = table
-            .get_mut(key)
-            .and_then(|array| element_at(array, *at))
-        else {
+        let Some((entry, _)) = table.get_mut(key).and_then(|array| element_at(array, *at)) else {
             return Landed::Refused;
         };
         return remove_at(entry, after, existing.saturating_sub(2));
@@ -831,8 +833,7 @@ mod tests {
             (json!("gpt"), "name = \"gpt\"\n"),
         ] {
             let pane = nested_pane("name = 0\n");
-            let out =
-                want_written(pane.edited_section_with(&edits_of(&[("name", value.clone())])));
+            let out = want_written(pane.edited_section_with(&edits_of(&[("name", value.clone())])));
             assert_eq!(out, want, "{value}");
         }
     }

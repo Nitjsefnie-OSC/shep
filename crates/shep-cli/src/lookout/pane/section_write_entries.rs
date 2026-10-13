@@ -8,12 +8,7 @@ use super::fixtures::{entries_schema, field};
 use super::{ConfigPane, SectionWrite};
 
 fn pane(section: &str) -> ConfigPane {
-    ConfigPane::dog(
-        "paddock".into(),
-        None,
-        entries_schema(),
-        section.to_owned(),
-    )
+    ConfigPane::dog("paddock".into(), None, entries_schema(), section.to_owned())
 }
 
 fn edits_of(pairs: &[(&str, Value)]) -> Edits {
@@ -84,7 +79,10 @@ fn a_set_in_a_table_of_a_map_leaves_the_other_models() {
         "provider = \"remote\"\n",
         "context = 4096\n",
     );
-    let out = written(&pane(section), &[("models[\"gpt\"].provider", json!("edge"))]);
+    let out = written(
+        &pane(section),
+        &[("models[\"gpt\"].provider", json!("edge"))],
+    );
     assert_eq!(out, section.replace("\"remote\"", "\"edge\""));
 }
 
@@ -113,7 +111,10 @@ fn a_set_below_an_entry_creates_the_table_it_needs_inside_that_entry() {
 #[test]
 fn a_map_key_with_a_dot_is_one_key() {
     let section = "[models.\"a.b\"]\nprovider = \"local\"\n\n[models.a]\nprovider = \"other\"\n";
-    let out = written(&pane(section), &[("models[\"a.b\"].provider", json!("edge"))]);
+    let out = written(
+        &pane(section),
+        &[("models[\"a.b\"].provider", json!("edge"))],
+    );
     assert_eq!(
         out,
         "[models.\"a.b\"]\nprovider = \"edge\"\n\n[models.a]\nprovider = \"other\"\n"

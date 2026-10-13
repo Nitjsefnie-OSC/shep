@@ -178,9 +178,9 @@ impl ConfigPane {
         self.open_down_to(key);
         if let Some(row_index) = self.rows().iter().position(|row| match row {
             PaneRow::Field(field_index) => self.fields.fields()[*field_index].key == key,
-            PaneRow::Entry(entry) => self.entries.row(*entry).is_some_and(|row| {
-                matches!(&row.body, EntryBody::Leaf { field, .. } if field.key == key)
-            }),
+            PaneRow::Entry(entry) => self.entries.row(*entry).is_some_and(
+                |row| matches!(&row.body, EntryBody::Leaf { field, .. } if field.key == key),
+            ),
             PaneRow::Table(_) | PaneRow::Env(_) | PaneRow::AddEnv => false,
         }) {
             let len = self.rows().len();
