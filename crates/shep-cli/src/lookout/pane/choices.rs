@@ -201,7 +201,13 @@ impl ConfigPane {
         } else {
             elements.push(choice.value);
         }
-        self.file_field(key, Value::Array(elements));
+        // An empty list where the target holds none is no change, and
+        // `file_field` only reads an absent key as equal to `null`.
+        if elements.is_empty() && self.values.get(&key).is_none_or(Value::is_null) {
+            self.edits.remove(&EditKey::Field(key));
+        } else {
+            self.file_field(key, Value::Array(elements));
+        }
         // An element outside the set leaves its row when toggled off. The
         // cursor goes to the list's own row, not the name that slides under
         // it, which the next key would toggle.
@@ -403,6 +409,21 @@ mod tests {
             Some(kinds_row(&pane)),
             "the cursor does not slide onto a name the next key would toggle"
         );
+    }
+
+    #[test]
+    fn toggling_a_name_on_and_off_in_a_list_the_table_does_not_carry_files_nothing() {
+        for table in [json!({}), json!({ "kinds": null })] {
+            let mut pane = pane_over(table);
+            on(&mut pane, "b");
+            pane.cycle();
+            assert_eq!(filed(&pane, "kinds"), Some(json!(["b"])));
+            pane.cycle();
+            assert!(
+                pane.edits().is_empty(),
+                "an empty list where the key was absent is not an edit"
+            );
+        }
     }
 
     #[test]
