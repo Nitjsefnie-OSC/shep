@@ -108,3 +108,29 @@ async fn disabling_a_name_nothing_holds_is_not_found() {
     };
     assert_eq!(err.code, RpcErrorCode::NotFound, "{err:?}");
 }
+
+/// fails if `enable` lands while a disable's stop is still on the kill
+/// ladder and spawns a second process beside the one being stopped, or lets
+/// the stop finish and leave the dog disabled after the operator asked for it
+/// back.
+#[tokio::test(start_paused = true)]
+async fn enabling_a_dog_mid_stop_cancels_the_disable_without_a_second_process() {
+    let h = harness(vec![
+        ProcScript::ignores_signals(),
+        ProcScript::never_exits(),
+    ]);
+    let first = enable_dog(&h.ctx, 1, "bark").await;
+
+    let (disabled, again) = tokio::join!(disable_dog(&h, 2, "bark"), async {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        enable_dog(&h.ctx, 3, "bark").await
+    });
+
+    assert!(disabled.result.is_ok(), "{:?}", disabled.result);
+    assert_eq!(again.pid, first.pid, "the old process was still live");
+    let flock = list_flock(&h.ctx, 4).await;
+    assert_eq!(flock.len(), 1, "{flock:?}");
+    assert_eq!(flock[0].id, first.id);
+    assert_eq!(flock[0].status, ProcStatus::Online);
+    assert_eq!(flock[0].disabled, None);
+}

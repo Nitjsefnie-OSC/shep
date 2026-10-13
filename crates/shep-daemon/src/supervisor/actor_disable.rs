@@ -69,10 +69,14 @@ impl<R: ProcessRunner> Actor<R> {
         name: &str,
         reply: oneshot::Sender<Result<Vec<u32>, SupervisorError>>,
     ) {
-        let held = self
+        // The mark and the stop reach every instance under the name, so a
+        // name any sheep shares is not the dog's alone to disable.
+        let mut under_name = self
             .sheep
             .values()
-            .any(|slot| slot.entry.dog.is_some() && slot.entry.spec.config().name == name);
+            .filter(|slot| slot.entry.spec.config().name == name)
+            .peekable();
+        let held = under_name.peek().is_some() && under_name.all(|slot| slot.entry.dog.is_some());
         if !held {
             let _ = reply.send(Err(SupervisorError::NotFound));
             return;
@@ -304,10 +308,35 @@ impl<R: ProcessRunner> Actor<R> {
             .map(|slot| slot.entry.spec.config().name.clone())
     }
 
-    /// Whether `entry` is a dog an operator disabled: it holds no process,
-    /// and `enable` spawns it afresh in its own row.
+    /// Whether `entry` is a dog an operator disabled and that has finished
+    /// stopping: it holds no process, and `enable` spawns it afresh in its
+    /// own row.
+    ///
+    /// A disabled dog still on its kill ladder is `Online`, not parked: a
+    /// spawn then would run beside the process being stopped.
     pub(super) fn is_parked_dog(&self, entry: &ProcessEntry) -> bool {
-        entry.dog.is_some() && self.disabled.contains(&entry.spec.config().name)
+        entry.dog.is_some()
+            && entry.status == ProcStatus::Stopped
+            && self.disabled.contains(&entry.spec.config().name)
+    }
+
+    /// Cancels the disable of the dog `name` while its stop is still in
+    /// flight: clears the mark and turns the pending stop into a restart, the
+    /// way [`Self::handle_enable`] does for a sheep. The restart respawns the
+    /// dog in its own row once the process is gone.
+    pub(super) fn cancel_dog_disable(&mut self, name: &str) {
+        if !self.disabled.remove(name) {
+            return;
+        }
+        for slot in self.sheep.values_mut() {
+            let stopping = slot.manual.is_some_and(|m| m.kind == ManualKind::Stop);
+            if stopping && slot.entry.spec.config().name == name {
+                slot.manual = Some(PendingManual {
+                    kind: ManualKind::Restart,
+                    origin: CommandOrigin::Operator,
+                });
+            }
+        }
     }
 
     pub(super) fn is_disabled_id(&self, id: u32) -> bool {

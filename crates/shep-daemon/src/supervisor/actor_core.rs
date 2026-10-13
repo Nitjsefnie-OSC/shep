@@ -360,7 +360,12 @@ impl<R: ProcessRunner> Actor<R> {
             });
         let at_rest = match held {
             Some((id, true, _)) => Some(id),
-            Some((_, false, info)) => return Ok(info),
+            Some((_, false, info)) => {
+                // A disable still stopping this dog is the operator's earlier
+                // word, and the enable is the later one.
+                self.cancel_dog_disable(&name);
+                return Ok(info);
+            }
             None => None,
         };
         // Cleared whether or not the spawn lands: the operator's word is
