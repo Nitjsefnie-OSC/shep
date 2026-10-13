@@ -28,8 +28,8 @@ use crate::terminal_safe;
 #[cfg(feature = "otel")]
 mod post;
 
-/// The one item outside this module uses from it, kept at the path the
-/// rest of the crate reaches it as.
+/// The one item outside this module uses from it, kept at the path the rest
+/// of the crate reaches it as. Its `PostReply` is named where it is made.
 #[cfg(feature = "otel")]
 pub use post::post_json;
 

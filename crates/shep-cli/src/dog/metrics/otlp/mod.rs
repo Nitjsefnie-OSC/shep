@@ -6,8 +6,9 @@
 //! dependency. The body is [`encode()`]'s OTLP/JSON.
 //!
 //! One export per interval, no retry and no queue: a failed export is
-//! reported once and the next tick sends current values anyway. Nothing here
-//! can take the scrape server or the dog's exit code down with it.
+//! reported once and the next tick sends current values anyway. A 2xx whose
+//! body names a `partialSuccess` counts as one. Nothing here can take the
+//! scrape server or the dog's exit code down with it.
 
 pub mod encode;
 
@@ -22,7 +23,7 @@ use tokio::task::JoinHandle;
 use super::MetricsConfig;
 use crate::fetch;
 
-pub use encode::{ExportContext, encode};
+pub use encode::{ExportContext, encode, rejection};
 
 /// The path every OTLP/HTTP collector serves metrics at.
 const METRICS_PATH: &str = "/v1/metrics";
@@ -86,6 +87,11 @@ enum ExportError {
     /// The collector refused the POST, or the connect, the TLS handshake or
     /// the deadline failed it.
     Send(fetch::FetchError),
+    /// The collector answered 2xx and said in its body that it took less than
+    /// it was sent, or answered something this could not read. Carries the
+    /// reason: the collector's own text, sanitised and cut. A 2xx here is not
+    /// a clean export, and points are missing.
+    Partial(String),
 }
 
 impl fmt::Display for ExportError {
@@ -93,6 +99,9 @@ impl fmt::Display for ExportError {
         match self {
             Self::Collect(source) => write!(f, "no reading to export: {source}"),
             Self::Send(source) => write!(f, "{source}"),
+            Self::Partial(reason) => {
+                write!(f, "the collector took less than it was sent: {reason}")
+            }
         }
     }
 }
@@ -102,6 +111,8 @@ impl core::error::Error for ExportError {
         match self {
             Self::Collect(source) => Some(source),
             Self::Send(source) => Some(source),
+            // The collector's own words, not an error this one came from.
+            Self::Partial(_reason) => None,
         }
     }
 }
@@ -258,8 +269,12 @@ async fn export_loop(exporter: Exporter, client: Arc<ReconnectingClient>) {
 }
 
 impl Exporter {
-    /// Collects one reading and pushes it. Any 2xx is a success; anything
-    /// else, a timeout or a connect error is a failed export.
+    /// Collects one reading and pushes it.
+    ///
+    /// A 2xx whose body names no `partialSuccess` is a success. A 2xx that
+    /// names one is a failed export: the collector took some of the points
+    /// and said so, and a tick that reported that as clean would lose the
+    /// dropped points with nothing in the log.
     async fn export(&self, client: &ReconnectingClient) -> Result<(), ExportError> {
         let reading = super::collect_reading(client)
             .await
@@ -270,9 +285,13 @@ impl Exporter {
             host_name: self.host_name.as_deref(),
         };
         let body = encode(&reading, &context);
-        fetch::post_json(&self.target, &self.headers, body.as_bytes(), self.timeout)
+        let reply = fetch::post_json(&self.target, &self.headers, body.as_bytes(), self.timeout)
             .await
-            .map_err(ExportError::Send)
+            .map_err(ExportError::Send)?;
+        match rejection(&reply.body) {
+            Some(reason) => Err(ExportError::Partial(reason)),
+            None => Ok(()),
+        }
     }
 }
 
@@ -293,9 +312,9 @@ mod tests {
     use super::super::{Reading, tests as metrics_tests};
     use super::*;
 
-    /// A listener that answers `statuses` in order, cycling, to every
-    /// request it accepts, and records each request's full bytes. Aborted on
-    /// drop, so a collector cannot hold its port for the rest of the run.
+    /// A listener that answers every request it accepts with `responses`,
+    /// cycling, and records each request's full bytes. Aborted on drop, so a
+    /// collector cannot hold its port for the rest of the run.
     struct Collector {
         addr: SocketAddr,
         seen: Arc<Mutex<Vec<String>>>,
@@ -333,7 +352,8 @@ mod tests {
         }
     }
 
-    async fn collector(statuses: Vec<u16>) -> Collector {
+    /// A listener answering `responses` verbatim, one per request, cycling.
+    async fn collector_answering(responses: Vec<String>) -> Collector {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -368,16 +388,29 @@ mod tests {
                     }
                 }
                 recorder.lock().unwrap().push(request);
-                let status = statuses[answered % statuses.len()];
+                let response = &responses[answered % responses.len()];
                 answered += 1;
-                let response = format!(
-                    "HTTP/1.1 {status} ok\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                );
                 let _ = reader.write_all(response.as_bytes()).await;
                 let _ = reader.shutdown().await;
             }
         });
         Collector { addr, seen, handle }
+    }
+
+    /// [`collector_answering`] with `statuses` and no body, which is what a
+    /// collector that took every point answers.
+    async fn collector(statuses: Vec<u16>) -> Collector {
+        collector_answering(
+            statuses
+                .iter()
+                .map(|status| {
+                    format!(
+                        "HTTP/1.1 {status} ok\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                })
+                .collect(),
+        )
+        .await
     }
 
     /// An [`Exporter`] pointed at `addr` on a `cadence` interval, with the
@@ -474,6 +507,54 @@ mod tests {
         assert_eq!(seen.len(), 3, "the tick after a failed export must run");
         assert!(!handle.is_finished(), "a failing exporter must not end");
         handle.abort();
+    }
+
+    /// A 200 whose body names a `partialSuccess` is a failed export. The
+    /// collector took some of the points and said which: a tick that called
+    /// that clean would lose the dropped points with nothing in the log, and
+    /// the next tick would do the same.
+    #[tokio::test]
+    async fn a_2xx_naming_a_partial_success_is_a_failed_export() {
+        let body = r#"{"partialSuccess":"1 data point dropped"}"#;
+        let collector = collector_answering(vec![format!(
+            "HTTP/1.1 200 ok\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )])
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+        let (client, _daemon) = fake_reconnecting_client_on(&socket).await;
+        let exporter = exporter_on(collector.addr, Duration::from_secs(60));
+
+        let err = exporter
+            .export(&client)
+            .await
+            .expect_err("a 2xx naming dropped points is not a clean export");
+        assert!(
+            matches!(&err, ExportError::Partial(reason) if reason == "1 data point dropped"),
+            "{err:?}"
+        );
+    }
+
+    /// A 204 with no `Content-Length` at all is how a collector answers a
+    /// payload it took whole, and it is the shape [`crate::fetch`]'s GET
+    /// reader refuses. Fails if it started reading as a failed export.
+    #[tokio::test]
+    async fn a_204_with_no_content_length_is_a_clean_export() {
+        let collector = collector_answering(vec![
+            "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".to_string(),
+        ])
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+        let (client, _daemon) = fake_reconnecting_client_on(&socket).await;
+        let exporter = exporter_on(collector.addr, Duration::from_secs(60));
+
+        exporter
+            .export(&client)
+            .await
+            .expect("a 204 that named nothing took everything");
+        assert_eq!(collector.wait_for(1).await.len(), 1);
     }
 
     /// The exporter shares its client with the scrape server and runs on a
