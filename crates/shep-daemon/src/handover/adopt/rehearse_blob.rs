@@ -1,4 +1,4 @@
-use super::super::{Handover, SheepFd, fds};
+use super::super::{Handover, SheepFd};
 use super::adopt_descriptors::{
     adopt_channel, adopt_fd, adopt_listener, adopt_log, adopt_pipe, adopt_stdin,
 };
@@ -101,7 +101,7 @@ fn rehearse<T>(
     // Labelled, because `sys::adoptable_fd` names only the number.
     sys::adoptable_fd(fd)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, format!("{what}: {error}")))?;
-    let duplicate = fds::duplicate_raw(fd)?;
+    let duplicate = sys::duplicate_fd(fd)?;
     // `adopt_one` owns `duplicate` on both arms, so nothing leaks: the one
     // arm that returns without consuming is `sys::adopt_handover_fd`
     // refusing, which the check above rules out for a number just created
@@ -131,7 +131,7 @@ mod tests {
 
     use std::os::fd::RawFd;
 
-    use super::super::super::{CarriedFds, SheepFd, fds};
+    use super::super::super::{CarriedFds, SheepFd};
 
     use std::os::fd::IntoRawFd as _;
 
@@ -351,9 +351,9 @@ mod tests {
         );
     }
 
-    /// A closed number is already refused before the exec, since clearing
-    /// `FD_CLOEXEC` on it meets `EBADF`. An open one of the wrong kind sails
-    /// through that and would reach a successor with no predecessor left.
+    /// A closed number is already refused before the exec, since carrying it
+    /// meets `EBADF`. An open one of the wrong kind sails through that and
+    /// would reach a successor with no predecessor left.
     #[tokio::test]
     async fn a_descriptor_that_is_open_but_not_a_pipe_is_refused_before_the_exec() {
         use std::os::fd::AsRawFd as _;
@@ -367,8 +367,8 @@ mod tests {
         // would have stopped it.
         crate::sys::adoptable_fd(not_a_pipe.as_raw_fd())
             .expect("the number must be open, or this proves nothing");
-        fds::keep_raw_across_exec(not_a_pipe.as_raw_fd())
-            .expect("the `FD_CLOEXEC` sweep must not refuse it either");
+        crate::sys::OpenFd::new(not_a_pipe.as_raw_fd())
+            .expect("carrying it must not refuse it either");
 
         let err = dry_run(&blob).expect_err("/dev/null is not a readable pipe");
 
@@ -422,9 +422,8 @@ mod tests {
     /// A repeated number is refused by the same function the successor
     /// refuses it with, rather than by a second copy of the rule.
     ///
-    /// The sweep before the exec cannot catch it: clearing `FD_CLOEXEC`
-    /// twice on one number succeeds, so a repeat reaches the successor
-    /// untouched.
+    /// The rehearsal is where the flock's own wording for it lives, and the
+    /// exec's checks are the backstop.
     #[tokio::test]
     async fn a_blob_naming_one_descriptor_twice_is_refused_before_the_exec() {
         let predecessor = Predecessor::new();

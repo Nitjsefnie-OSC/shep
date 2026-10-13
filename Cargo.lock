@@ -2206,6 +2206,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shep-core",
+ "shep-handover",
  "sysinfo",
  "tempfile",
  "tokio",

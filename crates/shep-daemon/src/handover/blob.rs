@@ -1,20 +1,20 @@
-//! The blob a shepherd leaves for its successor: its format, its version
-//! gate, and how it reaches and leaves disk.
+//! The blob a shepherd leaves for its successor: its format and its version
+//! gate.
 //!
 //! [`Handover`] is the whole of what crosses the exec besides the descriptors
-//! it names by number. It goes to disk at mode `0600` because it carries
-//! every sheep's environment, and it is read back through [`LoadError`], which
-//! refuses a blob whose format version this image does not implement rather
-//! than adopting a partial picture of a live flock.
+//! it names by number. It crosses as the state of a `shep-handover` envelope,
+//! which writes it to disk at mode `0600` because it carries every sheep's
+//! environment. A blob a release before the envelope wrote is read back
+//! through [`Handover::read`] and [`LoadError`], which refuse a blob whose
+//! format version this image does not implement rather than adopting a
+//! partial picture of a live flock.
 
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io;
 use std::os::fd::RawFd;
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use shep_core::paths::ShepPaths;
 
 use super::CarriedSheep;
 use crate::supervisor::CarriedReload;
@@ -26,7 +26,9 @@ use crate::supervisor::CarriedReload;
 /// flock.
 pub const VERSION: u32 = 1;
 
-/// The file name the blob is written under, inside `$SHEP_HOME/run`.
+/// The file name a release before the envelope wrote its blob under, inside
+/// `$SHEP_HOME/run`.
+#[cfg(test)]
 const FILE_NAME: &str = "handover.json";
 
 /// Everything the successor needs to keep supervising a flock it did not
@@ -124,16 +126,18 @@ impl Handover {
         self.reloads.as_deref().unwrap_or_default()
     }
 
-    /// Where the blob lives under `paths`: `$SHEP_HOME/run/handover.json`.
+    /// Where a release before the envelope left its blob under `paths`:
+    /// `$SHEP_HOME/run/handover.json`.
+    #[cfg(test)]
     #[must_use]
-    pub fn path(paths: &ShepPaths) -> PathBuf {
+    pub fn path(paths: &shep_core::paths::ShepPaths) -> std::path::PathBuf {
         paths.run.join(FILE_NAME)
     }
 
     /// Every descriptor number this blob names, listener and pidfile first.
     ///
-    /// The exact set [`hand_over`](super::hand_over) clears `FD_CLOEXEC` on.
-    /// A descriptor kept without being named leaks into the successor's image.
+    /// The exact set [`hand_over`](super::hand_over) carries. A descriptor
+    /// carried without being named is one the successor never adopts.
     pub(super) fn named_fds(&self) -> impl Iterator<Item = RawFd> + '_ {
         [self.listener_fd, self.pidfile_fd].into_iter().chain(
             self.sheep
@@ -142,18 +146,21 @@ impl Handover {
         )
     }
 
-    /// Write the blob under `paths` at mode `0600`, returning where it went.
+    /// Write the blob the way a release before the envelope did, at mode
+    /// `0600` under `paths`, returning where it went.
     ///
-    /// The mode is set at creation, since a later `chmod` leaves a
-    /// world-readable window. Any leftover blob is removed first, since
-    /// [`OpenOptions::mode`](OpenOptionsExt::mode) is honoured only on
-    /// create.
+    /// Only the tests write one: it is what a predecessor from that release
+    /// leaves for `successor_handover` to find.
     ///
     /// # Errors
     ///
     /// The leftover blob could not be removed, the new one could not be
     /// created, or serializing to it failed.
-    pub fn write(&self, paths: &ShepPaths) -> io::Result<PathBuf> {
+    #[cfg(test)]
+    pub fn write(&self, paths: &shep_core::paths::ShepPaths) -> io::Result<std::path::PathBuf> {
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::OpenOptionsExt as _;
+
         let path = Self::path(paths);
         match fs::remove_file(&path) {
             Ok(()) => {}
@@ -201,6 +208,11 @@ impl Handover {
         }
         serde_json::from_value(value).map_err(LoadError::Malformed)
     }
+}
+
+impl shep_handover::State for Handover {
+    /// The blob's own [`VERSION`], so one number answers both gates.
+    const FORMAT: u32 = VERSION;
 }
 
 /// Why a handover blob could not be loaded.
