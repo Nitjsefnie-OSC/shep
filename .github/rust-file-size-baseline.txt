@@ -17,6 +17,5 @@
 1103 crates/shep-cli/src/lookout/view/settings.rs
 1103 crates/shep-cli/src/lookout/view/bleats_full.rs
 1075 crates/shep-cli/src/lookout/app/sheep_pane.rs
-1065 crates/shep-daemon/src/boot_order.rs
 1030 crates/shep-cli/src/dog_index.rs
 1003 crates/shep-daemon/src/testing.rs
