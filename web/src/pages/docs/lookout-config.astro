@@ -589,7 +589,7 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
     <p>
       Enter or <code>e</code> on a set or unset row opens that dog's table
       over the sheep. It refuses while the sheep pane holds unwritten
-      edits: <code>Esc</code> goes back to the sheep pane, where{" "}
+      edits: <code>Esc</code> goes back to the pane, where{" "}
       <code>u</code> undoes them one at a time and a second{" "}
       <code>Esc</code> writes them.
     </p>
@@ -599,7 +599,9 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       <code>←</code> closes it or, on a key or a closed table, moves to its parent, and{" "}
       <code>Enter</code> toggles it. A secret
       reads <code>&lt;set&gt;</code>. A list of strings or integers opens
-      the sheep pane's list sub-screen. <code>Esc</code> writes the whole
+      the sheep pane's list sub-screen. A list of choices opens to a checklist
+      under its row, and <code>Space</code> or <code>Enter</code> toggles a
+      name. <code>Esc</code> writes the whole
       table and lands on the dashboard, not back on the sub-screen. If the
       table changed since the pane opened, nothing is written: the pane
       reloads it under your edits, and <code>Esc</code> again writes.
@@ -610,7 +612,7 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
     <p>
       <code>e</code> on a dog row opens its config, over that dog's{" "}
       <code>[&lt;name&gt;]</code> section in <code>dogs.toml</code>. It
-      works the same whether the row sits in the dashboard's own{" "}
+      works the same from the dashboard's{" "}
       <code>Dogs</code> section or the settings screen's dogs table. Inside
       the pane,{" "}
       <code>e</code> is the field list's own edit key, the same as on a
@@ -630,7 +632,7 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       with <code>--schema</code>, waits a second for an answer, then kills
       it. That is a third party's code executing because you pressed a key,
       and it is worth knowing before you browse the config of a dog you did
-      not write. A built-in dog is shep's own binary and is never spawned.
+      not write.
     </Callout>
     <p>
       The pane has no section headers: a dog's schema carries no groups, and

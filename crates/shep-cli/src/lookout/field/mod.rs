@@ -41,7 +41,7 @@ pub enum FieldKind {
     /// `type: object` with `additionalProperties`. Opens a sub-screen.
     Map,
     /// `type: array` of a shape the editor can parse back. Opens a list
-    /// sub-screen.
+    /// sub-screen, or for [`ListItem::Choice`] a checklist under its row.
     List(ListItem),
     /// An array or a map of tables with named properties. Read-only: the
     /// row reads as a count and opens to its entries.
@@ -62,12 +62,15 @@ pub enum Entries {
 }
 
 /// What an array's elements are, so the editor can parse one back.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListItem {
     /// `items: {type: string}`. Each element is typed as written.
     Text,
     /// `items: {type: integer}`. Each element is parsed back to a number.
     Integer,
+    /// `items` a closed set of strings, as [`FieldKind::Choice`] reads one.
+    /// Drawn as a checklist of the names in the set, in the schema's order.
+    Choice(Vec<String>),
 }
 
 /// Which of shep-core's own string grammars a [`FieldKind::Text`] field

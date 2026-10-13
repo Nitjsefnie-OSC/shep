@@ -1,11 +1,13 @@
 use super::super::*;
 
 impl App {
-    /// The operator's `Enter` on the config pane. Five meanings, picked in
+    /// The operator's `Enter` on the config pane. Six meanings, picked in
     /// this order:
     ///
-    /// - The cursor is on a table of a dog's pane: opens it if it is closed
-    ///   and closes it if it is open.
+    /// - The cursor is on a table of a dog's pane, or on a list of choices:
+    ///   opens it if it is closed and closes it if it is open.
+    /// - The cursor is on a name in a list of choices: toggles it, as
+    ///   `space` does.
     /// - The cursor is on a sheep's `dogs` row: probes the dogs for the
     ///   sub-screen that lists them. A read, so no gate.
     /// - The cursor is on an env row or `+ add a key`: opens the env
@@ -14,7 +16,7 @@ impl App {
     /// - The cursor is on a typed field: opens the editor and switches
     ///   [`InputMode::Text`] on.
     ///
-    /// The other three go through [`Self::authorize_write`], the editor included,
+    /// The last three go through [`Self::authorize_write`], the editor included,
     /// for the reason [`Self::confirm_setting`]'s own doc gives: the gate
     /// is checked on the keystroke that would file an edit, not on the
     /// close that writes them.
@@ -36,6 +38,9 @@ impl App {
         let Some(pane) = self.config_pane() else {
             return Effect::None;
         };
+        if matches!(pane.cursor(), Some(PaneRow::Choice { .. })) {
+            return self.cycle_field();
+        }
         if matches!(pane.cursor(), Some(PaneRow::Env(_) | PaneRow::AddEnv)) {
             if self.authorize_write().is_none() {
                 return Effect::None;
