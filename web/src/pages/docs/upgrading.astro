@@ -87,11 +87,10 @@ import Callout from "../../components/docs/Callout.astro";
       names this exact command as the fix.
     </Callout>
     <p class="fine">
-      An older <code>shep</code> binary re-running{" "}
-      <code>shep start &lt;Flockfile&gt;</code> against a newer shepherd does
-      not pass a disabled sheep by. The shepherd refuses that row, and the
-      older binary stops there without starting the rest of the file. Upgrade
-      the binary, or <code>shep enable</code> the sheep first.
+      An older <code>shep</code> re-running{" "}
+      <code>shep start &lt;Flockfile&gt;</code> gets the shepherd's refusal on
+      a disabled sheep's row and stops there, so the rest of the file does
+      not start.
     </p>
     <p class="fine">
       <code>shep start &lt;Flockfile&gt;</code> used to be the one verb that
