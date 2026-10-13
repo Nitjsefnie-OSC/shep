@@ -321,6 +321,12 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
         the crash ladder, and memory and liveness restarts. The mark is
         written to the muster roll, so it survives a shepherd restart.
       </p>
+      <p>
+        Re-running <code>shep start Flockfile.toml</code> passes a disabled
+        app by: it stays stopped, an aside names{" "}
+        <code>shep enable &lt;name&gt;</code>, and the rest of the file
+        loads and the verb exits 0. A Flockfile value never clears the mark.
+      </p>
     </VerbSignature>
     <VerbSignature verb="enable" usage="shep enable <name>">
       <p>
