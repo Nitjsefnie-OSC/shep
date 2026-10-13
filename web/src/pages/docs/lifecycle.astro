@@ -314,12 +314,9 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
         <code>/regex/</code> or <code>all</code>. An id or{" "}
         <code>name:slot</code> exits 2 and names the app to type. A disabled
         app answers <code>start</code>, <code>restart</code>,{" "}
-        <code>reload</code> and <code>stock</code> by name with exit 2, and
-        shows <code>disabled</code> in STATUS. A wildcard passes it by,
-        while naming it still reaches <code>stop</code>,{" "}
-        <code>delete</code>, <code>describe</code> and <code>signal</code>.
-        Disabling wins over a restart or a serial reload already running:
-        the app ends stopped and no
+        <code>reload</code> and <code>stock</code> with exit 2, and shows{" "}
+        <code>disabled</code> in STATUS. Disabling wins over a restart or a
+        serial reload already running: the app ends stopped and no
         replacement spawns. The shepherd's own restarts leave it stopped and
         log the drop: a <code>cron_restart</code> occurrence, a watch trigger,
         the crash ladder, and memory and liveness restarts. The mark is
@@ -335,8 +332,7 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
     <VerbSignature verb="enable" usage="shep enable <selector>">
       <p>
         Clears the mark and starts the app. An app that is not disabled is
-        left alone, and the verb says so. Its wildcards match only disabled
-        sheep, so <code>shep enable all</code> undoes a batch of disables.
+        left alone, and the verb says so.
       </p>
     </VerbSignature>
     <p class="fine">
