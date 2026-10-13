@@ -54,7 +54,7 @@ fn a_real_shepherd_runs_a_real_metrics_dog_that_answers_a_scrape() {
         "the metrics dog must answer 200 at /metrics: {body}"
     );
     assert!(
-        body.contains(r#"shep_sheep_status{sheep="web",id="0",fold="",status="online"} 1"#),
+        body.contains(r#"shep_sheep_status{sheep="web",id="2",fold="",status="online"} 1"#),
         "the exposition must name the sheep, online: {body}"
     );
     assert!(
