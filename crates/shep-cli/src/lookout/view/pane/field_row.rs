@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use shep_core::config::ApplyGroup;
 
 use super::super::super::field::{Field, FieldKind, ValueKind};
-use super::super::super::pane::{ConfigPane, Lock, PaneRow};
+use super::super::super::pane::{ConfigPane, Lock, PaneRow, TreeRow};
 use super::super::super::theme::Palette;
 use super::super::flock::{fit, mark};
 use super::layout::{BLURB_WRAP, body_width, cost_label, mask_secret, panel_width, widths, wrap};
@@ -70,7 +70,11 @@ pub(super) fn field_line(
         .map(|typing| &typing.buffer);
     let value = match typing {
         Some(buffer) => format!("{buffer}\u{258f}"),
-        None => mask_secret(field.secret, raw),
+        // An entries row reads as a count, which holds nothing to mask.
+        None => mask_secret(
+            field.secret && !matches!(field.kind, FieldKind::Entries(_)),
+            raw,
+        ),
     };
 
     let lock = match pane.lock(&field.key) {
@@ -156,12 +160,24 @@ pub(super) fn field_line(
 
 /// What a leaf's KEY cell draws after its flag: the full key, except on a
 /// dog's pane, where the tables above it are rows of their own and it is the
-/// key's last segment, indented two columns per table.
+/// key's last segment, indented two columns per table. An entries row opens
+/// and closes, so it leads with the same glyph a table does.
 fn key_cell(pane: &ConfigPane, index: usize, field: &Field) -> String {
     match pane.tree_row(PaneRow::Field(index)) {
-        Some(tree) => format!("{}{}", "  ".repeat(tree.depth), tree.label),
+        Some(tree) => {
+            let indent = "  ".repeat(tree.depth);
+            match tree.open {
+                Some(open) => format!("{indent}{} {}", open_glyph(open), tree.label),
+                None => format!("{indent}{}", tree.label),
+            }
+        }
         None => field.key.clone(),
     }
+}
+
+/// The glyph in front of a row that opens and closes.
+fn open_glyph(open: bool) -> char {
+    if open { '\u{25be}' } else { '\u{25b8}' }
 }
 
 /// One nested table's row on a dog's pane: the selection mark, the open or
@@ -182,15 +198,28 @@ pub(super) fn table_line(
     let Some(tree) = pane.tree_row(PaneRow::Table(index)) else {
         return Line::default();
     };
+    node_line(&tree, TABLE_LABEL, selected, width, palette, show_lands)
+}
+
+/// A row that opens and closes and holds no value, drawn for `tree`, with
+/// `type_label` in the cost cell.
+pub(super) fn node_line(
+    tree: &TreeRow,
+    type_label: &str,
+    selected: bool,
+    width: u16,
+    palette: Palette,
+    show_lands: bool,
+) -> Line<'static> {
     let (key_w, value_w, cost_w) = widths(body_width(width), show_lands);
-    let glyph = if tree.open == Some(true) {
-        '\u{25be}'
-    } else {
-        '\u{25b8}'
-    };
     let mut text = String::from(" ");
     text.push_str(&fit(
-        &format!(" {}{glyph} {}", "  ".repeat(tree.depth), tree.label),
+        &format!(
+            " {}{} {}",
+            "  ".repeat(tree.depth),
+            open_glyph(tree.open == Some(true)),
+            tree.label
+        ),
         key_w,
     ));
     if value_w > 0 {
@@ -199,7 +228,7 @@ pub(super) fn table_line(
     }
     if cost_w > 0 {
         text.push_str("  ");
-        text.push_str(&fit(TABLE_LABEL, cost_w));
+        text.push_str(&fit(type_label, cost_w));
     }
     let ground = if selected {
         palette.ground()
@@ -288,6 +317,7 @@ pub(super) fn type_label(field: &Field) -> &'static str {
         FieldKind::Choice(_) => "choice",
         FieldKind::Map => "map",
         FieldKind::List(_) => "list",
+        FieldKind::Entries(_) => "entries",
         FieldKind::Opaque => "opaque",
     }
 }
@@ -574,23 +604,18 @@ mod tests {
         );
     }
 
-    /// A row `flattened` has no walk into stays one row drawn whole as JSON,
-    /// so a secret one level inside it masks the row, and the panel's `now`
-    /// line with it (#630).
+    /// An array of tables that holds a secret draws as a count and never as
+    /// JSON, so neither the row nor the panel's `now` line can carry it
+    /// (#630).
     #[test]
-    fn a_table_holding_a_secret_draws_masked_in_the_row_and_the_panel() {
+    fn an_array_of_tables_holding_a_secret_draws_a_count_and_never_the_secret() {
         let pane = opaque_secret_dog_pane();
         let text = text_of(&pane_lines(&pane, fixtures::plain(), 160, 0));
         let row = text
             .iter()
             .find(|line| line.contains(" hosts"))
             .expect("hosts is drawn at 160 columns");
-        assert!(row.contains("<set>"), "{row:?}");
-        assert!(
-            text.iter()
-                .any(|line| line.contains("now") && line.contains("<set>")),
-            "the panel's now line: {text:?}"
-        );
+        assert!(row.contains("1 entry"), "{row:?}");
         assert!(
             !text.join("\n").contains("ab12cd34"),
             "the password leaked: {text:?}"

@@ -7,9 +7,9 @@ These are real frames, rendered headlessly through ratatui's TestBackend by
 
 Nothing here is a mockup.
 
-frames.ansi renders all sixty-two scenes through the same coloured
+frames.ansi renders all sixty-four scenes through the same coloured
 palette the pinned `.snap` tests use; read it with `less -R`. frames.txt
-renders the same sixty-two scenes through the flattened NO_COLOR palette
+renders the same sixty-four scenes through the flattened NO_COLOR palette
 instead, the one an operator with $NO_COLOR set or a 16-colour terminal
 actually gets. The two files are deliberately different pictures of the
 same dashboard, not one file with the colour removed.
@@ -1743,6 +1743,110 @@ shep lookout   /home/ada/.shep                                                  
                                                                                                                                                                 
                                                                                                                                                                 
 esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit   control enabled
+
+=== dog_entries  (160x48) ===
+A dog's pane over a paddock-shaped schema at 160x48: clients and models each read as a count and nothing more, clients is open onto alpha, b-2 and #2, named by name, then id, then their index, and alpha is open onto its fields, key drawn <set> with no credential on screen anywhere in the frame. Every row under an entry is read-only.
+
+shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
+                                                                                                                                                                
+  paddock  (dog config)                                                                                                                                         
+ ~ ▾ clients                  3 entries                                                  FOCUSED  key  text                                                     
+     ▾ alpha                                                                  entry                                                                             
+ ~     id                     (unset)                                                                                                                           
+>~     key                    <set>                                                                                                                             
+ ~     name                   alpha                                                                                                                             
+ ~     timeout                30                                                                                                                                
+     ▸ b-2                                                                    entry                                                                             
+     ▸ #2                                                                     entry                                                                             
+ ~ ▸ models                   2 entries                                                                                                                         
+   retries                    3                                                                                                                                 
+  shep publishes the change; paddock decides what to reload                                                                                                     
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit   control enabled
+
+=== dog_entries_narrow  (88x48) ===
+The same pane at 88 columns: narrow enough that the explanation panel is gone, so the count, the entries and the read-only rows under them have the whole width.
+
+shep lookout   /home/ada/.shep                                            6 in the flock
+                                                                                        
+  paddock  (dog config)                                                                 
+ ~ ▾ clients                  3 entries                                                 
+     ▾ alpha                                                                  entry     
+ ~     id                     (unset)                                                   
+>~     key                    <set>                                                     
+ ~     name                   alpha                                                     
+ ~     timeout                30                                                        
+     ▸ b-2                                                                    entry     
+     ▸ #2                                                                     entry     
+ ~ ▸ models                   2 entries                                                 
+   retries                    3                                                         
+  shep publishes the change; paddock decides what to reload                             
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+esc close   j/k select   g/G first/last   r refresh   space cycle   e e… control enabled
 
 === close_dialog  (160x48) ===
 esc pressed with cwd and err_file edited and listen_timeout already parked from before: the close dialog names both counts, boxed and centred at 160x48 over the dimmed editing pane.

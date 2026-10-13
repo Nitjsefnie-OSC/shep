@@ -78,7 +78,11 @@ export const BUDGETS: Record<string, number> = {
   // the element is filed, and the page has to name those four rather than
   // say the editor refuses whatever the item schema rejects, which is what
   // it said and is not true of maxLength.
-  "lookout-config": 3380, // 3379
+  //
+  // Raised again for the dog config pane's arrays and maps of tables, which
+  // read as a count and open onto entries: a new row shape the page has to
+  // name, with how its entries are labelled and that they are read-only.
+  "lookout-config": 3465, // 3464
   // Raised from 2930 on 2026-09-14 for the host line, which `shep flock`
   // began printing on a one-shot listing and not only under `--follow`. It
   // shows above every table on this page, so four transcripts gained a line

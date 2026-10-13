@@ -16,7 +16,8 @@ use shep_core::protocol::SheepConfigView;
 use super::super::edits::{EditKey, Edits};
 use super::super::field::{FieldKind, FieldSet, Flattened, Outline, flatten_values, flattened};
 use super::super::viewport::Viewport;
-use super::fields::{render_json, resolved_display, sheep_fields};
+use super::entries::{EntryBody, EntryRows};
+use super::fields::{entries_text, render_json, resolved_display, sheep_fields};
 use super::sheep_dog::SheepDogTable;
 
 // Link-only (IR-32): the unit grammars a row's resolved display goes
@@ -97,6 +98,8 @@ pub struct ConfigPane {
     /// The tables a dog pane's rows nest in. Empty for a sheep. Shared, so
     /// the pane stays small enough to sit in `Body` unboxed.
     pub(super) outline: Arc<Outline>,
+    /// The rows under each array or map of tables. Empty for a sheep.
+    pub(super) entries: Arc<EntryRows>,
     /// The tables currently drawn open, by their dotted path. See
     /// [`Self::rows`].
     pub(super) open: BTreeSet<String>,
@@ -143,6 +146,7 @@ impl ConfigPane {
             dog_table: None,
             section_paths: BTreeMap::new(),
             outline: Arc::new(Outline::default()),
+            entries: Arc::default(),
             open: BTreeSet::new(),
         }
     }
@@ -171,6 +175,7 @@ impl ConfigPane {
             fields,
             paths,
             outline,
+            shapes,
         } = flattened(&schema);
         let fields = FieldSet::from_fields(
             fields
@@ -193,6 +198,7 @@ impl ConfigPane {
             .and_then(|value| value.as_object().cloned())
             .unwrap_or_default();
         let values = flatten_values(&table, &paths);
+        let entries = EntryRows::build(&fields, &paths, &values, shapes);
         Self {
             target: PaneTarget::Dog { name, adopted_path },
             fields,
@@ -212,6 +218,7 @@ impl ConfigPane {
             section_paths: paths,
             open: outline.top_level_paths(),
             outline: Arc::new(outline),
+            entries: Arc::new(entries),
         }
     }
 
@@ -230,8 +237,15 @@ impl ConfigPane {
     /// than for a generic third.
     #[must_use]
     pub fn cursor_lock(&self) -> Option<(&str, Lock)> {
-        let PaneRow::Field(index) = self.cursor()? else {
-            return None;
+        let index = match self.cursor()? {
+            PaneRow::Field(index) => index,
+            PaneRow::Entry(index) => {
+                return match &self.entries.row(index)?.body {
+                    EntryBody::Leaf { field, .. } => Some((field.key.as_str(), Lock::NoWidget)),
+                    EntryBody::Node { .. } => None,
+                };
+            }
+            PaneRow::Table(_) | PaneRow::Env(_) | PaneRow::AddEnv => return None,
         };
         let field = self.fields.fields().get(index)?;
         self.lock(&field.key).map(|lock| (field.key.as_str(), lock))
@@ -241,10 +255,14 @@ impl ConfigPane {
     /// no row at all, or for one on an env row, which has no [`FieldKind`].
     #[must_use]
     pub fn cursor_kind(&self) -> Option<&FieldKind> {
-        let PaneRow::Field(index) = self.cursor()? else {
-            return None;
-        };
-        self.fields.fields().get(index).map(|field| &field.kind)
+        match self.cursor()? {
+            PaneRow::Field(index) => self.fields.fields().get(index).map(|field| &field.kind),
+            PaneRow::Entry(index) => match &self.entries.row(index)?.body {
+                EntryBody::Leaf { field, .. } => Some(&field.kind),
+                EntryBody::Node { .. } => None,
+            },
+            PaneRow::Table(_) | PaneRow::Env(_) | PaneRow::AddEnv => None,
+        }
     }
 
     /// What is being edited.
@@ -262,7 +280,9 @@ impl ConfigPane {
     /// The current value of `key`, rendered for a cell.
     ///
     /// A scalar shows bare, an absent or `null` value shows `(unset)`, and
-    /// anything else shows compact JSON. A sheep's `env` is the one field
+    /// anything else shows compact JSON. On a dog's pane an array or map of
+    /// tables shows how many entries it holds and nothing of them, since an
+    /// entry can hold a secret. A sheep's `env` is the one field
     /// whose value this pane never holds, since the shepherd strips it on
     /// the way out, so it shows its key count instead, and the sub-screen
     /// shows the names. A sheep's `dogs` shows dog names and no value: a
@@ -287,6 +307,11 @@ impl ConfigPane {
         }
         if key == "dogs" && matches!(self.target, PaneTarget::Sheep { .. }) {
             return dog_names(self.values.get("dogs"));
+        }
+        if !matches!(self.target, PaneTarget::Sheep { .. })
+            && let Some(FieldKind::Entries(_)) = self.fields.by_key(key).map(|field| &field.kind)
+        {
+            return entries_text(self.values.get(key));
         }
         self.values
             .get(key)

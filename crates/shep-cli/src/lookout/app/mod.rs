@@ -61,6 +61,8 @@ mod close_dialog;
 mod config_pane;
 mod config_pane_edits;
 mod dog_pane;
+#[cfg(test)]
+mod dog_pane_entries;
 mod keys;
 mod lambs;
 mod msg;

@@ -4,11 +4,13 @@
 //! A dog's settings are flat rows keyed by a dotted path, and nesting lives
 //! in the pane's outline. A table is a row that opens and closes with its
 //! keys under it. [`ConfigPane::rows`] walks the outline and these methods
-//! move through it.
+//! move through it. An array or map of tables opens the same way, to its
+//! entries, and an entry to its fields.
 
 use std::collections::BTreeSet;
 
 use super::super::field::{Child, segment};
+use super::entries::{EntryBody, EntryRow};
 use super::{ConfigPane, PaneRow, PaneTarget};
 
 /// How a row of a dog's pane is drawn in the tree.
@@ -38,7 +40,10 @@ impl ConfigPane {
     pub(super) fn push_tree_rows(&self, children: &[Child], rows: &mut Vec<PaneRow>) {
         for child in children {
             match *child {
-                Child::Leaf(index) => rows.push(PaneRow::Field(index)),
+                Child::Leaf(index) => {
+                    rows.push(PaneRow::Field(index));
+                    self.push_entry_rows(index, rows);
+                }
                 Child::Table(index) => {
                     rows.push(PaneRow::Table(index));
                     if let Some(table) = self.outline.tables.get(index)
@@ -47,6 +52,35 @@ impl ConfigPane {
                         self.push_tree_rows(&table.children, rows);
                     }
                 }
+            }
+        }
+    }
+
+    /// The entries under field `field`, when it is an entries field drawn
+    /// open, pushed onto `rows` in order.
+    fn push_entry_rows(&self, field: usize, rows: &mut Vec<PaneRow>) {
+        let Some(roots) = self.entries.roots(field) else {
+            return;
+        };
+        if self
+            .node_path(PaneRow::Field(field))
+            .is_some_and(|path| self.open.contains(path))
+        {
+            for &root in roots {
+                self.push_entry_row(root, rows);
+            }
+        }
+    }
+
+    /// Entry row `index`, and what is under it while it is open.
+    fn push_entry_row(&self, index: usize, rows: &mut Vec<PaneRow>) {
+        rows.push(PaneRow::Entry(index));
+        if let Some(EntryBody::Node { path, children, .. }) =
+            self.entries.row(index).map(|row| &row.body)
+            && self.open.contains(path)
+        {
+            for &child in children {
+                self.push_entry_row(child, rows);
             }
         }
     }
@@ -77,11 +111,66 @@ impl ConfigPane {
                 Some(TreeRow {
                     depth: path.len().saturating_sub(1),
                     label: segment(path.last()?),
-                    open: None,
+                    open: self.node_path(row).map(|path| self.open.contains(path)),
+                })
+            }
+            PaneRow::Entry(index) => {
+                let entry = self.entries.row(index)?;
+                Some(TreeRow {
+                    depth: entry.depth,
+                    label: entry.label.clone(),
+                    open: self.node_path(row).map(|path| self.open.contains(path)),
                 })
             }
             PaneRow::Env(_) | PaneRow::AddEnv => None,
         }
+    }
+
+    /// The row `row` is the open-set key of, for a row that opens and
+    /// closes: a nested table, an entries field, an entry, or a table in
+    /// one. [`None`] for a leaf.
+    fn node_path(&self, row: PaneRow) -> Option<&str> {
+        match row {
+            PaneRow::Table(index) => self.outline.tables.get(index).map(|t| t.path.as_str()),
+            PaneRow::Field(index) => {
+                self.entries.roots(index)?;
+                self.fields
+                    .fields()
+                    .get(index)
+                    .map(|field| field.key.as_str())
+            }
+            PaneRow::Entry(index) => match &self.entries.row(index)?.body {
+                EntryBody::Node { path, .. } => Some(path),
+                EntryBody::Leaf { .. } => None,
+            },
+            PaneRow::Env(_) | PaneRow::AddEnv => None,
+        }
+    }
+
+    /// The row that `row` sits under, or [`None`] at the top level.
+    fn parent_row(&self, row: PaneRow) -> Option<PaneRow> {
+        match row {
+            PaneRow::Table(index) => self
+                .outline
+                .tables
+                .get(index)
+                .and_then(|t| t.parent)
+                .map(PaneRow::Table),
+            PaneRow::Field(index) => self
+                .outline
+                .tables
+                .iter()
+                .position(|table| table.children.contains(&Child::Leaf(index)))
+                .map(PaneRow::Table),
+            PaneRow::Entry(index) => self.entries.row(index).map(|entry| entry.parent),
+            PaneRow::Env(_) | PaneRow::AddEnv => None,
+        }
+    }
+
+    /// The row under an entries field that [`PaneRow::Entry`] `index` names.
+    #[must_use]
+    pub(in crate::lookout) fn entry_row(&self, index: usize) -> Option<&EntryRow> {
+        self.entries.row(index)
     }
 
     /// The full dotted key of table `index`.
@@ -103,28 +192,48 @@ impl ConfigPane {
     /// this pane's outline still has, so a refresh does not close what the
     /// operator opened and does not hold a table the schema dropped.
     pub(in crate::lookout) fn adopt_open_tables(&mut self, open: &BTreeSet<String>) {
-        self.open = self
+        self.open.clone_from(open);
+        self.retain_known_open();
+    }
+
+    /// Drops from the open set what this pane no longer has a row for: a
+    /// table the schema dropped, a map entry whose key is gone, an array
+    /// entry past the end. An array entry is named by its index, so one
+    /// still there stays open whatever now sits at that index.
+    pub(super) fn retain_known_open(&mut self) {
+        let known: BTreeSet<String> = self
             .outline
             .tables
             .iter()
-            .filter(|table| open.contains(&table.path))
-            .map(|table| table.path.clone())
+            .map(|table| table.path.as_str())
+            .chain((0..self.fields.len()).filter_map(|index| self.node_path(PaneRow::Field(index))))
+            .chain(self.entries.node_paths())
+            .map(str::to_owned)
             .collect();
+        self.open.retain(|path| known.contains(path));
         let len = self.rows().len();
         self.view.clamp(len);
     }
 
-    /// Whether the cursor is on a nested table's row.
+    /// Whether the cursor is on a row that opens and closes and holds no
+    /// value to edit: a nested table, or an entry or a table inside one.
     #[must_use]
     pub(in crate::lookout) fn cursor_on_table(&self) -> bool {
-        matches!(self.cursor(), Some(PaneRow::Table(_)))
+        match self.cursor() {
+            Some(PaneRow::Table(_)) => true,
+            Some(PaneRow::Entry(index)) => self
+                .entries
+                .row(index)
+                .is_some_and(|row| matches!(row.body, EntryBody::Node { .. })),
+            _ => false,
+        }
     }
 
-    /// `→`: opens the table under the cursor. Does nothing on an open table,
-    /// on a leaf, or on a pane with no tables.
+    /// `→`: opens the table, entries field or entry under the cursor. Does
+    /// nothing on an open one, on a leaf, or on a pane with no tables.
     pub(in crate::lookout) fn open_table(&mut self) {
-        if let Some(PaneRow::Table(index)) = self.cursor() {
-            self.set_open(index, true);
+        if let Some(row) = self.cursor() {
+            self.set_open(row, true);
         }
     }
 
@@ -135,33 +244,23 @@ impl ConfigPane {
         let Some(row) = self.cursor().filter(|_| self.is_tree()) else {
             return;
         };
-        if let PaneRow::Table(index) = row
-            && self.is_open(index)
-        {
-            self.set_open(index, false);
+        if self.is_open(row) {
+            self.set_open(row, false);
             return;
         }
-        let parent = match row {
-            PaneRow::Table(index) => self.outline.tables.get(index).and_then(|t| t.parent),
-            PaneRow::Field(index) => self
-                .outline
-                .tables
-                .iter()
-                .position(|table| table.children.contains(&Child::Leaf(index))),
-            PaneRow::Env(_) | PaneRow::AddEnv => None,
-        };
-        if let Some(parent) = parent {
-            self.move_to_row(PaneRow::Table(parent));
+        if let Some(parent) = self.parent_row(row) {
+            self.move_to_row(parent);
         }
     }
 
     /// `Enter` on a table row: opens a closed table and closes an open one.
-    /// Returns whether the cursor was on a table.
+    /// Returns whether the cursor was on a table, an entries field or an
+    /// entry.
     pub(in crate::lookout) fn toggle_table(&mut self) -> bool {
-        let Some(PaneRow::Table(index)) = self.cursor() else {
+        let Some(row) = self.cursor().filter(|row| self.node_path(*row).is_some()) else {
             return false;
         };
-        self.set_open(index, !self.is_open(index));
+        self.set_open(row, !self.is_open(row));
         true
     }
 
@@ -179,29 +278,25 @@ impl ConfigPane {
         self.open.extend(above);
     }
 
-    fn is_open(&self, index: usize) -> bool {
-        self.outline
-            .tables
-            .get(index)
-            .is_some_and(|table| self.open.contains(&table.path))
+    fn is_open(&self, row: PaneRow) -> bool {
+        self.node_path(row)
+            .is_some_and(|path| self.open.contains(path))
     }
 
-    /// Opens or closes table `index`. The cursor stays on the row it was on,
-    /// or on the table's own row when closing hid that row.
-    fn set_open(&mut self, index: usize, open: bool) {
-        let Some(table) = self.outline.tables.get(index) else {
+    /// Opens or closes `row`. The cursor stays on the row it was on, or on
+    /// `row` itself when closing hid that row.
+    fn set_open(&mut self, row: PaneRow, open: bool) {
+        let Some(path) = self.node_path(row).map(str::to_owned) else {
             return;
         };
         let held = self.cursor();
         if open {
-            self.open.insert(table.path.clone());
+            self.open.insert(path);
         } else {
-            self.open.remove(&table.path);
+            self.open.remove(&path);
         }
         let rows = self.rows();
-        let target = held
-            .filter(|row| rows.contains(row))
-            .unwrap_or(PaneRow::Table(index));
+        let target = held.filter(|held| rows.contains(held)).unwrap_or(row);
         self.move_to_row(target);
     }
 
@@ -345,7 +440,7 @@ mod tests {
     fn closing_a_table_that_holds_the_cursor_puts_it_on_the_table_row() {
         let mut pane = tree_pane();
         go_to(&mut pane, "cap", 0);
-        pane.set_open(1, false);
+        pane.set_open(PaneRow::Table(1), false);
         assert_eq!(pane.cursor(), Some(PaneRow::Table(1)));
     }
 
@@ -353,7 +448,7 @@ mod tests {
     fn closing_a_table_above_the_cursor_keeps_the_cursor_on_its_row() {
         let mut pane = tree_pane();
         go_to(&mut pane, "name", 0);
-        pane.set_open(0, false);
+        pane.set_open(PaneRow::Table(0), false);
         assert_eq!(pane.cursor(), Some(PaneRow::Field(5)), "still `name`");
     }
 
@@ -382,7 +477,7 @@ mod tests {
         let mut previous = tree_pane();
         go_to(&mut previous, "inner", 0);
         previous.open_table();
-        previous.set_open(0, false);
+        previous.set_open(PaneRow::Table(0), false);
         let carried = previous.open_tables().clone();
         assert!(carried.contains("deep.inner") && !carried.contains("agents"));
 

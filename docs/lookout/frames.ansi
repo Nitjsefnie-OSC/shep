@@ -7,9 +7,9 @@ These are real frames, rendered headlessly through ratatui's TestBackend by
 
 Nothing here is a mockup.
 
-frames.ansi renders all sixty-two scenes through the same coloured
+frames.ansi renders all sixty-four scenes through the same coloured
 palette the pinned `.snap` tests use; read it with `less -R`. frames.txt
-renders the same sixty-two scenes through the flattened NO_COLOR palette
+renders the same sixty-four scenes through the flattened NO_COLOR palette
 instead, the one an operator with $NO_COLOR set or a 16-colour terminal
 actually gets. The two files are deliberately different pictures of the
 same dashboard, not one file with the colour removed.
@@ -1792,6 +1792,112 @@ Enter on jobs opens its table pane as a tree: hours and models open at the first
                                                                                                                                                                 [0m
                                                                                                                                                                 [0m
 [0m[38;5;221m[48;5;235mesc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit  [0m[38;5;245m[48;5;235m control enabled[0m
+
+
+=== dog_entries  (160x48) ===
+A dog's pane over a paddock-shaped schema at 160x48: clients and models each read as a count and nothing more, clients is open onto alpha, b-2 and #2, named by name, then id, then their index, and alpha is open onto its fields, key drawn <set> with no credential on screen anywhere in the frame. Every row under an entry is read-only.
+
+[0m[7m[38;5;29mshep lookout   /home/ada/.shep                                                                                                                    6 in the flock[0m
+                                                                                                                                                                [0m
+[0m[38;5;245m  paddock  (dog config)                                                                                                                                         [0m
+ [0m[38;5;245m~ ▾ clients                  3 entries                                                 [0m[7m[38;5;221m FOCUSED [0m key[0m[38;5;245m  text[0m                                                     [0m
+ [0m[38;5;245m    ▾ alpha                                                                  entry     [0m                                                                        [0m
+ [0m[38;5;245m~     id                     (unset)                                       [0m                                                                                    [0m
+[0m[38;5;221m[48;5;235m>[0m[38;5;245m[48;5;235m~     key                    <set>                                         [0m                                                                                    [0m
+ [0m[38;5;245m~     name                   alpha                                         [0m                                                                                    [0m
+ [0m[38;5;245m~     timeout                30                                            [0m                                                                                    [0m
+ [0m[38;5;245m    ▸ b-2                                                                    entry     [0m                                                                        [0m
+ [0m[38;5;245m    ▸ #2                                                                     entry     [0m                                                                        [0m
+ [0m[38;5;245m~ ▸ models                   2 entries                                                 [0m                                                                        [0m
+   retries                    3                                                                                                                                 [0m
+[0m[38;5;245m  shep publishes the change; paddock decides what to reload                                                                                                     [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+[0m[38;5;221m[48;5;235mesc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit  [0m[38;5;245m[48;5;235m control enabled[0m
+
+
+=== dog_entries_narrow  (88x48) ===
+The same pane at 88 columns: narrow enough that the explanation panel is gone, so the count, the entries and the read-only rows under them have the whole width.
+
+[0m[7m[38;5;29mshep lookout   /home/ada/.shep                                            6 in the flock[0m
+                                                                                        [0m
+[0m[38;5;245m  paddock  (dog config)                                                                 [0m
+ [0m[38;5;245m~ ▾ clients                  3 entries                                                 [0m
+ [0m[38;5;245m    ▾ alpha                                                                  entry     [0m
+ [0m[38;5;245m~     id                     (unset)                                       [0m            [0m
+[0m[38;5;221m[48;5;235m>[0m[38;5;245m[48;5;235m~     key                    <set>                                         [0m            [0m
+ [0m[38;5;245m~     name                   alpha                                         [0m            [0m
+ [0m[38;5;245m~     timeout                30                                            [0m            [0m
+ [0m[38;5;245m    ▸ b-2                                                                    entry     [0m
+ [0m[38;5;245m    ▸ #2                                                                     entry     [0m
+ [0m[38;5;245m~ ▸ models                   2 entries                                                 [0m
+   retries                    3                                                         [0m
+[0m[38;5;245m  shep publishes the change; paddock decides what to reload                             [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+                                                                                        [0m
+[0m[38;5;221m[48;5;235mesc close   j/k select   g/G first/last   r refresh   space cycle   e e…[0m[38;5;245m[48;5;235m control enabled[0m
 
 
 === close_dialog  (160x48) ===
