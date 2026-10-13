@@ -394,7 +394,7 @@ mod tests {
         }
     }
 
-    /// A [`Reading`] an exporter can be pointed at: one sheep, no host
+    /// A [`Reading`] an exporter can be pointed at: no flock, one host
     /// sample, so a test's assertions are about the transport.
     fn reading() -> Reading {
         Reading {
@@ -483,8 +483,7 @@ mod tests {
     async fn an_unreachable_endpoint_does_not_stop_the_scrape_server() {
         let dir = tempfile::tempdir().unwrap();
         let socket = shep_client::testing::control_address(dir.path());
-        let (client, daemon) = fake_reconnecting_client_on(&socket).await;
-        daemon.reply_to_list(vec![metrics_tests::sample_info("web")]);
+        let (client, _daemon) = fake_reconnecting_client_on(&socket).await;
         let client = Arc::new(client);
 
         // The scrape server this test must keep answering, built here
@@ -500,13 +499,19 @@ mod tests {
         drop(probe);
 
         let handle = tokio::spawn(export_loop(
-            exporter_on(dead, Duration::from_millis(20)),
+            exporter_on(dead, Duration::from_millis(100)),
             Arc::clone(&client),
         ));
 
+        // `shep_daemon_up` needs no flock and no host sample, so this says
+        // the scrape still reached the shepherd without depending on which
+        // of the two paths asked it first.
         let response = metrics_tests::scrape(served, "/metrics").await;
         assert!(response.starts_with("HTTP/1.1 200 "), "{response}");
-        assert!(response.contains(r#"sheep="web""#), "{response}");
+        assert!(
+            response.contains(r#"shep_daemon_up{version="9.9.9"} 1"#),
+            "{response}"
+        );
         assert!(!handle.is_finished(), "the exporter must still be trying");
         assert!(
             !server.is_finished(),
