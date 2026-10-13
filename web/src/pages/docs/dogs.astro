@@ -246,14 +246,16 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
       listener, or ask for its own restart. The frame says that the section
       changed and nothing about what is in it. Bark subscribes and swaps in
       place, since sinks and rules are pure data with no OS resource
-      attached. Three things publish today: the boot that moves a section out
+      attached. Four things publish today: the boot that moves a section out
       of <code>shep.toml</code>, a write from{" "}
       <a href="/docs/lookout">the dog config pane</a>, which is why an edit
-      made there reaches a running bark without bouncing it, and a provider
+      made there reaches a running bark without bouncing it, a provider
       dog's push that changes a value the section names with{" "}
-      <code>{"{{secret:namespace/KEY}}"}</code>. Re-pushing the same values
-      publishes nothing. A hand edit still needs the stop and start
-      above.
+      <code>{"{{secret:namespace/KEY}}"}</code>, and a change to{" "}
+      <code>secrets.json</code> that moves a key the section names with{" "}
+      <code>{"{{secret:KEY}}"}</code>. Writing the same value again
+      publishes nothing. A hand edit of <code>dogs.toml</code> still needs
+      the stop and start above.
     </p>
     <Callout variant="careful">
       A dog that restarts itself on a config change has to say so in its own
