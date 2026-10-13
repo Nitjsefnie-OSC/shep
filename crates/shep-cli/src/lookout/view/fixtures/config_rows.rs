@@ -26,6 +26,7 @@ pub fn config_pane_field_rows_for_tests(app: &App) -> Vec<String> {
             crate::lookout::pane::PaneRow::Table(_)
             | crate::lookout::pane::PaneRow::Entry(_)
             | crate::lookout::pane::PaneRow::Choice { .. }
+            | crate::lookout::pane::PaneRow::Arm { .. }
             | crate::lookout::pane::PaneRow::Env(_)
             | crate::lookout::pane::PaneRow::AddEnv => None,
         })

@@ -12,6 +12,7 @@ use super::super::edits::{EditKey, Edits};
 use super::super::field::{Field, FieldKind};
 use super::super::textbox::{TextBox, TextEdit};
 use super::super::validation::{self, Refusal};
+use super::union::Place;
 use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
 
 // Link-only (IR-32): the env editor this one is never open beside, and
@@ -193,6 +194,10 @@ impl ConfigPane {
     /// appears, rests on that: it never has to ask what a Structural
     /// edit would cost, because one can never be in the set to ask about.
     pub(super) fn file_field(&mut self, key: String, value: Value) {
+        if let Some(place) = Place::of(&key) {
+            self.file_arm(place, value);
+            return;
+        }
         if self.stored_value_is(&key, &value) {
             self.edits.remove(&EditKey::Field(key));
             return;
@@ -262,6 +267,10 @@ impl ConfigPane {
             return;
         }
         let key = field.key.clone();
+        if Place::of(&key).is_some() {
+            self.restore_arm_field(&key);
+            return;
+        }
         if self.field_shows_default(&key) {
             return;
         }
@@ -418,6 +427,16 @@ impl ConfigPane {
         {
             self.typing = Some(PaneTyping { key, buffer });
             return Some(refused);
+        }
+        if buffer.as_str().is_empty()
+            && let Some(text) = self.required_refusal(&key)
+        {
+            self.typing = Some(PaneTyping { key, buffer });
+            return Some(Refusal { text });
+        }
+        if buffer.as_str().is_empty() && Place::of(&key).is_some() {
+            self.restore_arm_field(&key);
+            return None;
         }
         let kind = field.as_ref().map(|field| field.kind.clone());
         let value = match (kind, buffer.as_str()) {

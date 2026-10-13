@@ -61,7 +61,7 @@ pub(in crate::lookout::view) fn panel_for_field(
     // 1: the FOCUSED chip, the field name, its type.
     lines.push(Line::from(vec![
         Span::styled(" FOCUSED ", palette.band(Role::Butter)),
-        Span::raw(format!(" {}", field.key)),
+        Span::raw(format!(" {}", pane.shown_key(&field.key))),
         Span::styled(format!("  {}", type_label(field)), palette.muted()),
     ]));
 
@@ -75,6 +75,12 @@ pub(in crate::lookout::view) fn panel_for_field(
         usize::from(BLURB_WRAP.min(width.saturating_sub(2))),
     ) {
         lines.push(Line::from(Span::raw(format!("  {row}"))));
+    }
+    if let Some(arm) = pane.arm_description_of(&field.key) {
+        lines.push(Line::default());
+        for row in wrap(arm, usize::from(BLURB_WRAP.min(width.saturating_sub(2)))) {
+            lines.push(Line::from(Span::raw(format!("  {row}"))));
+        }
     }
 
     // 3: now, default, example. `now` is never empty; the other two show a
@@ -189,6 +195,11 @@ pub(in crate::lookout::view) fn panel_lines(
         Some(PaneRow::Table(index)) => return panel_for_table(pane, index, palette, width),
         Some(PaneRow::Entry(index)) => return panel_for_entry(pane, index, palette, width),
         Some(PaneRow::Choice { field, .. }) => field,
+        Some(row @ PaneRow::Arm { .. }) => {
+            return pane.arm_field(row).map_or_else(Vec::new, |field| {
+                panel_for_field(field, pane, palette, width)
+            });
+        }
         Some(PaneRow::Env(_) | PaneRow::AddEnv) | None => return Vec::new(),
     };
     let Some(field) = pane.fields().fields().get(index) else {

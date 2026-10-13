@@ -44,6 +44,23 @@ pub(super) fn entry_line(
     leaf_line(pane, field, &key, selected, width, palette, show_lands)
 }
 
+/// A row under a union: its tag, or a field of the arm the tag names. Drawn
+/// as any field row, indented to its depth.
+pub(super) fn arm_line(
+    pane: &ConfigPane,
+    row: PaneRow,
+    selected: bool,
+    width: u16,
+    palette: Palette,
+    show_lands: bool,
+) -> Line<'static> {
+    let (Some(field), Some(tree)) = (pane.arm_field(row), pane.tree_row(row)) else {
+        return Line::default();
+    };
+    let key = format!("{}{}", "  ".repeat(tree.depth), tree.label);
+    leaf_line(pane, field, &key, selected, width, palette, show_lands)
+}
+
 /// A row that is only its label, indented to its depth and not muted because
 /// `Enter` or `space` acts on it: a name in a checklist, drawn as its
 /// `[x] name` text, or an entries field's `+ new`.

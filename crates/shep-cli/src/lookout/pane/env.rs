@@ -96,7 +96,11 @@ impl ConfigPane {
                 buffer: TextBox::new(),
             }),
             Some(
-                PaneRow::Field(_) | PaneRow::Table(_) | PaneRow::Entry(_) | PaneRow::Choice { .. },
+                PaneRow::Field(_)
+                | PaneRow::Table(_)
+                | PaneRow::Entry(_)
+                | PaneRow::Choice { .. }
+                | PaneRow::Arm { .. },
             )
             | None => None,
         };
@@ -170,9 +174,11 @@ impl ConfigPane {
         match self.cursor()? {
             PaneRow::Env(index) => Some(self.env_keys.get(index).cloned()),
             PaneRow::AddEnv => Some(None),
-            PaneRow::Field(_) | PaneRow::Table(_) | PaneRow::Entry(_) | PaneRow::Choice { .. } => {
-                None
-            }
+            PaneRow::Field(_)
+            | PaneRow::Table(_)
+            | PaneRow::Entry(_)
+            | PaneRow::Choice { .. }
+            | PaneRow::Arm { .. } => None,
         }
     }
 
@@ -195,6 +201,7 @@ impl ConfigPane {
                     | PaneRow::Table(_)
                     | PaneRow::Entry(_)
                     | PaneRow::Choice { .. }
+                    | PaneRow::Arm { .. }
                     | PaneRow::AddEnv => false,
                 })
             })
@@ -217,6 +224,7 @@ impl ConfigPane {
             | PaneRow::Table(_)
             | PaneRow::Entry(_)
             | PaneRow::Choice { .. }
+            | PaneRow::Arm { .. }
             | PaneRow::AddEnv => None,
         }
     }

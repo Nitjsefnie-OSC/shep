@@ -51,12 +51,6 @@ impl Arm {
     pub fn requires(&self, key: &str) -> bool {
         self.required.iter().any(|name| name == key)
     }
-
-    /// The field of this arm named `key`.
-    #[must_use]
-    pub fn field(&self, key: &str) -> Option<&Field> {
-        self.fields.iter().find(|field| field.key == key)
-    }
 }
 
 /// `schema` as a [`Union`], or [`None`] when it is not one: no `oneOf`, an
