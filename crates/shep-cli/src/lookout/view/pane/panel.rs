@@ -13,7 +13,7 @@ use super::super::super::pane::{ConfigPane, PaneRow};
 use super::super::super::theme::Palette;
 use super::super::super::validation;
 use super::chrome::hairline_line;
-use super::field_row::{impact_tag, type_label};
+use super::field_row::{TABLE_LABEL, impact_tag, type_label};
 use super::layout::{BLURB_WRAP, PANEL_MAX, clipped, mask_secret, wrap};
 use crate::vocabulary::Role;
 
@@ -183,13 +183,41 @@ pub(in crate::lookout::view) fn panel_lines(
     palette: Palette,
     width: u16,
 ) -> Vec<Line<'static>> {
-    let Some(PaneRow::Field(index)) = pane.cursor() else {
-        return Vec::new();
+    let index = match pane.cursor() {
+        Some(PaneRow::Field(index)) => index,
+        Some(PaneRow::Table(index)) => return panel_for_table(pane, index, palette, width),
+        Some(PaneRow::Env(_) | PaneRow::AddEnv) | None => return Vec::new(),
     };
     let Some(field) = pane.fields().fields().get(index) else {
         return Vec::new();
     };
     panel_for_field(field, pane, palette, width)
+}
+
+/// The panel for a nested table: the `FOCUSED` chip with its full key and
+/// its type, and nothing under it, since a table holds no value, default or
+/// validation of its own. A path longer than `width` leaves room for is
+/// clipped, so the type label stays inside the panel.
+fn panel_for_table(
+    pane: &ConfigPane,
+    index: usize,
+    palette: Palette,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let Some(path) = pane.table_path(index) else {
+        return Vec::new();
+    };
+    let chip = " FOCUSED ";
+    let label = format!("  {TABLE_LABEL}");
+    let taken = chip.chars().count() + 1 + label.chars().count();
+    let budget = width
+        .min(PANEL_MAX)
+        .saturating_sub(u16::try_from(taken).unwrap_or(u16::MAX));
+    vec![Line::from(vec![
+        Span::styled(chip, palette.band(Role::Butter)),
+        Span::raw(format!(" {}", clipped(path, budget))),
+        Span::styled(label, palette.muted()),
+    ])]
 }
 
 #[cfg(test)]
@@ -220,6 +248,21 @@ mod tests {
             "the current value leaked: {text}"
         );
         assert!(text.contains("<set>"), "{text}");
+    }
+
+    /// A table's chip keeps its `table` label and stays inside the panel
+    /// when the path is longer than the width leaves for it.
+    #[test]
+    fn a_tables_panel_clips_a_long_path_and_keeps_its_label() {
+        let mut pane = super::super::fixtures::nested_table_dog_pane();
+        pane.move_to_key("models.worker.token");
+        pane.close_table();
+        assert!(pane.cursor_on_table());
+        let text = text_of(&panel_lines(&pane, fixtures::plain(), 24));
+        assert_eq!(text.len(), 1, "{text:?}");
+        assert!(text[0].chars().count() <= 24, "{text:?}");
+        assert!(text[0].ends_with("table"), "{text:?}");
+        assert!(text[0].contains('\u{2026}'), "{text:?}");
     }
 
     #[test]

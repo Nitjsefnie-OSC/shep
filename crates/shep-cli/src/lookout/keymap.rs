@@ -103,9 +103,7 @@ const fn binding(press: &KeyPress) -> Binding {
         }
         KeyPress::StepDown | KeyPress::StepUp => row("J/K", Group::Moving, "next / prev sheep"),
         KeyPress::PageDown | KeyPress::PageUp => row("ctrl-d/u", Group::Moving, "page the feed"),
-        KeyPress::TabPrev | KeyPress::TabNext => {
-            row("\u{2190}/\u{2192}", Group::Moving, "environment tab")
-        }
+        KeyPress::TabPrev | KeyPress::TabNext => row(TAB_KEYS, Group::Moving, "environment tab"),
         KeyPress::NextGroup | KeyPress::PrevGroup => {
             row("tab/S-tab", Group::Moving, "next / prev group")
         }
@@ -239,6 +237,24 @@ fn rows_from(probe: &[(KeyCode, KeyModifiers)]) -> Vec<Binding> {
 pub(super) fn rows() -> Vec<Binding> {
     rows_from(PROBE)
 }
+
+/// [`rows`] as the overlay draws them over a pane: `←/→` closes and opens a
+/// table when `tree` says the pane under the overlay is a tree of tables,
+/// and keeps the environment-tab caption everywhere else.
+pub(super) fn rows_over(tree: bool) -> Vec<Binding> {
+    let mut out = rows();
+    if tree {
+        for row in &mut out {
+            if row.keys == TAB_KEYS {
+                row.does = "close/open table";
+            }
+        }
+    }
+    out
+}
+
+/// The caption of the `←/→` row.
+const TAB_KEYS: &str = "\u{2190}/\u{2192}";
 
 #[cfg(test)]
 mod tests {
@@ -501,7 +517,7 @@ mod tests {
     /// would have said a row drew no words.
     #[test]
     fn the_cells_fit_their_widths() {
-        for row in rows() {
+        for row in rows().into_iter().chain(rows_over(true)) {
             assert!(
                 (1..=usize::from(KEY_CELL)).contains(&visible_width(row.keys)),
                 "the `{}` caption is {} cells against {KEY_CELL}",

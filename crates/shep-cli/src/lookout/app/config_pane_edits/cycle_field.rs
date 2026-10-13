@@ -9,6 +9,10 @@ impl App {
     /// running flock's config needs the fat-finger catch a keystroke that
     /// stops a sheep has.
     pub(in crate::lookout::app) fn cycle_field(&mut self) -> Effect {
+        // A table holds no value to cycle, and nothing to refuse either.
+        if self.config_pane().is_some_and(ConfigPane::cursor_on_table) {
+            return Effect::None;
+        }
         // The lock is checked ahead of the control gate, the same order
         // `confirm_field` takes: it is the more specific fact, and
         // `--allow-control` would not change it. A screen that answers

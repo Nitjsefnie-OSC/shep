@@ -10,8 +10,12 @@
 //! writes whole at its dotted path. An array of tables and a map of scalars
 //! or tables stay one `Opaque` row: neither has a shape [`flattened`] can
 //! walk back into a set of writes.
+//!
+//! The rows are flat and keyed by the dotted path, so a write never needs
+//! the nesting. The nesting is kept beside them as an [`Outline`], which is
+//! what a pane draws its rows from.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::{Map, Value};
 
@@ -27,6 +31,56 @@ pub(crate) struct Flattened {
     /// of property names it came from. A property literally named `a.b`
     /// keeps the one-element path `["a.b"]`.
     pub(crate) paths: BTreeMap<String, Vec<String>>,
+    /// The tables the rows nest in, in the order `properties` iterates.
+    pub(crate) outline: Outline,
+}
+
+/// The nesting [`flattened`] folded into dotted rows.
+///
+/// An arena rather than a tree of boxes, so a pane names a table by an index
+/// that stays valid while it is open or closed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Outline {
+    /// Every nested table, parents before their children.
+    pub(crate) tables: Vec<TableNode>,
+    /// What sits at the top level, in order.
+    pub(crate) roots: Vec<Child>,
+}
+
+impl Outline {
+    /// The dotted path of every table at the top level.
+    pub(crate) fn top_level_paths(&self) -> BTreeSet<String> {
+        self.tables
+            .iter()
+            .filter(|table| table.parent.is_none())
+            .map(|table| table.path.clone())
+            .collect()
+    }
+}
+
+/// One nested table of an [`Outline`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TableNode {
+    /// Its own property name, as one segment of a dotted key: quoted when
+    /// TOML would quote it.
+    pub(crate) key: String,
+    /// Its full dotted key, the one its leaves' keys start with.
+    pub(crate) path: String,
+    /// How many tables sit above it.
+    pub(crate) depth: usize,
+    /// The table it sits in, or [`None`] at the top level.
+    pub(crate) parent: Option<usize>,
+    /// What sits directly in it, in order.
+    pub(crate) children: Vec<Child>,
+}
+
+/// What sits in a table, or at the top level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Child {
+    /// A leaf, by its index in [`Flattened::fields`].
+    Leaf(usize),
+    /// A nested table, by its index in [`Outline::tables`].
+    Table(usize),
 }
 
 /// Flattens `schema`, the `x-shep-sheep` value with the root's own `$defs`
@@ -58,21 +112,51 @@ pub(crate) fn flattened(schema: &Value) -> Flattened {
         .cloned()
         .unwrap_or_default();
 
-    let mut fields = Vec::new();
-    let mut paths = BTreeMap::new();
-    walk(
-        &properties,
-        &defs,
-        &[],
-        marked(schema) || marked(root),
-        &mut vec![root],
-        &mut fields,
-        &mut paths,
-    );
+    let mut walker = Walker {
+        defs: &defs,
+        open: vec![root],
+        fields: Vec::new(),
+        paths: BTreeMap::new(),
+        tables: Vec::new(),
+    };
+    let mut roots = walker.walk(&properties, &[], None, marked(schema) || marked(root));
+    let Walker {
+        fields,
+        paths,
+        tables,
+        ..
+    } = walker;
+
+    // The leaves were numbered in walk order. The set sorts by group, which
+    // a dog's schema does not set, but a schema that did would move them.
+    let walked: Vec<String> = fields.iter().map(|field| field.key.clone()).collect();
+    let fields = FieldSet::from_fields(fields, &[]);
+    let sorted: HashMap<&str, usize> = fields
+        .fields()
+        .iter()
+        .enumerate()
+        .map(|(index, field)| (field.key.as_str(), index))
+        .collect();
+    let renumber = |children: &mut Vec<Child>| {
+        for child in children {
+            if let Child::Leaf(index) = child
+                && let Some(&sorted_index) =
+                    walked.get(*index).and_then(|key| sorted.get(key.as_str()))
+            {
+                *index = sorted_index;
+            }
+        }
+    };
+    let mut tables = tables;
+    renumber(&mut roots);
+    for table in &mut tables {
+        renumber(&mut table.children);
+    }
 
     Flattened {
-        fields: FieldSet::from_fields(fields, &[]),
+        fields,
         paths,
+        outline: Outline { tables, roots },
     }
 }
 
@@ -93,7 +177,7 @@ fn is_nested_table(schema: &Value) -> bool {
 /// `key` as one segment of a dotted row key: bare when TOML would write it
 /// bare, quoted otherwise, so a property named `a.b` shows as `"a.b"` and
 /// can never collide with a nested `a` holding `b`.
-fn segment(key: &str) -> String {
+pub(crate) fn segment(key: &str) -> String {
     let bare = !key.is_empty()
         && key
             .chars()
@@ -105,56 +189,81 @@ fn segment(key: &str) -> String {
     }
 }
 
-/// `open` holds the nested tables on the current path, by identity: a
-/// schema is finite, so only a `$ref` back to one of them can loop, and
-/// that table is shown as one read-only leaf rather than walked again.
-///
-/// `inherited` is whether a table on the current path is marked secret.
-/// `#[shep(secret)]` on a struct field sits beside its `$ref`, not on the
-/// struct's own fields, so every row the table flattens into carries it.
-fn walk<'a>(
-    properties: &'a Map<String, Value>,
+/// What [`Walker::walk`] builds up as it descends.
+struct Walker<'a> {
     defs: &'a Map<String, Value>,
-    prefix: &[String],
-    inherited: bool,
-    open: &mut Vec<&'a Value>,
-    fields: &mut Vec<Field>,
-    paths: &mut BTreeMap<String, Vec<String>>,
-) {
-    for (key, property_schema) in properties {
-        let mut path = prefix.to_vec();
-        path.push(key.clone());
+    /// The nested tables on the current path, by identity: a schema is
+    /// finite, so only a `$ref` back to one of them can loop, and that table
+    /// is shown as one read-only leaf rather than walked again.
+    open: Vec<&'a Value>,
+    fields: Vec<Field>,
+    paths: BTreeMap<String, Vec<String>>,
+    tables: Vec<TableNode>,
+}
 
-        let resolved = super::schema::resolved(property_schema, defs);
-        let looped = open.iter().any(|seen| core::ptr::eq(*seen, resolved));
-        if !looped
-            && is_nested_table(resolved)
-            && let Some(nested) = resolved.get("properties").and_then(Value::as_object)
-        {
-            let secret = inherited || marked(property_schema) || marked(resolved);
-            open.push(resolved);
-            walk(nested, defs, &path, secret, open, fields, paths);
-            open.pop();
-            continue;
-        }
+impl<'a> Walker<'a> {
+    /// Walks `properties`, returning what sits directly in them.
+    ///
+    /// `inherited` is whether a table on the current path is marked secret.
+    /// `#[shep(secret)]` on a struct field sits beside its `$ref`, not on
+    /// the struct's own fields, so every row the table flattens into
+    /// carries it.
+    fn walk(
+        &mut self,
+        properties: &'a Map<String, Value>,
+        prefix: &[String],
+        parent: Option<usize>,
+        inherited: bool,
+    ) -> Vec<Child> {
+        let mut children = Vec::new();
+        for (key, property_schema) in properties {
+            let mut path = prefix.to_vec();
+            path.push(key.clone());
+            let dotted = path
+                .iter()
+                .map(|key| segment(key))
+                .collect::<Vec<_>>()
+                .join(".");
 
-        let dotted = path
-            .iter()
-            .map(|key| segment(key))
-            .collect::<Vec<_>>()
-            .join(".");
-        let mut field = super::field_from(key, property_schema, defs);
-        field.key.clone_from(&dotted);
-        // `field_from` already masks a row with a secret anywhere beneath
-        // it; what it cannot see is a secret table above this one.
-        field.secret |= inherited;
-        let secret_list = field.secret && matches!(field.kind, FieldKind::List(_));
-        if looped || secret_list || field.kind == FieldKind::Map {
-            field.kind = FieldKind::Opaque;
-            field.editable = false;
+            let resolved = super::schema::resolved(property_schema, self.defs);
+            let looped = self.open.iter().any(|seen| core::ptr::eq(*seen, resolved));
+            if !looped
+                && is_nested_table(resolved)
+                && let Some(nested) = resolved.get("properties").and_then(Value::as_object)
+            {
+                let secret = inherited || marked(property_schema) || marked(resolved);
+                let index = self.tables.len();
+                self.tables.push(TableNode {
+                    key: segment(key),
+                    path: dotted,
+                    depth: prefix.len(),
+                    parent,
+                    children: Vec::new(),
+                });
+                self.open.push(resolved);
+                let below = self.walk(nested, &path, Some(index), secret);
+                self.open.pop();
+                self.tables[index].children = below;
+                children.push(Child::Table(index));
+                continue;
+            }
+
+            let mut field = super::field_from(key, property_schema, self.defs);
+            field.key.clone_from(&dotted);
+            // `field_from` already masks a row with a secret anywhere
+            // beneath it; what it cannot see is a secret table above this
+            // one.
+            field.secret |= inherited;
+            let secret_list = field.secret && matches!(field.kind, FieldKind::List(_));
+            if looped || secret_list || field.kind == FieldKind::Map {
+                field.kind = FieldKind::Opaque;
+                field.editable = false;
+            }
+            children.push(Child::Leaf(self.fields.len()));
+            self.fields.push(field);
+            self.paths.insert(dotted, path);
         }
-        fields.push(field);
-        paths.insert(dotted, path);
+        children
     }
 }
 
@@ -574,6 +683,116 @@ mod tests {
         assert!(flat.fields.by_key("pools").unwrap().secret, "two hops");
         assert!(flat.fields.by_key("token").unwrap().secret);
         assert!(!flat.fields.by_key("names").unwrap().secret);
+    }
+
+    /// The keys of `outline`'s roots and below, depth first, a table as
+    /// `[key]` and its children after it, a leaf as the key of the field it
+    /// indexes.
+    fn shape(flat: &Flattened) -> Vec<String> {
+        fn visit(flat: &Flattened, children: &[Child], out: &mut Vec<String>) {
+            for child in children {
+                match *child {
+                    Child::Leaf(index) => out.push(flat.fields.fields()[index].key.clone()),
+                    Child::Table(index) => {
+                        let table = &flat.outline.tables[index];
+                        out.push(format!("[{}]", table.path));
+                        visit(flat, &table.children, out);
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        visit(flat, &flat.outline.roots, &mut out);
+        out
+    }
+
+    #[test]
+    fn the_outline_follows_property_order_through_a_table_two_levels_down() {
+        let flat = flattened(&sheep_schema());
+        assert_eq!(
+            shape(&flat),
+            [
+                "\"a.b\"",
+                "concurrency",
+                "labels",
+                "merge",
+                "[models]",
+                "[models.worker]",
+                "models.worker.model",
+                "models.worker.token",
+                "tags",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_outline_table_holds_its_last_segment_its_depth_and_its_parent() {
+        let flat = flattened(&sheep_schema());
+        let tables = &flat.outline.tables;
+        assert_eq!(tables.len(), 2);
+        assert_eq!(
+            (tables[0].key.as_str(), tables[0].depth, tables[0].parent),
+            ("models", 0, None)
+        );
+        assert_eq!(
+            (tables[1].key.as_str(), tables[1].depth, tables[1].parent),
+            ("worker", 1, Some(0))
+        );
+        assert_eq!(tables[1].path, "models.worker");
+    }
+
+    /// The outline orders the rows; `paths` and `by_key` still answer by the
+    /// dotted key alone, one entry per leaf and none per table.
+    #[test]
+    fn a_table_adds_no_path_and_no_field() {
+        let flat = flattened(&sheep_schema());
+        assert_eq!(flat.fields.len(), 7);
+        assert_eq!(flat.paths.len(), 7);
+        assert!(flat.paths.contains_key("models.worker.model"));
+        assert!(flat.fields.by_key("models").is_none());
+        assert!(flat.fields.by_key("models.worker").is_none());
+    }
+
+    #[test]
+    fn a_loop_is_one_leaf_in_the_outline_and_no_table() {
+        let flat = flattened(&json!({
+            "$ref": "#/$defs/Node",
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "child": { "anyOf": [{ "$ref": "#/$defs/Node" }, { "type": "null" }] },
+                    },
+                },
+            },
+        }));
+        assert_eq!(shape(&flat), ["child", "name"]);
+        assert!(flat.outline.tables.is_empty());
+    }
+
+    #[test]
+    fn an_outline_leaf_indexes_its_field_after_the_groups_sort() {
+        let flat = flattened(&json!({
+            "type": "object",
+            "properties": {
+                "a": { "type": "string" },
+                "b": { "type": "string", "init": { "group": "late" } },
+                "t": { "type": "object", "properties": { "c": { "type": "string" } } },
+            },
+        }));
+        let keys: Vec<&str> = flat
+            .fields
+            .fields()
+            .iter()
+            .map(|f| f.key.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            ["b", "a", "t.c"],
+            "the set sorts the grouped field first"
+        );
+        assert_eq!(shape(&flat), ["a", "b", "[t]", "t.c"]);
     }
 
     #[test]
