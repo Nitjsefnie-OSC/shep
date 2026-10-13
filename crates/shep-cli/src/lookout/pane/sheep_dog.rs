@@ -398,7 +398,7 @@ mod tests {
         assert_eq!(list.key(), "worker.allowed_domains");
         assert_eq!(list.elements(), ["a.example"]);
         list.move_to_last();
-        pane.file_list_element("b.example".into());
+        pane.file_list_element("b.example".into()).expect("filed");
 
         let table = pane.edited_table_with(pane.edits());
         assert_eq!(
@@ -430,7 +430,7 @@ mod tests {
         assert_eq!(list.elements(), ["a.example", "c.example"]);
 
         list.move_to_last();
-        pane.file_list_element("b.example".into());
+        pane.file_list_element("b.example".into()).expect("filed");
         let table = pane.edited_table_with(pane.edits());
         assert_eq!(
             table["worker"]["allowed_domains"],

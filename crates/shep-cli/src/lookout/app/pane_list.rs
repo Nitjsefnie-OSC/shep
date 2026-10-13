@@ -2,6 +2,7 @@
 //! environment.
 
 use super::*;
+use crate::lookout::validation::Refusal;
 
 impl App {
     /// One `Request::SetSheepEnv` reply.
@@ -114,18 +115,20 @@ impl App {
                 if self.authorize_write().is_none() {
                     return Effect::None;
                 }
-                if let Some(pane) = self.config_pane_mut() {
-                    pane.file_list_removal();
-                }
+                let refused = self
+                    .config_pane_mut()
+                    .and_then(|pane| pane.file_list_removal().err());
+                self.notice_refusal(refused);
             }
             KeyPress::StepUp | KeyPress::StepDown => {
                 if self.authorize_write().is_none() {
                     return Effect::None;
                 }
                 let delta = if key == KeyPress::StepUp { -1 } else { 1 };
-                if let Some(pane) = self.config_pane_mut() {
-                    pane.file_list_reorder(delta);
-                }
+                let refused = self
+                    .config_pane_mut()
+                    .and_then(|pane| pane.file_list_reorder(delta).err());
+                self.notice_refusal(refused);
             }
             KeyPress::Help => {
                 self.open_keymap();
@@ -177,6 +180,16 @@ impl App {
         Effect::None
     }
 
+    /// Shows `refused`, when there is one, as a grave notice.
+    fn notice_refusal(&mut self, refused: Option<Refusal>) {
+        if let Some(refused) = refused {
+            self.notice = Some(Notice {
+                text: refused.text,
+                grave: true,
+            });
+        }
+    }
+
     /// The list sub-screen's own text keymap.
     ///
     /// `TextApply` files the whole array. An element the item schema refuses
@@ -211,14 +224,12 @@ impl App {
                     self.mode = InputMode::Normal;
                 }
                 match applied {
-                    Ok(Some(text)) => pane.file_list_element(text),
-                    Ok(None) => {}
-                    Err(refused) => {
-                        self.notice = Some(Notice {
-                            text: refused.text,
-                            grave: true,
-                        });
+                    Ok(Some(text)) => {
+                        let refused = pane.file_list_element(text).err();
+                        self.notice_refusal(refused);
                     }
+                    Ok(None) => {}
+                    Err(refused) => self.notice_refusal(Some(refused)),
                 }
             }
             KeyPress::TextAbandon => {
@@ -421,6 +432,42 @@ mod tests {
                 .typing()
                 .is_some(),
             "and the buffer is still in the editor"
+        );
+    }
+
+    /// A hand-written `ports = [80, "http"]` opens as it is. A dog's writer
+    /// has no cell for a list that mixes the two, so the keystroke that
+    /// would file one says which element is the trouble, and nothing is
+    /// filed that would take the pane's other edits down on close.
+    #[test]
+    fn a_dogs_integer_list_with_a_stray_string_refuses_to_file_and_names_it() {
+        let mut app = fixtures::app_in_dog_pane_over_lists(
+            "ports = [80, \"http\"]\nhosts = [\"a.example\"]\n".to_owned(),
+        );
+        pane_to(&mut app, "ports");
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        let _ = app.update(Msg::Key(KeyPress::SelectLast));
+        let _ = app.update(Msg::Key(KeyPress::Edit));
+        for typed in "443".chars() {
+            let _ = app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        let _ = app.update(Msg::Key(KeyPress::TextApply));
+        let notice = app.notice().expect("the refusal answers");
+        assert!(notice.is_grave(), "{notice}");
+        assert_eq!(
+            notice.to_string(),
+            "ports holds \"http\", which is not an integer; remove it before changing ports"
+        );
+        let pane = app.config_pane().expect("the pane is open");
+        assert!(pane.edits().is_empty(), "nothing was filed");
+
+        let _ = app.update(Msg::Key(KeyPress::SelectFirst));
+        let _ = app.update(Msg::Key(KeyPress::SelectDown));
+        let _ = app.update(Msg::Key(KeyPress::Remove));
+        assert_eq!(
+            filed_value(&app, "ports"),
+            serde_json::json!([80]),
+            "removing the odd element files the rest"
         );
     }
 

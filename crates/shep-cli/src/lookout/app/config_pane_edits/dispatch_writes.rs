@@ -519,4 +519,97 @@ mod tests {
             "the file parses and already says what the operator asked for"
         );
     }
+
+    /// `Enter` opens the sub-screen over a dog's list, an element added
+    /// there is filed whole, and the close writes the section back with that
+    /// one line changed: the comment above the list stays where it was.
+    #[test]
+    fn an_element_added_to_a_dogs_list_changes_one_line_of_its_section() {
+        let mut app = fixtures::app_in_dog_pane_with_lists();
+        pane_to(&mut app, "hosts");
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        let _ = app.update(Msg::Key(KeyPress::SelectLast));
+        let _ = app.update(Msg::Key(KeyPress::Edit));
+        for typed in "c.example".chars() {
+            let _ = app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        let _ = app.update(Msg::Key(KeyPress::TextApply));
+        assert_eq!(
+            filed_value(&app, "hosts"),
+            serde_json::json!(["a.example", "b.example", "c.example"])
+        );
+        let _ = app.update(Msg::Key(KeyPress::Escape));
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Escape)) else {
+            panic!("a dog close reads its section first");
+        };
+        let effect = app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: fixtures::list_dog_section().into(),
+            }),
+        });
+        let mut batch = wire_batch(effect);
+        let Sent::SetDogSection { name, toml, .. } = batch.remove(0) else {
+            panic!("closing the pane sends the section: {batch:?}");
+        };
+        assert_eq!(name, "watch");
+        let before = fixtures::list_dog_section();
+        let sent = toml.as_str();
+        let changed: Vec<(usize, &str, &str)> = sent
+            .lines()
+            .zip(before.lines())
+            .enumerate()
+            .filter(|(_, pair)| pair.0 != pair.1)
+            .map(|(line, pair)| (line, pair.0, pair.1))
+            .collect();
+        assert_eq!(
+            changed,
+            vec![(
+                1,
+                "hosts = [\"a.example\", \"b.example\", \"c.example\"]",
+                "hosts = [\"a.example\", \"b.example\"]"
+            )],
+            "{sent}",
+        );
+        assert_eq!(sent.lines().count(), before.lines().count(), "{sent}");
+    }
+
+    /// The item schema's rules are the sub-screen's, not the sheep pane's:
+    /// `hosts` items need three characters, and a shorter one files nothing.
+    #[test]
+    fn an_element_a_dogs_item_schema_refuses_files_nothing() {
+        let mut app = fixtures::app_in_dog_pane_with_lists();
+        pane_to(&mut app, "hosts");
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        let _ = app.update(Msg::Key(KeyPress::SelectLast));
+        let _ = app.update(Msg::Key(KeyPress::Edit));
+        let _ = app.update(Msg::Key(KeyPress::TextChar('x')));
+        assert_eq!(app.update(Msg::Key(KeyPress::TextApply)), Effect::None);
+        assert_eq!(app.mode(), InputMode::Text, "the editor stays open");
+        let notice = app.notice().expect("a refusal answers");
+        assert!(notice.is_grave(), "{notice}");
+        assert!(notice.to_string().starts_with("hosts is \"x\""), "{notice}");
+        assert!(
+            app.config_pane()
+                .expect("the pane is open")
+                .edits()
+                .is_empty(),
+            "nothing was filed"
+        );
+    }
+
+    /// `Enter` on a secret list or a map raises the no-editor refusal and
+    /// opens nothing: the sub-screen would draw a secret's elements bare.
+    #[test]
+    fn enter_on_a_dogs_secret_list_or_map_opens_no_sub_screen() {
+        for key in ["keys", "labels"] {
+            let mut app = fixtures::app_in_dog_pane_with_lists();
+            pane_to(&mut app, key);
+            let _ = app.update(Msg::Key(KeyPress::Confirm));
+            let pane = app.config_pane().expect("the pane is open");
+            assert!(pane.list().is_none(), "{key}");
+            let notice = app.notice().expect("a locked row answers").to_string();
+            assert!(notice.contains("no editor in this pane"), "{key}: {notice}");
+        }
+    }
 }
