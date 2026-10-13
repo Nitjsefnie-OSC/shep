@@ -17,14 +17,18 @@ on:
     types: [published]
   # An escape hatch, so the matrix can be exercised against an existing tag
   # without waiting for a release. `dry-run` skips the upload, which is what
-  # makes it safe to point at a tag that already has its assets.
+  # makes it safe to point at a tag that already has its assets. A dry run
+  # also builds the dispatching ref rather than the tag, so a branch can
+  # prove its own changes to this matrix (a new feature, a new target) before
+  # anything is released; the tag still has to exist and match the workspace
+  # version, because `resolve` checks it either way.
   workflow_dispatch:
     inputs:
       tag:
         description: Tag to build, e.g. shep-v0.1.12
         required: true
       dry-run:
-        description: Build and archive, but upload nothing
+        description: Build the dispatching ref and archive it, but upload nothing
         type: boolean
         default: true
 
@@ -137,7 +141,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve.outputs.tag }}
+          # A dry run builds the dispatching ref, not the tag: the point of
+          # dispatching one is to exercise this job's own YAML against the
+          # code that would ship, and a tag predating the change cannot do
+          # that. A real dispatch (`dry-run: false`) builds the tag, because
+          # that is the tree whose assets then get uploaded under it.
+          ref: >-
+            ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run && github.ref || needs.resolve.outputs.tag }}
           persist-credentials: false
       - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
       - if: matrix.packages != ''
@@ -165,6 +175,13 @@ jobs:
           # just built, which the cross-compiled Intel macOS leg cannot do.
           # Homebrew and the .deb generate their own.
           include: LICENSE-MIT,LICENSE-APACHE,README.md
+          # `otel`, the metrics dog's OTLP exporter, ships on in every
+          # prebuilt archive (#737). `cargo install shep` and the Homebrew
+          # formula still build without it; docs/distribution.md and the web
+          # install page carry that split. It adds no dependency, and the
+          # measured delta is about 93 KiB per binary, well under the 0.25
+          # MiB ceiling #737 set.
+          features: otel
           checksum: sha256
           locked: true
           ref: refs/tags/${{ needs.resolve.outputs.tag }}
@@ -179,6 +196,60 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.build.outputs.tar }}${{ steps.build.outputs.zip }}
+      # The per-binary sizes, printed on every leg. Nothing gates on them; a
+      # release run carries them for the record, and a `workflow_dispatch`
+      # dry run is how a feature's cost is measured on the real release
+      # profile (`lto = "fat"`, `codegen-units = 1`) on every target, which
+      # no local machine can do.
+      - name: Report binary sizes
+        if: steps.build.outcome == 'success'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          for bin in shep shep-runtime shep-dev; do
+            path="target/$TARGET/release/$bin"
+            printf 'size %s %s bytes\n' "$bin" "$(wc -c < "$path" | tr -d '[:space:]')"
+          done
+      # The acceptance check on the artifact itself: a produced binary must
+      # take `otlp_endpoint` in a dog config rather than exit `invalid_config`
+      # (4) naming the missing feature. A shepherd is started so the dog has
+      # something to ask its section from, and the dog it spawns at boot is
+      # the binary under test: the shepherd runs built-in dogs as
+      # `shep dog metrics`.
+      #
+      # Skipped on the cross-compiled Intel macOS leg, the one leg whose
+      # binary cannot run on its runner.
+      - name: The built binary accepts otlp_endpoint
+        if: steps.build.outcome == 'success' && matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          bin="target/$TARGET/release/shep"
+          export SHEP_HOME
+          SHEP_HOME="$(mktemp -d)"
+          printf '[metrics]\notlp_endpoint = "http://127.0.0.1:4318"\n' > "$SHEP_HOME/dogs.toml"
+          "$bin" daemon > daemon.log 2>&1 &
+          daemon_pid=$!
+          trap 'kill "$daemon_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            "$bin" ping > /dev/null 2>&1 && break
+            sleep 1
+          done
+          "$bin" ping > /dev/null
+          # Long enough for a dog that refuses its config to have exited:
+          # the refusal is read before the dog binds anything.
+          sleep 5
+          "$bin" dogs --format json | tee dogs.json
+          jq -e '
+            [.data[] | select(.name == "metrics")] as $dogs
+            | ($dogs | length) == 1
+              and $dogs[0].pid != null
+              and $dogs[0].last_exit == null
+          ' dogs.json
 
   # The per-archive `.sha256` sidecars above are what a Homebrew formula or a
   # Chocolatey nuspec reads, one asset at a time. This adds the combined file
@@ -365,6 +436,9 @@ jobs:
   #
   # Unpacks the musl archives the matrix already uploaded and hands them to
   # `cargo deb --no-build`, a thirty-second repack rather than a rebuild.
+  # Because it repacks, the `otel` feature the matrix builds with is in the
+  # .deb without this job naming it: there is no second build here to pass
+  # the feature to.
   # musl, not gnu: `depends = "$auto"` would otherwise record the builder's
   # glibc (ubuntu-latest is 24.04), refusing to install on Debian 12 or
   # Ubuntu 22.04.
