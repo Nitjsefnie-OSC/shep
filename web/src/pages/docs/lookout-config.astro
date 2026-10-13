@@ -656,9 +656,15 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       cannot show. <code>→</code> opens it onto one closed row per entry. A
       map's entries are named by key. An array's are named by{" "}
       <code>name</code>, else <code>id</code>, else{" "}
-      <code>#&lt;index&gt;</code>, never by a secret. Everything under an
-      entry is read-only for now, and <code>r</code> keeps an entry open by
-      its key or its position.
+      <code>#&lt;index&gt;</code>, never by a secret. <code>r</code> keeps an
+      entry open by its key or its position.
+    </p>
+    <p>
+      A scalar field inside an entry edits like any other row, with the same
+      editors, validation and <code>d</code>. Applying one files it, and{" "}
+      <code>Esc</code> writes the section once for every entry you edited. A
+      list, a map or a nested array of tables inside an entry stays
+      read-only.
     </p>
     <p>
       Edits file into the same change set a sheep's pane uses, and{" "}
