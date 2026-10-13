@@ -132,7 +132,7 @@ watchdog  adopted  true      stopped`}</CodeBlock>
     </p>
     <p>
       What gets recorded in <code>shep.toml</code> is the canonicalized,
-      absolute path (never whatever relative path you typed) because the
+      absolute path because the
       daemon may resolve it again after a reboot from a different working
       directory than the one <code>adopt</code> ran from.
     </p>
@@ -145,7 +145,11 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       section as opaque text. Send{" "}
       <code>Request::DogConfigResolved {"{"} name {"}"}</code> instead to
       have each <code>{'{{secret:...}}'}</code> replaced by its value;{" "}
-      <code>DogConfig</code> still gives the text as written. Shep sets two variables of its own on a dog:{" "}
+      <code>DogConfig</code> still gives the text as written. A Rust dog on{" "}
+      <code>shep-client</code> gets this from <code>dog_config</code>{" "}
+      unchanged. Against a shepherd too old to know the request it reads the
+      plain section, and refuses one naming a reference as{" "}
+      <code>unsupported</code>. Shep sets two variables of its own on a dog:{" "}
       <code>$SHEP_HOME</code>, which is how it finds that socket in the first
       place, and <code>$SHEP_DOG_NAME</code>, which is the name to put in
       that request. No <code>[&lt;name&gt;]</code> value rides along
@@ -164,8 +168,7 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       refused too. <code>shep daemon reload</code> prints that report to the
       operator, after your reconnect rather than before it: what the old
       image knew about you described a process that was about to stop
-      existing. Without it you go quiet and nothing on either side says
-      why.
+      existing. Without it you go quiet.
     </p>
     <p>
       A dog written against <code>shep-client</code> gets both halves from{" "}
@@ -184,11 +187,9 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       of a shepherd whose pid does not change, so it keeps its own pid and
       its restart count stays where it was. What does not survive is the
       accepted connection, which dies with the old image — so a dog that
-      does not dial again is a live process holding a dead socket, alive on
-      every column a listing has and answering nothing. Both built-in dogs
+      does not dial again is a live process holding a dead socket. Both built-in dogs
       are measured holding their pid and <code>restarts 0</code> across ten
-      reloads, the metrics dog still serving a scrape and the bark dog
-      still delivering.
+      reloads, still serving and delivering.
     </p>
     <p>
       A subscription belongs to one connection too, so a dog that has one

@@ -48,6 +48,7 @@ pub struct Handovers {
     armed_list: Arc<Mutex<Vec<ProcessInfo>>>,
     armed_dog_section: Arc<Mutex<String>>,
     armed_subscribe_err: Arc<Mutex<Option<RpcError>>>,
+    armed_resolved_refusal: Arc<Mutex<Option<RpcError>>>,
     task: JoinHandle<()>,
 }
 
@@ -76,6 +77,7 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
     let armed_list: Arc<Mutex<Vec<ProcessInfo>>> = Arc::new(Mutex::new(Vec::new()));
     let armed_dog_section: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let armed_subscribe_err: Arc<Mutex<Option<RpcError>>> = Arc::new(Mutex::new(None));
+    let armed_resolved_refusal: Arc<Mutex<Option<RpcError>>> = Arc::new(Mutex::new(None));
 
     let task = tokio::spawn({
         let cut_on_next_request = Arc::clone(&cut_on_next_request);
@@ -85,6 +87,7 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
         let armed_list = Arc::clone(&armed_list);
         let armed_dog_section = Arc::clone(&armed_dog_section);
         let armed_subscribe_err = Arc::clone(&armed_subscribe_err);
+        let armed_resolved_refusal = Arc::clone(&armed_resolved_refusal);
         async move {
             let mut generation: u32 = 0;
             while let Ok(stream) = listener.accept().await {
@@ -134,6 +137,13 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
                             } else {
                                 None
                             };
+                            let refusal = refusal.or_else(|| {
+                                if matches!(body, Request::DogConfigResolved { .. }) {
+                                    armed_resolved_refusal.lock().unwrap().clone()
+                                } else {
+                                    None
+                                }
+                            });
                             if let Some(refusal) = refusal {
                                 write_err(&mut frames, id, refusal.code, refusal.message).await;
                                 continue;
@@ -145,7 +155,7 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
                                 Request::Subscribe { .. } => Response::Subscribed,
                                 // A dog refuses to run on a reply it can't
                                 // parse, and this is its first request.
-                                Request::DogConfig { .. } => Response::DogSection {
+                                Request::DogConfig { .. } | Request::DogConfigResolved { .. } => Response::DogSection {
                                     toml: armed_dog_section.lock().unwrap().clone().into(),
                                 },
                                 _ => Response::Pong,
@@ -168,6 +178,7 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
         armed_list,
         armed_dog_section,
         armed_subscribe_err,
+        armed_resolved_refusal,
         task,
     }
 }
@@ -218,13 +229,23 @@ impl Handovers {
     }
 
     /// Arms the `[<name>]` section every generation answers
-    /// `Request::DogConfig` with. Empty until set, matching a home with no
+    /// `Request::DogConfig` and `Request::DogConfigResolved` with. Empty until set, matching a home with no
     /// dog configured.
     ///
     /// Not consumed, like [`Self::reply_to_list`]: a dog asks again after a
     /// handover.
     pub fn reply_to_dog_config(&self, section: &str) {
         *self.armed_dog_section.lock().unwrap() = section.to_owned();
+    }
+
+    /// Arms every `Request::DogConfigResolved` to be refused with `refusal`,
+    /// as a shepherd that has never heard of it does. `Request::DogConfig`
+    /// is still answered with the armed section.
+    ///
+    /// Held rather than taken, like [`Self::reply_to_list`]: a dog asks
+    /// again after a handover.
+    pub fn refuse_dog_config_resolved(&self, refusal: RpcError) {
+        *self.armed_resolved_refusal.lock().unwrap() = Some(refusal);
     }
 
     /// Arms the next `Request::Subscribe` to be answered with `refusal`
