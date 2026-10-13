@@ -114,3 +114,29 @@ async fn a_disable_during_a_restart_in_flight_leaves_the_app_stopped() {
     assert_eq!(actor.sheep[&0].entry.status, ProcStatus::Stopped);
     assert_eq!(actor.sheep[&0].entry.pid, None, "nothing respawned");
 }
+
+// The old instance is already gone, so the replacement is the app's only
+// row: its exit under the reload marker would deregister it.
+#[tokio::test(start_paused = true)]
+async fn a_disable_while_a_serial_replacement_awaits_readiness_keeps_the_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut actor, _mailbox) =
+        actor_with_one_online_sheep_of(&dir, probed_app("web"), vec![ProcScript::never_exits()]);
+    let (ctl_tx, _ctl_rx) = mpsc::channel(SHEEP_CTL_CAPACITY);
+    actor.sheep.get_mut(&0).expect("the fixture's sheep").ctl = Some(ctl_tx);
+    actor.advance_reload("web", VecDeque::from([0]));
+    exit_clean(&mut actor, 0);
+    let replacement = actor.reloads["web"].swap.new_id.expect("a replacement");
+
+    let (reply, _answer) = oneshot::channel();
+    actor.handle_disable(&ProcessSelector::Name("web".into()), reply);
+    exit_clean(&mut actor, replacement);
+
+    assert!(
+        actor.reloads.is_empty(),
+        "the reload ended with the disable"
+    );
+    assert_eq!(actor.sheep.len(), 1, "the app keeps its row");
+    assert_eq!(actor.sheep[&replacement].entry.status, ProcStatus::Stopped);
+    assert!(actor.is_disabled_id(replacement), "and its mark");
+}
