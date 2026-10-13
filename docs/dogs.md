@@ -285,8 +285,10 @@ A refusal is counted in `shep_channel_samples_refused_total{reason="..."}` and
 printed once per sender and reason in the dog's own log, read with
 `shep bleats metrics`. A metric that never shows up is otherwise silent.
 
-A sender's samples go when it stops, exits, restarts, is deleted, errors, or
-is replaced by a reload. A scrape also drops a sender the flock no longer
+A sender's samples go when it stops, exits, restarts, is deleted or errors. A
+reload frees what the drained instance sent, through that instance's own
+deregistration, and never the samples of the instance the reload put in its
+place. A scrape also drops a sender the flock no longer
 reports as online, or reports as an instance younger than the samples it is
 holding, which is what covers the events the dog never received.
 

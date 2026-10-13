@@ -117,16 +117,20 @@ fn clears_samples(kind: ProcessEventKind) -> bool {
         | ProcessEventKind::Exit
         | ProcessEventKind::Stop
         | ProcessEventKind::Delete
-        | ProcessEventKind::Errored
-        // This instance replaced the one it was spawned to drain, so the
-        // samples in the store are the drained one's.
-        | ProcessEventKind::Reloaded => true,
-        // Still the same instance: `Online` follows a `Start` this dog already
-        // cleared for, and a reload that never reached this one changed
-        // nothing about it.
-        ProcessEventKind::Online | ProcessEventKind::Reload | ProcessEventKind::ReloadAbandoned => {
-            false
-        }
+        | ProcessEventKind::Errored => true,
+        // Still the instance that is serving. `Online` follows a `Start` this
+        // dog already cleared for, and a reload that gave up changed nothing
+        // about the one it left holding the slot.
+        //
+        // `Reloaded` belongs here because it names the replacement, not the
+        // instance it drained: the shepherd deregisters the drainee, which
+        // clears that id, and only then announces `Reloaded` on the fresh id
+        // that is now serving. Clearing on it throws away the numbers of the
+        // sheep that just came back healthy.
+        ProcessEventKind::Online
+        | ProcessEventKind::Reload
+        | ProcessEventKind::Reloaded
+        | ProcessEventKind::ReloadAbandoned => false,
         // Where `Unrecognized` and any variant added later land.
         _ => true,
     }
@@ -272,7 +276,6 @@ mod tests {
             ProcessEventKind::Stop,
             ProcessEventKind::Delete,
             ProcessEventKind::Errored,
-            ProcessEventKind::Reloaded,
         ] {
             assert!(
                 clears_samples(kind),
@@ -282,6 +285,7 @@ mod tests {
         for kind in [
             ProcessEventKind::Online,
             ProcessEventKind::Reload,
+            ProcessEventKind::Reloaded,
             ProcessEventKind::ReloadAbandoned,
         ] {
             assert!(
@@ -313,6 +317,50 @@ mod tests {
             process_event(ProcessEventKind::Unrecognized, sheep(1, "web")),
         );
         assert!(sample_names(&store, &flock).is_empty());
+    }
+
+    /// A replay of what a completed swap puts on the bus, read from the
+    /// shepherd's own test of it
+    /// (`crates/shep-daemon/src/supervisor/tests/reload_bus.rs`): `Reload`
+    /// names the instance being drained, the replacement starts on a fresh id,
+    /// the drainee is `Delete`d, and `Reloaded` lands on the replacement, which
+    /// is the instance now serving.
+    ///
+    /// The replacement's own sample survives the swap, and the drainee's does
+    /// not. Its `Delete` is what frees it, which is why keeping on `Reloaded`
+    /// leaks nothing.
+    #[test]
+    fn a_completed_swap_keeps_the_replacements_sample_and_frees_the_draineed() {
+        let store = SampleStore::new();
+        apply(
+            &store,
+            process_event(ProcessEventKind::Reload, sheep(0, "web")),
+        );
+        apply(
+            &store,
+            process_event(ProcessEventKind::Start, sheep(1, "web")),
+        );
+        apply(&store, metric(0, "queue_depth", 1.0));
+        apply(&store, metric(1, "queue_depth", 3.0));
+        apply(
+            &store,
+            process_event(ProcessEventKind::Delete, sheep(0, "web")),
+        );
+        apply(
+            &store,
+            process_event(ProcessEventKind::Reloaded, sheep(1, "web")),
+        );
+
+        assert_eq!(
+            format!("{store:?}"),
+            "SampleStore { senders: 1, series: 1, refused: 0 }",
+            "the swap left the wrong instance's samples behind"
+        );
+        assert_eq!(
+            sample_names(&store, &[sheep(1, "web")]),
+            vec!["queue_depth".to_string()],
+            "the instance now serving lost the sample it sent"
+        );
     }
 
     #[test]

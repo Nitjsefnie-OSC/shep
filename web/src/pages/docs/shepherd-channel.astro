@@ -161,8 +161,8 @@ channel = true`}</CodeBlock>
       with a <code>reason</code> label, and printed once per sender and reason
       in the dog's own log, read with <code>shep bleats metrics</code>. Your
       latest value per name and label set is kept until your process stops,
-      exits, restarts, is deleted, errors or is reloaded, so a new instance
-      starts with nothing stored.
+      exits, restarts, is deleted or errors. A reload frees the drained
+      instance's samples, never the ones the instance now serving sent.
     </p>
 
     <h2 id="a-worked-example">A worked example</h2>

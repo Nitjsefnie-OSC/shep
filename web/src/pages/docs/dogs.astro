@@ -409,9 +409,9 @@ shep_host_memory_total_bytes 51539607552`}</CodeBlock>
       A metric that never shows up is otherwise silent.
     </p>
     <p>
-      A sender's samples go when it stops, exits, restarts, is deleted, errors
-      or is reloaded, so a new instance never reports numbers the old one
-      sent.
+      A sender's samples go when it stops, exits, restarts, is deleted or
+      errors. A reload frees the drained instance's through its own
+      deregistration, never the numbers of the instance now serving.
     </p>
 
     <h3 id="otlp-export">OTLP export</h3>

@@ -223,9 +223,9 @@ log, read with `shep bleats metrics`. Nothing else tells you a sample was
 dropped.
 
 The dog keeps your latest value per name and label set until your process
-stops, exits, restarts, is deleted, errors, or is replaced by a reload. The new
-instance starts with nothing stored, so a value from the old one never outlives
-it.
+stops, exits, restarts, is deleted or errors. A reload frees what the drained
+instance sent, and never what the instance it put in place sends, so a value
+from the old one never outlives it.
 
 ## Custom actions — the part most worth reading closely
 
