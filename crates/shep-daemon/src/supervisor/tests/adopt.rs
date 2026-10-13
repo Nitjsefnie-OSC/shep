@@ -5,6 +5,8 @@
 
 use super::*;
 
+mod disabled;
+
 /// The wait that would resolve it belonged to a task of the predecessor's,
 /// which the `execve` took. Nothing else moves a sheep off `Starting`
 /// except its own exit, so a successor that adopts one without re-arming

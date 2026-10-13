@@ -63,6 +63,8 @@ pub(super) struct HandoverDraft {
     /// Whether a reload's readiness verification has already failed against
     /// this sheep. See [`SheepSlot::ready_failed`].
     pub(super) ready_failed: bool,
+    /// Whether this sheep's app is disabled, per the actor's `disabled` set.
+    pub(super) disabled: bool,
     /// When this sheep's owed respawn falls due, so the successor re-arms
     /// for what is left of the delay rather than for the whole of it. See
     /// [`SheepSlot::restart_due`].
@@ -130,7 +132,8 @@ pub(super) fn spawn_handover_task(
                 draft.manual,
                 draft.ready_failed,
                 draft.restart_due,
-            );
+            )
+            .with_disabled(draft.disabled);
             let candidate = OwnedCandidate {
                 entry: draft.entry,
                 pump_unresponsive,

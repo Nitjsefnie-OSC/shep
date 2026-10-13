@@ -145,6 +145,15 @@ impl FlockRegistry {
         self.dirty.notify_one();
     }
 
+    /// Schedules a roll write without changing what is recorded.
+    ///
+    /// For a change the roll reads from the live listing rather than from
+    /// this map, such as the disabled mark: on an app that is already stopped
+    /// it moves no process, so the bus has nothing to wake the writer with.
+    pub(crate) fn touch(&self) {
+        self.dirty.notify_one();
+    }
+
     /// Drops every recorded app, so the next [`Self::roll`] describes an
     /// empty flock regardless of what is still live in the supervisor's own
     /// listing.

@@ -198,22 +198,29 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
             selector_call(id, selector, |s| ctx.supervisor.stop(s), Response::Stopped).await
         }
         Request::Disable { selector } => {
-            selector_call(
+            let outcome = selector_call(
                 id,
                 selector,
                 |s| ctx.supervisor.disable(s),
                 Response::Disabled,
             )
-            .await
+            .await;
+            // The mark is part of the roll and moves no process on an app
+            // that is already stopped, so the bus cannot be what wakes the
+            // writer.
+            ctx.registry.touch();
+            outcome
         }
         Request::Enable { selector } => {
-            selector_call(
+            let outcome = selector_call(
                 id,
                 selector,
                 |s| ctx.supervisor.enable(s),
                 Response::Enabled,
             )
-            .await
+            .await;
+            ctx.registry.touch();
+            outcome
         }
         // Forward, dependencies first, when the selector matches more than
         // one sheep. Not reverse-stop then forward-start: the rolling version
