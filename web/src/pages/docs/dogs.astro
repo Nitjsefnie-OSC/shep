@@ -67,11 +67,12 @@ const dogLogDemo = `2026-09-02T14:22:31.412+02:00 [shep] shep started this dog; 
     </p>
     <p>
       <code>shep flock</code> prints the flock as two tables (sheep, then
-      dogs) and <code>shep dogs</code> prints the second one alone. A
+      dogs) and <code>shep dogs</code> prints the second one alone. Both
+      built-ins always appear, <code>disabled</code> until enabled. A
       wildcard selector (<code>stop all</code>, <code>reload all</code>,{" "}
       <code>/regex/</code>) never touches a dog; naming one exactly always
-      does, which is what lets <code>shep disable bark</code> reach a dog
-      while a sweep of everything else leaves it running.
+      does, so <code>shep disable bark</code> reaches a dog that a sweep
+      leaves running.
     </p>
 
     <h2 id="turning-one-on">Turning one on</h2>
@@ -113,16 +114,18 @@ NAME     SOURCE    SHEPHERD  STATUS
 metrics  built-in  true      online
 
 $ shep dogs
-ID  NAME     STATUS  PID    RESTARTS  EXIT  CPU  MEM    UPTIME  SOURCE
-1   metrics  online  49313  0         -     -    10.9M  2s      built-in
+ID  NAME     STATUS    PID    RESTARTS  EXIT  CPU  MEM    UPTIME  SOURCE
+0   metrics  online    49313  0         -     -    10.9M  2s      built-in
+1   bark     disabled  -      0         -     -    -      0s      built-in
 
 $ shep flock
 ID  NAME  STATUS  PID    RESTARTS  EXIT  CFG  CPU  MEM   UPTIME  FOLD  SMIT
-0   web   online  49290  0         -     -    -    3.0M  2s      -     -
+2   web   online  49290  0         -     -    -    3.0M  2s      -     -
 
 Dogs
-ID  NAME     STATUS  PID    RESTARTS  EXIT  CPU  MEM    UPTIME  SOURCE
-1   metrics  online  49313  0         -     -    10.9M  2s      built-in
+ID  NAME     STATUS    PID    RESTARTS  EXIT  CPU  MEM    UPTIME  SOURCE
+0   metrics  online    49313  0         -     -    10.9M  2s      built-in
+1   bark     disabled  -      0         -     -    -      0s      built-in
 
 $ shep disable metrics`}</CodeBlock>
     <p class="fine">

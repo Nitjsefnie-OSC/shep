@@ -113,6 +113,18 @@ impl<R: ProcessRunner> Actor<R> {
                 let _ = reply.send(Ok(registered));
                 false
             }
+            Command::RegisterDogsAtRest {
+                dogs,
+                disabled,
+                reply,
+            } => {
+                let registered = dogs
+                    .into_iter()
+                    .map(|(app, source)| self.register_dog_at_rest(&app, source, &disabled))
+                    .collect();
+                let _ = reply.send(Ok(registered));
+                false
+            }
             Command::ConfigDrift { apps, reply } => {
                 let _ = reply.send(Ok(self.config_drift(&apps)));
                 false
@@ -313,11 +325,15 @@ impl<R: ProcessRunner> Actor<R> {
         }
     }
 
-    /// Registers + spawns one dog, or reports the one already registered
-    /// under that name.
+    /// Registers + spawns one dog, or reports the one already running under
+    /// that name.
     ///
     /// The name lookup reads names rather than markers: what it rules out is
-    /// two live processes under one name, dog or not.
+    /// two live processes under one name, dog or not. A dog entry at rest is
+    /// the exception, since no process stands behind it: it spawns in place
+    /// from `app` and `source`, which win over what it was registered with.
+    /// A dog that ran and stopped is not at rest, so a boot that names it
+    /// again leaves it stopped.
     pub(super) fn do_start_dog(
         &mut self,
         app: ResolvedApp,
@@ -326,13 +342,33 @@ impl<R: ProcessRunner> Actor<R> {
         if self.shutting_down {
             return Err(SupervisorError::EngineStopped);
         }
-        if let Some(slot) = self
+        let name = app.config().name.clone();
+        let held = self
             .sheep
-            .values()
-            .find(|slot| slot.entry.spec.config().name == app.config().name)
-        {
-            return Ok(to_info(&slot.entry, &self.smits));
-        }
+            .iter()
+            .find(|(_, slot)| slot.entry.spec.config().name == name)
+            .map(|(id, slot)| {
+                (
+                    *id,
+                    is_at_rest(&slot.entry),
+                    to_info(&slot.entry, &self.smits),
+                )
+            });
+        let at_rest = match held {
+            Some((id, true, _)) => Some(id),
+            Some((_, false, info)) => return Ok(info),
+            None => None,
+        };
+        // Cleared whether or not the spawn lands: the operator's word is
+        // `enable`, and a spawn that fails is `Errored` rather than disabled.
+        self.disabled.remove(&name);
+        // The at-rest entry is dropped and the spawn takes its id, so a dog
+        // keeps its place in the listing across an enable. `spawn_fresh` hands
+        // out `next_id`, and a dog is one instance, which is one id.
+        let resume = at_rest.map(|id| {
+            self.sheep.remove(&id);
+            std::mem::replace(&mut self.next_id, id)
+        });
         // `PerApp`: a dog that cannot start must land in the dogs table as
         // `Errored`, which `dogs::spawn_dog_watch` subscribes to.
         let started = self.do_start(
@@ -340,8 +376,12 @@ impl<R: ProcessRunner> Actor<R> {
             Some(source),
             BatchPolicy::PerApp,
             &BTreeSet::new(),
-        )?;
-        started
+        );
+        if let Some(next_id) = resume {
+            debug_assert_eq!(self.next_id, at_rest.map_or(0, |id| id + 1));
+            self.next_id = next_id;
+        }
+        started?
             .into_iter()
             .next()
             .ok_or_else(|| SupervisorError::SpawnFailed("the dog registered no instance".into()))
@@ -504,4 +544,15 @@ impl<R: ProcessRunner> Actor<R> {
         sort_flock(&mut results);
         Ok(results)
     }
+}
+
+/// Whether `entry` is a dog that has never had a process: registered, not
+/// started.
+///
+/// Every process exit writes `last_exit`, an operator's `stop` included, so a
+/// dog that ran and stopped is not at rest and is not respawned by a boot
+/// that names it again. `last_exit` rides a handover, so the answer holds
+/// across one.
+fn is_at_rest(entry: &ProcessEntry) -> bool {
+    entry.dog.is_some() && entry.status == ProcStatus::Stopped && entry.last_exit.is_none()
 }
