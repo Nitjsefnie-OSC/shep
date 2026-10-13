@@ -20,6 +20,7 @@
 mod config;
 mod dogs;
 mod edit;
+mod entries;
 mod env;
 mod fields;
 #[cfg(test)]
@@ -35,7 +36,9 @@ pub use config::{ConfigPane, ReloadKind};
 pub(crate) use dogs::dog_names;
 pub use dogs::{DogTableState, DogsPane, SheepDogEntry};
 pub use edit::PaneTyping;
+pub(in crate::lookout) use entries::EntryBody;
 pub use env::EnvTyping;
 pub(crate) use fields::{resolved_display, sheep_fields};
 pub use list::{ListPane, ListRow};
+pub(in crate::lookout) use tree::TreeRow;
 pub use types::{FieldValue, Lock, PaneEdit, PaneRow, PaneTarget, SectionWrite};

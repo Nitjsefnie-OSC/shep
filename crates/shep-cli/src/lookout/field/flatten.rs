@@ -33,6 +33,11 @@ pub(crate) struct Flattened {
     pub(crate) paths: BTreeMap<String, Vec<String>>,
     /// The tables the rows nest in, in the order `properties` iterates.
     pub(crate) outline: Outline,
+    /// For each [`FieldKind::Entries`] row, by its dotted key, the item
+    /// schema flattened the same way. Empty inside one of these, so an
+    /// entry's own entries stop at a count and a type that holds itself
+    /// does not recurse.
+    pub(crate) shapes: BTreeMap<String, Flattened>,
 }
 
 /// The nesting [`flattened`] folded into dotted rows.
@@ -100,6 +105,13 @@ pub(crate) enum Child {
 /// [`FieldKind::List`], filed whole.
 #[must_use]
 pub(crate) fn flattened(schema: &Value) -> Flattened {
+    flatten_schema(schema, true, false)
+}
+
+/// [`flattened`], with `shapes` filled in only when `with_shapes` is set.
+/// `secret_above` marks every leaf, for an entry shape whose field sits
+/// under a secret.
+fn flatten_schema(schema: &Value, with_shapes: bool, secret_above: bool) -> Flattened {
     let defs = schema
         .get("$defs")
         .and_then(Value::as_object)
@@ -118,12 +130,20 @@ pub(crate) fn flattened(schema: &Value) -> Flattened {
         fields: Vec::new(),
         paths: BTreeMap::new(),
         tables: Vec::new(),
+        shapes: BTreeMap::new(),
+        with_shapes,
     };
-    let mut roots = walker.walk(&properties, &[], None, marked(schema) || marked(root));
+    let mut roots = walker.walk(
+        &properties,
+        &[],
+        None,
+        secret_above || marked(schema) || marked(root),
+    );
     let Walker {
         fields,
         paths,
         tables,
+        shapes,
         ..
     } = walker;
 
@@ -157,6 +177,7 @@ pub(crate) fn flattened(schema: &Value) -> Flattened {
         fields,
         paths,
         outline: Outline { tables, roots },
+        shapes,
     }
 }
 
@@ -199,6 +220,9 @@ struct Walker<'a> {
     fields: Vec<Field>,
     paths: BTreeMap<String, Vec<String>>,
     tables: Vec<TableNode>,
+    shapes: BTreeMap<String, Flattened>,
+    /// Whether an [`FieldKind::Entries`] leaf gets a shape of its own.
+    with_shapes: bool,
 }
 
 impl<'a> Walker<'a> {
@@ -259,6 +283,21 @@ impl<'a> Walker<'a> {
                 field.kind = FieldKind::Opaque;
                 field.editable = false;
             }
+            if self.with_shapes
+                && matches!(field.kind, FieldKind::Entries(_))
+                && let Some(item) = super::schema::entry_schema(property_schema, self.defs)
+            {
+                let mut item = item.clone();
+                if let Some(table) = item.as_object_mut() {
+                    table.insert("$defs".to_owned(), Value::Object(self.defs.clone()));
+                }
+                let above = inherited
+                    || marked(property_schema)
+                    || marked(resolved)
+                    || super::schema::entry_slot_marked(property_schema, self.defs);
+                self.shapes
+                    .insert(dotted.clone(), flatten_schema(&item, false, above));
+            }
             children.push(Child::Leaf(self.fields.len()));
             self.fields.push(field);
             self.paths.insert(dotted, path);
@@ -305,7 +344,7 @@ mod tests {
 
     use super::super::fixtures::props;
     use super::*;
-    use crate::lookout::field::ListItem;
+    use crate::lookout::field::{Entries, ListItem};
 
     /// A per-sheep schema three tables deep, through a `$ref` chain, the
     /// way a dog's own `--schema` answer nests one: `models` names
@@ -460,8 +499,11 @@ mod tests {
         assert!(plain.editable);
     }
 
+    /// An array or a map of tables is one read-only `Entries` row, and its
+    /// item schema is flattened beside it, so a pane can draw an entry as
+    /// the rows of that schema.
     #[test]
-    fn an_array_of_tables_stays_one_opaque_row() {
+    fn an_array_or_map_of_tables_is_one_read_only_row_with_its_item_shape() {
         let schema = json!({
             "$ref": "#/$defs/Root",
             "$defs": {
@@ -472,17 +514,120 @@ mod tests {
                             "type": "array",
                             "items": { "$ref": "#/$defs/Host" },
                         },
+                        "models": {
+                            "type": "object",
+                            "additionalProperties": { "$ref": "#/$defs/Host" },
+                        },
                     },
                 },
                 "Host": {
                     "type": "object",
-                    "properties": { "name": { "type": "string" } },
+                    "properties": {
+                        "name": { "type": "string" },
+                        "limits": {
+                            "type": "object",
+                            "properties": { "rate": { "type": "integer" } },
+                        },
+                        "peers": { "type": "array", "items": { "$ref": "#/$defs/Host" } },
+                    },
                 },
             },
         });
         let flat = flattened(&schema);
-        assert_eq!(flat.fields.by_key("hosts").unwrap().kind, FieldKind::Opaque);
-        assert!(!flat.fields.by_key("hosts").unwrap().editable);
+        for (key, entries) in [("hosts", Entries::Array), ("models", Entries::Map)] {
+            let field = flat.fields.by_key(key).expect(key);
+            assert_eq!(field.kind, FieldKind::Entries(entries), "{key}");
+            assert!(!field.editable, "{key}");
+            let item = flat.shapes.get(key).expect(key);
+            let keys: Vec<&str> = item
+                .fields
+                .fields()
+                .iter()
+                .map(|field| field.key.as_str())
+                .collect();
+            assert_eq!(keys, ["limits.rate", "name", "peers"], "{key}");
+            assert_eq!(item.outline.tables.len(), 1, "{key}");
+        }
+        let peers = flat.shapes["hosts"].fields.by_key("peers").expect("peers");
+        assert_eq!(peers.kind, FieldKind::Entries(Entries::Array));
+        assert!(
+            flat.shapes["hosts"].shapes.is_empty(),
+            "an entry's own entries are a count and nothing deeper"
+        );
+    }
+
+    // The item shape is flattened on its own, so a mark above it has to be
+    // handed in: on the field, on a table holding the field, or beside the
+    // `$ref` on `items` or `additionalProperties`.
+    #[test]
+    fn a_secret_mark_above_the_entries_masks_every_leaf_of_the_item_shape() {
+        let client = json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "key": { "type": "string" },
+                "limits": { "type": "object", "properties": { "rate": { "type": "integer" } } },
+            },
+        });
+        let on_field = json!({
+            "type": "array",
+            "items": { "$ref": "#/$defs/Client" },
+            "x-shep-secret": true,
+        });
+        let beside_ref = json!({
+            "type": "array",
+            "items": { "$ref": "#/$defs/Client", "x-shep-secret": true },
+        });
+        let on_map_slot = json!({
+            "type": "object",
+            "additionalProperties": { "$ref": "#/$defs/Client", "x-shep-secret": true },
+        });
+        let plain = json!({ "type": "array", "items": { "$ref": "#/$defs/Client" } });
+        let schemas = [
+            ("on the field", json!({ "clients": on_field })),
+            ("beside the ref", json!({ "clients": beside_ref })),
+            ("beside the map ref", json!({ "clients": on_map_slot })),
+            (
+                "on a table above",
+                json!({
+                    "vault": {
+                        "type": "object",
+                        "x-shep-secret": true,
+                        "properties": { "clients": plain.clone() },
+                    },
+                }),
+            ),
+        ];
+        for (case, properties) in schemas {
+            let flat = flattened(&json!({
+                "type": "object",
+                "properties": properties,
+                "$defs": { "Client": client.clone() },
+            }));
+            let key = if case == "on a table above" {
+                "vault.clients"
+            } else {
+                "clients"
+            };
+            let item = flat.shapes.get(key).expect(case);
+            assert!(item.fields.fields().len() >= 3, "{case}");
+            for field in item.fields.fields() {
+                assert!(field.secret, "{case}: {} must be masked", field.key);
+            }
+        }
+        let flat = flattened(&json!({
+            "type": "object",
+            "properties": { "clients": plain },
+            "$defs": { "Client": client },
+        }));
+        assert!(
+            flat.shapes["clients"]
+                .fields
+                .fields()
+                .iter()
+                .all(|field| !field.secret),
+            "an unmarked field masks nothing"
+        );
     }
 
     #[test]

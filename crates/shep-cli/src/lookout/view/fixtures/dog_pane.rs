@@ -3,6 +3,7 @@
 use shep_core::protocol::Response;
 
 use crate::lookout::app::{App, Control, KeyPress, Msg, Sent};
+use crate::lookout::pane::{EntryBody, PaneRow};
 
 use super::flock::{app_with, flock_of};
 use super::palette::plain;
@@ -110,6 +111,103 @@ pub fn app_in_dog_pane_with_a_nested_table() -> App {
         }),
     });
     app
+}
+
+/// A paddock-shaped dog: a `clients` array whose entries carry a secret
+/// `key` beside a `name` or an `id`, a `models` map, and a scalar.
+pub fn entries_dog_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "clients": { "type": "array", "items": { "$ref": "#/$defs/Client" } },
+            "models": {
+                "type": "object",
+                "additionalProperties": { "$ref": "#/$defs/Model" },
+            },
+            "retries": { "type": "integer" },
+        },
+        "$defs": {
+            "Client": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "key": { "type": "string", "x-shep-secret": true },
+                    "name": { "type": "string" },
+                    "timeout": { "type": "integer" },
+                },
+            },
+            "Model": {
+                "type": "object",
+                "properties": {
+                    "context": { "type": "integer" },
+                    "provider": { "type": "string" },
+                },
+            },
+        },
+    })
+}
+
+/// The `[paddock]` section [`entries_dog_schema`] opens on: three clients,
+/// each holding a credential, and two models.
+pub fn entries_dog_section() -> String {
+    concat!(
+        "retries = 3\n\n",
+        "[[clients]]\nname = \"alpha\"\nkey = \"hunter2\"\ntimeout = 30\n\n",
+        "[[clients]]\nid = \"b-2\"\nkey = \"hunter3\"\n\n",
+        "[[clients]]\nkey = \"hunter4\"\n\n",
+        "[models.large]\nprovider = \"remote\"\n\n",
+        "[models.small]\nprovider = \"local\"\ncontext = 4096\n",
+    )
+    .to_string()
+}
+
+/// A dashboard with the `paddock` dog's config pane open over
+/// [`entries_dog_section`], every entries row still closed. Opened the way
+/// the event loop opens one. The control gate is open.
+pub fn app_in_dog_pane_with_entries() -> App {
+    let mut app = app_with(flock_of(3, 0), plain());
+    app.set_control_for_tests(Control::Allowed);
+    app.update(Msg::DogPane {
+        name: "paddock".to_string(),
+        adopted_path: None,
+        result: Ok(entries_dog_schema()),
+    });
+    app.update(Msg::Replied {
+        sent: Sent::DogSection {
+            name: "paddock".to_string(),
+        },
+        result: Ok(Response::DogSection {
+            toml: entries_dog_section().into(),
+        }),
+    });
+    app
+}
+
+/// Walks the open dog pane's cursor onto the row that opens and closes at
+/// the open-set key `path`: a nested table, an array or map of tables, or
+/// one of their entries.
+///
+/// Panics if no such row is drawn, which is a fixture bug rather than a
+/// failure the test is about.
+#[track_caller]
+pub fn select_node(app: &mut App, path: &str) {
+    let pane = app.config_pane().expect("the pane is open");
+    let index = pane
+        .rows()
+        .iter()
+        .position(|row| match *row {
+            PaneRow::Field(index) => pane.fields().fields()[index].key == path,
+            PaneRow::Table(index) => pane.table_path(index) == Some(path),
+            PaneRow::Entry(index) => pane.entry_row(index).is_some_and(
+                |entry| matches!(&entry.body, EntryBody::Node { path: at, .. } if at == path),
+            ),
+            PaneRow::Env(_) | PaneRow::AddEnv => false,
+        })
+        .unwrap_or_else(|| panic!("no node {path} is drawn"));
+    app.update(Msg::Key(KeyPress::SelectFirst));
+    for _ in 0..index {
+        app.update(Msg::Key(KeyPress::SelectDown));
+    }
 }
 
 /// A dog whose schema holds a string list with an item pattern, an integer

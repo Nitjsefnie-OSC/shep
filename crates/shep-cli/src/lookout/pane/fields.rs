@@ -32,6 +32,21 @@ pub(super) fn render_json(value: &Value) -> String {
     }
 }
 
+/// How many entries an array or map of tables holds, the whole of what its
+/// row says: `3 entries`, `1 entry`, `0 entries`, or `(unset)` for an absent
+/// or `null` value, or one that is neither an array nor an object.
+pub(super) fn entries_text(value: Option<&Value>) -> String {
+    let count = match value {
+        Some(Value::Array(items)) => items.len(),
+        Some(Value::Object(map)) => map.len(),
+        _ => return render_json(&Value::Null),
+    };
+    match count {
+        1 => "1 entry".to_owned(),
+        count => format!("{count} entries"),
+    }
+}
+
 /// The field set and the value map a sheep's config renders as.
 ///
 /// Shared by [`ConfigPane::sheep`] and the sheep pane's read-only listing,

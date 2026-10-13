@@ -21,6 +21,7 @@ mod chrome;
 pub(super) mod close;
 mod dogs;
 mod draw;
+mod entry_row;
 mod env;
 mod field_row;
 #[cfg(test)]

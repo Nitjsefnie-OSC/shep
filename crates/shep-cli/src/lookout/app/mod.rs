@@ -64,6 +64,8 @@ mod config_pane_edits;
 #[cfg(test)]
 mod disabled_tests;
 mod dog_pane;
+#[cfg(test)]
+mod dog_pane_entries;
 mod keys;
 mod lambs;
 mod msg;

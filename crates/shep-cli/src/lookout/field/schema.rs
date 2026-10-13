@@ -6,7 +6,7 @@
 
 use serde_json::{Map, Value};
 
-use super::{FieldKind, ListItem, ValueKind};
+use super::{Entries, FieldKind, ListItem, ValueKind};
 
 /// Follows one `$ref` of the form `#/$defs/Name` into `defs`.
 fn resolve<'a>(schema: &'a Value, defs: &'a Map<String, Value>) -> &'a Value {
@@ -152,29 +152,66 @@ pub(super) fn kind_of(schema: &Value, defs: &Map<String, Value>) -> FieldKind {
         // each element as a string and would turn a stored `null` into
         // `"null"`.
         Some("array") if allows_null(items(schema), defs) => FieldKind::Opaque,
-        Some("array") => match type_of(strip_nullable(resolve(items(schema), defs), defs)) {
-            Some("string") => FieldKind::List(ListItem::Text),
-            Some("integer") => FieldKind::List(ListItem::Integer),
-            _ => FieldKind::Opaque,
-        },
-        // A map of scalars, like `env`, is `Map`; a map of tables, like
-        // `dogs`, is `additionalProperties` naming a schema with its own
-        // `object` type, direct or through a `$ref`, and stays read-only:
-        // `kind_of` has no editor for a value that is itself a table.
+        Some("array") => {
+            let item = resolved(items(schema), defs);
+            match type_of(item) {
+                Some("string") => FieldKind::List(ListItem::Text),
+                Some("integer") => FieldKind::List(ListItem::Integer),
+                Some("object") if item.get("properties").is_some() => {
+                    FieldKind::Entries(Entries::Array)
+                }
+                _ => FieldKind::Opaque,
+            }
+        }
+        // A map of scalars, like `env`, is `Map`. A map of tables with named
+        // properties is `Entries`; a map of free-form objects, like `dogs`,
+        // stays read-only, since `kind_of` has no editor for a value that is
+        // itself a table.
         Some("object")
             if schema.get("additionalProperties").is_some()
                 && schema.get("properties").is_none() =>
         {
-            match schema
+            let value = schema
                 .get("additionalProperties")
-                .map(|additional| resolve(additional, defs))
-                .and_then(type_of)
-            {
-                Some("object") => FieldKind::Opaque,
+                .map(|additional| resolved(additional, defs));
+            match value {
+                Some(table) if type_of(table) == Some("object") => {
+                    if table.get("properties").is_some() {
+                        FieldKind::Entries(Entries::Map)
+                    } else {
+                        FieldKind::Opaque
+                    }
+                }
                 _ => FieldKind::Map,
             }
         }
         _ => FieldKind::Opaque,
+    }
+}
+
+/// The table schema an [`FieldKind::Entries`] field holds one of per entry:
+/// an array's `items`, or a map's `additionalProperties`, followed through a
+/// `$ref` and an `anyOf` with `null`. [`None`] for any other field.
+pub(super) fn entry_schema<'a>(
+    schema: &'a Value,
+    defs: &'a Map<String, Value>,
+) -> Option<&'a Value> {
+    entry_slot(schema, defs).map(|item| resolved(item, defs))
+}
+
+/// Whether the secret marker sits on an [`FieldKind::Entries`] field's
+/// entry slot itself, beside the `$ref` that [`entry_schema`] resolves past.
+pub(super) fn entry_slot_marked(schema: &Value, defs: &Map<String, Value>) -> bool {
+    entry_slot(schema, defs).is_some_and(marked)
+}
+
+/// The `items` or `additionalProperties` value as the schema wrote it.
+fn entry_slot<'a>(schema: &'a Value, defs: &'a Map<String, Value>) -> Option<&'a Value> {
+    let schema = resolved(schema, defs);
+    match type_of(schema)? {
+        "array" => schema.get("items"),
+        "object" => schema.get("additionalProperties"),
+        _ => None,
     }
 }
 
@@ -410,6 +447,77 @@ mod tests {
         let set = FieldSet::from_properties(&p, &d, &[]);
         assert_eq!(set.by_key("dogs").unwrap().kind, FieldKind::Opaque);
         assert!(!set.by_key("dogs").unwrap().editable);
+    }
+
+    /// An array or a map whose entries are tables with named properties is
+    /// `Entries`, followed through a `$ref` and an `anyOf` with `null`. A map
+    /// of scalars, a map of free-form objects and an array of anything else
+    /// keep the kind they had.
+    #[test]
+    fn an_array_or_map_of_tables_is_entries_and_nothing_else_changes() {
+        let defs = props(json!({
+            "Client": { "type": "object", "properties": { "name": { "type": "string" } } },
+            "Clients": { "type": "array", "items": { "$ref": "#/$defs/Client" } },
+            "Free": { "type": "object", "additionalProperties": true },
+        }));
+        let table = json!({ "type": "object", "properties": { "name": { "type": "string" } } });
+        for (name, schema, want) in [
+            (
+                "array, inline",
+                json!({ "type": "array", "items": table }),
+                FieldKind::Entries(Entries::Array),
+            ),
+            (
+                "array, $ref on items",
+                json!({ "type": "array", "items": { "$ref": "#/$defs/Client" } }),
+                FieldKind::Entries(Entries::Array),
+            ),
+            (
+                "array, anyOf [array, null]",
+                json!({ "anyOf": [{ "$ref": "#/$defs/Clients" }, { "type": "null" }] }),
+                FieldKind::Entries(Entries::Array),
+            ),
+            (
+                "map, inline",
+                json!({ "type": "object", "additionalProperties": table }),
+                FieldKind::Entries(Entries::Map),
+            ),
+            (
+                "map, $ref on additionalProperties",
+                json!({ "type": "object", "additionalProperties": { "$ref": "#/$defs/Client" } }),
+                FieldKind::Entries(Entries::Map),
+            ),
+            (
+                "map, anyOf [table, null] values",
+                json!({
+                    "type": "object",
+                    "additionalProperties": { "anyOf": [{ "$ref": "#/$defs/Client" }, { "type": "null" }] },
+                }),
+                FieldKind::Entries(Entries::Map),
+            ),
+            (
+                "map of strings",
+                json!({ "type": "object", "additionalProperties": { "type": "string" } }),
+                FieldKind::Map,
+            ),
+            (
+                "map of free-form objects",
+                json!({ "type": "object", "additionalProperties": { "$ref": "#/$defs/Free" } }),
+                FieldKind::Opaque,
+            ),
+            (
+                "array of strings",
+                json!({ "type": "array", "items": { "type": "string" } }),
+                FieldKind::List(ListItem::Text),
+            ),
+            (
+                "array of free-form objects",
+                json!({ "type": "array", "items": { "$ref": "#/$defs/Free" } }),
+                FieldKind::Opaque,
+            ),
+        ] {
+            assert_eq!(kind_of(&schema, &defs), want, "{name}");
+        }
     }
 
     #[test]
