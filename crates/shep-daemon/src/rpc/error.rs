@@ -91,6 +91,12 @@ pub(super) fn rpc_error(err: &SupervisorError) -> RpcError {
             message: err.to_string(),
             daemon_version: None,
         },
+        // Its own code: the fix is another verb, and `Display` names it.
+        SupervisorError::Disabled(_) => RpcError {
+            code: RpcErrorCode::Disabled,
+            message: err.to_string(),
+            daemon_version: None,
+        },
         SupervisorError::EngineStopped => RpcError {
             code: RpcErrorCode::Internal,
             message: "the supervisor engine has stopped".to_string(),

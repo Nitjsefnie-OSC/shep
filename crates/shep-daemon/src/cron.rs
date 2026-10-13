@@ -138,6 +138,7 @@ pub fn spawn_cron_worker(
                         | SupervisorError::InvalidScale(_)
                         | SupervisorError::CannotStart(_)
                         | SupervisorError::IsADog(_)
+                        | SupervisorError::Disabled(_)
                         | SupervisorError::InvalidEnv(_)
                         | SupervisorError::InvalidField(_)
                         | SupervisorError::Overrides(_)),
