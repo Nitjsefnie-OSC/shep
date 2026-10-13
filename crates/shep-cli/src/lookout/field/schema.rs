@@ -196,13 +196,23 @@ pub(super) fn entry_schema<'a>(
     schema: &'a Value,
     defs: &'a Map<String, Value>,
 ) -> Option<&'a Value> {
+    entry_slot(schema, defs).map(|item| resolved(item, defs))
+}
+
+/// Whether the secret marker sits on an [`FieldKind::Entries`] field's
+/// entry slot itself, beside the `$ref` that [`entry_schema`] resolves past.
+pub(super) fn entry_slot_marked(schema: &Value, defs: &Map<String, Value>) -> bool {
+    entry_slot(schema, defs).is_some_and(marked)
+}
+
+/// The `items` or `additionalProperties` value as the schema wrote it.
+fn entry_slot<'a>(schema: &'a Value, defs: &'a Map<String, Value>) -> Option<&'a Value> {
     let schema = resolved(schema, defs);
-    let item = match type_of(schema)? {
-        "array" => schema.get("items")?,
-        "object" => schema.get("additionalProperties")?,
-        _ => return None,
-    };
-    Some(resolved(item, defs))
+    match type_of(schema)? {
+        "array" => schema.get("items"),
+        "object" => schema.get("additionalProperties"),
+        _ => None,
+    }
 }
 
 /// Renders a default the way the pane will show the value: bare for a

@@ -392,6 +392,45 @@ mod tests {
         assert_eq!(labels(&mut pane, "hosts"), ["#0"]);
     }
 
+    /// A mark on the field, not on anything inside the item: the entries
+    /// still label as indexes and every leaf under them is masked.
+    #[test]
+    fn a_secret_entries_field_masks_unmarked_leaves_and_never_labels_by_name() {
+        let schema = json!({
+            "properties": { "clients": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/Client" },
+                "x-shep-secret": true,
+            } },
+            "$defs": { "Client": { "type": "object", "properties": {
+                "name": { "type": "string" },
+                "key": { "type": "string" },
+            } } },
+        });
+        let mut pane = ConfigPane::dog(
+            "paddock".into(),
+            None,
+            schema,
+            "[[clients]]\nname = \"alpha\"\nkey = \"hunter2\"\n".to_owned(),
+        );
+        assert_eq!(labels(&mut pane, "clients"), ["#0"]);
+        pane.move_by(1);
+        pane.open_table();
+        let masked: Vec<bool> = pane
+            .rows()
+            .into_iter()
+            .filter_map(|row| match row {
+                PaneRow::Entry(index) => pane.entry_row(index),
+                _ => None,
+            })
+            .filter_map(|row| match &row.body {
+                EntryBody::Leaf { masked, .. } => Some(*masked),
+                EntryBody::Node { .. } => None,
+            })
+            .collect();
+        assert_eq!(masked, [true, true]);
+    }
+
     #[test]
     fn an_entries_field_inside_an_entry_is_a_count_row_with_no_children() {
         let schema = json!({

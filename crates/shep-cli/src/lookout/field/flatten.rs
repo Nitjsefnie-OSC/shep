@@ -105,11 +105,13 @@ pub(crate) enum Child {
 /// [`FieldKind::List`], filed whole.
 #[must_use]
 pub(crate) fn flattened(schema: &Value) -> Flattened {
-    flatten_schema(schema, true)
+    flatten_schema(schema, true, false)
 }
 
 /// [`flattened`], with `shapes` filled in only when `with_shapes` is set.
-fn flatten_schema(schema: &Value, with_shapes: bool) -> Flattened {
+/// `secret_above` marks every leaf, for an entry shape whose field sits
+/// under a secret.
+fn flatten_schema(schema: &Value, with_shapes: bool, secret_above: bool) -> Flattened {
     let defs = schema
         .get("$defs")
         .and_then(Value::as_object)
@@ -131,7 +133,12 @@ fn flatten_schema(schema: &Value, with_shapes: bool) -> Flattened {
         shapes: BTreeMap::new(),
         with_shapes,
     };
-    let mut roots = walker.walk(&properties, &[], None, marked(schema) || marked(root));
+    let mut roots = walker.walk(
+        &properties,
+        &[],
+        None,
+        secret_above || marked(schema) || marked(root),
+    );
     let Walker {
         fields,
         paths,
@@ -284,8 +291,12 @@ impl<'a> Walker<'a> {
                 if let Some(table) = item.as_object_mut() {
                     table.insert("$defs".to_owned(), Value::Object(self.defs.clone()));
                 }
+                let above = inherited
+                    || marked(property_schema)
+                    || marked(resolved)
+                    || super::schema::entry_slot_marked(property_schema, self.defs);
                 self.shapes
-                    .insert(dotted.clone(), flatten_schema(&item, false));
+                    .insert(dotted.clone(), flatten_schema(&item, false, above));
             }
             children.push(Child::Leaf(self.fields.len()));
             self.fields.push(field);
@@ -542,6 +553,80 @@ mod tests {
         assert!(
             flat.shapes["hosts"].shapes.is_empty(),
             "an entry's own entries are a count and nothing deeper"
+        );
+    }
+
+    // The item shape is flattened on its own, so a mark above it has to be
+    // handed in: on the field, on a table holding the field, or beside the
+    // `$ref` on `items` or `additionalProperties`.
+    #[test]
+    fn a_secret_mark_above_the_entries_masks_every_leaf_of_the_item_shape() {
+        let client = json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "key": { "type": "string" },
+                "limits": { "type": "object", "properties": { "rate": { "type": "integer" } } },
+            },
+        });
+        let on_field = json!({
+            "type": "array",
+            "items": { "$ref": "#/$defs/Client" },
+            "x-shep-secret": true,
+        });
+        let beside_ref = json!({
+            "type": "array",
+            "items": { "$ref": "#/$defs/Client", "x-shep-secret": true },
+        });
+        let on_map_slot = json!({
+            "type": "object",
+            "additionalProperties": { "$ref": "#/$defs/Client", "x-shep-secret": true },
+        });
+        let plain = json!({ "type": "array", "items": { "$ref": "#/$defs/Client" } });
+        let schemas = [
+            ("on the field", json!({ "clients": on_field })),
+            ("beside the ref", json!({ "clients": beside_ref })),
+            ("beside the map ref", json!({ "clients": on_map_slot })),
+            (
+                "on a table above",
+                json!({
+                    "vault": {
+                        "type": "object",
+                        "x-shep-secret": true,
+                        "properties": { "clients": plain.clone() },
+                    },
+                }),
+            ),
+        ];
+        for (case, properties) in schemas {
+            let flat = flattened(&json!({
+                "type": "object",
+                "properties": properties,
+                "$defs": { "Client": client.clone() },
+            }));
+            let key = if case == "on a table above" {
+                "vault.clients"
+            } else {
+                "clients"
+            };
+            let item = flat.shapes.get(key).expect(case);
+            assert!(item.fields.fields().len() >= 3, "{case}");
+            for field in item.fields.fields() {
+                assert!(field.secret, "{case}: {} must be masked", field.key);
+            }
+        }
+        let flat = flattened(&json!({
+            "type": "object",
+            "properties": { "clients": plain },
+            "$defs": { "Client": client },
+        }));
+        assert!(
+            flat.shapes["clients"]
+                .fields
+                .fields()
+                .iter()
+                .all(|field| !field.secret),
+            "an unmarked field masks nothing"
         );
     }
 
