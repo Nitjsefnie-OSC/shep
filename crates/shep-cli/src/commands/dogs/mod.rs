@@ -56,17 +56,17 @@ pub(crate) use disable::disable_in_config;
 pub(crate) use enable::{EnableRefusal, enable_in_config};
 pub(crate) use vet::{VERSION_BUDGET, ask_schema, dog_env};
 
-/// [`DogActionRow`](crate::output::DogActionRow)'s status when
+/// [`DogActionRow`]'s status when
 /// `enable` wrote the config and no shepherd answered. A success outcome:
 /// `enable` never autostarts one.
 const NO_SHEPHERD_ENABLE_STATUS: &str = "will start with the next shepherd";
 
-/// [`DogActionRow`](crate::output::DogActionRow)'s status when
+/// [`DogActionRow`]'s status when
 /// `disable` wrote the config and no shepherd answered: the mirror of
 /// [`NO_SHEPHERD_ENABLE_STATUS`].
 const NO_SHEPHERD_DISABLE_STATUS: &str = "not running; will not start with the next shepherd";
 
-/// [`DogActionRow`](crate::output::DogActionRow)'s status when a
+/// [`DogActionRow`]'s status when a
 /// shepherd stopped the dog.
 const DISABLED_STATUS: &str = "stopped";
 
