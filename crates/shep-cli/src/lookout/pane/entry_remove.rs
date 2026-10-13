@@ -11,9 +11,29 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
+use shep_core::config::ApplyGroup;
+
 use super::super::edits::EditKey;
 use super::super::field::{Entries, FieldKind};
 use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget, PathStep};
+
+/// What one entry removal took out of the pane, kept so `u` can give it
+/// back: the edits it folded into the whole value, the whole value it
+/// replaced, and which entries were open.
+///
+/// `Debug` is derived, safe because [`PaneEdit`]'s own `Debug` withholds its
+/// values (IR-41).
+#[derive(Debug, Clone)]
+pub(super) struct Removal {
+    /// The entries field the removal was filed for.
+    key: String,
+    /// The whole value that was filed for it before, if there was one.
+    prior: Option<(PaneEdit, Option<ApplyGroup>)>,
+    /// The edits filed under its entries, folded into the new whole value.
+    folded: Vec<(PaneEdit, Option<ApplyGroup>)>,
+    /// The open paths under it.
+    open: BTreeSet<String>,
+}
 
 impl ConfigPane {
     /// Whether the cursor is on the row of an entry of an array or map of
@@ -66,11 +86,28 @@ impl ConfigPane {
         if !take_entry(&mut whole, &step) {
             return;
         }
-        self.drop_edits_under(&key);
+        let head = format!("{key}[");
+        let removal = Removal {
+            prior: self
+                .edits
+                .get(&EditKey::Field(key.clone()))
+                .map(|edit| (edit.edit().clone(), edit.impact())),
+            folded: self.drop_edits_under(&key),
+            open: self
+                .open
+                .iter()
+                .filter(|path| path.starts_with(&head))
+                .cloned()
+                .collect(),
+            key: key.clone(),
+        };
         if matches!(step, PathStep::Index(_)) {
             self.shift_open_entries(&key, &step);
         }
-        self.file_field(key, whole);
+        self.file_field(key.clone(), whole);
+        if self.edits.get(&EditKey::Field(key)).is_some() {
+            Arc::make_mut(&mut self.removals).push(removal);
+        }
         self.resync_entries();
         self.retain_known_open();
         let left = self.entries.roots(field).map_or(0, <[usize]>::len);
@@ -83,6 +120,45 @@ impl ConfigPane {
                 .map_or(PaneRow::Field(field), |&root| PaneRow::Entry(root)),
         };
         self.move_to_row(land);
+    }
+
+    /// [`Self::adopt_edits`] from `previous`, less every edit filed under an
+    /// array entry this pane no longer holds at the same position, and every
+    /// whole value filed for an array or map of tables that the new section
+    /// no longer matches. That is how many it dropped.
+    ///
+    /// An array entry is named by its place in the array, so after another
+    /// writer inserts or removes one, the same key names a different entry,
+    /// and the edit would be written into it. A removal files the whole
+    /// array as it stood, so it would write the other writer's change away.
+    pub(in crate::lookout) fn adopt_edits_from(&mut self, previous: &Self) -> usize {
+        let mut kept = previous.edits.clone();
+        let mut dropped = 0;
+        for (key, _) in previous.edits.iter() {
+            let EditKey::Field(name) = key else {
+                continue;
+            };
+            if previous.entries_field(name).is_some()
+                && previous.values.get(name) != self.values.get(name)
+            {
+                kept.remove(key);
+                dropped += 1;
+            }
+        }
+        self.edits = kept;
+        self.resync_entries();
+        for (key, _) in previous.edits.iter() {
+            let EditKey::Field(name) = key else {
+                continue;
+            };
+            if self.edits.get(key).is_some()
+                && !previous.entries.names_same_entry(name, &self.entries)
+            {
+                self.edits.remove(key);
+                dropped += 1;
+            }
+        }
+        dropped
     }
 
     /// Rebuilds the rows under every entries field over what the pane holds
@@ -149,8 +225,9 @@ impl ConfigPane {
         Some(whole)
     }
 
-    /// Drops every edit filed under an entry of the field `key`.
-    fn drop_edits_under(&mut self, key: &str) {
+    /// Drops every edit filed under an entry of the field `key` and hands
+    /// them back.
+    fn drop_edits_under(&mut self, key: &str) -> Vec<(PaneEdit, Option<ApplyGroup>)> {
         let under = format!("{key}[");
         let filed: Vec<EditKey> = self
             .edits
@@ -158,9 +235,31 @@ impl ConfigPane {
             .filter(|(edit_key, _)| matches!(edit_key, EditKey::Field(name) if name.starts_with(&under)))
             .map(|(edit_key, _)| edit_key.clone())
             .collect();
+        let mut folded = Vec::new();
         for edit_key in filed {
+            if let Some(edit) = self.edits.get(&edit_key) {
+                folded.push((edit.edit().clone(), edit.impact()));
+            }
             self.edits.remove(&edit_key);
         }
+        folded
+    }
+
+    /// Gives back what the newest removal filed for the entries field `key`
+    /// took out, after `u` has dropped the whole value it filed: the whole
+    /// value it replaced, the edits it folded in, and the entries that were
+    /// open. Does nothing when no removal is held for `key`.
+    pub(super) fn restore_removal(&mut self, key: &str) {
+        let Some(at) = self.removals.iter().rposition(|removal| removal.key == key) else {
+            return;
+        };
+        let removal = Arc::make_mut(&mut self.removals).remove(at);
+        for (edit, impact) in removal.prior.into_iter().chain(removal.folded) {
+            self.edits.set(edit, impact);
+        }
+        let head = format!("{key}[");
+        self.open.retain(|path| !path.starts_with(&head));
+        self.open.extend(removal.open);
     }
 
     /// Renames the open entries of the array `key` the way removing the entry
@@ -412,6 +511,57 @@ mod tests {
             pane.edited_section_with(pane.edits()),
             SectionWrite::Nothing
         );
+    }
+
+    #[test]
+    fn undo_gives_back_an_edit_the_removal_folded_in() {
+        let mut pane = on("clients[0]");
+        pane.move_to_key("clients[2].name");
+        pane.begin_typing();
+        pane.type_char('z');
+        assert_eq!(pane.apply_typing(), None);
+        select(&mut pane, "clients[0]");
+        pane.file_entry_removal();
+        assert_eq!(pane.edits().len(), 1, "the edit is folded in");
+        assert!(pane.undo_edit().is_some());
+        assert_eq!(pane.edits().len(), 1, "the edit is back");
+        assert_eq!(filed(&pane, "clients[2].name"), Some(json!("z")));
+        assert_eq!(labels(&pane, "clients"), ["alpha", "b-2", "#2"]);
+        let SectionWrite::Written(out) = pane.edited_section_with(pane.edits()) else {
+            panic!("the edit lands");
+        };
+        assert_eq!(out.as_str().matches("[[clients]]").count(), 3);
+        assert!(out.as_str().contains("name = \"z\""), "{}", out.as_str());
+    }
+
+    #[test]
+    fn undo_gives_back_the_whole_value_an_earlier_removal_filed() {
+        let mut pane = on("clients[0]");
+        pane.file_entry_removal();
+        select(&mut pane, "clients[0]");
+        pane.file_entry_removal();
+        assert_eq!(labels(&pane, "clients"), ["#0"]);
+        assert!(pane.undo_edit().is_some());
+        assert_eq!(labels(&pane, "clients"), ["b-2", "#1"]);
+        assert!(pane.undo_edit().is_some());
+        assert_eq!(labels(&pane, "clients"), ["alpha", "b-2", "#2"]);
+        assert!(pane.edits().is_empty());
+    }
+
+    #[test]
+    fn undo_opens_the_entries_that_were_open_before_the_removal() {
+        let mut pane = on("clients[0]");
+        select(&mut pane, "clients[0]");
+        pane.open_table();
+        select(&mut pane, "clients[2]");
+        pane.open_table();
+        select(&mut pane, "clients[0]");
+        pane.open_table();
+        let before = pane.open.clone();
+        pane.file_entry_removal();
+        assert_ne!(pane.open, before, "the open set shifted with the entries");
+        assert!(pane.undo_edit().is_some());
+        assert_eq!(pane.open, before);
     }
 
     #[test]
