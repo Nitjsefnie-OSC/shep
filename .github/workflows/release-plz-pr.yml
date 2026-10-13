@@ -11,7 +11,7 @@ name: Release PR
 permissions:
   contents: write
   pull-requests: write
-  # The breaking-bump guard writes its verdict as a commit status on the
+  # The release guard writes its verdict as a commit status on the
   # release pull request's head. This workflow runs on a push to main rather
   # than on the pull request, so a failing step here is a red run in the
   # Actions tab and nothing at all on the pull request itself. Measured
@@ -81,15 +81,19 @@ jobs:
           # the registry to work out which versions are already published.
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      # Fails the run rather than closing the PR: a changelog-only release
-      # PR also happens legitimately, when a hand-edited version leaves
-      # release-plz nothing to bump. Left open and red, a human decides
-      # which case it is before merging.
+      # Three checks on the branch release-plz just pushed. Two of them fail
+      # for a human to read. The middle one does not: release-plz's own walk
+      # under-reads a diamond, so scripts/fix-release-bump.py writes what it
+      # missed onto the release branch and pushes it, and a release PR that
+      # came out too small comes back correct instead of red. It writes to the
+      # release branch only, so nothing publishes: a release still waits for a
+      # human to merge.
       - name: Guard the release PR's version and changelog
-        id: noop-guard
+        id: guard
         if: ${{ steps.release-plz.outputs.prs_created == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          RELEASE_PLZ_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
           PR_NUMBER: ${{ fromJSON(steps.release-plz.outputs.pr).number }}
         run: |
           set -euo pipefail
@@ -122,9 +126,10 @@ jobs:
             exit 1
           fi
 
-          # A bump can also be real and still be too small. release-plz walks
-          # each package's history one commit at a time, asking the commit it
-          # is standing on for its own next ancestor, so on a diamond (two
+          # A bump can also be real and still be too small, and a changelog can
+          # be complete-looking and still be short. release-plz walks each
+          # package's history one commit at a time, asking the commit it is
+          # standing on for its own next ancestor, so on a diamond (two
           # branches cut from one base, merged in turn) it goes down one leg
           # and never crosses to the other. Measured 2026-09-20 against
           # release-plz 0.3.160: it lost `refactor(daemon)!: carry the real
@@ -132,37 +137,89 @@ jobs:
           # that needed 0.9.0. cargo-semver-checks passed, having no lint for
           # a changed variant payload under `#[non_exhaustive]`, so nothing
           # else would have caught it either. The same commits rebased
-          # into a line produced 0.9.0 correctly.
+          # into a line produced 0.9.0 correctly. Measured again 2026-10-13:
+          # release PR #809 came out at 0.13.1 with none of #807, #803 or
+          # #812 in its changelogs.
           #
-          # The script reads git and two manifests, so it wants the tags and
+          # The script reads git and the manifests, so it wants the tags and
           # the full history that `fetch-depth: 0` above fetches, and no
-          # toolchain. `manifest_version` returns the line with its spaces
-          # gone, so the quotes come off here.
-          head_number="$(printf '%s' "${head_version#version=}" | tr -d '"')"
-          bump_state=success
-          if ! python3 scripts/check-breaking-bump.py \
+          # toolchain.
+          pr_branch="$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)"
+
+          # The script pushes over https with the token every other step here
+          # already holds. checkout ran with persist-credentials: false, so the
+          # remote carries no credential at all: the token goes on for the
+          # push and the trap puts the plain URL back before any later step can
+          # read .git/config. The token needs Contents: write for the push to
+          # be accepted, which is what release-plz already needs to push the
+          # branch in the first place.
+          origin_url="$(git remote get-url origin)"
+          git remote set-url origin "https://x-access-token:${RELEASE_PLZ_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          trap 'git remote set-url origin "$origin_url"' EXIT
+
+          guard=judged
+          if ! python3 scripts/fix-release-bump.py \
               --base-sha "$base_sha" \
-              --base-version "$(printf '%s' "${base_version#version=}" | tr -d '"')" \
-              --head-version "$head_number"; then
-            bump_state=failure
+              --head-sha "$head_sha" \
+              --branch "$pr_branch" \
+              --output "$GITHUB_OUTPUT"; then
+            guard=refused
           fi
 
-          # Written on both outcomes, and written before the exit below. A
-          # status only ever attaches to the sha it names, so a force-push
-          # leaves the new head with none, which reads as unverified rather
-          # than as inherited approval. Add `release bump` to main's ruleset
-          # to make this block the merge as well as report it.
-          gh api "repos/${GITHUB_REPOSITORY}/statuses/${head_sha}" \
-            -f state="$bump_state" \
-            -f context='release bump' \
-            -f description="$head_number against the breaking commits since the last release" \
-            --silent
+          # The script reports its verdict as key=value lines in $GITHUB_OUTPUT
+          # because that is the one channel a step has to the rest of the job.
+          read_out() {
+            sed -n "s/^$1=//p" "$GITHUB_OUTPUT" | tail -n 1
+          }
+          new_version="$(read_out new_version)"
+          old_version="$(read_out old_version)"
+          new_head="$(read_out release_head)"
+          changed="$(read_out changed)"
+          new_head="${new_head:-$head_sha}"
+          # `manifest_version` returns the line with its spaces gone, so the
+          # quotes come off here. These three only matter if the script
+          # succeeded without reporting, which is a broken script rather than a
+          # broken release, and the fallbacks keep the status text honest.
+          head_number="$(printf '%s' "${head_version#version=}" | tr -d '"')"
+          new_version="${new_version:-$head_number}"
+          old_version="${old_version:-$head_number}"
 
-          if [ "$bump_state" = failure ]; then
-            echo "::error::release PR #$PR_NUMBER publishes a breaking change as a compatible release."
-            echo "::error::Left open for a human: set the version by hand on the release branch, or"
-            echo "::error::rebase the pull request that carried the break into one line of history."
+          if [ "$guard" = refused ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/statuses/${head_sha}" \
+              -f state=failure \
+              -f context='release bump' \
+              -f description='the guard could not read this release branch' \
+              --silent
+            echo "::error::release PR #$PR_NUMBER could not be judged."
+            echo "::error::Left open for a human: the script refuses rather than rewrite a"
+            echo "::error::branch it cannot read the range of commits behind."
             exit 1
+          fi
+
+          if [ "$changed" = true ]; then
+            # GitHub's own view of the pull request head lags the push by a
+            # moment, and the title edit and the diff below both read it.
+            for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+              if [ "$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$new_head" ]; then
+                break
+              fi
+              sleep 2
+            done
+
+            # Keep whatever shape release-plz gave the title and move only the
+            # number in it. The title is also what a squashed merge writes into
+            # main's history, and the job's own `if` above reads that history
+            # for the string `chore: release` to skip a release's own merge.
+            if [ "$old_version" != "$new_version" ]; then
+              title="$(gh pr view "$PR_NUMBER" --json title --jq .title)"
+              if printf '%s' "$title" | grep -qF "$old_version"; then
+                title="${title//"$old_version"/$new_version}"
+              else
+                title="chore: release v$new_version"
+              fi
+              gh pr edit "$PR_NUMBER" --title "$title"
+            fi
+            echo "Rewrote $pr_branch at $new_head: $old_version -> $new_version."
           fi
 
           # The other no-op shape: release-plz can bump the version even when
@@ -170,7 +227,8 @@ jobs:
           # release-plz-changelog.toml, producing a version header with
           # nothing under it. The version-value guard above passes this
           # correctly, since the bump is real; this guard catches the empty
-          # changelog instead.
+          # changelog instead. It runs against the head the guard left the
+          # branch at, which is the head a merge would publish.
           #
           # Scoped to the new version's own added lines: `gh pr diff` prints
           # every file in the PR, so a bullet added anywhere else would
@@ -181,6 +239,8 @@ jobs:
           # template's `trim = true` strips it per line: dropping `trim`
           # later would otherwise stop every release here with no clear
           # signal why.
+          bump_state=success
+          bump_note="$new_version against every commit since the last release"
           if ! gh pr diff "$PR_NUMBER" | awk '
                 /^diff --git /                 { in_log = 0 }
                 /^\+\+\+ b\/.*CHANGELOG\.md$/  { in_log = 1; under_new = 0; next }
@@ -189,6 +249,22 @@ jobs:
                 under_new && /^\+[[:space:]]*[-*][[:space:]]/ { found = 1 }
                 END                            { exit !found }
               '; then
+            bump_state=failure
+            bump_note="$new_version, but its new changelog section is empty"
+          fi
+
+          # Written on both outcomes, and written before the exit below. A
+          # status only ever attaches to the sha it names, so a force-push
+          # leaves the new head with none, which reads as unverified rather
+          # than as inherited approval. Add `release bump` to main's ruleset
+          # to make this block the merge as well as report it.
+          gh api "repos/${GITHUB_REPOSITORY}/statuses/${new_head}" \
+            -f state="$bump_state" \
+            -f context='release bump' \
+            -f description="$bump_note" \
+            --silent
+
+          if [ "$bump_state" = failure ]; then
             echo "::error::release PR #$PR_NUMBER bumps a version but its new changelog section is empty."
             echo "::error::Every commit since the last release was filtered out by release-plz-changelog.toml."
             echo "::error::Left open for a human: close it, or land something worth releasing first."
