@@ -99,7 +99,7 @@ fn a_disabled_dog_comes_back_at_rest_under_a_new_id_after_a_daemon_reload() {
     );
     assert_eq!(
         metrics["dog"]["kind"].as_str(),
-        Some("built-in"),
+        Some("built_in"),
         "a dog registered at rest is still listed as a dog: {metrics}"
     );
 
@@ -143,12 +143,19 @@ fn a_carried_dog_a_hand_edit_dropped_from_enabled_dogs_is_stopped_and_marked() {
         .as_u64()
         .expect("a listed dog has an id");
 
-    // The hand edit: the name is out of `[daemon] enabled_dogs`, and the
-    // dog's own section stays, which is what `shep disable` leaves too.
-    write_shep_toml(
-        &dir,
-        &format!("[dog.metrics]\nbind = \"127.0.0.1:{port}\"\n"),
-    );
+    // The hand edit: `enabled_dogs` is the only line that decides whether a
+    // dog is enabled, so the edit removes that line and changes nothing else.
+    // Writing the file from scratch would put `[dog.metrics]` back in
+    // `shep.toml`, which the first boot already moved to `dogs.toml`, and a
+    // dog configured in both files refuses the boot.
+    let shep_toml = home.join("shep.toml");
+    let edited = std::fs::read_to_string(&shep_toml)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("enabled_dogs"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&shep_toml, format!("{edited}\n")).unwrap();
 
     let reloaded = shep(home).arg("daemon").arg("reload").output().unwrap();
     assert_success(&reloaded);
