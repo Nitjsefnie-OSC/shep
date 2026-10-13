@@ -38,13 +38,37 @@ impl fmt::Debug for Resolved {
     }
 }
 
-/// A file's modification time and length, or `None` for one that is absent
-/// or cannot be statted.
-type Stamp = Option<(SystemTime, u64)>;
+/// What tells a rewrite of a file from the file as last seen.
+///
+/// Modification time and length alone miss a same-length rewrite inside one
+/// clock granule, and every store write is a rename of a new file over the
+/// old. On unix the inode and the change time are stamped too, which that
+/// rename always moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileStamp {
+    modified: SystemTime,
+    len: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    changed: (i64, i64),
+}
+
+/// `None` for a file that is absent or cannot be statted.
+type Stamp = Option<FileStamp>;
 
 fn stamp(path: &Path) -> Stamp {
     let meta = std::fs::metadata(path).ok()?;
-    Some((meta.modified().ok()?, meta.len()))
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt as _;
+    Some(FileStamp {
+        modified: meta.modified().ok()?,
+        len: meta.len(),
+        #[cfg(unix)]
+        inode: meta.ino(),
+        #[cfg(unix)]
+        changed: (meta.ctime(), meta.ctime_nsec()),
+    })
 }
 
 /// The poll state: how each file looked at the last look, and what the
@@ -58,6 +82,9 @@ pub(crate) struct Watcher {
     dogs_config: PathBuf,
     environment: String,
     seen: Option<(Stamp, Stamp)>,
+    /// Whether the last read failed, so a store that stays broken is warned
+    /// about once.
+    broken: bool,
     /// `None` until a read succeeds, so the first one fires nothing.
     baseline: Option<Resolved>,
 }
@@ -79,6 +106,7 @@ impl Watcher {
             dogs_config,
             environment,
             seen: None,
+            broken: false,
             baseline: None,
         }
     }
@@ -88,30 +116,33 @@ impl Watcher {
     ///
     /// A store that will not read logs one `warn!` and changes nothing, so
     /// the next good read is compared against the baseline from before it
-    /// broke. A key a dog names for the first time has no earlier value and
+    /// broke. It is read again on every look until it reads, because the
+    /// failure may be a passing one that leaves the file unchanged. A key a dog names for the first time has no earlier value and
     /// announces nothing.
     pub(crate) fn tick(&mut self) -> Vec<String> {
         let now = (stamp(&self.secrets), stamp(&self.dogs_config));
         if self.seen.as_ref() == Some(&now) {
             return Vec::new();
         }
-        // Recorded before the read, so a store that stays broken is warned
-        // about once and not once per poll.
-        self.seen = Some(now);
-
         let store = match secrets::all(&self.secrets) {
             Ok(store) => store,
             Err(err) => {
                 // The class of failure, not the error's text: a decode error
                 // can quote the value that failed to parse (IR-41).
-                tracing::warn!(
-                    path = %self.secrets.display(),
-                    fault = %StoreFault::from(&err),
-                    "the secret store could not be read; dogs are not told of changes until it reads again"
-                );
+                if !self.broken {
+                    tracing::warn!(
+                        path = %self.secrets.display(),
+                        fault = %StoreFault::from(&err),
+                        "the secret store could not be read; dogs are not told of changes until it reads again"
+                    );
+                }
+                // `seen` stays as it was, so the next look reads again.
+                self.broken = true;
                 return Vec::new();
             }
         };
+        self.broken = false;
+        self.seen = Some(now);
         let named = dogs_referencing(&self.dogs_config, None);
         let view = SecretView::new(self.environment.clone(), store, ProviderCache::default());
         let resolved: BTreeMap<String, Option<String>> = named
@@ -350,7 +381,7 @@ mod tests {
             assert!(fixture.tick().is_empty());
             assert!(
                 fixture.tick().is_empty(),
-                "the same broken file is not re-read"
+                "a store that stays broken warns once"
             );
         });
 
@@ -360,6 +391,50 @@ mod tests {
         );
         assert_eq!(logged.matches("WARN").count(), 1, "{logged}");
         assert!(!logged.contains("s3ntinel"), "{logged}");
+    }
+
+    /// A rotation to a value of the same length, landing in the same
+    /// modification-time granule as the file the last look read. The mtime
+    /// is put back by hand to stand in for a coarse clock.
+    #[cfg(unix)]
+    #[test]
+    fn a_same_length_rotation_in_the_same_clock_granule_still_fires() {
+        let mut fixture = Fixture::new(DISCORD);
+        fixture.set("DISCORD_TOKEN", HOST, "aaaaaaaa");
+        fixture.tick();
+        let granule = std::fs::metadata(fixture.store())
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        fixture.set("DISCORD_TOKEN", HOST, "bbbbbbbb");
+        std::fs::File::options()
+            .write(true)
+            .open(fixture.store())
+            .unwrap()
+            .set_modified(granule)
+            .unwrap();
+
+        assert_eq!(fixture.tick(), names(&["discord"]));
+    }
+
+    /// A read that fails leaves the file looking unchanged, so the next look
+    /// has to read it again: the failure may have been a passing one.
+    #[test]
+    fn a_store_that_failed_to_read_is_read_again_on_the_next_look() {
+        let mut fixture = Fixture::new(DISCORD);
+        fixture.set("DISCORD_TOKEN", HOST, "first");
+        fixture.tick();
+        std::fs::write(fixture.store(), "{ not json").unwrap();
+        assert!(fixture.tick().is_empty());
+
+        assert!(
+            fixture
+                .watcher
+                .seen
+                .is_none_or(|(secrets, _)| secrets != stamp(&fixture.store())),
+            "the broken file's stamp must not be remembered as read"
+        );
     }
 
     #[test]
