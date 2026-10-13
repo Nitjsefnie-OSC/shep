@@ -152,9 +152,14 @@ fn a_carried_dog_answers_a_scrape_after_a_real_reload() {
         "the carried dog must answer inside the reload's own wait: {text}"
     );
 
-    let after = poll_flock_data(home, FLOCK_DEADLINE, |data| {
-        data.as_array()
-            .is_some_and(|rows| rows.len() == 2 && rows.iter().all(|row| !row["pid"].is_null()))
+    let after = poll_flock_listing(home, FLOCK_DEADLINE, |data| {
+        let live = |name: &str| {
+            data.as_array()
+                .into_iter()
+                .flatten()
+                .any(|row| row["name"] == name && !row["pid"].is_null())
+        };
+        live("metrics") && live("web")
     });
     let rows = after.as_array().expect("flock data is an array");
     let dog_row = rows
