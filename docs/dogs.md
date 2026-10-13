@@ -915,6 +915,38 @@ gives up on it, and the exit code or signal when its process stops.
 `shep bleats <name> --follow` sees the same lines live, marked the same
 way, interleaved with the dog's own output in arrival order.
 
+## Handing over in place
+
+A dog, or any sheep, can replace its own binary without dropping what it
+holds. [`shep-handover`](../crates/shep-handover/README.md) does the `execve`:
+the process keeps its pid, its children stay its children, and the
+descriptors and state you name arrive in the new image. It depends on no
+other shep crate, so a dog built against an older shep line can use it.
+
+- **Boot.** Call `shep_handover::boot::<YourState>()` first thing in `main`.
+  `None` is an ordinary start. `Some(arrival)` carries your `state` and the
+  descriptors by key (`arrival.fds.take("key")`), as async readers, writers or
+  streams. A pipe your dog's child writes to arrives mid-stream, and
+  `wait_for_child(pid)` reaps the exit code.
+- **Hand over.** `Handover::new(&state).carry("key", &fd).exec(&gate)`. Only
+  the descriptors you carry survive; the rest are closed. `gate` is your
+  `Fitness` check and can refuse the whole handover.
+- **A handover that does not happen** (a refusal, an unreadable target, a
+  failed `execve`) returns the reason with the old image still running. Fall
+  back to a stop and a start.
+- **A state your new build cannot read** is found out before the exec. The
+  old image starts the target with a probe variable set, and the target's
+  `boot` answers for its `State` and exits, so `boot` must run before `main`
+  does anything it would not want done twice. A target that cannot read the
+  format refuses the handover, and the old image keeps running. A target that
+  never reaches `boot` is killed after ten seconds and refuses it too;
+  `.unprobed()` skips the question for a target that cannot answer it.
+
+The blob is a `0600` file under the temp directory (or `blob_dir`), named in
+`SHEP_PROCESS_HANDOVER` and removed by `boot`. That is not the shepherd's own
+`SHEP_HANDOVER`, so a dog the shepherd handed over never reads that one. On
+Windows every entry point answers "not supported".
+
 ## When the shepherd goes away
 
 A dog's process outlives the shepherd that spawned it, and that is

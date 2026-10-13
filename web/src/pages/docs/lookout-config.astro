@@ -646,8 +646,8 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       under it. The first level starts open, and <code>r</code> keeps what
       you opened. A credential reads{" "}
       <code>&lt;set&gt;</code> at any depth and never its value, and its editor
-      opens empty. A list or a map gets <code>~</code>, the same glyph a
-      sheep's <code>args</code> gets and for the same reason.
+      opens empty. A list of strings or integers opens the list sub-screen. A
+      map and a secret list get <code>~</code> and stay read-only.
     </p>
     <p>
       Edits file into the same change set a sheep's pane uses, and{" "}
