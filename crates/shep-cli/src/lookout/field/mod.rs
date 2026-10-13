@@ -15,7 +15,7 @@ mod init;
 mod schema;
 
 pub use bounds::Bounds;
-pub(crate) use flatten::{Flattened, flatten_values, flattened};
+pub(crate) use flatten::{Child, Flattened, Outline, flatten_values, flattened, segment};
 
 use serde_json::{Map, Value};
 
@@ -236,12 +236,6 @@ impl FieldSet {
     #[must_use]
     pub fn len(&self) -> usize {
         self.fields.len()
-    }
-
-    /// Whether there are none.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
     }
 }
 

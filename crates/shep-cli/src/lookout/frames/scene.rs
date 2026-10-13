@@ -442,7 +442,7 @@ impl Scene {
                 "The same sub-screen with jobs's table removal armed by d: the title asks remove api's jobs table? instead of naming the sheep, and any key but enter would cancel it."
             }
             Self::SheepDogTable => {
-                "Enter on jobs opens its table pane: dotted rows for the nested hours and models.worker tables, and models.worker.token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame."
+                "Enter on jobs opens its table pane as a tree: hours and models open at the first level, models.worker opened onto token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame."
             }
             Self::CloseDialog => {
                 "esc pressed with cwd and err_file edited and listen_timeout already parked from before: the close dialog names both counts, boxed and centred at 160x48 over the dimmed editing pane."

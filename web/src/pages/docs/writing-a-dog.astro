@@ -723,12 +723,12 @@ speaks protocol 9, accepts 8 and newer`}</CodeBlock>
     <p>
       <code>#[shep(secret)]</code> marks a field of <code>S</code> the way
       it marks one of <code>T</code>: <code>&lt;set&gt;</code> in lookout,
-      never the value. A nested struct in <code>S</code> becomes dotted
-      rows there, <code>models.worker.model</code> for a{" "}
-      <code>models</code> field holding a <code>worker</code> field
-      holding a <code>model</code>. A map with more than a fixed set of
-      keys, an array of tables, or a list whose items can be null stays
-      one read-only row.
+      never the value. A nested struct in <code>S</code> becomes a
+      table row there with its keys indented under it, like{" "}
+      <code>models</code> holding <code>worker</code> holding{" "}
+      <code>model</code>. A map with more than
+      a fixed set of keys, an array of tables, or a list whose items can
+      be null stays one read-only row.
     </p>
     <p class="fine">
       Without the <code>schema</code> feature,{" "}

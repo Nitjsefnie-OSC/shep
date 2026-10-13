@@ -92,9 +92,9 @@ pub enum Lock {
 
 /// One row of the pane.
 ///
-/// Three variants, not one: the env sub-screen is gone, and its keys now
+/// Four variants, not one: the env sub-screen is gone, and its keys now
 /// walk the same cursor as every field, so this enum has to name a row in
-/// either territory. Named rather than left as a bare index anyway, a
+/// either territory. A dog's nested table is a row of its own too. Named rather than left as a bare index anyway, a
 /// `usize` travelling between [`ConfigPane::rows`], the viewport and the
 /// renderer says nothing about what it indexes, and this one says.
 ///
@@ -103,6 +103,9 @@ pub enum Lock {
 pub enum PaneRow {
     /// Index into [`ConfigPane::fields`].
     Field(usize),
+    /// A nested table on a dog's pane, by its index among the tables the
+    /// pane's outline holds. It opens and closes; it holds no value.
+    Table(usize),
     /// Index into [`ConfigPane::env_key_names`].
     Env(usize),
     /// The row that adds a new env key.

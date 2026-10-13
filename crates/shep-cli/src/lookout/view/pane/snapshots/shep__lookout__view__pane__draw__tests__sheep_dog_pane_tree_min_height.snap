@@ -1,0 +1,7 @@
+---
+source: crates/shep-cli/src/lookout/view/pane/draw.rs
+expression: "on_a_table.join(\"\\n\")"
+---
+  web › jobs  (dog table)                                                                                                                                       
+>  ▾ models                                                                   table      FOCUSED  models  table
+  shep publishes the change; jobs decides what to reload

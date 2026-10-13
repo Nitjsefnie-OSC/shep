@@ -1,5 +1,5 @@
 use super::super::super::app::{App, Control, Link};
-use super::super::super::keymap::{Binding, ENTRY_ROWS, Group, KEY_CELL, TEXT_CELL, rows};
+use super::super::super::keymap::{Binding, ENTRY_ROWS, Group, KEY_CELL, TEXT_CELL, rows_over};
 use super::super::super::theme::Palette;
 use super::super::flock::fit;
 use super::super::status;
@@ -58,7 +58,7 @@ pub(super) const SHEEP: [&str; 4] = [
 /// not at 60 fps.
 ///
 /// Two more of the same tier, worth naming here rather than left for a
-/// reader to rediscover: [`rows`] runs twice when a form fits the width
+/// reader to rediscover: [`rows_over`] runs twice when a form fits the width
 /// and not the height, since [`lines`] builds and discards one before
 /// [`draw_borderless`](crate::lookout::view::keymap::shed::draw_borderless) builds another, and [`entry_cell`]'s
 /// `filter().nth()` scans `all_rows` once per cell, about forty-eight
@@ -234,7 +234,7 @@ const fn colour_sentence() -> &'static str {
 /// Never, in practice: `keymap::binding` is an exhaustive match with no
 /// wildcard
 /// arm, and its `KeyPress::Quit` arm is the only one that returns a
-/// [`Group::Closing`] row, so [`rows`] always carries exactly one. The
+/// [`Group::Closing`] row, so [`rows_over`] always carries exactly one. The
 /// `.expect` stays rather than a silent fallback, because the alternative
 /// to panicking here is drawing a quit line that names no key at all, which
 /// is a worse failure than a panic in a private function guarded by a
@@ -299,7 +299,7 @@ pub(super) fn folded_gate_and_quit_line(
 #[must_use]
 pub(in crate::lookout::view) fn lines(app: &App, interior: u16) -> Vec<Line<'static>> {
     let palette = app.palette();
-    let all_rows = rows();
+    let all_rows = rows_over(app.over_a_tree());
     let mut out = Vec::with_capacity(ENTRY_ROWS + 5);
     out.push(heading_line(palette));
     out.extend(
@@ -321,6 +321,8 @@ mod tests {
     use super::*;
 
     use super::super::testing::*;
+    use crate::lookout::app::{KeyPress, Msg};
+    use crate::lookout::view::fixtures;
     use crate::output::width::visible_width;
 
     /// The arithmetic, asserted rather than commented.
@@ -512,5 +514,21 @@ mod tests {
             "the second bank should hold DOING alone: {:?}",
             heading_rows[1]
         );
+    }
+
+    /// Opened over a dog's tree of tables, `←/→` closes and opens a
+    /// table; anywhere else it keeps the tab caption.
+    #[test]
+    fn the_arrows_close_and_open_a_table_over_a_dog_schema_pane() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        let _ = app.update(Msg::Key(KeyPress::Help));
+        assert!(app.keymap_open(), "the overlay did not open");
+        let over_a_dog = render_overlay(&app, 160, 48);
+        assert!(over_a_dog.contains("close/open table"), "{over_a_dog}");
+        assert!(!over_a_dog.contains("environment tab"), "{over_a_dog}");
+
+        let plain = render_overlay(&app_with_overlay(), 160, 48);
+        assert!(plain.contains("environment tab"), "{plain}");
+        assert!(!plain.contains("close/open table"), "{plain}");
     }
 }

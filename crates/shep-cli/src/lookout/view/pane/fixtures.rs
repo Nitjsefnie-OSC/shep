@@ -220,14 +220,29 @@ pub(super) fn bark_pane() -> ConfigPane {
 }
 
 /// A dog pane over a section whose nested table is written as its own
-/// `[models.worker]` header: the rows are dotted, and the credential one
-/// table down is a row of its own.
+/// `[models.worker]` header: the credential two tables down is a row of its
+/// own, under `models` and `worker`, and `worker` starts closed.
 pub(super) fn nested_table_dog_pane() -> ConfigPane {
     ConfigPane::dog(
         "jobs".into(),
         None,
         fixtures::nested_dog_schema(),
         fixtures::nested_dog_section(),
+    )
+}
+
+/// The same nested schema as a table `web` carries for `jobs`, so the
+/// pane is a per-sheep table pane.
+pub(super) fn nested_sheep_dog_pane() -> ConfigPane {
+    let table = serde_json::json!({
+        "name": "small",
+        "models": { "worker": { "model": "gpt", "token": "sk-live-51Hx9Qa" } },
+    });
+    ConfigPane::sheep_dog(
+        "web".into(),
+        "jobs".into(),
+        &fixtures::nested_dog_schema(),
+        table.as_object().cloned().expect("a table"),
     )
 }
 
