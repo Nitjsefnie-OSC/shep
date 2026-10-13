@@ -367,12 +367,12 @@ mod tests {
     #[test]
     fn a_secret_value_can_be_corrected_at_the_cursor() {
         let mut app = fixtures::app_typing_a_value();
-        for typed in "abd".chars() {
+        for typed in "xz".chars() {
             let _ = app.update(Msg::Key(KeyPress::TextChar(typed)));
         }
         let _ = app.update(Msg::Key(KeyPress::TextEdit(TextEdit::Left)));
-        let _ = app.update(Msg::Key(KeyPress::TextChar('c')));
+        let _ = app.update(Msg::Key(KeyPress::TextChar('y')));
 
-        assert_eq!(typing_of(&app).unwrap().buffer.as_str(), "abcd");
+        assert_eq!(typing_of(&app).unwrap().buffer.as_str(), "xyz");
     }
 }

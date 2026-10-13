@@ -298,12 +298,12 @@ mod tests {
 
     #[test]
     fn delete_removes_the_character_under_the_cursor_and_backspace_the_one_before() {
-        let mut text_box = boxed("abcd", 2);
+        let mut text_box = boxed("wxyz", 2);
 
         text_box.edit(TextEdit::Delete);
-        assert_eq!(text_box.as_str(), "abd");
+        assert_eq!(text_box.as_str(), "wxz");
         text_box.backspace();
-        assert_eq!(text_box.as_str(), "ad");
+        assert_eq!(text_box.as_str(), "wz");
         assert_eq!(text_box.cursor(), 1);
     }
 
@@ -371,7 +371,7 @@ mod tests {
         assert_eq!(boxed("hello world", 11).drawn(6), "world\u{258f}");
         assert_eq!(boxed("hello world", 0).drawn(6), "\u{258f}hello");
         assert_eq!(boxed("hello world", 8).drawn(6), "lo wo\u{258f}");
-        assert_eq!(boxed("hello world", 3).drawn(6), "hel\u{258f}lo");
+        assert_eq!(boxed("jumps over", 3).drawn(6), "jum\u{258f}ps");
     }
 
     #[test]
