@@ -79,8 +79,6 @@ pub(in crate::lookout) enum EntryBody {
         /// The value as a row draws it: a count for a nested
         /// [`FieldKind::Entries`].
         text: String,
-        /// Whether the row draws `<set>` in place of `text`.
-        masked: bool,
     },
 }
 
@@ -273,7 +271,6 @@ impl EntryRows {
                             } else {
                                 render_json(value.unwrap_or(&Value::Null))
                             },
-                            masked: field.secret && !counted,
                             stored: value.cloned().unwrap_or(Value::Null),
                             at,
                             entry_len: under.steps.len(),
@@ -494,7 +491,7 @@ mod tests {
                 _ => None,
             })
             .filter_map(|row| match &row.body {
-                EntryBody::Leaf { masked, .. } => Some(*masked),
+                EntryBody::Leaf { field, .. } => Some(field.secret),
                 EntryBody::Node { .. } => None,
             })
             .collect();

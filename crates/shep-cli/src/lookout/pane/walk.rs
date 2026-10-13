@@ -8,6 +8,7 @@
 use shep_core::config::GROUP_ORDER;
 
 use super::super::viewport::Viewport;
+#[cfg(test)]
 use super::entries::EntryBody;
 use super::{ConfigPane, PaneRow, PaneTarget};
 
