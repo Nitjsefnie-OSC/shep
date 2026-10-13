@@ -4,7 +4,8 @@
 //! are rows the schema alone cannot name: how many there are and what each
 //! is called come from the values. They are built once, when the pane is,
 //! into an arena the pane's rows index, the way its outline indexes tables.
-//! Every row here is read-only.
+//! A field in an entry edits like any other row, filed under its full path
+//! from the section root; see [`EntryBody::Leaf`].
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use serde_json::{Map, Value};
 use super::super::field::{
     Child, Entries, Field, FieldKind, FieldSet, Flattened, flatten_values, segment,
 };
-use super::PaneRow;
+use super::{PaneRow, PathStep};
 use super::fields::{entries_text, render_json};
 
 /// Every row under an [`FieldKind::Entries`] field of one pane.
@@ -29,6 +30,8 @@ pub(super) struct EntryRows {
     /// The entries directly under each [`FieldKind::Entries`] field, by the
     /// field's index, in the order they are drawn.
     roots: BTreeMap<usize, Vec<usize>>,
+    /// The arena row of each [`EntryBody::Leaf`], by its key.
+    leaves: BTreeMap<String, usize>,
 }
 
 /// One row under an [`FieldKind::Entries`] field.
@@ -61,8 +64,18 @@ pub(in crate::lookout) enum EntryBody {
     },
     /// One of the item schema's own properties.
     Leaf {
-        /// The property, for its type.
+        /// The property, for its type. Its key is the row's full path from
+        /// the section root (`clients[1].limits.rate`), each segment quoted
+        /// as [`segment`] quotes it, so an edit files into the pane's one
+        /// [`Edits`](super::super::edits::Edits) set under it.
         field: Box<Field>,
+        /// What the section holds there, or [`Value::Null`].
+        stored: Value,
+        /// Where the property is in the section.
+        at: Vec<PathStep>,
+        /// How many leading steps of `at` name the entry, which a write
+        /// finds and never creates.
+        entry_len: usize,
         /// The value as a row draws it: a count for a nested
         /// [`FieldKind::Entries`].
         text: String,
@@ -116,6 +129,7 @@ impl EntryRows {
                 kind,
                 shape,
                 base: &field.key,
+                steps: path.iter().cloned().map(PathStep::Key).collect(),
                 depth: path.len(),
                 parent: PaneRow::Field(index),
             };
@@ -136,6 +150,31 @@ impl EntryRows {
         self.roots.get(&field).map(Vec::as_slice)
     }
 
+    /// The field whose key is `key`, with where it is in the section, when
+    /// `key` names a row under an entries field.
+    pub(super) fn leaf(&self, key: &str) -> Option<EntryLeaf<'_>> {
+        match &self.rows.get(*self.leaves.get(key)?)?.body {
+            EntryBody::Leaf {
+                field,
+                stored,
+                at,
+                entry_len,
+                ..
+            } => Some(EntryLeaf {
+                field,
+                stored,
+                at,
+                entry_len: *entry_len,
+            }),
+            EntryBody::Node { .. } => None,
+        }
+    }
+
+    /// The body of the leaf whose key is `key`.
+    pub(super) fn leaf_body(&self, key: &str) -> Option<&EntryBody> {
+        self.rows.get(*self.leaves.get(key)?).map(|row| &row.body)
+    }
+
     /// The open-set key of every entry and table inside one.
     pub(super) fn node_paths(&self) -> impl Iterator<Item = &str> {
         self.rows.iter().filter_map(|row| match &row.body {
@@ -145,12 +184,13 @@ impl EntryRows {
     }
 
     fn push_entries(&mut self, at: &Where<'_>, value: Option<&Value>) -> Vec<usize> {
-        let mut entries: Vec<(String, String, &Value)> = Vec::new();
+        let mut entries: Vec<(String, String, PathStep, &Value)> = Vec::new();
         match (at.kind, value) {
             (Entries::Array, Some(Value::Array(items))) => {
                 for (index, item) in items.iter().enumerate() {
                     let path = format!("{}[{index}]", at.base);
-                    entries.push((path, array_label(at.shape, item, index), item));
+                    let label = array_label(at.shape, item, index);
+                    entries.push((path, label, PathStep::Index(index), item));
                 }
             }
             (Entries::Map, Some(Value::Object(map))) => {
@@ -159,13 +199,13 @@ impl EntryRows {
                 for key in keys {
                     let quoted = serde_json::to_string(key).unwrap_or_default();
                     let path = format!("{}[{quoted}]", at.base);
-                    entries.push((path, plain(key), &map[key]));
+                    entries.push((path, plain(key), PathStep::Key(key.clone()), &map[key]));
                 }
             }
             _ => {}
         }
         let mut roots = Vec::new();
-        for (path, label, item) in entries {
+        for (path, label, step, item) in entries {
             let index = self.rows.len();
             self.rows.push(EntryRow {
                 depth: at.depth,
@@ -179,13 +219,16 @@ impl EntryRows {
             });
             let table = item.as_object().cloned().unwrap_or_default();
             let values = flatten_values(&table, &at.shape.paths);
+            let mut steps = at.steps.clone();
+            steps.push(step);
             let children = self.push_children(
                 at.shape,
                 &values,
                 &at.shape.outline.roots,
                 &Under {
                     depth: at.depth,
-                    prefix: &path,
+                    entry: &path,
+                    steps: &steps,
                     parent: PaneRow::Entry(index),
                 },
             );
@@ -215,17 +258,26 @@ impl EntryRows {
                     };
                     let value = values.get(&field.key);
                     let counted = matches!(field.kind, FieldKind::Entries(_));
+                    let key = format!("{}.{}", under.entry, field.key);
+                    let mut at = under.steps.to_vec();
+                    at.extend(path.iter().cloned().map(PathStep::Key));
+                    let mut field = field.clone();
+                    field.key.clone_from(&key);
+                    self.leaves.insert(key, index);
                     self.rows.push(EntryRow {
                         depth: under.depth + path.len(),
                         label: path.last().map(|last| segment(last)).unwrap_or_default(),
                         body: EntryBody::Leaf {
-                            field: Box::new(field.clone()),
                             text: if counted {
                                 entries_text(value)
                             } else {
                                 render_json(value.unwrap_or(&Value::Null))
                             },
                             masked: field.secret && !counted,
+                            stored: value.cloned().unwrap_or(Value::Null),
+                            at,
+                            entry_len: under.steps.len(),
+                            field: Box::new(field),
                         },
                         parent: under.parent,
                     });
@@ -234,7 +286,7 @@ impl EntryRows {
                     let Some(table) = shape.outline.tables.get(table) else {
                         continue;
                     };
-                    let path = format!("{}.{}", under.prefix, table.path);
+                    let path = format!("{}.{}", under.entry, table.path);
                     self.rows.push(EntryRow {
                         depth: under.depth + 1 + table.depth,
                         label: table.key.clone(),
@@ -251,7 +303,8 @@ impl EntryRows {
                         &table.children,
                         &Under {
                             depth: under.depth,
-                            prefix: &path,
+                            entry: under.entry,
+                            steps: under.steps,
                             parent: PaneRow::Entry(index),
                         },
                     );
@@ -274,6 +327,18 @@ impl EntryRows {
     }
 }
 
+/// A field under an entries field, as [`EntryRows::leaf`] answers for it.
+pub(super) struct EntryLeaf<'a> {
+    /// The property, keyed by its full path.
+    pub(super) field: &'a Field,
+    /// What the section holds there, or [`Value::Null`].
+    pub(super) stored: &'a Value,
+    /// Where it is in the section.
+    pub(super) at: &'a [PathStep],
+    /// How many leading steps of `at` name the entry.
+    pub(super) entry_len: usize,
+}
+
 /// What [`EntryRows::push_entries`] needs to know about the field it builds
 /// under.
 struct Where<'a> {
@@ -281,6 +346,8 @@ struct Where<'a> {
     shape: &'a Flattened,
     /// The field's dotted key, which its entries' paths start with.
     base: &'a str,
+    /// The field's own path in the section.
+    steps: Vec<PathStep>,
     /// The entries' depth.
     depth: usize,
     parent: PaneRow,
@@ -290,8 +357,11 @@ struct Where<'a> {
 struct Under<'a> {
     /// The entry's depth.
     depth: usize,
-    /// The path of the node the rows sit in.
-    prefix: &'a str,
+    /// The path of the entry the rows are in, which a leaf's key starts
+    /// with.
+    entry: &'a str,
+    /// Where the entry is in the section.
+    steps: &'a [PathStep],
     parent: PaneRow,
 }
 

@@ -12,7 +12,7 @@ use super::super::edits::{EditKey, Edits};
 use super::super::field::{Field, FieldKind};
 use super::super::textbox::{TextBox, TextEdit};
 use super::super::validation::{self, Refusal};
-use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
+use super::{ConfigPane, PaneEdit, PaneTarget};
 
 // Link-only (IR-32): the env editor this one is never open beside, and
 // the group a structural field carries.
@@ -110,10 +110,7 @@ impl ConfigPane {
     /// cycles ([`FieldKind::Text`], [`FieldKind::Integer`],
     /// [`FieldKind::Map`], [`FieldKind::Opaque`], [`FieldKind::Entries`]).
     pub fn cycle(&mut self) {
-        let Some(PaneRow::Field(index)) = self.cursor() else {
-            return;
-        };
-        let Some(field) = self.fields.fields().get(index) else {
+        let Some(field) = self.cursor_field() else {
             return;
         };
         if self.lock(&field.key).is_some() {
@@ -130,7 +127,7 @@ impl ConfigPane {
             },
             None => None,
         };
-        let current = filed_here.or_else(|| self.values.get(&field.key));
+        let current = filed_here.or_else(|| self.stored_of(&field.key));
         let next = match &field.kind {
             FieldKind::Bool => Value::Bool(!current.and_then(Value::as_bool).unwrap_or(false)),
             FieldKind::Choice(names) | FieldKind::Suggested(names) if !names.is_empty() => {
@@ -189,7 +186,7 @@ impl ConfigPane {
     /// both as `(unset)`, so unsetting a field that is already unset is
     /// not a change.
     fn stored_value_is(&self, key: &str, value: &Value) -> bool {
-        match self.values.get(key) {
+        match self.stored_of(key) {
             Some(stored) => stored == value,
             None => value.is_null(),
         }
@@ -229,10 +226,7 @@ impl ConfigPane {
     /// already been refused once, by the caller's own lock check, and this
     /// is the defense behind it.
     pub(in crate::lookout) fn file_default(&mut self) {
-        let Some(PaneRow::Field(index)) = self.cursor() else {
-            return;
-        };
-        let Some(field) = self.fields.fields().get(index) else {
+        let Some(field) = self.cursor_field() else {
             return;
         };
         if self.lock(&field.key).is_some() {
@@ -300,10 +294,7 @@ impl ConfigPane {
     /// empty: the pane renders `<set>` for one and never holds the value,
     /// so a seed would have to invent it.
     pub fn begin_typing(&mut self) {
-        let Some(PaneRow::Field(index)) = self.cursor() else {
-            return;
-        };
-        let Some(field) = self.fields.fields().get(index) else {
+        let Some(field) = self.cursor_field() else {
             return;
         };
         if self.lock(&field.key).is_some()
@@ -385,7 +376,7 @@ impl ConfigPane {
     #[must_use]
     pub fn apply_typing(&mut self) -> Option<Refusal> {
         let PaneTyping { key, buffer } = self.typing.take()?;
-        let field = self.fields.by_key(&key).cloned();
+        let field = self.field_of(&key).cloned();
         if let Some(refused) = field
             .as_ref()
             .and_then(|field| validation::refusal(field, buffer.as_str()))

@@ -12,13 +12,18 @@
 //! the rows from beside the section text. The path is what this writer walks,
 //! never the key: a property literally named `a.b` is one key, and the
 //! section spells it `"a.b" = ...`.
+//!
+//! A field inside an entry of an array or map of tables is addressed the
+//! same way, through a path of [`PathStep`]s that adds the entry's index in
+//! an array. The entry is found and never created: an index past the end of
+//! the array and a map key the section lacks write nothing.
 
 use serde_json::Value;
 
 use super::super::edits::{EditKey, Edits};
 #[cfg(doc)]
 use super::super::field::flattened;
-use super::{ConfigPane, PaneEdit, SectionWrite};
+use super::{ConfigPane, PaneEdit, PathStep, SectionWrite};
 
 impl ConfigPane {
     /// The section with every field edit in `edits` applied at its own path,
@@ -38,6 +43,11 @@ impl ConfigPane {
     /// nothing and is not a failure: the section already says the key is
     /// absent, and refusing such an edit would cost every other edit in the
     /// close its write.
+    ///
+    /// A filed key that names no row of this pane is refused, and so is a
+    /// field of an entry the section does not hold: a refresh can remove the
+    /// entry an edit was filed under, and writing the edit anywhere else
+    /// would put a key in the operator's file that they never typed.
     ///
     /// [`SectionWrite::Nothing`] for a sheep pane, which holds no section, for
     /// a set carrying no field edit, and for a batch whose every edit the
@@ -64,15 +74,13 @@ impl ConfigPane {
                 continue;
             };
             let value = value.as_value();
-            // A filed key always names a row `flattened` built. The one-key
-            // fallback is for a key that somehow does not: the whole name as
-            // one literal key, never split on its dots.
-            let unnamed = vec![name.clone()];
-            let path = self.section_paths.get(name).unwrap_or(&unnamed);
+            let Some((path, existing)) = self.write_path(name) else {
+                return SectionWrite::Refused;
+            };
             let landed = match toml_cell(value) {
-                Some(cell) => set_at(doc.as_table_mut(), path, cell, false),
+                Some(cell) => set_at(doc.as_table_mut(), &path, existing, cell, false),
                 // `null` has no TOML cell: it is the removal, not a value.
-                None if value.is_null() => remove_at(doc.as_table_mut(), path),
+                None if value.is_null() => remove_at(doc.as_table_mut(), &path, existing),
                 None => Landed::Refused,
             };
             match landed {
@@ -86,6 +94,19 @@ impl ConfigPane {
         } else {
             SectionWrite::Nothing
         }
+    }
+}
+
+impl ConfigPane {
+    /// Where the row `key` is in the section, and how many leading steps of
+    /// that path the section must already hold. [`None`] for a key that
+    /// names no row.
+    fn write_path(&self, key: &str) -> Option<(Vec<PathStep>, usize)> {
+        if let Some(leaf) = self.entries.leaf(key) {
+            return Some((leaf.at.to_vec(), leaf.entry_len));
+        }
+        let path = self.section_paths.get(key)?;
+        Some((path.iter().cloned().map(PathStep::Key).collect(), 0))
     }
 }
 
@@ -163,6 +184,10 @@ fn toml_array(elements: &[Value]) -> Option<toml_edit::Array> {
 /// `[models]` header above it, and inside an inline table it is created as an
 /// inline table, which is the only kind that renders there.
 ///
+/// The first `existing` steps are the exception: they name an entry of an
+/// array or map of tables, which the operator's section either holds or does
+/// not, and [`Landed::Refused`] is the answer when it does not.
+///
 /// [`Landed::Refused`] where the section already holds something else at a
 /// step of the path: `models = "old"` there is the operator's value, and a
 /// nested row is not licensed to trade it for a table. The same for a leaf
@@ -173,13 +198,26 @@ fn toml_array(elements: &[Value]) -> Option<toml_edit::Array> {
 /// inline table too, or it renders as nothing.
 fn set_at(
     table: &mut dyn toml_edit::TableLike,
-    path: &[String],
+    path: &[PathStep],
+    existing: usize,
     cell: toml_edit::Item,
     inline: bool,
 ) -> Landed {
-    let Some((key, rest)) = path.split_first() else {
+    let Some((PathStep::Key(key), rest)) = path.split_first() else {
         return Landed::Refused;
     };
+    if let Some((PathStep::Index(at), after)) = rest.split_first() {
+        let Some((entry, entry_inline)) = table
+            .get_mut(key)
+            .and_then(|array| element_at(array, *at))
+        else {
+            return Landed::Refused;
+        };
+        return set_at(entry, after, existing.saturating_sub(2), cell, entry_inline);
+    }
+    if existing > 0 && table.get(key).is_none_or(toml_edit::Item::is_none) {
+        return Landed::Refused;
+    }
     // `entry` rather than `insert`: `insert` re-formats the key it replaces,
     // and that is where a comment the operator wrote above the key goes.
     let entry = table.entry(key).or_insert(toml_edit::Item::None);
@@ -207,19 +245,30 @@ fn set_at(
     let Some(nested) = entry.as_table_like_mut() else {
         return Landed::Refused;
     };
-    set_at(nested, rest, cell, nested_inline)
+    set_at(nested, rest, existing.saturating_sub(1), cell, nested_inline)
 }
 
 /// Removes the leaf `path` names, and nothing above it.
 ///
 /// [`Landed::Already`] when the leaf, or a table on the way to it, is not in
-/// the section: the key is already unset, which is what the edit wanted.
-/// [`Landed::Refused`] only when a step on the path is there and holds no
-/// keys, so the removal was aimed at something that is not a table.
-fn remove_at(table: &mut dyn toml_edit::TableLike, path: &[String]) -> Landed {
-    let Some((key, rest)) = path.split_first() else {
+/// the section: the key is already unset, which is what the edit wanted. An
+/// entry that is not there is the exception, as it is for [`set_at`]:
+/// [`Landed::Refused`], since the edit was aimed at something that is gone.
+/// [`Landed::Refused`] too when a step on the path is there and holds no keys,
+/// so the removal was aimed at something that is not a table.
+fn remove_at(table: &mut dyn toml_edit::TableLike, path: &[PathStep], existing: usize) -> Landed {
+    let Some((PathStep::Key(key), rest)) = path.split_first() else {
         return Landed::Refused;
     };
+    if let Some((PathStep::Index(at), after)) = rest.split_first() {
+        let Some((entry, _)) = table
+            .get_mut(key)
+            .and_then(|array| element_at(array, *at))
+        else {
+            return Landed::Refused;
+        };
+        return remove_at(entry, after, existing.saturating_sub(2));
+    }
     if rest.is_empty() {
         return if table.remove(key).is_some() {
             Landed::Changed
@@ -228,7 +277,11 @@ fn remove_at(table: &mut dyn toml_edit::TableLike, path: &[String]) -> Landed {
         };
     }
     let Some(item) = table.get_mut(key) else {
-        return Landed::Already;
+        return if existing > 0 {
+            Landed::Refused
+        } else {
+            Landed::Already
+        };
     };
     if matches!(item, toml_edit::Item::None) {
         return Landed::Already;
@@ -236,7 +289,26 @@ fn remove_at(table: &mut dyn toml_edit::TableLike, path: &[String]) -> Landed {
     let Some(nested) = item.as_table_like_mut() else {
         return Landed::Refused;
     };
-    remove_at(nested, rest)
+    remove_at(nested, rest, existing.saturating_sub(1))
+}
+
+/// Entry `at` of the array of tables `item` holds, and whether it is an inline
+/// table. [`None`] for an index past the end, and for an item that is not an
+/// array of tables.
+fn element_at(
+    item: &mut toml_edit::Item,
+    at: usize,
+) -> Option<(&mut dyn toml_edit::TableLike, bool)> {
+    match item {
+        toml_edit::Item::ArrayOfTables(tables) => tables
+            .get_mut(at)
+            .map(|table| (table as &mut dyn toml_edit::TableLike, false)),
+        toml_edit::Item::Value(toml_edit::Value::Array(array)) => array
+            .get_mut(at)?
+            .as_inline_table_mut()
+            .map(|table| (table as &mut dyn toml_edit::TableLike, true)),
+        _ => None,
+    }
 }
 
 /// A table `toml_edit` will not print a header for while it has no values of
@@ -579,9 +651,9 @@ mod tests {
         let mut doc: toml_edit::DocumentMut = "[models.worker]\nmodel = \"gpt\"\n"
             .parse()
             .expect("the section parses");
-        let path = ["models".to_owned()];
+        let path = [PathStep::Key("models".to_owned())];
         assert_eq!(
-            set_at(doc.as_table_mut(), &path, toml_edit::value("old"), false),
+            set_at(doc.as_table_mut(), &path, 0, toml_edit::value("old"), false),
             Landed::Refused
         );
         assert!(doc.to_string().contains("[models.worker]"), "{doc}");
@@ -753,14 +825,14 @@ mod tests {
     #[test]
     fn a_scalar_writes_its_own_toml_type() {
         for (value, want) in [
-            (json!(-5), "count = -5\n"),
-            (json!(1.5), "count = 1.5\n"),
-            (json!(true), "count = true\n"),
-            (json!("gpt"), "count = \"gpt\"\n"),
+            (json!(-5), "name = -5\n"),
+            (json!(1.5), "name = 1.5\n"),
+            (json!(true), "name = true\n"),
+            (json!("gpt"), "name = \"gpt\"\n"),
         ] {
-            let pane = nested_pane("count = 0\n");
+            let pane = nested_pane("name = 0\n");
             let out =
-                want_written(pane.edited_section_with(&edits_of(&[("count", value.clone())])));
+                want_written(pane.edited_section_with(&edits_of(&[("name", value.clone())])));
             assert_eq!(out, want, "{value}");
         }
     }
