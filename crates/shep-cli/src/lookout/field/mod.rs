@@ -13,9 +13,11 @@ mod fixtures;
 mod flatten;
 mod init;
 mod schema;
+mod union;
 
 pub use bounds::Bounds;
 pub(crate) use flatten::{Child, Flattened, Outline, flatten_values, flattened, segment};
+pub use union::Union;
 
 use serde_json::{Map, Value};
 
@@ -46,6 +48,9 @@ pub enum FieldKind {
     /// An array or a map of tables with named properties. Read-only: the
     /// row reads as a count and opens to its entries.
     Entries(Entries),
+    /// A `oneOf` of objects that share a required `const` tag. The row reads
+    /// as the tag and opens to a choice of tag and the chosen arm's fields.
+    Union(Union),
     /// Anything else, including a nested object. Read-only, shown as JSON.
     Opaque,
 }

@@ -170,6 +170,7 @@ impl ConfigPane {
             | FieldKind::Map
             | FieldKind::List(_)
             | FieldKind::Entries(_)
+            | FieldKind::Union(_)
             | FieldKind::Opaque => return,
         };
         let key = field.key.clone();

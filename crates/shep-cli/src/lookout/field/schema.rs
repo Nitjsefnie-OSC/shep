@@ -6,6 +6,7 @@
 
 use serde_json::{Map, Value};
 
+use super::union::union_of;
 use super::{Entries, FieldKind, ListItem, ValueKind};
 
 /// Follows one `$ref` of the form `#/$defs/Name` into `defs`.
@@ -150,6 +151,9 @@ pub(super) fn kind_of(schema: &Value, defs: &Map<String, Value>) -> FieldKind {
         } else {
             FieldKind::Choice(names)
         };
+    }
+    if let Some(union) = union_of(schema, defs) {
+        return FieldKind::Union(union);
     }
     match type_of(schema) {
         Some("boolean") => FieldKind::Bool,
@@ -377,6 +381,187 @@ mod tests {
         let set = FieldSet::from_properties(&p, &d, &[]);
         assert_eq!(set.by_key("max_memory").unwrap().kind, FieldKind::Text);
         assert_eq!(set.by_key("max_memory").unwrap().default, None);
+    }
+
+    /// What `#[serde(tag = "kind")]` over a unit-like arm and two arms with
+    /// fields comes out of schemars as.
+    fn tagged_union() -> serde_json::Value {
+        json!({
+            "oneOf": [
+                {
+                    "description": "Skip the step.",
+                    "type": "object",
+                    "properties": { "kind": { "type": "string", "const": "none" } },
+                    "required": ["kind"],
+                },
+                {
+                    "description": "A skill in the repo.",
+                    "type": "object",
+                    "properties": {
+                        "kind": { "type": "string", "const": "path" },
+                        "path": { "type": "string", "description": "Where it lives." },
+                    },
+                    "required": ["kind", "path"],
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": { "type": "string", "const": "plugin" },
+                        "plugin": { "type": "string" },
+                        "skill": { "type": "string", "default": "retro" },
+                    },
+                    "required": ["kind", "plugin"],
+                },
+            ],
+        })
+    }
+
+    #[test]
+    fn a_one_of_of_objects_sharing_a_const_tag_is_a_union_with_a_tag_per_arm() {
+        let p = props(json!({ "retro": tagged_union() }));
+        let set = FieldSet::from_properties(&p, &Default::default(), &[]);
+        let field = set.by_key("retro").unwrap();
+        let FieldKind::Union(union) = &field.kind else {
+            panic!("expected a union, got {:?}", field.kind);
+        };
+        assert!(field.editable);
+        assert_eq!(union.tag, "kind");
+        let tags: Vec<&str> = union.arms.iter().map(|arm| arm.tag.as_str()).collect();
+        assert_eq!(tags, ["none", "path", "plugin"]);
+        assert_eq!(union.arms[0].description.as_deref(), Some("Skip the step."));
+        assert_eq!(union.arms[2].description, None);
+        assert!(
+            union.arms[0].fields.is_empty(),
+            "the tag is not a field of its arm"
+        );
+        let path = &union.arms[1].fields[0];
+        assert_eq!(path.key, "path");
+        assert_eq!(path.kind, FieldKind::Text);
+        assert_eq!(path.help, "Where it lives.");
+        assert!(union.arms[1].requires("path"));
+        let plugin = &union.arms[2];
+        assert!(plugin.requires("plugin"));
+        assert!(!plugin.requires("skill"));
+        assert_eq!(plugin.fields[1].default.as_deref(), Some("retro"));
+    }
+
+    #[test]
+    fn a_union_is_found_through_a_ref_and_through_a_nullable_any_of() {
+        let defs = props(json!({ "Step": tagged_union() }));
+        let p = props(json!({
+            "by_ref": { "$ref": "#/$defs/Step" },
+            "optional": { "anyOf": [{ "$ref": "#/$defs/Step" }, { "type": "null" }] },
+        }));
+        let set = FieldSet::from_properties(&p, &defs, &[]);
+        for key in ["by_ref", "optional"] {
+            assert!(
+                matches!(set.by_key(key).unwrap().kind, FieldKind::Union(_)),
+                "{key}: {:?}",
+                set.by_key(key).unwrap().kind
+            );
+        }
+    }
+
+    #[test]
+    fn a_one_of_of_objects_with_no_shared_const_tag_stays_opaque() {
+        let no_tag = json!({
+            "oneOf": [
+                { "type": "object", "properties": { "path": { "type": "string" } } },
+                { "type": "object", "properties": { "url": { "type": "string" } } },
+            ],
+        });
+        let tag_in_one_arm_only = json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": { "kind": { "const": "a" } },
+                    "required": ["kind"],
+                },
+                { "type": "object", "properties": { "name": { "type": "string" } } },
+            ],
+        });
+        let tag_not_required = json!({
+            "oneOf": [
+                { "type": "object", "properties": { "kind": { "const": "a" } } },
+                { "type": "object", "properties": { "kind": { "const": "b" } } },
+            ],
+        });
+        let tag_repeated = json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": { "kind": { "const": "a" } },
+                    "required": ["kind"],
+                },
+                {
+                    "type": "object",
+                    "properties": { "kind": { "const": "a" }, "x": { "type": "string" } },
+                    "required": ["kind"],
+                },
+            ],
+        });
+        for (name, schema) in [
+            ("no_tag", no_tag),
+            ("tag_in_one_arm_only", tag_in_one_arm_only),
+            ("tag_not_required", tag_not_required),
+            ("tag_repeated", tag_repeated),
+        ] {
+            let p = props(json!({ name: schema }));
+            let set = FieldSet::from_properties(&p, &Default::default(), &[]);
+            let field = set.by_key(name).unwrap();
+            assert_eq!(field.kind, FieldKind::Opaque, "{name}");
+            assert!(!field.editable, "{name}");
+        }
+    }
+
+    #[test]
+    fn an_arm_field_with_no_editor_is_opaque_and_a_secret_keeps_the_union_read_only() {
+        let nested = json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": { "const": "a" },
+                        "tags": { "type": "array", "items": { "type": "string" } },
+                        "inner": tagged_union(),
+                        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+                    },
+                    "required": ["kind"],
+                },
+            ],
+        });
+        let p = props(json!({ "nested": nested }));
+        let set = FieldSet::from_properties(&p, &Default::default(), &[]);
+        let FieldKind::Union(union) = &set.by_key("nested").unwrap().kind else {
+            panic!("expected a union");
+        };
+        let kinds: Vec<(&str, &FieldKind)> = union.arms[0]
+            .fields
+            .iter()
+            .map(|field| (field.key.as_str(), &field.kind))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("env", &FieldKind::Opaque),
+                ("inner", &FieldKind::Opaque),
+                ("tags", &FieldKind::List(ListItem::Text)),
+            ]
+        );
+
+        let secret = json!({
+            "oneOf": [{
+                "type": "object",
+                "properties": {
+                    "kind": { "const": "a" },
+                    "token": { "type": "string", "x-shep-secret": true },
+                },
+                "required": ["kind"],
+            }],
+        });
+        let p = props(json!({ "secret": secret }));
+        let set = FieldSet::from_properties(&p, &Default::default(), &[]);
+        assert_eq!(set.by_key("secret").unwrap().kind, FieldKind::Opaque);
     }
 
     #[test]
