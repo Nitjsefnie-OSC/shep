@@ -393,8 +393,7 @@ impl Rules {
         let kind_wire = wire_spelling(kind);
         let mut firings = Vec::new();
         for idx in 0..self.rules.len() {
-            let trigger = self.rules[idx].when.clone();
-            let message = match &trigger {
+            let message = match &self.rules[idx].when {
                 Trigger::Event { kinds } if kinds.iter().any(|k| k == kind_wire) => {
                     Some(format!("{} {kind_wire}", info.name))
                 }
@@ -421,6 +420,7 @@ impl Rules {
         let mut firings = Vec::new();
         for info in flock {
             for idx in 0..self.rules.len() {
+                // Owned: the `RestartRate` arm needs `&mut self` while matching.
                 let trigger = self.rules[idx].when.clone();
                 let message = match &trigger {
                     Trigger::Event { .. } => None,
