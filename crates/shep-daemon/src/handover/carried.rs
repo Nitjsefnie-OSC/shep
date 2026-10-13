@@ -113,6 +113,13 @@ pub struct CarriedSheep {
     /// Carried with [`Self::pending`] and never without it: the load that
     /// parks the config decides this, and a later diff cannot recompute it.
     pub(super) pending_reidentifies: Option<bool>,
+    /// Whether an operator disabled this instance's app. An absent key reads
+    /// as "no".
+    ///
+    /// The mark belongs to the app, so every instance of a disabled app
+    /// carries it. Without it the successor starts with nothing disabled and
+    /// its first roll write erases the mark from disk.
+    pub(super) disabled: Option<bool>,
     /// The resolved config this instance runs under, environment included.
     ///
     /// The `AppConfig` beneath [`ProcessEntry::spec`]'s `ResolvedApp`, not the
@@ -166,8 +173,19 @@ impl CarriedSheep {
             restart_due: (entry.status == ProcStatus::WaitingRestart)
                 .then_some(restart_due)
                 .flatten(),
+            disabled: None,
             app: entry.spec.config().clone(),
         }
+    }
+
+    /// This row, carrying whether its app is disabled.
+    ///
+    /// Separate from [`Self::from_entry`] because the mark lives on the
+    /// supervisor's app set and not on the entry.
+    #[must_use]
+    pub fn with_disabled(mut self, disabled: bool) -> Self {
+        self.disabled = Some(disabled);
+        self
     }
 
     /// The descriptor numbers this instance's output travels on.
@@ -226,6 +244,13 @@ impl CarriedSheep {
     #[must_use]
     pub const fn ready_failed(&self) -> Option<bool> {
         self.ready_failed
+    }
+
+    /// Whether an operator disabled this instance's app, or `None`, which
+    /// means "no".
+    #[must_use]
+    pub const fn disabled(&self) -> Option<bool> {
+        self.disabled
     }
 
     /// When this instance's owed respawn falls due, or `None` for one that is

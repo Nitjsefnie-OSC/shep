@@ -180,6 +180,7 @@ pub(crate) mod test_support {
                 .map(|app| SavedApp {
                     app,
                     instances_running: 1,
+                    disabled: false,
                 })
                 .collect(),
         );

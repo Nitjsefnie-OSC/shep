@@ -312,12 +312,14 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
         Stops the app and refuses to start it again until{" "}
         <code>shep enable</code>. It takes one app name: an id or{" "}
         <code>name:slot</code> exits 2 and names the app to type. A disabled
-        app answers <code>start</code>, <code>restart</code> and{" "}
-        <code>stock</code> with exit 2, and shows <code>disabled</code> in
-        STATUS. The shepherd's own restarts leave it stopped and log the
-        drop: a <code>cron_restart</code> occurrence, a watch trigger, the
-        crash ladder, and memory and liveness restarts. The mark lives in the
-        shepherd's memory.
+        app answers <code>start</code>, <code>restart</code>,{" "}
+        <code>reload</code> and <code>stock</code> with exit 2, and shows{" "}
+        <code>disabled</code> in STATUS. Disabling wins over a restart or a
+        serial reload already running: the app ends stopped and no
+        replacement spawns. The shepherd's own restarts leave it stopped and
+        log the drop: a <code>cron_restart</code> occurrence, a watch trigger,
+        the crash ladder, and memory and liveness restarts. The mark is
+        written to the muster roll, so it survives a shepherd restart.
       </p>
     </VerbSignature>
     <VerbSignature verb="enable" usage="shep enable <name>">
