@@ -10,9 +10,11 @@ use shep_core::protocol::{DogSource, Request, Response};
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::shep_toml::{ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
-use crate::output::{DogActionRow, Streams, emit, write_outcome};
+use crate::output::Streams;
 
-use super::{NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, fail_config};
+use super::{
+    NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, emit_dog_action, fail_config,
+};
 
 /// [`enable`]'s own failure, so its `try_edit` closure can refuse from
 /// inside the lock: either the config layer's error, or a name that answers
@@ -130,14 +132,14 @@ async fn enable_after_config(
     client: Option<&Client>,
 ) -> ExitCode {
     let Some(client) = client else {
-        let row = DogActionRow::new(name, source.clone(), NO_SHEPHERD_ENABLE_STATUS, false);
-        return write_outcome(emit(
-            &mut *streams.out,
-            streams.fmt,
+        return emit_dog_action(
+            streams,
             "enable",
-            row,
-            streams.style,
-        ));
+            name,
+            source.clone(),
+            NO_SHEPHERD_ENABLE_STATUS,
+            false,
+        );
     };
     // A name a sheep already holds comes back as
     // `RpcErrorCode::InvalidConfig`; the `Err` arm surfaces it verbatim.
@@ -147,14 +149,7 @@ async fn enable_after_config(
     };
     match client.request(request).await {
         Ok(Response::DogStarted(info)) => {
-            let row = DogActionRow::new(name, source.clone(), info.status, true);
-            write_outcome(emit(
-                &mut *streams.out,
-                streams.fmt,
-                "enable",
-                row,
-                streams.style,
-            ))
+            emit_dog_action(streams, "enable", name, source.clone(), info.status, true)
         }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
@@ -171,17 +166,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Format;
-
-    /// A dog verb's streams under `--format table`; a test reading a
-    /// JSON field sets `fmt` itself.
-    fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        }
-    }
+    use crate::commands::dogs::test_support::streams;
 
     /// Exact strings, not a "contains no secret" probe: the output is half
     /// the derive and half [`ShepTomlError`]'s manual impl, and either alone

@@ -12,13 +12,13 @@ use crate::cli::AdoptArgs;
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::shep_toml::ShepToml;
 use crate::exit::ExitCode;
-use crate::output::{DogActionRow, Streams, emit, write_outcome};
+use crate::output::Streams;
 
 use super::vet::{
     DogSchema, fail_adopt, report_channel_ask, report_dog_version, vet_binary, warn_group_writable,
     warn_unreadable_schema,
 };
-use super::{NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, fail_config};
+use super::{NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, emit_dog_action, fail_config};
 
 /// `shep adopt <path> [--name <name>]`: vets a binary shep has never seen,
 /// records it, and starts it if a shepherd is running.
@@ -243,14 +243,14 @@ async fn adopt_after_config(
         channel,
     };
     let Some(client) = client else {
-        let row = DogActionRow::new(name, source, NO_SHEPHERD_ENABLE_STATUS, false);
-        return write_outcome(emit(
-            &mut *streams.out,
-            streams.fmt,
+        return emit_dog_action(
+            streams,
             "adopt",
-            row,
-            streams.style,
-        ));
+            name,
+            source,
+            NO_SHEPHERD_ENABLE_STATUS,
+            false,
+        );
     };
     let request = Request::EnableDog {
         name: name.to_string(),
@@ -258,14 +258,7 @@ async fn adopt_after_config(
     };
     match client.request(request).await {
         Ok(Response::DogStarted(info)) => {
-            let row = DogActionRow::new(name, source, info.status, true);
-            write_outcome(emit(
-                &mut *streams.out,
-                streams.fmt,
-                "adopt",
-                row,
-                streams.style,
-            ))
+            emit_dog_action(streams, "adopt", name, source, info.status, true)
         }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
@@ -278,17 +271,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Format;
-
-    /// A dog verb's streams under `--format table`; a test reading a
-    /// JSON field sets `fmt` itself.
-    fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        }
-    }
+    use crate::commands::dogs::test_support::streams;
 
     /// `adopt`'s own report is the only place an operator learns which
     /// refusal mode it was.
