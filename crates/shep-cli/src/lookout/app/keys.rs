@@ -29,6 +29,27 @@ impl App {
         }
     }
 
+    /// A bracketed paste: each printable character goes through the open
+    /// box's own [`KeyPress::TextChar`] path, so every editor keeps its own
+    /// rules. Nothing happens outside [`InputMode::Text`].
+    ///
+    /// The effects of the single characters collapse to the first one that
+    /// asks for anything: every effect a text box raises is a re-read, and
+    /// asking twice reads the same files twice.
+    pub(super) fn on_paste(&mut self, text: &str) -> Effect {
+        if self.mode != InputMode::Text {
+            return Effect::None;
+        }
+        let mut effect = Effect::None;
+        for typed in TextBox::pasted(text) {
+            let next = self.on_text_key(KeyPress::TextChar(typed));
+            if effect == Effect::None {
+                effect = next;
+            }
+        }
+        effect
+    }
+
     pub(super) fn on_key(&mut self, key: KeyPress) -> Effect {
         // While the box is open every key is text.
         if self.mode == InputMode::Text {
@@ -97,7 +118,7 @@ impl App {
                 if self.filter.is_empty() {
                     Effect::Quit
                 } else {
-                    self.set_filter(String::new())
+                    self.set_filter(TextBox::new())
                 }
             }
             // Once the link task has ended its poll receiver is gone, so an
@@ -136,6 +157,7 @@ impl App {
             // screen has groups to walk or a filed edit set to undo.
             KeyPress::TextChar(_)
             | KeyPress::TextBackspace
+            | KeyPress::TextEdit(_)
             | KeyPress::TextApply
             | KeyPress::TextAbandon
             | KeyPress::Remove
@@ -307,12 +329,17 @@ impl App {
             KeyPress::Quit => Effect::Quit,
             KeyPress::TextChar(typed) => {
                 let mut query = self.filter.clone();
-                query.push(typed);
+                query.insert(typed);
                 self.set_filter(query)
             }
             KeyPress::TextBackspace => {
                 let mut query = self.filter.clone();
-                query.pop();
+                query.backspace();
+                self.set_filter(query)
+            }
+            KeyPress::TextEdit(edit) => {
+                let mut query = self.filter.clone();
+                query.edit(edit);
                 self.set_filter(query)
             }
             KeyPress::TextApply => {
@@ -321,7 +348,7 @@ impl App {
             }
             KeyPress::TextAbandon => {
                 self.mode = InputMode::Normal;
-                self.set_filter(String::new())
+                self.set_filter(TextBox::new())
             }
             _ => Effect::None,
         }
@@ -329,8 +356,13 @@ impl App {
 
     /// Replaces the filter and puts the selection back on a visible sheep: a
     /// keystroke that narrows the query can hide the selected one.
-    pub(super) fn set_filter(&mut self, query: String) -> Effect {
+    pub(super) fn set_filter(&mut self, query: TextBox) -> Effect {
         if self.filter == query {
+            return Effect::None;
+        }
+        // A cursor move changes no row, so there is nothing to reseat.
+        if self.filter.as_str() == query.as_str() {
+            self.filter = query;
             return Effect::None;
         }
         let previous = self.selected_index();
@@ -346,6 +378,12 @@ impl App {
     /// The filter as typed, empty when there is none.
     #[must_use]
     pub fn filter(&self) -> &str {
+        self.filter.as_str()
+    }
+
+    /// The filter box itself, for the bar that draws its cursor.
+    #[must_use]
+    pub(crate) fn filter_box(&self) -> &TextBox {
         &self.filter
     }
 
@@ -685,5 +723,52 @@ mod tests {
         });
         let _ = app.update(Msg::Key(KeyPress::Help));
         assert!(app.keymap_open());
+    }
+
+    /// The `/` box takes a paste at the cursor and narrows live, like typing.
+    #[test]
+    fn a_paste_into_the_filter_box_lands_at_the_cursor_and_narrows() {
+        let mut app = fixtures::full_app();
+        app.update(Msg::Key(KeyPress::FilterStart));
+        for typed in "wb".chars() {
+            app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        app.update(Msg::Key(KeyPress::TextEdit(TextEdit::Left)));
+
+        app.update(Msg::Paste(Pasted::new("e\n".to_string())));
+
+        assert_eq!(app.filter(), "web");
+        assert_eq!(app.filter_box().cursor(), 2);
+        assert_eq!(app.mode(), InputMode::Text, "the newline did not apply it");
+    }
+
+    /// Outside a text box a paste is dropped, not replayed as normal-mode
+    /// keys (`q` would quit, `x` would arm a stop).
+    #[test]
+    fn a_paste_in_normal_mode_does_nothing() {
+        let mut app = fixtures::full_app();
+
+        let effect = app.update(Msg::Paste(Pasted::new("qx\nj".to_string())));
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(app.mode(), InputMode::Normal);
+        assert_eq!(app.filter(), "");
+    }
+
+    /// Moving the cursor edits nothing, so the selection stays where it is.
+    #[test]
+    fn moving_the_cursor_in_the_filter_box_changes_no_rows() {
+        let mut app = fixtures::full_app();
+        app.update(Msg::Key(KeyPress::FilterStart));
+        for typed in "web".chars() {
+            app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        let selected = app.selected_index();
+
+        let effect = app.update(Msg::Key(KeyPress::TextEdit(TextEdit::Home)));
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(app.filter_box().cursor(), 0);
+        assert_eq!(app.selected_index(), selected);
     }
 }

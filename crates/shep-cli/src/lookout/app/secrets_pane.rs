@@ -347,7 +347,7 @@ pub(crate) struct Typing {
     /// What is being typed: a new key's name, or a value for a key.
     pub what: TypingWhat,
     /// The buffer.
-    pub buffer: String,
+    pub buffer: TextBox,
 }
 
 /// Redacted (IR-41): a value buffer is the secret being typed.
@@ -355,7 +355,10 @@ impl fmt::Debug for Typing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Typing")
             .field("what", &self.what)
-            .field("buffer", &format_args!("<{} bytes>", self.buffer.len()))
+            .field(
+                "buffer",
+                &format_args!("<{} bytes>", self.buffer.as_str().len()),
+            )
             .finish()
     }
 }

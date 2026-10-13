@@ -9,7 +9,7 @@ impl App {
         Self {
             flock: BTreeMap::new(),
             selected: None,
-            filter: String::new(),
+            filter: TextBox::new(),
             mode: InputMode::Normal,
             next_write_ticket: 0,
             sheep_dogs_ask: 0,
@@ -199,6 +199,7 @@ impl App {
             }
             Msg::Resize => Effect::None,
             Msg::Key(key) => self.on_key(key),
+            Msg::Paste(text) => self.on_paste(text.as_str()),
             Msg::Host { sample } => {
                 // A strip ticking over under a banner saying the values are
                 // frozen contradicts it on one frame.
@@ -209,8 +210,7 @@ impl App {
                 self.host = sample;
                 Effect::None
             }
-            // `Effect::None` for `Msg::Bleats`' reason: answering a local read
-            // with another refresh would spin the UI task.
+            // `Effect::None` for `Msg::Bleats`' reason: a refresh in answer would spin the UI task.
             Msg::LogSize { id, total_bytes } => {
                 self.log_size = Some(LogSize { id, total_bytes });
                 Effect::None

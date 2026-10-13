@@ -114,7 +114,11 @@ mod tests {
             .typing()
             .expect("the buffer survives the reply");
         assert_eq!(typing.key, "cwd");
-        assert!(typing.buffer.ends_with("/srv"), "{}", typing.buffer);
+        assert!(
+            typing.buffer.as_str().ends_with("/srv"),
+            "{:?}",
+            typing.buffer
+        );
     }
 
     /// A landed write asks for a re-read, and the re-read rebuilds the

@@ -192,6 +192,8 @@ rmcp.workspace = true
 # `rmcp::schemars`, because `#[derive(JsonSchema)]` in `src/whistle/` expands
 # to absolute `schemars::` paths.
 schemars.workspace = true
+# The lookout text box's cursor and editing commands.
+tui-input.workspace = true
 # Two `ratatui` transitive floors, only ever read by `-Z minimal-versions`;
 # see the workspace `Cargo.toml`'s comments on each.
 time.workspace = true
