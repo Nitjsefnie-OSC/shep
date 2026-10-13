@@ -116,6 +116,23 @@ pub enum PaneRow {
     AddEnv,
 }
 
+/// One step from a dog section's root to a field inside an entry of an array
+/// or map of tables.
+///
+/// A property is a [`Self::Key`], an entry of an array of tables is its
+/// [`Self::Index`], and an entry of a map is the [`Self::Key`] it is stored
+/// under. A key is a real key, never a dotted one: `"a.b"` is one step.
+///
+/// `Debug` is derived (IR-41): property names, map keys and an index, none of
+/// them a value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::lookout) enum PathStep {
+    /// A property of a table.
+    Key(String),
+    /// The nth entry of an array of tables.
+    Index(usize),
+}
+
 /// One config field's new value, on its way out of the pane.
 ///
 /// A newtype for the reason [`EnvValue`] is one: `cwd` and `script`

@@ -82,7 +82,11 @@ export const BUDGETS: Record<string, number> = {
   // Raised again for the dog config pane's arrays and maps of tables, which
   // read as a count and open onto entries: a new row shape the page has to
   // name, with how its entries are labelled and that they are read-only.
-  "lookout-config": 3465, // 3464
+  //
+  // Raised from 3465 for editing a field inside an entry: the page said
+  // everything under one was read-only, and now has to say what edits, what
+  // stays read-only, and that Esc writes the section once.
+  "lookout-config": 3530, // 3521
   // Raised from 2930 on 2026-09-14 for the host line, which `shep flock`
   // began printing on a one-shot listing and not only under `--follow`. It
   // shows above every table on this page, so four transcripts gained a line

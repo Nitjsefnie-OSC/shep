@@ -284,7 +284,7 @@ pub(super) fn apply_post_tick_scene(app: &mut App, which: Scene) {
                 }
             }
         }
-        Scene::DogEntries | Scene::DogEntriesNarrow => {
+        Scene::DogEntries | Scene::DogEntriesNarrow | Scene::DogEntryTyping => {
             // The schema probe, then the shepherd's section, the way the
             // event loop opens a dog's pane. `clients` and its first entry
             // are opened with `→` the way an operator would, and the
@@ -302,12 +302,26 @@ pub(super) fn apply_post_tick_scene(app: &mut App, which: Scene) {
                     toml: entries_dog_section().into(),
                 }),
             });
-            for key in ["clients", "clients[0]"] {
+            let opened = if which == Scene::DogEntryTyping {
+                ["clients", "clients[1]"]
+            } else {
+                ["clients", "clients[0]"]
+            };
+            for key in opened {
                 select_node(app, key);
                 app.update(Msg::Key(KeyPress::TabNext));
             }
-            app.update(Msg::Key(KeyPress::SelectDown));
-            app.update(Msg::Key(KeyPress::SelectDown));
+            if which == Scene::DogEntryTyping {
+                // `b-2` has no `name` yet; the editor opens empty on it.
+                select_node(app, "clients[1].name");
+                app.update(Msg::Key(KeyPress::Confirm));
+                for character in "beta".chars() {
+                    app.update(Msg::Key(KeyPress::TextChar(character)));
+                }
+            } else {
+                app.update(Msg::Key(KeyPress::SelectDown));
+                app.update(Msg::Key(KeyPress::SelectDown));
+            }
         }
         Scene::CloseDialog
         | Scene::CloseDialogFloor
@@ -732,6 +746,26 @@ mod tests {
             for credential in ["hunter2", "hunter3", "hunter4"] {
                 assert!(!text.contains(credential), "{which:?} drew {credential}");
             }
+        }
+    }
+
+    /// The typing scene shows the half-typed name in the second client's
+    /// value cell, the panel on `name`, and the credentials still unseen.
+    #[test]
+    #[cfg(unix)] // inherited, not measured per test: see the `build` module's docs
+    fn the_dog_entry_typing_scene_draws_the_text_being_typed() {
+        let text = render_text(&scene(Scene::DogEntryTyping).1);
+        let name_row = text
+            .lines()
+            .find(|line| line.starts_with('>'))
+            .expect("the cursor is on the name row");
+        assert!(
+            name_row.contains("name") && name_row.contains("beta\u{258f}"),
+            "{name_row:?}"
+        );
+        assert!(text.contains("FOCUSED  clients[1].name"), "{text}");
+        for credential in ["hunter2", "hunter3", "hunter4"] {
+            assert!(!text.contains(credential), "drew {credential}");
         }
     }
 

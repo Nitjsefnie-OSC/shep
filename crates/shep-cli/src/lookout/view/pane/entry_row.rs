@@ -1,21 +1,18 @@
 //! A row under an array or map of tables: an entry, a table in one, or one
 //! of its fields.
 
-use ratatui::style::Style;
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 
 use super::super::super::pane::{ConfigPane, EntryBody, PaneRow};
 use super::super::super::theme::Palette;
-use super::super::flock::{fit, mark};
-use super::field_row::{TABLE_LABEL, node_line};
-use super::layout::{body_width, mask_secret, widths};
+use super::field_row::{TABLE_LABEL, leaf_line, node_line};
 
 /// The type label of an entry's row, beside [`TABLE_LABEL`].
 pub(super) const ENTRY_LABEL: &str = "entry";
 
 /// Entry row `index`. An entry and a table in one open and close like any
-/// table. A field reads `~` and muted, as any locked row does, and a secret
-/// reads `<set>`.
+/// table. A field draws as any other field row does: locked fields in it read
+/// `~` and muted, and a secret reads `<set>`.
 pub(super) fn entry_line(
     pane: &ConfigPane,
     index: usize,
@@ -28,35 +25,13 @@ pub(super) fn entry_line(
     else {
         return Line::default();
     };
-    let EntryBody::Leaf { text, masked, .. } = &row.body else {
+    let EntryBody::Leaf { field, .. } = &row.body else {
         let label = match &row.body {
             EntryBody::Node { entry: true, .. } => ENTRY_LABEL,
             EntryBody::Node { .. } | EntryBody::Leaf { .. } => TABLE_LABEL,
         };
         return node_line(&tree, label, selected, width, palette, show_lands);
     };
-    let (key_w, value_w, _) = widths(body_width(width), show_lands);
-    let mut cells = String::from("~");
-    cells.push_str(&fit(
-        &format!(" {}{}", "  ".repeat(tree.depth), tree.label),
-        key_w,
-    ));
-    if value_w > 0 {
-        cells.push_str("  ");
-        cells.push_str(&fit(&mask_secret(*masked, text.clone()), value_w));
-    }
-    let ground = if selected {
-        palette.ground()
-    } else {
-        Style::default()
-    };
-    let mark_style = if selected {
-        palette.attention().patch(ground)
-    } else {
-        Style::default()
-    };
-    Line::from(vec![
-        Span::styled(mark(selected), mark_style),
-        Span::styled(cells, palette.muted().patch(ground)),
-    ])
+    let key = format!("{}{}", "  ".repeat(tree.depth), tree.label);
+    leaf_line(pane, field, &key, selected, width, palette, show_lands)
 }

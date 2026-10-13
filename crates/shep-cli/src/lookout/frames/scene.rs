@@ -186,6 +186,9 @@ pub enum Scene {
     DogEntries,
     /// The same pane at 88 columns, where the explanation panel is gone.
     DogEntriesNarrow,
+    /// The same pane with the second client open and a new `name` half
+    /// typed, the cursor drawn in the value.
+    DogEntryTyping,
     /// The close dialog at the design size: two edits filed, one field
     /// already parked, the box centred over the dimmed editing pane.
     CloseDialog,
@@ -280,6 +283,7 @@ impl Scene {
             Self::SheepDogTable => "sheep_dog_table",
             Self::DogEntries => "dog_entries",
             Self::DogEntriesNarrow => "dog_entries_narrow",
+            Self::DogEntryTyping => "dog_entry_typing",
             Self::CloseDialog => "close_dialog",
             Self::CloseDialogFloor => "close_dialog_floor",
             Self::CloseDialogNarrow => "close_dialog_narrow",
@@ -454,10 +458,13 @@ impl Scene {
                 "Enter on jobs opens its table pane as a tree: hours and models open at the first level, models.worker opened onto token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame."
             }
             Self::DogEntries => {
-                "A dog's pane over a paddock-shaped schema at 160x48: clients and models each read as a count and nothing more, clients is open onto alpha, b-2 and #2, named by name, then id, then their index, and alpha is open onto its fields, key drawn <set> with no credential on screen anywhere in the frame. Every row under an entry is read-only."
+                "A dog's pane over a paddock-shaped schema at 160x48: clients and models each read as a count and nothing more, clients is open onto alpha, b-2 and #2, named by name, then id, then their index, and alpha is open onto its fields, key drawn <set> with no credential on screen anywhere in the frame. The cursor is on key, which opens an editor like any other field."
             }
             Self::DogEntriesNarrow => {
-                "The same pane at 88 columns: narrow enough that the explanation panel is gone, so the count, the entries and the read-only rows under them have the whole width."
+                "The same pane at 88 columns: narrow enough that the explanation panel is gone, so the count, the entries and the rows under them have the whole width."
+            }
+            Self::DogEntryTyping => {
+                "The same pane at 160x48 with the b-2 client open and a name being typed into it: the value cell holds the typed text and the cursor, the explanation panel describes name, and the title band counts no edit until the text is applied."
             }
             Self::CloseDialog => {
                 "esc pressed with cwd and err_file edited and listen_timeout already parked from before: the close dialog names both counts, boxed and centred at 160x48 over the dimmed editing pane."
@@ -627,7 +634,8 @@ impl Scene {
             | Self::SheepDogsList
             | Self::SheepDogsRemove
             | Self::SheepDogTable
-            | Self::DogEntries => (160, 48),
+            | Self::DogEntries
+            | Self::DogEntryTyping => (160, 48),
             // 88: the same cut as `EditPaneNarrow`, short of the
             // explanation panel's floor.
             Self::DogEntriesNarrow => (88, 48),
@@ -739,6 +747,7 @@ impl Scene {
             | Self::SheepDogTable
             | Self::DogEntries
             | Self::DogEntriesNarrow
+            | Self::DogEntryTyping
             | Self::CloseDialog
             | Self::CloseDialogFloor
             | Self::CloseDialogNarrow
@@ -767,7 +776,7 @@ mod tests {
     /// which is the form a reader sees.
     #[test]
     fn the_gallery_preamble_counts_the_scenes_it_has() {
-        const NUMBERS: [(usize, &str); 31] = [
+        const NUMBERS: [(usize, &str); 32] = [
             (34, "thirty-four"),
             (35, "thirty-five"),
             (36, "thirty-six"),
@@ -799,6 +808,7 @@ mod tests {
             (62, "sixty-two"),
             (63, "sixty-three"),
             (64, "sixty-four"),
+            (65, "sixty-five"),
         ];
         let spelled = NUMBERS
             .iter()
@@ -913,7 +923,8 @@ mod tests {
             Scene::SheepDogsRemove => Some(Scene::SheepDogTable),
             Scene::SheepDogTable => Some(Scene::DogEntries),
             Scene::DogEntries => Some(Scene::DogEntriesNarrow),
-            Scene::DogEntriesNarrow => Some(Scene::CloseDialog),
+            Scene::DogEntriesNarrow => Some(Scene::DogEntryTyping),
+            Scene::DogEntryTyping => Some(Scene::CloseDialog),
             Scene::CloseDialog => Some(Scene::CloseDialogFloor),
             Scene::CloseDialogFloor => Some(Scene::CloseDialogNarrow),
             Scene::CloseDialogNarrow => Some(Scene::CloseDialogParked),
