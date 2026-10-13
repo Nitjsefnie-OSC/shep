@@ -3,7 +3,8 @@
 //!
 //! The transport is [`crate::fetch`]'s, the same hand-rolled HTTP/1.1 over
 //! `tokio-rustls` bark delivers webhooks with, so export adds no
-//! dependency. The body is [`encode()`]'s OTLP/JSON.
+//! dependency. The body is [`encode()`]'s OTLP/JSON, and the answer is read
+//! by [`reply::rejection`].
 //!
 //! One export per interval, no retry and no queue: a failed export is
 //! reported once and the next tick sends current values anyway. A 2xx whose
@@ -11,6 +12,7 @@
 //! scrape server or the dog's exit code down with it.
 
 pub mod encode;
+mod reply;
 
 use std::fmt;
 use std::sync::Arc;
@@ -23,7 +25,8 @@ use tokio::task::JoinHandle;
 use super::MetricsConfig;
 use crate::fetch;
 
-pub use encode::{ExportContext, encode, rejection};
+pub use encode::{ExportContext, encode};
+use reply::rejection;
 
 /// The path every OTLP/HTTP collector serves metrics at.
 const METRICS_PATH: &str = "/v1/metrics";
@@ -203,12 +206,20 @@ fn has_control_byte(value: &str) -> bool {
 
 /// The full URL to POST to: `endpoint`, minus any trailing slash, plus
 /// [`METRICS_PATH`].
+///
+/// The query is split off before the slash is trimmed. Trimming the whole
+/// string leaves a slash that sits just before the `?`, and a collector that
+/// does not normalise its path answers 404 for `//v1/metrics` while the
+/// operator's endpoint was valid.
 fn metrics_url(endpoint: &str) -> String {
-    let base = endpoint.trim_end_matches('/');
-    match base.split_once('?') {
+    let (base, query) = match endpoint.split_once('?') {
+        Some((head, tail)) => (head.trim_end_matches('/'), Some(tail)),
+        None => (endpoint.trim_end_matches('/'), None),
+    };
+    match query {
         // A query belongs after the appended segment. Appending to the whole
         // string would put `/v1/metrics` inside the query's value.
-        Some((head, query)) => format!("{head}{METRICS_PATH}?{query}"),
+        Some(query) => format!("{base}{METRICS_PATH}?{query}"),
         None => format!("{base}{METRICS_PATH}"),
     }
 }
@@ -515,7 +526,7 @@ mod tests {
     /// the next tick would do the same.
     #[tokio::test]
     async fn a_2xx_naming_a_partial_success_is_a_failed_export() {
-        let body = r#"{"partialSuccess":"1 data point dropped"}"#;
+        let body = r#"{"partialSuccess":{"rejectedDataPoints":"1","errorMessage":"bad point"}}"#;
         let collector = collector_answering(vec![format!(
             "HTTP/1.1 200 ok\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
@@ -531,7 +542,7 @@ mod tests {
             .await
             .expect_err("a 2xx naming dropped points is not a clean export");
         assert!(
-            matches!(&err, ExportError::Partial(reason) if reason == "1 data point dropped"),
+            matches!(&err, ExportError::Partial(reason) if reason == "1 data point rejected: bad point"),
             "{err:?}"
         );
     }
@@ -554,6 +565,30 @@ mod tests {
             .export(&client)
             .await
             .expect("a 204 that named nothing took everything");
+        assert_eq!(collector.wait_for(1).await.len(), 1);
+    }
+
+    /// A collector that took every point and echoes `partialSuccess` as an
+    /// empty object is a clean export. Fails if that answer started reading
+    /// as a failure, which is also the answer that never lets the loop log a
+    /// recovery: it would sit unhealthy from the first tick.
+    #[tokio::test]
+    async fn a_200_echoing_an_empty_partial_success_is_a_clean_export() {
+        let body = r#"{"partialSuccess":{}}"#;
+        let collector = collector_answering(vec![format!(
+            "HTTP/1.1 200 ok\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )])
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+        let (client, _daemon) = fake_reconnecting_client_on(&socket).await;
+        let exporter = exporter_on(collector.addr, Duration::from_secs(60));
+
+        exporter
+            .export(&client)
+            .await
+            .expect("an empty `partialSuccess` names nothing the collector dropped");
         assert_eq!(collector.wait_for(1).await.len(), 1);
     }
 
@@ -739,6 +774,14 @@ mod tests {
                 "https://otlp.internal?token=abc",
                 "/v1/metrics?token=abc",
             ),
+            (
+                // The same with the slash the operator put before the query:
+                // trimming after splitting is what keeps one `/` in front of
+                // the appended path.
+                "http://127.0.0.1:4318/?token=abc",
+                "/v1/metrics?token=abc",
+            ),
+            ("http://127.0.0.1:4318/collect/", "/collect/v1/metrics"),
         ] {
             let config = MetricsConfig {
                 otlp_endpoint: Some(endpoint.to_owned()),

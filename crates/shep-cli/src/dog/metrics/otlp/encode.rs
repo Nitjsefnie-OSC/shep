@@ -16,7 +16,7 @@
 
 use std::borrow::Cow;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use shep_core::status::ProcStatus;
 
 use crate::dog::metrics::Reading;
@@ -443,48 +443,6 @@ pub fn encode(reading: &Reading, context: &ExportContext<'_>) -> String {
         .expect("every value here is a string, an integer, a finite double or a bool")
 }
 
-/// The most of a collector's `partialSuccess` text this keeps. A collector
-/// listing every rejected point would otherwise put a paragraph in the dog's
-/// log, where the reason is one line.
-const MAX_REASON_CHARS: usize = 200;
-
-/// `ExportMetricsServiceResponse`: the answer a collector gives to a POST
-/// [`encode`] wrote. Only `partialSuccess` is read.
-///
-/// An unknown field is ignored rather than refused: a collector adding one
-/// must not break an export that worked.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ExportReply {
-    /// Why the collector took less than it was sent. Absent, or an empty
-    /// string, means it took everything.
-    #[serde(default)]
-    partial_success: Option<String>,
-}
-
-/// Why a collector's 2xx answer says it dropped points, `None` when it took
-/// the whole payload.
-///
-/// An empty body is a 204, or a 200 that said nothing, and OTLP reads both
-/// as "everything landed". A body that is not that object is reported rather
-/// than passed: an answer this cannot read is not evidence that anything was
-/// accepted.
-///
-/// The reason is the collector's own text, so it goes through
-/// [`crate::terminal_safe::sanitise`] and is cut at [`MAX_REASON_CHARS`].
-pub fn rejection(body: &str) -> Option<String> {
-    let trimmed = body.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let Ok(reply) = serde_json::from_str::<ExportReply>(trimmed) else {
-        return Some("the collector answered something that was not OTLP/JSON".to_owned());
-    };
-    let reason = reply.partial_success.unwrap_or_default();
-    let (sanitised, _stripped) = crate::terminal_safe::sanitise(reason.trim());
-    (!sanitised.is_empty()).then(|| sanitised.chars().take(MAX_REASON_CHARS).collect())
-}
-
 #[cfg(test)]
 mod tests {
     use shep_core::protocol::{DogSource, ProcessInfo};
@@ -851,56 +809,5 @@ mod tests {
             .map(|attribute| attribute["key"].as_str().expect("key"))
             .collect();
         assert_eq!(names, vec!["service.name", "service.version"]);
-    }
-
-    /// An empty answer is a 204, or a 200 that said nothing, and OTLP reads
-    /// both as "every point landed". Fails if a clean export started reading
-    /// as a dropped one.
-    #[test]
-    fn an_answer_that_names_nothing_means_the_collector_took_everything() {
-        assert_eq!(rejection(""), None);
-        assert_eq!(rejection("  \n "), None);
-        assert_eq!(rejection("{}"), None);
-        assert_eq!(rejection(r#"{"partialSuccess":""}"#), None);
-        assert_eq!(rejection(r#"{"partialSuccess":null}"#), None);
-    }
-
-    #[test]
-    fn a_partial_success_names_the_reason_the_collector_gave() {
-        assert_eq!(
-            rejection(r#"{"partialSuccess":"1 data point dropped"}"#).as_deref(),
-            Some("1 data point dropped")
-        );
-        // A field this module does not read must not break an answer it does.
-        assert_eq!(
-            rejection(r#"{"partialSuccess":"dropped","futureField":[1]}"#).as_deref(),
-            Some("dropped")
-        );
-    }
-
-    /// A 2xx this cannot read is not evidence that anything was accepted.
-    /// Fails if an unreadable answer started counting as a clean export.
-    #[test]
-    fn an_answer_that_is_not_otlp_json_is_reported_rather_than_ignored() {
-        assert_eq!(
-            rejection("Gateway Timeout").as_deref(),
-            Some("the collector answered something that was not OTLP/JSON")
-        );
-        assert_eq!(
-            rejection("null").as_deref(),
-            Some("the collector answered something that was not OTLP/JSON")
-        );
-    }
-
-    /// The reason is a collector's own text: it reaches the dog's log
-    /// sanitised, and cut at the budget rather than as a paragraph.
-    #[test]
-    fn a_reason_is_sanitised_and_cut_before_it_reaches_the_log() {
-        let long = "x".repeat(10 * MAX_REASON_CHARS);
-        let reason = rejection(&format!("{{\"partialSuccess\":\"{long}\"}}")).unwrap();
-        assert_eq!(reason.chars().count(), MAX_REASON_CHARS);
-
-        let control = rejection(r#"{"partialSuccess":"a\u001b[31mb"}"#).unwrap();
-        assert!(!control.chars().any(char::is_control), "{control}");
     }
 }
