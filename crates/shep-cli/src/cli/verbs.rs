@@ -157,6 +157,12 @@ pub enum Commands {
     /// refused, by the shepherd: `shep disable metrics` is the verb that
     /// exists for one. A sweep (`all`, a fold, a `/regex/`) is the flock, and
     /// a dog is not in it.
+    ///
+    /// A name is judged against `shep.toml`, so a `shep.toml` that exists and
+    /// cannot be read or parsed refuses a name selector instead of guessing at
+    /// it: the shepherd would delete the live entry while the adoption survived
+    /// in the file the next boot reads. A sweep needs no such judgement and
+    /// runs regardless.
     Delete(SelectorArgs),
     /// Set how many instances one app runs — the stocking rate.
     ///

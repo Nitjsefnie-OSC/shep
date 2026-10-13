@@ -12,15 +12,22 @@
 //! has one honest answerer: the shepherd that is holding the entry. So the
 //! name travels the sheep path and the shepherd either refuses it or deletes
 //! the sheep, whichever it is.
+//!
+//! A `shep.toml` that exists and cannot be read or parsed answers that same
+//! question for no name, so a name selector is refused there rather than sent
+//! off to be guessed at. The shepherd would delete the live entry, the
+//! adoption would survive in the file the next boot reads, and a verb that
+//! promises "for good" would exit 0 saying `deleted 1 sheep`. A sweep needs no
+//! answer and is untouched.
 
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::SelectorSpec;
 
 use crate::cli::SelectorArgs;
-use crate::commands::dogs::{self, Removal};
+use crate::commands::dogs::{self, Removal, fail_config};
 use crate::commands::lifecycle::operational::delete_sheep;
 use crate::commands::lifecycle::selectors::parse_selectors;
-use crate::commands::shep_toml::ShepToml;
+use crate::commands::shep_toml::{ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
 use crate::output::Streams;
 use crate::version_guard::{VersionGuard, connect_client};
@@ -34,6 +41,12 @@ use crate::version_guard::{VersionGuard, connect_client};
 /// names both gets one envelope per half. A mixed `delete` is rare enough that
 /// the alternative, one payload holding a dog's row beside a sheep's ids, was
 /// not worth a row type neither verb asked for.
+///
+/// # Errors
+/// [`ExitCode::InvalidConfig`] or [`ExitCode::Failure`] after writing what
+/// went wrong, when this home's `shep.toml` exists and cannot be read or
+/// parsed and a selector is an exact name. Nothing is sent and nothing is
+/// deleted on that arm.
 pub(crate) async fn delete(
     streams: &mut Streams<'_>,
     paths: &ShepPaths,
@@ -48,8 +61,9 @@ pub(crate) async fn delete(
     let mut sheep_tokens: Vec<String> = Vec::new();
     for (raw, selector) in args.selectors.iter().zip(&selectors) {
         match dog_in_config(paths, selector) {
-            Some(name) => dog_names.push(name),
-            None => sheep_tokens.push(raw.clone()),
+            Ok(Some(name)) => dog_names.push(name),
+            Ok(None) => sheep_tokens.push(raw.clone()),
+            Err(err) => return fail_config(streams, &err),
         }
     }
 
@@ -84,22 +98,27 @@ pub(crate) async fn delete(
 /// read off `shep.toml`, the one place this CLI knows what it adopted, and a
 /// built-in name is passed by for the reason this module's header gives.
 ///
-/// An unreadable config answers `None` for every name, which sends the
-/// selector to the shepherd and reports what it says.
-fn dog_in_config(paths: &ShepPaths, selector: &SelectorSpec) -> Option<String> {
+/// # Errors
+/// [`ShepTomlError::Io`] or [`ShepTomlError::Parse`] when `shep.toml` exists
+/// and this cannot read it. A missing file is an empty document, which answers
+/// `None` for every name, and a sweep is `Ok(None)` without reading at all.
+fn dog_in_config(
+    paths: &ShepPaths,
+    selector: &SelectorSpec,
+) -> Result<Option<String>, ShepTomlError> {
     let SelectorSpec::Name(name) = selector else {
-        return None;
+        return Ok(None);
     };
     if crate::dog::BUILT_IN_DOGS.contains(&name.as_str()) {
-        return None;
+        return Ok(None);
     }
-    let known = ShepToml::read_only(&paths.daemon_config).is_ok_and(|cfg| {
-        cfg.adopted_dog_names()
-            .iter()
-            .chain(cfg.enabled_dog_names().iter())
-            .any(|dog| dog == name)
-    });
-    known.then(|| name.clone())
+    let cfg = ShepToml::read_only(&paths.daemon_config)?;
+    let known = cfg
+        .adopted_dog_names()
+        .iter()
+        .chain(cfg.enabled_dog_names().iter())
+        .any(|dog| dog == name);
+    Ok(known.then(|| name.clone()))
 }
 
 #[cfg(all(test, unix))]
@@ -395,6 +414,82 @@ mod tests {
         assert!(
             !written.contains("log-rotate"),
             "the next boot reads this file: {written}"
+        );
+    }
+
+    /// A `shep.toml` this CLI cannot read answers "is this name a dog?" for no
+    /// name, which is not a licence to guess. Sent off, the shepherd deletes
+    /// the live entry, the adoption survives in the file the next boot reads,
+    /// and a verb that promises "for good" exits 0 saying `deleted 1 sheep`.
+    #[tokio::test]
+    async fn a_shep_toml_that_cannot_be_parsed_refuses_a_name_and_deletes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = home_with_a_dog(dir.path(), "log-rotate");
+        let broken = "enabled_dogs = [\"log-rotate\"\n";
+        std::fs::write(&paths.daemon_config, broken).unwrap();
+        let mut envelopes = fake_shepherd(&paths).await;
+
+        let (code, out, err, sent) =
+            delete_against(&paths, Some(&mut envelopes), &["log-rotate"], Format::Table).await;
+
+        assert_eq!(code, ExitCode::InvalidConfig, "{err}");
+        assert!(err.contains("shep.toml"), "{err}");
+        assert!(out.is_empty(), "a refusal prints no deletion: {out}");
+        assert!(sent.is_empty(), "nothing reached the shepherd: {sent:?}");
+        let written = std::fs::read_to_string(&paths.daemon_config).unwrap();
+        assert_eq!(written, broken, "a refusal spends no config edit");
+    }
+
+    /// The half the refusal rests on, held with no socket and no shepherd: an
+    /// unreadable `shep.toml` answers the dog question with the failure, not
+    /// with `None`, and a missing file is still "no dog here".
+    #[test]
+    fn dog_in_config_reports_an_unreadable_config_instead_of_answering_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ShepPaths::resolve(&|_| None, dir.path());
+        let name = SelectorSpec::Name("log-rotate".to_string());
+
+        assert!(
+            matches!(dog_in_config(&paths, &name), Ok(None)),
+            "a home with no shep.toml has no adopted dog"
+        );
+
+        std::fs::create_dir_all(&paths.run).unwrap();
+        std::fs::write(&paths.daemon_config, "enabled_dogs = [\"log-rotate\"\n").unwrap();
+        assert!(
+            matches!(
+                dog_in_config(&paths, &name),
+                Err(ShepTomlError::Parse { .. })
+            ),
+            "a file that exists and does not parse is a failure this verb reports"
+        );
+
+        assert!(
+            matches!(dog_in_config(&paths, &SelectorSpec::All), Ok(None)),
+            "a sweep is answered without opening the file at all"
+        );
+    }
+
+    /// The refusal is scoped to the selector that needs the answer. `all` is
+    /// the flock, a dog is not in it, and a broken `shep.toml` costs that
+    /// command nothing it did not already pay.
+    #[tokio::test]
+    async fn a_sweep_still_deletes_the_flock_over_an_unreadable_shep_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = home_with_a_dog(dir.path(), "log-rotate");
+        std::fs::write(&paths.daemon_config, "not toml at all").unwrap();
+        let mut envelopes = fake_shepherd(&paths).await;
+
+        let (code, _, err, sent) =
+            delete_against(&paths, Some(&mut envelopes), &["all"], Format::Json).await;
+
+        assert_eq!(code, ExitCode::Success, "{err}");
+        assert_eq!(
+            sent,
+            vec![Request::Delete {
+                selector: SelectorSpec::All
+            }],
+            "{sent:?}"
         );
     }
 }

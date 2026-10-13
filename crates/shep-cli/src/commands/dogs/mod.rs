@@ -100,7 +100,7 @@ fn emit_dog_action(
 /// config-validation failures, so [`ExitCode::InvalidConfig`];
 /// [`ShepTomlError::Io`] has no more specific code than
 /// [`ExitCode::Failure`].
-fn fail_config(streams: &mut Streams<'_>, err: &ShepTomlError) -> ExitCode {
+pub(crate) fn fail_config(streams: &mut Streams<'_>, err: &ShepTomlError) -> ExitCode {
     let code = match err {
         ShepTomlError::Io { .. } => ExitCode::Failure,
         ShepTomlError::Parse { .. } | ShepTomlError::WrongShape { .. } => ExitCode::InvalidConfig,
