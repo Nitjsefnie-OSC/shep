@@ -240,7 +240,7 @@ async fn write_loop<W: AsyncWrite + Unpin>(
                 None
             };
         }
-        if sink.flush().await.is_err() {
+        if SinkExt::<Bytes>::flush(&mut sink).await.is_err() {
             return; // peer gone, surfaced by the flush
         }
     }
