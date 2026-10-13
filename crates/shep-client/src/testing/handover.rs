@@ -123,6 +123,8 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
                 // exist before it, so an earlier frame is simply lost.
                 let mut subscribed = false;
                 let mut pending_events: Vec<BusEvent> = Vec::new();
+                // Whether the test still holds the `Handovers` that can push.
+                let mut events_open = true;
                 loop {
                     tokio::select! {
                         frame = frames.next() => {
@@ -177,8 +179,14 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
                                 }
                             }
                         }
-                        event = events_rx.recv() => {
-                            let Some(event) = event else { break };
+                        event = events_rx.recv(), if events_open => {
+                            let Some(event) = event else {
+                                // The test dropped its `Handovers`. Keep
+                                // serving this connection, which is what this
+                                // helper did before it could take events.
+                                events_open = false;
+                                continue;
+                            };
                             if subscribed {
                                 write_event(&mut frames, event).await;
                             } else {

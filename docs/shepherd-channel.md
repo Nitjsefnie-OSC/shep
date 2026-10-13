@@ -175,7 +175,7 @@ build a JSON object, append `\n`, write it.
 | Message | Meaning |
 |---|---|
 | `{"kind":"ready"}` | You are up and ready to serve. Only meaningful if `wait_ready = true`; the daemon is otherwise not waiting for it. |
-| `{"kind":"metric","name":"<name>","value":<number>}`, optionally with `"type":"gauge"|"counter"`, `"labels":{"<key>":"<value>", ...}` and `"help":"<text>"` | A custom metric sample. An absent `type` means gauge; an unknown one makes the line malformed and the daemon drops it. `labels` is a string map: an absent key and an empty map are the same message. `help` is free text. Currently logged by the daemon at debug level and nothing more — no dog reads it yet. |
+| `{"kind":"metric","name":"<name>","value":<number>}`, optionally with `"type":"gauge"|"counter"`, `"labels":{"<key>":"<value>", ...}` and `"help":"<text>"` | A custom metric sample. An absent `type` means gauge; an unknown one makes the line malformed and the daemon drops it. `labels` is a string map: an absent key and an empty map are the same message. `help` is free text. The metrics dog keeps it and serves it at `/metrics`: see [Metrics](#metrics). |
 | `{"kind":"action-reply","action":"<name>","body":"<text>","id":<number>}` | Your answer to a triggered action. `action` names which one; `body` is free-form text and becomes what the operator sees. `id` is optional — echo the `id` from the `action` message you are answering and shep matches your reply to that exact request. |
 | `{"kind":"lamb-label","pid":<number>,"label":"<text>"}` | Names one of your own child processes in `shep describe` and lookout. An empty `label` clears it. See [Naming your lambs](#naming-your-lambs). |
 
@@ -191,6 +191,41 @@ committed at `crates/shep-channel/wire/channel.go`. It is the same file
 `github.com/shep-pm/shep-go/channel` ships as `channel/wire.go`. Copy it
 rather than retyping it: every optional field is a pointer, because Go's
 `omitempty` on a plain value drops a metric of zero and an id of zero.
+
+## Metrics
+
+A `metric` line is a sample the metrics dog keeps. It shows up on that dog's
+`/metrics` endpoint (`127.0.0.1:9615` by default) after shep's own series, as
+one `# HELP`/`# TYPE` block per name with one series per label set.
+
+Your sample carries the labels shep already uses for your process: `sheep`,
+`id` and `fold` for a sheep, `dog` and `source` for a dog. Your own labels come
+after those, so a label named `sheep`, `id`, `fold`, `dog` or `source` is
+refused.
+
+What the dog enforces, and the reason it reports when you break one:
+
+- A name matches `[a-zA-Z_:][a-zA-Z0-9_:]*` and is at most 128 bytes
+  (`invalid_name`), and does not start with `shep_`, which is the shepherd's
+  own namespace (`reserved_name`).
+- A label name matches `[a-zA-Z_][a-zA-Z0-9_]*`, is at most 64 bytes, and does
+  not start with `__` (`invalid_label`).
+- At most 16 labels, a label value at most 256 bytes, help text at most 512
+  bytes (`too_long`).
+- At most 256 series per sender. A new one is refused rather than an old one
+  evicted (`series_cap`).
+- A name keeps the kind its first sample set, so a `counter` for a name already
+  held as a `gauge` is refused (`type_conflict`). An absent `type` means gauge.
+
+A refusal is counted in `shep_channel_samples_refused_total{reason="..."}` on
+the same endpoint, and the dog prints one line per sender and reason in its own
+log, read with `shep bleats metrics`. Nothing else tells you a sample was
+dropped.
+
+The dog keeps your latest value per name and label set until your process
+stops, exits, restarts, is deleted, errors, or is replaced by a reload. The new
+instance starts with nothing stored, so a value from the old one never outlives
+it.
 
 ## Custom actions — the part most worth reading closely
 
