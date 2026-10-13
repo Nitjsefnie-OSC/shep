@@ -57,8 +57,8 @@ pub struct DogArgs {
 /// `the_hidden_pm2_spelling_reaches_adopt_with_the_arguments_the_right_way_round`.
 #[derive(Debug, clap::Args)]
 pub struct EnableArgs {
-    /// A sheep's name, or a dog's name (the `[<name>]` config key in
-    /// `dogs.toml`)
+    /// A sheep's name, `fold:<fold>`, `/<regex>/` or `all`, or a dog's name
+    /// (the `[<name>]` config key in `dogs.toml`)
     pub name: String,
     /// Hidden pm2-spelling alias for `shep adopt`: routes to `adopt` with
     /// this flag's value as the binary path
@@ -69,8 +69,8 @@ pub struct EnableArgs {
 /// Arguments to `shep disable`.
 #[derive(Debug, clap::Args)]
 pub struct DisableArgs {
-    /// A sheep's name, or a dog's name (the `[<name>]` config key in
-    /// `dogs.toml`)
+    /// A sheep's name, `fold:<fold>`, `/<regex>/` or `all`, or a dog's name
+    /// (the `[<name>]` config key in `dogs.toml`)
     pub name: String,
 }
 

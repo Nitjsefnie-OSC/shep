@@ -35,8 +35,7 @@ impl Toggle {
         }
     }
 
-    fn request(self, name: &str) -> Request {
-        let selector = SelectorSpec::Name(name.to_string());
+    fn request(self, selector: SelectorSpec) -> Request {
         match self {
             Self::Enable => Request::Enable { selector },
             Self::Disable => Request::Disable { selector },
@@ -47,7 +46,7 @@ impl Toggle {
 /// `shep enable <name>` or `shep disable <name>`
 ///
 /// A name the daemon config knows as a dog goes through the dog verbs. Any
-/// other name is a sheep and is sent to the shepherd.
+/// other token is a sheep selector and is sent to the shepherd.
 pub(crate) async fn toggle(
     streams: &mut Streams<'_>,
     paths: &ShepPaths,
@@ -91,9 +90,9 @@ fn names_a_dog(paths: &ShepPaths, name: &str) -> bool {
 
 /// The sheep half of [`toggle`], against a connected shepherd
 ///
-/// Only an exact app name is sent. An id or `name:slot` is refused here,
-/// naming the app, so an operator never marks a whole app by naming one
-/// instance of it.
+/// An app name, a fold, a regex or `all` is sent as typed: the shepherd owns
+/// what a sweep reaches. An id or `name:slot` is refused here, naming the
+/// app, so an operator never marks a whole app by naming one instance of it.
 pub(crate) async fn toggle_sheep(
     client: &Client,
     streams: &mut Streams<'_>,
@@ -104,8 +103,8 @@ pub(crate) async fn toggle_sheep(
         Ok(selector) => selector,
         Err(code) => return code,
     };
-    let app = match selector {
-        ProcessSelector::Name(app) => app,
+    let sweep = !selector.is_exact();
+    let spec = match selector {
         ProcessSelector::Instance { name: app, .. } => {
             return refuse_instance(streams, verb, name, &app);
         }
@@ -116,16 +115,9 @@ pub(crate) async fn toggle_sheep(
                 None => streams.fail(ExitCode::NotFound, &format!("no sheep has id {id}")),
             };
         }
-        _ => {
-            let message = format!(
-                "`shep {} {name}` is not supported yet; name one sheep, such as `shep {} api`",
-                verb.verb(),
-                verb.verb()
-            );
-            return streams.fail(ExitCode::Usage, &message);
-        }
+        sweep_or_name => SelectorSpec::from(&sweep_or_name),
     };
-    let response = match client.request(verb.request(&app)).await {
+    let response = match client.request(verb.request(spec)).await {
         Ok(response) => response,
         Err(RequestError::Rpc(err)) if err.code == RpcErrorCode::Unsupported => {
             let message = format!(
@@ -138,14 +130,22 @@ pub(crate) async fn toggle_sheep(
         Err(err) => return client_error(streams, &err),
     };
     match (verb, response) {
+        (Toggle::Disable, Response::Disabled(procs)) if procs.is_empty() => {
+            let said =
+                format!("every sheep matching `{name}` is already disabled; nothing changed");
+            streams.note("already_disabled", &said);
+            ExitCode::Success
+        }
         (Toggle::Disable, Response::Disabled(procs)) => {
             render_outcome(client, streams, "disable", FlockRows(procs)).await
         }
         (Toggle::Enable, Response::Enabled(procs)) if procs.is_empty() => {
-            streams.note(
-                "not_disabled",
-                &format!("`{app}` is not disabled; nothing changed"),
-            );
+            let said = if sweep {
+                format!("no sheep matching `{name}` is disabled; nothing changed")
+            } else {
+                format!("`{name}` is not disabled; nothing changed")
+            };
+            streams.note("not_disabled", &said);
             ExitCode::Success
         }
         (Toggle::Enable, Response::Enabled(procs)) => {

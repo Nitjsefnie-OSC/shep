@@ -138,6 +138,12 @@ ID  NAME    STATUS   PID    RESTARTS  EXIT     CFG  CPU  MEM    UPTIME  FOLD    
       prints it that way, so <code>cron</code> is there and still online. See{" "}
       <a href="/docs/output#after-a-lifecycle-command">terminal output</a>.
     </p>
+    <p>
+      A wildcard passes a disabled sheep by, and a dog. Naming it still
+      reaches <code>stop</code>, <code>delete</code>, <code>describe</code>{" "}
+      and <code>signal</code>. <code>shep enable all</code> reaches only
+      disabled sheep.
+    </p>
 
     <details>
       <summary><h2 id="folds-on-start">Folds on <code>start</code></h2></summary>
