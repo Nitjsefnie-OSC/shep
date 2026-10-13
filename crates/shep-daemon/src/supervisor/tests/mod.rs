@@ -39,6 +39,7 @@ mod config_rearm;
 mod config_report;
 mod config_reset;
 mod credentials;
+mod disabled_respawn;
 mod dogs;
 mod env_batch;
 mod flush;
