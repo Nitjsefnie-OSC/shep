@@ -470,8 +470,8 @@ impl App {
     /// else a count per state, as `output::rows::group_status` does for
     /// `shep flock`.
     ///
-    /// Reads `ProcStatus` directly, never [`Row::reported`]: a dog is never
-    /// stocked to several instances, so a group has no handshake to report.
+    /// Reads [`Row::reported`], as `output::rows::group_status` does, so a
+    /// disabled app's header says `disabled` over the rows that do.
     #[must_use]
     pub fn group_status_text(&self, name: &str) -> String {
         Self::status_text_for(&self.group_members(name))
@@ -486,15 +486,15 @@ impl App {
     /// copy of the walk is how the fourth one gets written.
     #[must_use]
     pub fn status_text_for(members: &[&Row]) -> String {
-        let Some(first) = members.first().map(|row| row.info.status) else {
+        let Some(first) = members.first().map(|row| row.reported()) else {
             return String::new();
         };
-        if members.iter().all(|row| row.info.status == first) {
-            return first.to_string();
+        if members.iter().all(|row| row.reported() == first) {
+            return first.word();
         }
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
         for row in members {
-            *counts.entry(row.info.status.to_string()).or_default() += 1;
+            *counts.entry(row.reported().word()).or_default() += 1;
         }
         counts
             .into_iter()

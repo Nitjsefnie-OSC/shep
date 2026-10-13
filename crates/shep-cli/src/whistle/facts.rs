@@ -134,6 +134,14 @@ pub struct SheepRow {
     /// unlike the two fields above, because `ProcessInfo` carries it without
     /// one and this type's doc promises byte-identical JSON.
     pub max_memory: Option<u64>,
+    /// `true` when the sheep's app is disabled: stopped, and refused a spawn
+    /// until `shep enable`. Absent otherwise, and when the peer daemon
+    /// predates the field. `status` stays `stopped` on a disabled sheep.
+    ///
+    /// `skip_serializing_if`, matching `ProcessInfo::disabled` exactly, which
+    /// is never `Some(false)`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
 }
 
 /// Where a dog came from. Mirrors `DogSource`'s tagged wire shape exactly.
@@ -212,6 +220,7 @@ impl From<&ProcessInfo> for SheepRow {
             pending: info.pending.clone(),
             overridden: info.overridden.clone(),
             max_memory: info.max_memory,
+            disabled: info.disabled,
         }
     }
 }
@@ -402,6 +411,7 @@ mod tests {
             ]))
             .pending(Some(vec!["env".to_string()]))
             .overridden(Some(vec!["cwd".to_string()]))
+            .disabled(Some(true))
             .build();
 
         assert_eq!(

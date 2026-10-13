@@ -151,6 +151,12 @@ tools: describe_sheep, get_metrics, list_barks, list_flock, reload_sheep,
       script path handed to a model) would be arbitrary code execution as
       the operator, and no config setting makes that acceptable.
     </p>
+    <p>
+      A sheep that <code>shep disable</code> parked shows in{" "}
+      <code>list_flock</code> with <code>"disabled": true</code> and{" "}
+      <code>"status": "stopped"</code>. <code>start_sheep</code> on it
+      returns the shepherd's refusal, which names <code>shep enable</code>.
+    </p>
 
     <h2 id="what-the-shepherd-cannot-tell-you">What the shepherd cannot tell you</h2>
     <p>
