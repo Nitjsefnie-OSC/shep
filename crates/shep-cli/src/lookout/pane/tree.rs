@@ -331,7 +331,7 @@ impl ConfigPane {
         self.move_to_row(target);
     }
 
-    fn move_to_row(&mut self, row: PaneRow) {
+    pub(super) fn move_to_row(&mut self, row: PaneRow) {
         let rows = self.rows();
         if let Some(position) = rows.iter().position(|candidate| *candidate == row) {
             self.view.move_to(position, rows.len());

@@ -84,7 +84,9 @@ impl ConfigPane {
     /// silently, since the pane already holds nothing once this returns.
     #[must_use]
     pub(in crate::lookout) fn close(&mut self) -> Edits {
-        core::mem::take(&mut self.edits)
+        let edits = core::mem::take(&mut self.edits);
+        self.resync_entries();
+        edits
     }
 
     /// Drops the most recently filed edit and names it, for `u`.
@@ -93,9 +95,13 @@ impl ConfigPane {
     /// `u` inside one shows the array it just restored rather than the one
     /// it has undone. One entry is one field, so a `u` there takes the
     /// whole field back to the shepherd's array rather than one keystroke
-    /// of it.
+    /// of it. Undoing the removal of an entry gives the entry's rows back.
     pub(in crate::lookout) fn undo_edit(&mut self) -> Option<EditKey> {
         let undone = self.edits.undo();
+        if matches!(&undone, Some(EditKey::Field(key)) if self.entries_field(key).is_some()) {
+            self.resync_entries();
+            self.retain_known_open();
+        }
         if let Some(key) = self.list.as_ref().map(|list| list.key().to_owned()) {
             let elements = self.filed_elements_of(&key);
             if let Some(list) = self.list.as_mut() {
