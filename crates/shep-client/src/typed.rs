@@ -9,6 +9,7 @@ use core::future::Future;
 use shep_core::protocol::{
     DogSectionToml, HostUsage, ProcessInfo, Request, Response, RpcError, RpcErrorCode, SelectorSpec,
 };
+use shep_core::secrets::references_in;
 
 use crate::ReconnectingClient;
 use crate::client::{Client, LOG_PLANE_DEADLINE, RequestError};
@@ -110,8 +111,6 @@ impl ReconnectingClient {
     }
 }
 
-const SECRET_TOKEN: &str = "{{secret:";
-
 fn dog_config_request(name: &str) -> Request {
     Request::DogConfigResolved {
         name: name.to_owned(),
@@ -140,7 +139,7 @@ where
                 name: name.to_owned(),
             };
             let section = dog_section(ask(plain).await?)?;
-            if section.as_str().contains(SECRET_TOKEN) {
+            if !references_in(section.as_str()).is_empty() {
                 return Err(RequestError::Rpc(RpcError {
                     code: RpcErrorCode::Unsupported,
                     message: format!(
@@ -423,6 +422,25 @@ mod tests {
         let text = format!("{err} {err:?}");
         assert!(!text.contains(SENTINEL), "{text}");
         assert!(!text.contains("{{secret:"), "{text}");
+    }
+
+    /// An escaped `{{{{secret:` and a malformed token name no reference, so
+    /// the plain section is safe to hand over.
+    #[tokio::test]
+    async fn an_older_shepherd_with_only_text_that_looks_like_a_reference_is_read_as_before() {
+        for text in [
+            "note = \"{{{{secret:X}}}}\"\n",
+            "note = \"{{secret:bad key}}\"\n",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = control_address(dir.path());
+            let _shepherd = older_shepherd(&path, text);
+            let client = Client::connect(&path).await.unwrap();
+
+            let section = client.dog_config("bark").await.unwrap();
+
+            assert_eq!(section.as_str(), text);
+        }
     }
 
     #[tokio::test]
