@@ -91,9 +91,9 @@ impl fmt::Display for BootError {
                 "this shepherd was handed a flock it could not take over: {source}. The flock is \
                  still running and nothing is supervising it. `shep daemon reload` is not the \
                  way back: it needs a live shepherd to ask and to signal, and this process is \
-                 about to exit without ever serving. It holds the pidfile until it does, so the \
-                 home is claimable straight afterwards and `shep muster` starts a shepherd from \
-                 the roll"
+                 about to exit without ever serving, and boots nothing beside the flock \
+                 first. The home is claimable straight afterwards and `shep muster` starts a \
+                 shepherd from the roll"
             ),
         }
     }
