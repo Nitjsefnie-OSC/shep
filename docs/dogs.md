@@ -61,18 +61,18 @@ starts a shepherd on your behalf to act on its own edit — that would be a
 bigger side effect than a config change should cause, and `shep muster` is
 the one verb in this CLI that autostarts anything.
 
-`enable` takes a built-in name or one `shep adopt` has already recorded,
-and refuses anything else before it writes:
+`enable` takes a built-in name or one `shep adopt` has already recorded.
+Any other name is read as a sheep's, so a mistyped dog is a name no sheep
+answers to either. With a shepherd running it exits 3 and lists the dogs;
+with none running it exits 5:
 
 ```
 $ shep enable pydog
-error[invalid_config]: `pydog` is not a dog; valid names are "metrics"
-and "bark" -- if you meant a third-party dog, run `shep adopt pydog` first
+error[not_found]: selector matched no registered sheep; the dogs are "metrics" and "bark"
 ```
 
 A refused `enable` writes nothing at all: a `$SHEP_HOME` that had no
-`shep.toml` still has none afterwards. The check reads `[daemon]
-adopted_dogs`, not the shepherd, so it holds with nothing listening.
+`shep.toml` still has none afterwards.
 
 The guard is on the verb, not on the file. Write a name into `[daemon]
 enabled_dogs` by hand and the shepherd still reads it at boot, still
@@ -83,9 +83,10 @@ that looks like from `shep dogs` is a climbing restart count against a
 is where the refusal itself shows up.
 
 `shep disable <name>` is the mirror: it stops the dog if one is running,
-and removes it from the boot list either way. It carries no name check of
-its own, deliberately, so it is what takes a hand-written entry back out
-of `enabled_dogs`.
+and removes it from the boot list either way. The dog stays registered, so
+`shep flock` lists it as `disabled` and `shep enable <name>` starts it again
+in the same row. It carries no name check of its own, deliberately, so it is
+what takes a hand-written entry back out of `enabled_dogs`.
 
 Running two of these at once is safe. A provisioning script that
 backgrounds `shep adopt` and `shep enable` together has each of them take
@@ -230,7 +231,7 @@ stale-cache window and no state a slow scraper could hold open.
 | `shep_sheep_restart_total` | Restart count since registration. |
 | `shep_sheep_uptime_seconds` | Seconds since this sheep's last successful start. |
 | `shep_sheep_status` | 1 for the status this sheep is currently in, 0 for every other status. |
-| `shep_dog_up` | 1 when this dog is online, 0 otherwise. |
+| `shep_dog_up` | 1 when this dog is online, 0 otherwise. A disabled dog has no series, so disabling one never reads as it going down. |
 | `shep_daemon_up` | Always 1: the scrape reached the shepherd. |
 | `shep_daemon_pid` | The shepherd's own pid, so a restart is visible as a step change. |
 | `shep_host_memory_total_bytes` | Total physical memory on the host. |
