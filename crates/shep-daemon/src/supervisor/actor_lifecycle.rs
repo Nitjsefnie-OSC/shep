@@ -384,16 +384,14 @@ impl<R: ProcessRunner> Actor<R> {
 
     /// [`Self::matching_ids`] with the sweep's side of the disabled mark
     /// chosen: `enable` is the one verb whose wildcard wants the parked apps
-    /// and nothing else.
+    /// and nothing else, and the log verbs want both kinds.
     pub(super) fn reached_ids(&self, selector: &ProcessSelector, sweep: Sweep) -> Vec<u32> {
         let exact = selector.is_exact();
         let mut ids: Vec<u32> = self
             .sheep
             .iter()
             .filter(|(id, slot)| {
-                exact
-                    || (slot.entry.dog.is_none()
-                        && self.is_disabled_id(**id) == (sweep == Sweep::Disabled))
+                exact || (slot.entry.dog.is_none() && sweep.reaches(self.is_disabled_id(**id)))
             })
             .filter_map(|(id, slot)| {
                 let config = slot.entry.spec.config();

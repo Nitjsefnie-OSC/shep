@@ -328,3 +328,73 @@ async fn enable_all_with_nothing_disabled_changes_nothing() {
 
     assert!(enabled.is_empty(), "{enabled:?}");
 }
+
+/// Fails if a disable sweep over apps that are all disabled already answers
+/// `NotFound`: the fold exists and every app in it is parked as asked.
+#[tokio::test(start_paused = true)]
+async fn disabling_a_fold_again_changes_nothing_and_succeeds() {
+    let h = harness(vec![ProcScript::never_exits(); 2]);
+    start(&h, 1, vec![in_fold("api", "web"), in_fold("site", "web")]).await;
+    disable(&h, 2, SelectorSpec::Fold("web".to_string())).await;
+
+    let again = disable(&h, 3, SelectorSpec::Fold("web".to_string())).await;
+    assert!(again.is_empty(), "{again:?}");
+    let all = disable(&h, 4, SelectorSpec::All).await;
+    assert!(all.is_empty(), "{all:?}");
+
+    let missed = send(
+        &h,
+        5,
+        Request::Disable {
+            selector: SelectorSpec::Fold("nope".to_string()),
+        },
+    )
+    .await;
+    assert_eq!(missed.result.unwrap_err().code, RpcErrorCode::NotFound);
+}
+
+/// Fails if the log verbs resolve through the ordinary sweep: `flush all` and
+/// `reopen all` would skip `api`, or answer `NotFound` with every app parked.
+#[tokio::test(start_paused = true)]
+async fn flush_and_reopen_all_still_reach_a_disabled_app() {
+    let h = harness(vec![ProcScript::never_exits(); 2]);
+    start(
+        &h,
+        1,
+        vec![
+            AppConfig::minimal("api", "./srv"),
+            AppConfig::minimal("web", "./srv"),
+        ],
+    )
+    .await;
+    disable(&h, 2, by_name("api")).await;
+
+    let Ok(Response::Flushed(flushed)) = send(
+        &h,
+        3,
+        Request::Flush {
+            selector: SelectorSpec::All,
+        },
+    )
+    .await
+    .result
+    else {
+        panic!("expected Flushed")
+    };
+    assert_eq!(names(&flushed), ["api", "web"]);
+
+    disable(&h, 4, by_name("web")).await;
+    let Ok(Response::Reopened(reopened)) = send(
+        &h,
+        5,
+        Request::Reopen {
+            selector: SelectorSpec::All,
+        },
+    )
+    .await
+    .result
+    else {
+        panic!("expected Reopened")
+    };
+    assert_eq!(names(&reopened), ["api", "web"]);
+}

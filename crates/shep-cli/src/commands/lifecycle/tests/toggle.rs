@@ -221,6 +221,28 @@ async fn enable_all_with_nothing_disabled_says_so_and_succeeds() {
     );
 }
 
+/// fails if `disable all` with every sheep already disabled prints a table or
+/// exits non-zero for work that is already done.
+#[tokio::test]
+async fn disable_all_with_everything_disabled_says_so_and_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, _envelopes) = fake_client_answering(&path, |request| match request {
+        Request::Disable { .. } => Response::Disabled(Vec::new()),
+        _ => Response::Pong,
+    })
+    .await;
+
+    let (code, printed, said) =
+        toggle_against(&client, Toggle::Disable, "all", Format::Table).await;
+
+    assert_eq!(code, ExitCode::Success, "{said}");
+    assert!(
+        printed.contains("already disabled") && printed.contains("nothing changed"),
+        "{printed}"
+    );
+}
+
 /// fails if an older shepherd's `Unsupported` reaches the operator as a bare
 /// protocol error instead of telling them to upgrade it.
 #[tokio::test]

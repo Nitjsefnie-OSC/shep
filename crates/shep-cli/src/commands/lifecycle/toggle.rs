@@ -130,6 +130,12 @@ pub(crate) async fn toggle_sheep(
         Err(err) => return client_error(streams, &err),
     };
     match (verb, response) {
+        (Toggle::Disable, Response::Disabled(procs)) if procs.is_empty() => {
+            let said =
+                format!("every sheep matching `{name}` is already disabled; nothing changed");
+            streams.note("already_disabled", &said);
+            ExitCode::Success
+        }
         (Toggle::Disable, Response::Disabled(procs)) => {
             render_outcome(client, streams, "disable", FlockRows(procs)).await
         }

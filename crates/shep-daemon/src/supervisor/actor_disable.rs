@@ -12,6 +12,21 @@ pub(super) enum Sweep {
     Enabled,
     /// Sheep that are disabled: `enable`.
     Disabled,
+    /// Every sheep, parked or not: the log verbs, which read or empty files a
+    /// disabled app still owns.
+    Any,
+}
+
+impl Sweep {
+    /// Whether a wildcard on this side reaches a sheep whose app is
+    /// `disabled`.
+    pub(super) fn reaches(self, disabled: bool) -> bool {
+        match self {
+            Self::Enabled => !disabled,
+            Self::Disabled => disabled,
+            Self::Any => true,
+        }
+    }
 }
 
 impl<R: ProcessRunner> Actor<R> {
@@ -27,6 +42,14 @@ impl<R: ProcessRunner> Actor<R> {
     ) {
         let names = match self.apps_reached(selector, Sweep::Enabled) {
             Ok(names) => names,
+            // A sweep over sheep all of which are parked has nothing to
+            // disable, which is the answer an exact name gets too.
+            Err(SupervisorError::NotFound)
+                if !self.reached_ids(selector, Sweep::Disabled).is_empty() =>
+            {
+                let _ = reply.send(Ok(Vec::new()));
+                return;
+            }
             Err(err) => {
                 let _ = reply.send(Err(err));
                 return;
