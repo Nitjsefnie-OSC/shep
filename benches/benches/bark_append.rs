@@ -75,8 +75,12 @@ fn bench_full_ring(c: &mut Criterion) {
     let new_bark = bark_for(u64::MAX);
     c.bench_function("bark_append/full_ring", |b| {
         b.iter(|| {
-            barks::append(black_box(&path), black_box(&new_bark), black_box(DEFAULT_MAX_BYTES))
-                .unwrap();
+            barks::append(
+                black_box(&path),
+                black_box(&new_bark),
+                black_box(DEFAULT_MAX_BYTES),
+            )
+            .unwrap();
         });
     });
 }
