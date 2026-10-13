@@ -15,8 +15,8 @@ use crate::commands::shep_toml::ShepToml;
 use crate::lookout::app::{ActionVerb, App, Effect, KeyPress, Msg, RevealedValue, RowKey, Sent};
 use crate::lookout::frames::fixtures::{
     close_dialog_config_view, dogs_probe, edit_pane_config_view, flock_without_api,
-    move_settings_cursor_to, restarted_api, settings_snapshot_for_gallery,
-    settings_snapshot_with_dog_drift, sheep_dogs_config_view,
+    kelpie_config_view, kelpie_probe, move_settings_cursor_to, restarted_api,
+    settings_snapshot_for_gallery, settings_snapshot_with_dog_drift, sheep_dogs_config_view,
 };
 use crate::lookout::frames::scene::Scene;
 use crate::lookout::secrets::{SecretRow, SecretsModel, Source};
@@ -283,6 +283,32 @@ pub(super) fn apply_post_tick_scene(app: &mut App, which: Scene) {
                     _ => {}
                 }
             }
+        }
+        Scene::SheepDogUnion => {
+            // The `kelpie` table, opened the way `SheepDogTable` opens
+            // `jobs`, then `implement` opened onto its rows and the cursor
+            // walked onto its `path`.
+            app.update(Msg::Key(KeyPress::Edit));
+            app.update(Msg::Replied {
+                sent: Sent::SheepConfig {
+                    name: "api".to_string(),
+                },
+                result: Ok(Response::SheepConfig(Box::new(kelpie_config_view()))),
+            });
+            select_field(app, "dogs");
+            let Effect::LoadSheepDogs { ask, .. } = app.update(Msg::Key(KeyPress::Confirm)) else {
+                panic!("Enter on the dogs row probes");
+            };
+            app.update(Msg::SheepDogs {
+                sheep: "api".to_string(),
+                ask,
+                dogs: kelpie_probe(),
+            });
+            app.update(Msg::Key(KeyPress::Confirm));
+            select_field(app, "skills.implement");
+            app.update(Msg::Key(KeyPress::Confirm));
+            app.update(Msg::Key(KeyPress::SelectDown));
+            app.update(Msg::Key(KeyPress::SelectDown));
         }
         Scene::DogEntries
         | Scene::DogEntriesNarrow
@@ -724,6 +750,35 @@ mod tests {
         );
         assert!(!table.contains(TOKEN), "{table:?}");
         assert!(!table.contains(LEGACY_CREDENTIAL), "{table:?}");
+    }
+
+    /// The union scene reads each step as its tag, opens one onto its tag
+    /// row and the fields of that arm, and leaves the unset one unset.
+    #[test]
+    #[cfg(unix)] // inherited, not measured per test: see the `build` module's docs
+    fn the_sheep_dog_union_scene_opens_one_union_onto_its_arm() {
+        let text = render_text(&scene(Scene::SheepDogUnion).1);
+        for drawn in [
+            "\u{25be} implement",
+            "kind = path",
+            "\u{25b8} review",
+            "kind = plugin",
+            "\u{25b8} retro",
+            "(unset)",
+            "skills/mine",
+            "A skill kept in the repo.",
+        ] {
+            assert!(text.contains(drawn), "{drawn} is drawn: {text:?}");
+        }
+        let cursor_row = text
+            .lines()
+            .find(|line| line.starts_with('>'))
+            .expect("the cursor is on a row");
+        assert!(
+            cursor_row.contains("path") && cursor_row.contains("skills/mine"),
+            "{cursor_row:?}"
+        );
+        assert!(!text.contains('\u{1f}'), "no edit key reaches the screen");
     }
 
     /// The entries scenes read an array and a map of tables as counts,

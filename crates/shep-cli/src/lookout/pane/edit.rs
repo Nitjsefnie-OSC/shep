@@ -170,6 +170,7 @@ impl ConfigPane {
             | FieldKind::Map
             | FieldKind::List(_)
             | FieldKind::Entries(_)
+            | FieldKind::Union(_)
             | FieldKind::Opaque => return,
         };
         let key = field.key.clone();
@@ -192,6 +193,10 @@ impl ConfigPane {
     /// appears, rests on that: it never has to ask what a Structural
     /// edit would cost, because one can never be in the set to ask about.
     pub(super) fn file_field(&mut self, key: String, value: Value) {
+        if let Some(place) = self.place(&key) {
+            self.file_arm(place, value);
+            return;
+        }
         if self.stored_value_is(&key, &value) {
             self.edits.remove(&EditKey::Field(key));
             return;
@@ -261,6 +266,10 @@ impl ConfigPane {
             return;
         }
         let key = field.key.clone();
+        if self.place(&key).is_some() {
+            self.restore_arm_field(&key);
+            return;
+        }
         if self.field_shows_default(&key) {
             return;
         }
@@ -417,6 +426,16 @@ impl ConfigPane {
         {
             self.typing = Some(PaneTyping { key, buffer });
             return Some(refused);
+        }
+        if buffer.as_str().is_empty()
+            && let Some(text) = self.required_refusal(&key)
+        {
+            self.typing = Some(PaneTyping { key, buffer });
+            return Some(Refusal { text });
+        }
+        if buffer.as_str().is_empty() && self.place(&key).is_some() {
+            self.restore_arm_field(&key);
+            return None;
         }
         let kind = field.as_ref().map(|field| field.kind.clone());
         let value = match (kind, buffer.as_str()) {

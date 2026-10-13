@@ -44,6 +44,7 @@ impl ConfigPane {
                     rows.push(PaneRow::Field(index));
                     self.push_entry_rows(index, rows);
                     self.push_choice_rows(index, rows);
+                    self.push_union_rows(index, rows);
                 }
                 Child::Table(index) => {
                     rows.push(PaneRow::Table(index));
@@ -132,6 +133,14 @@ impl ConfigPane {
                     open: None,
                 })
             }
+            PaneRow::Arm { .. } => {
+                let (depth, label) = self.arm_label(row)?;
+                Some(TreeRow {
+                    depth,
+                    label,
+                    open: None,
+                })
+            }
             PaneRow::Env(_) | PaneRow::AddEnv => None,
         }
     }
@@ -152,7 +161,7 @@ impl ConfigPane {
         match row {
             PaneRow::Table(index) => self.outline.tables.get(index).map(|t| t.path.as_str()),
             PaneRow::Field(index) => {
-                if !self.is_checklist(index) {
+                if !self.is_checklist(index) && !self.is_union(index) {
                     self.entries.roots(index)?;
                 }
                 self.fields
@@ -164,7 +173,9 @@ impl ConfigPane {
                 EntryBody::Node { path, .. } => Some(path),
                 EntryBody::Leaf { .. } | EntryBody::New { .. } => None,
             },
-            PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => None,
+            PaneRow::Choice { .. } | PaneRow::Arm { .. } | PaneRow::Env(_) | PaneRow::AddEnv => {
+                None
+            }
         }
     }
 
@@ -184,7 +195,9 @@ impl ConfigPane {
                 .position(|table| table.children.contains(&Child::Leaf(index)))
                 .map(PaneRow::Table),
             PaneRow::Entry(index) => self.entries.row(index).map(|entry| entry.parent),
-            PaneRow::Choice { field, .. } => Some(PaneRow::Field(field)),
+            PaneRow::Choice { field, .. } | PaneRow::Arm { field, .. } => {
+                Some(PaneRow::Field(field))
+            }
             PaneRow::Env(_) | PaneRow::AddEnv => None,
         }
     }

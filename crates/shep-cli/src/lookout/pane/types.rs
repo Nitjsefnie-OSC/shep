@@ -92,7 +92,7 @@ pub enum Lock {
 
 /// One row of the pane.
 ///
-/// Six variants, not one: the env sub-screen is gone, and its keys now
+/// Seven variants, not one: the env sub-screen is gone, and its keys now
 /// walk the same cursor as every field, so this enum has to name a row in
 /// either territory. A dog's nested table is a row of its own too. Named rather than left as a bare index anyway, a
 /// `usize` travelling between [`ConfigPane::rows`], the viewport and the
@@ -117,6 +117,15 @@ pub enum PaneRow {
         /// Index into [`ConfigPane::fields`], of the list.
         field: usize,
         /// Which row of its checklist.
+        item: usize,
+    },
+    /// A row under a tagged union on a dog's table on a sheep: `item` 0 is
+    /// its tag, a choice that `space` cycles, then the fields of the arm the
+    /// tag names. They file the whole union, never a part of it.
+    Arm {
+        /// Index into [`ConfigPane::fields`], of the union.
+        field: usize,
+        /// Which row under it.
         item: usize,
     },
     /// Index into [`ConfigPane::env_key_names`].

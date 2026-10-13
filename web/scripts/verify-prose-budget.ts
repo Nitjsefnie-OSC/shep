@@ -90,7 +90,10 @@ export const BUDGETS: Record<string, number> = {
   // removes an operator's data from dogs.toml, so the page has to say when
   // it writes, what `u` does and where the cursor goes. The page had 9
   // words of headroom.
-  "lookout-config": 3785, // 3604
+  // Raised from 3785 on 2026-10-13 for a dog setting that is a tagged union:
+  // it reads as its tag, opens to that tag's fields and is picked with space,
+  // which is new operator-facing surface. The page had no headroom.
+  "lookout-config": 3880, // 3871
   // Raised from 2930 on 2026-09-14 for the host line, which `shep flock`
   // began printing on a one-shot listing and not only under `--follow`. It
   // shows above every table on this page, so four transcripts gained a line

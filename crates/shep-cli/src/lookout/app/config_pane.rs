@@ -238,6 +238,10 @@ impl App {
             // One press, not two: the field's help draws unconditionally
             // now, so nothing waits behind a second `esc` for it.
             KeyPress::Escape => {
+                if let Some(text) = self.config_pane().and_then(ConfigPane::incomplete_union) {
+                    self.notice = Some(Notice { text, grave: true });
+                    return Effect::None;
+                }
                 if let Some(dialog) = self.close_offer() {
                     self.close_dialog = Some(dialog);
                     return Effect::None;

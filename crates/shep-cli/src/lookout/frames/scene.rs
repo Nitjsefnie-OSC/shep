@@ -179,6 +179,10 @@ pub enum Scene {
     /// `hours` and `models.worker` tables, `models.worker.token` drawn
     /// `<set>`.
     SheepDogTable,
+    /// `Enter` on `kelpie`, whose `skills` table holds one tagged union per
+    /// step: `implement` open onto its tag and `path`, `review` set and
+    /// closed, `retro` unset, the cursor on `path`.
+    SheepDogUnion,
     /// A paddock-shaped dog's pane at the design target: a `clients` array
     /// and a `models` map each read as a count, `clients` opened onto its
     /// entries and the first of them onto its fields, a credential drawn
@@ -285,6 +289,7 @@ impl Scene {
             Self::SheepDogsList => "sheep_dogs_list",
             Self::SheepDogsRemove => "sheep_dogs_remove",
             Self::SheepDogTable => "sheep_dog_table",
+            Self::SheepDogUnion => "sheep_dog_union",
             Self::DogEntries => "dog_entries",
             Self::DogEntriesNarrow => "dog_entries_narrow",
             Self::DogEntryTyping => "dog_entry_typing",
@@ -461,6 +466,9 @@ impl Scene {
             }
             Self::SheepDogTable => {
                 "Enter on jobs opens its table pane as a tree: hours and models open at the first level, models.worker opened onto token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame."
+            }
+            Self::SheepDogUnion => {
+                "Enter on kelpie opens its table pane over a recorded copy of its schema, skills opened onto one union per step: implement reads kind = path and is open onto its kind row and its path, review reads kind = plugin and is closed, and retro reads (unset). The cursor is on path, and the explanation panel names it and carries the blurb of the path arm."
             }
             Self::DogEntries => {
                 "A dog's pane over a paddock-shaped schema at 160x48: clients and models each read as a count and nothing more, clients is open onto alpha, b-2 and #2, named by name, then id, then their index, and alpha is open onto its fields, key drawn <set> with no credential on screen anywhere in the frame. The cursor is on key, which opens an editor like any other field."
@@ -642,6 +650,7 @@ impl Scene {
             | Self::SheepDogsList
             | Self::SheepDogsRemove
             | Self::SheepDogTable
+            | Self::SheepDogUnion
             | Self::DogEntries
             | Self::DogEntryTyping
             | Self::DogEntriesNew => (160, 48),
@@ -754,6 +763,7 @@ impl Scene {
             | Self::SheepDogsList
             | Self::SheepDogsRemove
             | Self::SheepDogTable
+            | Self::SheepDogUnion
             | Self::DogEntries
             | Self::DogEntriesNarrow
             | Self::DogEntryTyping

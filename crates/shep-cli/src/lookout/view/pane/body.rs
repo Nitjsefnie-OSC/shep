@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use super::super::super::pane::{ConfigPane, PaneRow};
 use super::super::super::theme::Palette;
 use super::super::scroll::{self, Attempt};
-use super::entry_row::{choice_line, entry_line};
+use super::entry_row::{arm_line, choice_line, entry_line};
 use super::env::pending_and_env_lines;
 use super::field_row::{field_line, section_header, table_line};
 
@@ -169,6 +169,24 @@ pub(super) fn body_from(
                 drawn += 1;
                 continue;
             }
+            PaneRow::Arm { .. } => {
+                if index < offset {
+                    continue;
+                }
+                if !room(lines.len(), 1, index) {
+                    break;
+                }
+                lines.push(arm_line(
+                    pane,
+                    *row,
+                    pane.cursor() == Some(*row),
+                    width,
+                    palette,
+                    show_lands,
+                ));
+                drawn += 1;
+                continue;
+            }
             PaneRow::Env(_) | PaneRow::AddEnv => continue,
         };
         let group = pane
@@ -266,6 +284,9 @@ pub(super) fn cursor_only(
         }
         Some(row @ PaneRow::Choice { .. }) => {
             lines.push(choice_line(pane, row, true, width, palette));
+        }
+        Some(row @ PaneRow::Arm { .. }) => {
+            lines.push(arm_line(pane, row, true, width, palette, show_lands));
         }
         Some(PaneRow::Env(_) | PaneRow::AddEnv) | None => {}
     }

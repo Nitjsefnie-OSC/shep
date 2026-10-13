@@ -11,3 +11,5 @@ mod file_edit;
 #[cfg(test)]
 mod paste;
 mod restore_default;
+#[cfg(test)]
+mod union_edit;
