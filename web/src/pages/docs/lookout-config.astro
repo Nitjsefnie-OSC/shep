@@ -499,11 +499,13 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
         <code>K</code>/<code>J</code> move it, and <code>e</code>/
         <code>Enter</code> edits it, or adds one from the{" "}
         <code>+ new</code> row. Each of those files the whole array on the
-        spot; there's no second key to send it. They build on each other,
-        and the rows show what you have filed rather than what the shepherd
-        sent, so you can remove two elements or add several before leaving.
+        spot; there's no second key to send it. The rows show what you have
+        filed rather than what the shepherd sent, so you can remove two
+        elements or add several before leaving.
         <code>u</code> in here drops the array's whole entry and puts the
-        shepherd's own back.
+        shepherd's own back. An element its item schema rejects is refused,
+        the rule named, and the editor stays open: <code>minLength</code>,
+        <code>pattern</code>, <code>enum</code>, or an integer's range.
       </li>
       <li>
         <code>d</code> on the field list restores the selected field to its

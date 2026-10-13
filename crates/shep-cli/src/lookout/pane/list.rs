@@ -4,11 +4,18 @@
 //! that lands rebuilds the array and files one `PaneEdit::Set` over the
 //! field, so the shepherd never sees a half-written list and the pane never
 //! has to reconcile two representations of one field.
+//!
+//! An element is checked against the bounds its item schema published
+//! ([`super::super::field::Bounds::items`]) before it is filed, which is
+//! the only gate a dog's `Request::SetSheepDogSettings` has: that write
+//! replaces the whole table without the shepherd reading it, so an element
+//! the dog cannot deserialize is a table the operator has already saved.
 
 use serde_json::Value;
 
 use super::super::edits::EditKey;
-use super::super::field::{FieldKind, ListItem};
+use super::super::field::{Bounds, FieldKind, ListItem};
+use super::super::validation::{Refusal, item_refusal};
 use super::super::viewport::Viewport;
 use super::{ConfigPane, PaneEdit, PaneRow};
 
@@ -37,6 +44,13 @@ pub enum ListRow {
 pub struct ListPane {
     key: String,
     item: ListItem,
+    /// What the item schema says an element must satisfy, which is what
+    /// [`Self::apply_typing`] checks a buffer against. Empty for a list
+    /// whose items are a plain string or a plain integer.
+    item_bounds: Bounds,
+    /// Whether the field is a secret, which decides what a refusal may
+    /// print: the element, or `<set>`.
+    secret: bool,
     elements: Vec<String>,
     view: Viewport,
     /// `Some((Some(index), buffer))` on an element, `Some((None, buffer))`
@@ -47,11 +61,23 @@ pub struct ListPane {
 impl ListPane {
     /// A sub-screen over one array field, cursor at the top and nothing
     /// being typed.
+    ///
+    /// `item_bounds` are that field's [`Bounds::items`], and `secret` is
+    /// its [`Field::secret`](super::super::field::Field::secret): both come
+    /// off the field the sub-screen was opened on, and neither is a value.
     #[must_use]
-    pub fn new(key: String, item: ListItem, elements: Vec<String>) -> Self {
+    pub fn new(
+        key: String,
+        item: ListItem,
+        item_bounds: Bounds,
+        secret: bool,
+        elements: Vec<String>,
+    ) -> Self {
         Self {
             key,
             item,
+            item_bounds,
+            secret,
             elements,
             view: Viewport::new(),
             typing: None,
@@ -69,6 +95,13 @@ impl ListPane {
     #[must_use]
     pub fn item(&self) -> ListItem {
         self.item
+    }
+
+    /// Whether the field is a secret: what masks an element's value on the
+    /// screen, and what decides whether a refusal may print one.
+    #[must_use]
+    pub fn is_secret(&self) -> bool {
+        self.secret
     }
 
     /// The elements, in the order the array holds them.
@@ -192,19 +225,38 @@ impl ListPane {
 
     /// Closes the editor and reads what it holds.
     ///
-    /// [`None`] three ways, and only one of them closes the editor: an
+    /// `Ok(None)` three ways, and only one of them closes the editor: an
     /// empty buffer is nothing to write and leaves the array alone, since
-    /// `d` is the key that removes an element. An integer element whose
-    /// buffer does not parse keeps the editor open, the same rule
-    /// [`ConfigPane::apply_typing`] follows, because the operator is
-    /// mid-word rather than wrong.
-    pub fn apply_typing(&mut self) -> Option<String> {
-        let (_, buffer) = self.typing.as_ref()?;
-        if self.item == ListItem::Integer && buffer.parse::<i64>().is_err() && !buffer.is_empty() {
-            return None;
+    /// `d` is the key that removes an element, and no editor open is the
+    /// same answer. An element the item schema refuses keeps the editor
+    /// open, the same rule [`ConfigPane::apply_typing`] follows, because
+    /// the operator is mid-word rather than wrong.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal`] naming the rule the element failed, with the buffer left
+    /// in the editor: an integer element that does not parse, or one the
+    /// item schema's `minLength`, `pattern`, `enum`, `minimum` or `maximum`
+    /// turns down. Nothing is filed for it.
+    pub fn apply_typing(&mut self) -> Result<Option<String>, Refusal> {
+        let Some((_, buffer)) = self.typing.clone() else {
+            return Ok(None);
+        };
+        if buffer.is_empty() {
+            self.typing = None;
+            return Ok(None);
         }
-        let (_, buffer) = self.typing.take()?;
-        (!buffer.is_empty()).then_some(buffer)
+        if let Some(refused) = item_refusal(
+            &self.key,
+            self.item,
+            &self.item_bounds,
+            &buffer,
+            self.secret,
+        ) {
+            return Err(refused);
+        }
+        self.typing = None;
+        Ok(Some(buffer))
     }
 
     /// The elements with `text` written at the cursor, appended on the `+
@@ -283,9 +335,10 @@ impl core::fmt::Debug for ListPane {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "ListPane {{ key: {:?}, item: {:?}, elements: {}, typing: {} }}",
+            "ListPane {{ key: {:?}, item: {:?}, secret: {}, elements: {}, typing: {} }}",
             self.key,
             self.item,
+            self.secret,
             self.elements.len(),
             if self.typing.is_some() {
                 "some"
@@ -301,11 +354,11 @@ impl ConfigPane {
     /// on screen.
     #[must_use]
     pub fn list(&self) -> Option<&ListPane> {
-        self.list.as_ref()
+        self.list.as_deref()
     }
 
     pub(in crate::lookout) fn list_mut(&mut self) -> Option<&mut ListPane> {
-        self.list.as_mut()
+        self.list.as_deref_mut()
     }
 
     /// Opens the list sub-screen over the array field under the cursor.
@@ -321,8 +374,16 @@ impl ConfigPane {
             return;
         };
         let key = field.key.clone();
+        let item_bounds = field.bounds.items.as_deref().cloned().unwrap_or_default();
+        let secret = field.secret;
         let elements = self.filed_elements_of(&key);
-        self.list = Some(ListPane::new(key, item, elements));
+        self.list = Some(Box::new(ListPane::new(
+            key,
+            item,
+            item_bounds,
+            secret,
+            elements,
+        )));
     }
 
     /// Closes it, leaving the field list up.
@@ -376,7 +437,7 @@ impl ConfigPane {
 
     /// Files the whole array without the element under the cursor.
     pub(in crate::lookout) fn file_list_removal(&mut self) {
-        let Some(elements) = self.list.as_ref().and_then(ListPane::without_element) else {
+        let Some(elements) = self.list.as_ref().and_then(|list| list.without_element()) else {
             return;
         };
         self.file_list(elements);
@@ -422,15 +483,23 @@ impl ConfigPane {
     /// the operator's filed set, and the sub-screen has to keep showing the
     /// set.
     pub(in crate::lookout) fn adopt_list_view(&mut self, key: &str, view: Viewport) {
-        let Some(item) = self.fields.by_key(key).and_then(|field| match field.kind {
-            FieldKind::List(item) => Some(item),
-            _ => None,
-        }) else {
+        let Some(field) = self.fields.by_key(key) else {
             return;
         };
-        let mut list = ListPane::new(key.to_owned(), item, self.filed_elements_of(key));
+        let FieldKind::List(item) = field.kind else {
+            return;
+        };
+        let item_bounds = field.bounds.items.as_deref().cloned().unwrap_or_default();
+        let secret = field.secret;
+        let mut list = ListPane::new(
+            key.to_owned(),
+            item,
+            item_bounds,
+            secret,
+            self.filed_elements_of(key),
+        );
         list.adopt_view(view);
-        self.list = Some(list);
+        self.list = Some(Box::new(list));
     }
 }
 
@@ -439,6 +508,36 @@ mod tests {
     use super::super::Lock;
     use super::super::fixtures::{filed, web_with_args};
     use super::*;
+
+    /// A dog's per-sheep table with one array field, `tags`, whose items
+    /// carry `minLength` and a `pattern`: the shape a `Vec<Slug>` flattened
+    /// one table down publishes, and the shape whose elements the pane
+    /// writes whole at `tags`.
+    fn tags_schema() -> Value {
+        serde_json::json!({
+            "$ref": "#/$defs/Settings",
+            "$defs": {
+                "Settings": {
+                    "type": "object",
+                    "properties": {
+                        "tags": {
+                            "type": "array",
+                            "items": { "type": "string", "minLength": 3, "pattern": "^[a-z-]+$" },
+                        },
+                    },
+                },
+            },
+        })
+    }
+
+    fn tags_pane() -> ConfigPane {
+        ConfigPane::sheep_dog(
+            "web".into(),
+            "jobs".into(),
+            &tags_schema(),
+            serde_json::Map::new(),
+        )
+    }
 
     /// The array is one value, so an element is not a thing the wire can
     /// name.
@@ -464,17 +563,20 @@ mod tests {
         let list = ListPane::new(
             "args".into(),
             ListItem::Text,
+            Bounds::default(),
+            false,
             vec!["--token".into(), "hunter2".into()],
         );
         assert_eq!(
             format!("{list:?}"),
-            r#"ListPane { key: "args", item: Text, elements: 2, typing: none }"#
+            r#"ListPane { key: "args", item: Text, secret: false, elements: 2, typing: none }"#
         );
     }
 
     /// The operator is mid-word, not wrong, so the editor stays open and
     /// nothing is filed. The same rule `ConfigPane::apply_typing` follows
-    /// for an integer field.
+    /// for an integer field, and `stop_exit_codes` is the list the Flockfile
+    /// schema puts no bound on its items at all.
     #[test]
     fn an_integer_element_that_does_not_parse_keeps_the_editor_open() {
         let mut pane = ConfigPane::sheep(web_with_args(&[]));
@@ -484,10 +586,148 @@ mod tests {
         list.move_to_last();
         list.begin_typing();
         list.type_char('-');
-        assert_eq!(list.apply_typing(), None);
+        let refused = list.apply_typing().expect_err("- is not a whole number");
+        assert_eq!(
+            refused.text,
+            "stop_exit_codes is \"-\", which is not a whole number shep accepts"
+        );
         assert!(list.typing().is_some(), "the editor is still open");
         list.type_char('1');
-        assert_eq!(list.apply_typing().as_deref(), Some("-1"));
+        assert_eq!(
+            list.apply_typing().ok().flatten().as_deref(),
+            Some("-1"),
+            "and a buffer that parses is still accepted"
+        );
+    }
+
+    /// `minLength` on an item is the rule a dog writes for "not blank, and
+    /// not two characters either". The refused element stays in the editor
+    /// and files nothing, exactly as a scalar field's own refusal does.
+    #[test]
+    fn a_list_element_under_its_item_min_length_files_nothing() {
+        let mut pane = tags_pane();
+        pane.move_to_key("tags");
+        pane.open_list();
+        let refused = {
+            let list = pane.list_mut().expect("the sub-screen opens");
+            list.move_to_last();
+            list.begin_typing();
+            for typed in "ab".chars() {
+                list.type_char(typed);
+            }
+            list.apply_typing()
+                .expect_err("two characters is under three")
+        };
+        assert_eq!(
+            refused.text,
+            "tags is \"ab\"; tags needs at least 3 characters"
+        );
+        assert!(
+            pane.list().expect("still open").typing().is_some(),
+            "the editor stays open on what was typed"
+        );
+        assert!(pane.edits().is_empty(), "nothing was filed");
+
+        let text = {
+            let list = pane.list_mut().expect("still open");
+            list.type_char('c');
+            list.apply_typing()
+                .ok()
+                .flatten()
+                .expect("three characters is the bound itself")
+        };
+        pane.file_list_element(text);
+        assert_eq!(filed(&pane, "tags"), Some(serde_json::json!(["abc"])));
+    }
+
+    /// A `pattern` an item carries is the dog's own grammar, enforced as the
+    /// dog wrote it, and `Request::SetSheepDogSettings` has no gate behind
+    /// this one: it replaces the table without reading it.
+    #[test]
+    fn a_list_element_that_fails_its_item_pattern_files_nothing() {
+        let mut pane = tags_pane();
+        pane.move_to_key("tags");
+        pane.open_list();
+        let refused = {
+            let list = pane.list_mut().expect("the sub-screen opens");
+            list.move_to_last();
+            list.begin_typing();
+            for typed in "Ab1".chars() {
+                list.type_char(typed);
+            }
+            list.apply_typing()
+                .expect_err("uppercase is outside the pattern")
+        };
+        assert_eq!(
+            refused.text,
+            "tags is \"Ab1\", which it does not take; try it matches ^[a-z-]+$"
+        );
+        assert!(pane.edits().is_empty(), "nothing reached the table");
+
+        let text = {
+            let list = pane.list_mut().expect("still open");
+            for _ in 0..3 {
+                list.type_backspace();
+            }
+            for typed in "ops-team".chars() {
+                list.type_char(typed);
+            }
+            list.apply_typing()
+                .ok()
+                .flatten()
+                .expect("the pattern takes it")
+        };
+        pane.file_list_element(text);
+        assert_eq!(filed(&pane, "tags"), Some(serde_json::json!(["ops-team"])));
+    }
+
+    /// A list the schema marks secret is a `Vec` of tokens, and the editor
+    /// draws what is typed: the refusal is the one place that value would be
+    /// repeated, so it names the marker the row already draws (IR-41).
+    #[test]
+    fn a_secret_lists_refusal_prints_the_marker_and_not_the_element() {
+        let mut list = ListPane::new(
+            "tokens".into(),
+            ListItem::Text,
+            Bounds {
+                pattern: Some("^sk-".to_owned()),
+                ..Default::default()
+            },
+            true,
+            Vec::new(),
+        );
+        list.begin_typing();
+        for typed in "tok_HUNTER2".chars() {
+            list.type_char(typed);
+        }
+        let refused = list.apply_typing().expect_err("the pattern refuses it");
+        assert_eq!(
+            refused.text,
+            "tokens is \"<set>\", which it does not take; try it matches ^sk-"
+        );
+        assert!(list.typing().is_some(), "the editor stays open");
+    }
+
+    /// The control on the test above: an element of a list that is not a
+    /// credential is quoted back in the sentence.
+    #[test]
+    fn an_ordinary_list_refusal_quotes_the_element() {
+        let mut list = ListPane::new(
+            "regions".into(),
+            ListItem::Text,
+            Bounds {
+                pattern: Some("^eu-".to_owned()),
+                ..Default::default()
+            },
+            false,
+            Vec::new(),
+        );
+        list.begin_typing();
+        for typed in "Europe".chars() {
+            list.type_char(typed);
+        }
+        let refused = list.apply_typing().expect_err("Europe does not match");
+        assert!(refused.text.contains("Europe"), "{}", refused.text);
     }
 
     /// The whole array goes out, so a removal and a reorder are the same
