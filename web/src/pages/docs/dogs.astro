@@ -360,6 +360,70 @@ shep_host_memory_total_bytes 51539607552`}</CodeBlock>
       to lock it down.
     </p>
 
+    <h3 id="otlp-export">OTLP export</h3>
+    <p>
+      The same series can be pushed to an OTLP/HTTP collector instead of
+      waited for. <code>otlp_endpoint</code> is the only key that turns it
+      on:
+    </p>
+    <CodeBlock label="dogs.toml">{`[metrics]
+otlp_endpoint = "http://127.0.0.1:4318"
+otlp_interval = "60s"
+otlp_timeout = "10s"
+
+[metrics.otlp_headers]
+Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
+    <div class="metrics-table">
+      <div class="row header">
+        <span>Key</span>
+        <span>Meaning</span>
+      </div>
+      <div class="row"><span><code>otlp_endpoint</code></span> <span data-label="Meaning">Base URL of the collector, <code>http://</code> or <code>https://</code>. Absent means no export, and <code>/v1/metrics</code> is appended to it.</span></div>
+      <div class="row"><span><code>otlp_interval</code></span> <span data-label="Meaning">Between exports, <code>60s</code> by default. The first lands one interval after the dog starts.</span></div>
+      <div class="row"><span><code>otlp_timeout</code></span> <span data-label="Meaning">One export's budget, connect through response, <code>10s</code> by default.</span></div>
+      <div class="row"><span><code>otlp_headers</code></span> <span data-label="Meaning">Extra headers, for a collector that needs auth. Empty by default, and never printed.</span></div>
+    </div>
+    <p>
+      Export is a cargo feature, off in the shipped binary:
+    </p>
+    <CodeBlock>{`$ cargo install shep --features otel`}</CodeBlock>
+    <p>
+      A build without it refuses <code>otlp_endpoint</code> at startup,
+      exiting <code>invalid_config</code> and naming the feature, rather
+      than running a dog that exports nothing while <code>shep list</code>
+      reports it online.
+    </p>
+    <p>
+      The body is OTLP/JSON. Every series above is a <code>gauge</code>
+      except <code>shep_sheep_restart_total</code>, a monotonic cumulative
+      <code>sum</code> whose <code>startTimeUnixNano</code> is the dog's own
+      start, so a collector can difference two exports for the restarts
+      inside the interval. Integers are decimal strings, rates are numbers,
+      and every Prometheus label is a string attribute, so both paths report
+      the same series with the same labels. Channel samples are not exported
+      yet.
+    </p>
+    <p>
+      One failed export is one line in the dog's log, on the first failure
+      after a success and again on recovery, never once per tick. It never
+      touches the scrape server or the dog's exit code, and there is no
+      final flush on stop: the next tick sends current values anyway.
+    </p>
+    <p class="fine">
+      The feature adds no dependency, and its cost is code only. Measured on
+      one machine (macOS, Apple Silicon, one toolchain, raw file size, not
+      the corrected install-size method #292 is still sorting out):
+    </p>
+    <div class="metrics-table">
+      <div class="row header">
+        <span>Build</span>
+        <span>target/release/shep</span>
+      </div>
+      <div class="row"><span>default</span> <span data-label="target/release/shep">18,994,048 bytes</span></div>
+      <div class="row"><span><code>--features otel</code></span> <span data-label="target/release/shep">19,053,088 bytes</span></div>
+      <div class="row"><span>delta</span> <span data-label="target/release/shep">59,040 bytes</span></div>
+    </div>
+
     <h2 id="the-bark-dog">The bark dog</h2>
     <p>
       <code>shep enable bark</code> subscribes to the shepherd's event bus

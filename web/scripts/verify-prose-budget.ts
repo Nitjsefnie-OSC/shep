@@ -108,7 +108,13 @@ export const BUDGETS: Record<string, number> = {
   // passage has to list.
   // Raised from 3130 on 2026-10-13 for dog names: a sheep cannot take a
   // dog's name, and one that already holds a built-in's keeps it.
-  dogs: 3200, // 3179
+  //
+  // Raised from 3200 for the metrics dog's OTLP export: four config keys an
+  // operator has to be told the defaults of, the `--features otel` install
+  // line, what a build without the feature does with `otlp_endpoint`, and
+  // the measured binary size #292 asked for. All of it is operator-facing
+  // surface for a shipped feature, not prose to trim back out.
+  dogs: 3500, // 3471
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
