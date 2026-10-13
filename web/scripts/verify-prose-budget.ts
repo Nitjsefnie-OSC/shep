@@ -100,13 +100,18 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 2980 on 2026-10-13 for the `log_match` rule: a new `on`
   // value, its `stream` key, and the loss and secrets caveats are
   // operator-facing surface, not prose to trim back out.
-  dogs: 3100, // 3059
+  // Raised from 3100 on 2026-10-13 for the `secrets.json` rotation: a
+  // `shep secret set` now reaches a running dog, which the live-updates
+  // passage has to list.
+  dogs: 3130, // 3118
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
   // push now reaches a running dog, which an operator rotating a secret has
   // to be told. The page had drifted to 2067 against a recorded 1977.
-  secrets: 2150, // 2123
+  // Raised again from 2150 on 2026-10-13 for the store poll: a `shep secret
+  // set` reaches a running dog, and the page says how soon and which keys.
+  secrets: 2200, // 2184
   // Raised from 2020 on 2026-10-13 for `disable` and `enable`: two verbs
   // with a refusal an operator has to be told about (an id or `name:slot`
   // exits 2, and `start`, `restart` and `stock` refuse a disabled app) are

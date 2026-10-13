@@ -225,6 +225,8 @@ pub(crate) mod proc_table;
 // restart in. Crate-private: a dog writes here over the socket, never by
 // linking this crate.
 pub(crate) mod secrets;
+// Polls the operator's store for a value a running dog names.
+pub(crate) mod secrets_watch;
 pub(crate) mod sweep;
 pub(crate) mod watch;
 

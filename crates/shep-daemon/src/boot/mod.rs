@@ -399,6 +399,18 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         events.clone(),
     );
 
+    // Ends on `shutdown`, so teardown holds no handle for it. A successor
+    // starts its own and sets its own baseline, so a handover wakes no dog.
+    drop(crate::secrets_watch::spawn_secrets_watch(
+        crate::secrets_watch::Watcher::new(
+            paths.secrets.clone(),
+            paths.dogs_config.clone(),
+            host_environment.clone(),
+        ),
+        events.clone(),
+        shutdown.subscribe(),
+    ));
+
     let writer = spawn_snapshot_writer(
         paths.snapshot.clone(),
         supervisor.clone(),

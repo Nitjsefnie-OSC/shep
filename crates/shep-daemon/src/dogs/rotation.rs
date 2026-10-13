@@ -1,5 +1,6 @@
-//! Which dogs a provider's push can reach: the ones whose `dogs.toml`
-//! section names a value in the pushed namespace.
+//! Which dogs a change to a secret can reach: the ones whose `dogs.toml`
+//! section names a value in the namespace that moved, or in the operator's
+//! own store.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -12,21 +13,25 @@ use super::secrets::section_references;
 /// Every dog whose section in `dogs_config` names `namespace`, with the
 /// keys it names there.
 ///
+/// `namespace` is a provider's name, or `None` for the operator's own
+/// store, which an un-namespaced `{{secret:KEY}}` reads. Either way the keys
+/// come back bare.
+///
 /// A reference is read through [`section_references`], so a string that
-/// [`super::resolve_section`] would not substitute names nothing. An
-/// un-namespaced `{{secret:KEY}}` is the operator's own store, not a
-/// provider's, and is not counted. A missing, unreadable or invalid file
-/// names nobody, and so does a section that does not parse: the push that
-/// asked is not the place to report either.
+/// [`super::resolve_section`] would not substitute names nothing. A missing,
+/// unreadable or invalid file names nobody, and so does a section that does
+/// not parse: the change that asked is not the place to report either.
 #[must_use]
-pub fn dogs_referencing(dogs_config: &Path, namespace: &str) -> BTreeMap<String, BTreeSet<String>> {
+pub fn dogs_referencing(
+    dogs_config: &Path,
+    namespace: Option<&str>,
+) -> BTreeMap<String, BTreeSet<String>> {
     let Ok(source) = std::fs::read_to_string(dogs_config) else {
         return BTreeMap::new();
     };
     let Ok(config) = DogsConfig::load(Some(&source)) else {
         return BTreeMap::new();
     };
-    let prefix = format!("{namespace}/");
     config
         .dog
         .keys()
@@ -34,7 +39,11 @@ pub fn dogs_referencing(dogs_config: &Path, namespace: &str) -> BTreeMap<String,
             let section = dog_section(dogs_config, dog).ok()?;
             let keys: BTreeSet<String> = section_references(&section)
                 .into_iter()
-                .filter_map(|reference| reference.strip_prefix(&prefix).map(str::to_owned))
+                .filter_map(|reference| match (namespace, reference.split_once('/')) {
+                    (None, None) => Some(reference),
+                    (Some(wanted), Some((found, key))) if wanted == found => Some(key.to_owned()),
+                    _ => None,
+                })
                 .collect();
             (!keys.is_empty()).then(|| (dog.clone(), keys))
         })
@@ -45,7 +54,7 @@ pub fn dogs_referencing(dogs_config: &Path, namespace: &str) -> BTreeMap<String,
 mod tests {
     use super::*;
 
-    fn named(dogs_toml: &str, namespace: &str) -> BTreeMap<String, BTreeSet<String>> {
+    fn named(dogs_toml: &str, namespace: Option<&str>) -> BTreeMap<String, BTreeSet<String>> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dogs.toml");
         std::fs::write(&path, dogs_toml).unwrap();
@@ -63,7 +72,7 @@ mod tests {
              [metrics.auth]\nkey = \"{{secret:vercel/TOKEN}}\"\n\
              [quiet]\npoll = \"5s\"\n\
              [own]\nk = \"{{secret:TOKEN}}\"\n",
-            "vercel",
+            Some("vercel"),
         );
         assert_eq!(
             found,
@@ -75,14 +84,30 @@ mod tests {
     }
 
     #[test]
+    fn no_namespace_finds_the_dogs_naming_the_operators_own_store() {
+        let found = named(
+            "[bark]\nurl = \"{{secret:vercel/URL}}\"\ntoken = \"{{secret:TOKEN}} {{secret:OTHER}}\"\n\
+             [metrics.auth]\nkey = \"{{secret:TOKEN}}\"\n",
+            None,
+        );
+        assert_eq!(
+            found,
+            BTreeMap::from([
+                ("bark".to_string(), keys(&["OTHER", "TOKEN"])),
+                ("metrics".to_string(), keys(&["TOKEN"])),
+            ])
+        );
+    }
+
+    #[test]
     fn a_namespace_nobody_names_finds_nobody() {
-        assert!(named("[bark]\nt = \"{{secret:vercel/T}}\"\n", "other").is_empty());
+        assert!(named("[bark]\nt = \"{{secret:vercel/T}}\"\n", Some("other")).is_empty());
     }
 
     #[test]
     fn a_missing_or_invalid_file_names_nobody() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(dogs_referencing(&dir.path().join("dogs.toml"), "vercel").is_empty());
-        assert!(named("[bark\nt = ", "vercel").is_empty());
+        assert!(dogs_referencing(&dir.path().join("dogs.toml"), Some("vercel")).is_empty());
+        assert!(named("[bark\nt = ", Some("vercel")).is_empty());
     }
 }

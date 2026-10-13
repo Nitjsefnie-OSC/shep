@@ -763,7 +763,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 .collect();
             // Asked before the push so a namespace nobody names costs one
             // file read and nothing else.
-            let named = crate::dogs::dogs_referencing(&ctx.dogs_config, &namespace);
+            let named = crate::dogs::dogs_referencing(&ctx.dogs_config, Some(&namespace));
             let pushed = ctx.provider_secrets.put(
                 &ctx.host_environment,
                 &namespace,
