@@ -199,7 +199,7 @@ impl<'a, S: State> Handover<'a, S> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::path::Path;
 
@@ -217,7 +217,6 @@ mod tests {
         const FORMAT: u32 = 3;
     }
 
-    #[cfg(unix)]
     #[test]
     fn debug_names_the_keys_and_never_the_state() {
         let state = Secret {
@@ -282,7 +281,6 @@ mod tests {
         assert!(matches!(err, HandOverError::Target(_)), "{err}");
     }
 
-    #[cfg(unix)]
     #[test]
     fn one_key_carried_twice_is_refused() {
         let state = Secret {
