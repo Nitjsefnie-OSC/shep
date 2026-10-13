@@ -42,6 +42,7 @@ mod dispatch;
 mod dog_channel;
 mod dogs_kv;
 mod fixtures;
+mod flockfile_disabled;
 mod flockfile_load;
 mod guard;
 mod handover_basic;

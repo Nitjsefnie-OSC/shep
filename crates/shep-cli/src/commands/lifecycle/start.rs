@@ -18,7 +18,7 @@ use crate::commands::lifecycle::configure::{
 use crate::commands::lifecycle::resolve::{
     TargetError, resolve_target_declared, split_assignments,
 };
-use crate::commands::lifecycle::respawn::{already_registered, resume_all};
+use crate::commands::lifecycle::respawn::{already_registered, leave_disabled, resume_all};
 use crate::commands::lifecycle::selectors::{
     fail_target, flock_matches, flock_now, is_reachable_as_a_name, render_outcome, request_each,
     selector_miss,
@@ -415,6 +415,7 @@ async fn load_one(
             .iter()
             .flat_map(|(_, rows)| rows.iter().cloned())
             .collect();
+        let existing = leave_disabled(streams, existing);
         let code = resume_all(client, streams, None, &existing, started).await;
         if code != ExitCode::Success {
             return first_failure(applied, code);
