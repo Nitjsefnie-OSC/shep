@@ -434,16 +434,16 @@ impl<R: ProcessRunner> Actor<R> {
             return;
         }
 
-        if kind == ManualKind::Delete {
-            if let Some(name) = matched.iter().find_map(|id| self.built_in_dog_name(*id)) {
-                send_reply(
-                    reply,
-                    Err(SupervisorError::IsADog(crate::dogs::built_in_dog_refusal(
-                        &name,
-                    ))),
-                );
-                return;
-            }
+        if kind == ManualKind::Delete
+            && let Some(name) = matched.iter().find_map(|id| self.built_in_dog_name(*id))
+        {
+            send_reply(
+                reply,
+                Err(SupervisorError::IsADog(crate::dogs::built_in_dog_refusal(
+                    &name,
+                ))),
+            );
+            return;
         }
 
         self.begin_manual_ids(matched, kind, origin, reply);
