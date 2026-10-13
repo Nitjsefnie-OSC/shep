@@ -152,10 +152,15 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 560 on 2026-10-13 for dog names: an upgrade must say a sheep
   // named after a built-in keeps its name.
   //
-  // Raised from 610 the same day for "Going back to an older version": an
+  // Raised from 610 on 2026-10-13 for "Going back to an older version": an
   // operator has to be told a downgrade loses the disable marks and that
   // `shep disable` is what to re-run. Nothing on the page was cut for it.
-  upgrading: 645, // 643
+  //
+  // Raised again the same day, to 675, when review named the wrong downgrade
+  // behaviour in that section. A parked sheep stays down and loses its refusals
+  // rather than coming straight back up, and saying that correctly costs 28
+  // more words than saying it wrongly.
+  upgrading: 675, // 671
   kv: 550, // 519
   // Raised from 440 on 2026-09-21 for the prebuilt-binary download list,
   // which is new content rather than a correction. The page was sitting at
