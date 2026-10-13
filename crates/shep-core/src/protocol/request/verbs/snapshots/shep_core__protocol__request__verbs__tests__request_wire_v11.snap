@@ -1,6 +1,5 @@
 ---
-source: crates/shep-core/src/protocol/request/verbs.rs
-assertion_line: 975
+source: crates/shep-core/src/protocol/request/verbs/tests.rs
 expression: requests
 ---
 [
@@ -509,6 +508,14 @@ expression: requests
       "name": "web",
       "dog": "jobs",
       "table": null
+    }
+  },
+  {
+    "id": 38,
+    "deadline_ms": null,
+    "body": {
+      "kind": "dog_config_resolved",
+      "name": "bark"
     }
   }
 ]

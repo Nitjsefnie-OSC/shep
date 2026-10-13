@@ -9,6 +9,7 @@
 use core::fmt;
 use std::path::PathBuf;
 
+use shep_core::config::template::RenderError;
 use shep_core::config::{AppConfig, ResolvedApp, normalize};
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::DogSource;
@@ -17,6 +18,7 @@ use crate::bus::Bus;
 use crate::supervisor::SupervisorHandle;
 
 use super::narrate::narrate;
+use super::secrets::StoreFault;
 
 /// One dog the daemon knows about: its name, and where its binary comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,10 +32,12 @@ pub struct DogSpec {
 /// Error assembling a dog's app config, or reading its section
 ///
 /// `Debug` needs no redaction: a path, a normalizer complaint, or a TOML
-/// parser message, never a value read out of a parsed `[<name>]` table. A
-/// syntax error can quote a line of the section's own source, but only to
-/// the peer that asked, which peer-cred auth already established owns the
-/// file.
+/// parser message, never a value read out of a parsed `[<name>]` table. The
+/// two secret variants hold a key path, a reference as written, an
+/// environment name and a [`StoreFault`], so no field can hold a resolved
+/// value (IR-41). A syntax error can quote a line of the section's own
+/// source, but only to the peer that asked, which peer-cred auth already
+/// established owns the file.
 ///
 /// [`Self::NoBinary`] and [`Self::Io`] wrap their [`std::io::Error`] rather
 /// than rendering it, which costs this enum `Clone`, `PartialEq` and `Eq`.
@@ -54,6 +58,24 @@ pub enum DogError {
     Config(String),
     /// The file exists and could not be read
     Io(std::io::Error),
+    /// A `{{secret:...}}` in the section cannot be resolved: it names no
+    /// value, names a namespace no provider has pushed, or is outside the
+    /// reference grammar
+    Reference {
+        /// Where the string sits in the section, as `sinks.local.url` or
+        /// `rules[1].url`
+        key_path: String,
+        /// Which reference, and why. Holds the reference as written and the
+        /// environment, never a value.
+        source: RenderError,
+    },
+    /// The section names a reference and the secret store could not be read
+    SecretStore {
+        /// Where the first reference in the section sits
+        key_path: String,
+        /// What went wrong, without the store's own message
+        fault: StoreFault,
+    },
 }
 
 impl fmt::Display for DogError {
@@ -65,6 +87,11 @@ impl fmt::Display for DogError {
             }
             Self::Config(msg) => write!(f, "dog configuration is unusable: {msg}"),
             Self::Io(err) => write!(f, "dog configuration could not be read: {err}"),
+            Self::Reference { key_path, source } => write!(f, "`{key_path}`: {source}"),
+            Self::SecretStore { key_path, fault } => write!(
+                f,
+                "`{key_path}`: the secret store could not be read ({fault})"
+            ),
         }
     }
 }
@@ -73,7 +100,8 @@ impl core::error::Error for DogError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Self::NoBinary(err) | Self::Io(err) => Some(err),
-            Self::UnsupportedSource(_) | Self::Config(_) => None,
+            Self::Reference { source, .. } => Some(source),
+            Self::UnsupportedSource(_) | Self::Config(_) | Self::SecretStore { .. } => None,
         }
     }
 }
