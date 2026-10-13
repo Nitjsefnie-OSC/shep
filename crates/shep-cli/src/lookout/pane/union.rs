@@ -401,7 +401,8 @@ impl ConfigPane {
     }
 
     /// The sentence that says why the filed edits cannot be written: a
-    /// union among them holds an arm without a field the arm requires.
+    /// union among them holds an arm without an editable field the arm
+    /// requires. A field with no editor is not asked for.
     /// [`None`] when every filed union is whole.
     #[must_use]
     pub(in crate::lookout) fn incomplete_union(&self) -> Option<String> {
@@ -416,7 +417,11 @@ impl ConfigPane {
             let arm = &shape.arms[arm];
             arm.fields
                 .iter()
-                .find(|member| arm.requires(&member.key) && !object.contains_key(&member.key))
+                .find(|member| {
+                    member.editable
+                        && arm.requires(&member.key)
+                        && !object.contains_key(&member.key)
+                })
                 .map(|member| required_text(&shape.tag, &arm.tag, &member.key))
         })
     }

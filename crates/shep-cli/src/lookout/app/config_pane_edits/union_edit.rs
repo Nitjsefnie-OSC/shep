@@ -182,3 +182,29 @@ fn esc_holds_the_pane_while_a_picked_tag_lacks_a_field_it_requires() {
         json!({ "retro": { "kind": "path", "path": "skills/new" } })
     );
 }
+
+#[test]
+fn a_tag_picked_while_the_close_read_is_out_is_held_when_the_read_lands() {
+    let mut app = app_on_retro();
+    open_and_walk(&mut app, 2);
+    press(&mut app, KeyPress::Confirm);
+    press(&mut app, KeyPress::TextChar('x'));
+    press(&mut app, KeyPress::TextApply);
+    assert_eq!(
+        app.update(Msg::Key(KeyPress::Escape)),
+        Effect::Send(Sent::SheepConfig { name: "web".into() }),
+        "the table is whole, so esc asks for the re-read"
+    );
+    press(&mut app, KeyPress::SelectUp);
+    press(&mut app, KeyPress::Cycle);
+    press(&mut app, KeyPress::Cycle);
+    let effect = app.update(Msg::Replied {
+        sent: Sent::SheepConfig { name: "web".into() },
+        result: Ok(Response::SheepConfig(Box::new(web_with_retro()))),
+    });
+    assert_eq!(effect, Effect::None, "nothing is written");
+    let notice = app.notice().expect("the hold says why");
+    assert!(notice.grave);
+    assert!(notice.text.contains("path is required"), "{}", notice.text);
+    assert!(app.config_pane().is_some(), "the pane stays open");
+}

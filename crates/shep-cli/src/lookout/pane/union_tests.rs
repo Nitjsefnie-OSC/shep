@@ -430,3 +430,37 @@ fn an_ordinary_key_holding_the_separator_is_not_read_as_a_union_row() {
     pane.file_field(key.clone(), json!("kept"));
     assert_eq!(filed(&pane, &key), Some(json!("kept")));
 }
+
+#[test]
+fn a_required_field_with_no_editor_does_not_hold_the_close() {
+    let schema = json!({
+        "properties": {
+            "retro": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": { "kind": { "type": "string", "const": "none" } },
+                        "required": ["kind"],
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "kind": { "type": "string", "const": "blob" },
+                            "blob": {},
+                        },
+                        "required": ["kind", "blob"],
+                    },
+                ],
+            },
+        },
+    });
+    let table = json!({ "retro": { "kind": "none" } });
+    let Value::Object(table) = table else {
+        panic!("a table is an object");
+    };
+    let mut pane = ConfigPane::sheep_dog("web".into(), "kelpie".into(), &schema, table);
+    on_arm(&mut pane, "retro", 0);
+    pane.cycle();
+    assert_eq!(written(&pane)["retro"], json!({ "kind": "blob" }));
+    assert_eq!(pane.incomplete_union(), None);
+}
