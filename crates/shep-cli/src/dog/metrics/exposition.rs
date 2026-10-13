@@ -10,8 +10,9 @@ use shep_core::status::ProcStatus;
 use super::Reading;
 
 /// Every [`ProcStatus`] value, in the order `shep_sheep_status` renders
-/// them, so a scrape's series order is stable across calls.
-const ALL_STATUSES: [ProcStatus; 6] = [
+/// them, so a scrape's series order is stable across calls, and so the OTLP
+/// exporter writes the same six.
+pub(super) const ALL_STATUSES: [ProcStatus; 6] = [
     ProcStatus::Starting,
     ProcStatus::Online,
     ProcStatus::Stopping,
@@ -128,7 +129,7 @@ impl fmt::Display for StatusLabels<'_> {
 /// fixed at compile time. The dog-source spelling lives in `shep-core`'s own
 /// `From<&DogSource> for &'static str`; the two hand-listed vocabularies sit
 /// where the type that owns them is defined.
-fn status_label(status: ProcStatus) -> &'static str {
+pub(super) fn status_label(status: ProcStatus) -> &'static str {
     match status {
         ProcStatus::Starting => "starting",
         ProcStatus::Online => "online",
@@ -292,7 +293,7 @@ pub fn render(reading: &Reading) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use shep_core::protocol::{DogSource, ProcessInfo};
     use shep_core::status::ProcStatus;
 
@@ -516,7 +517,10 @@ mod tests {
     /// one sheep whose name needs all three escapes while in a non-online
     /// state, so every label path and all six status spellings appear in
     /// it.
-    fn golden_reading() -> Reading {
+    ///
+    /// `pub(super)`: the OTLP encoder's drift guard renders the same
+    /// reading through both renderers.
+    pub(in crate::dog::metrics) fn golden_reading() -> Reading {
         let mut dog = sample_info("bark");
         dog.dog = Some(DogSource::BuiltIn);
         let mut odd = sample_info("we\"b\\x\n");

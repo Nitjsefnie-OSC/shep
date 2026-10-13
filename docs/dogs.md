@@ -257,6 +257,66 @@ Widening `bind` to `0.0.0.0` (or any non-loopback address) is one config
 line away when you want it, but the metrics dog will not make that
 decision for you by shipping wide and asking you to lock it down.
 
+### OTLP export
+
+The same series can be pushed to an OTLP/HTTP collector instead of waited
+for. `otlp_endpoint` is the only key that turns it on:
+
+```toml
+[metrics]
+otlp_endpoint = "http://127.0.0.1:4318"
+otlp_interval = "60s"
+otlp_timeout = "10s"
+
+[metrics.otlp_headers]
+Authorization = "Bearer token-from-a-secret-manager"
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `otlp_endpoint` | none | Base URL of the collector, `http://` or `https://`. Absent means no export. `/v1/metrics` is appended to it. |
+| `otlp_interval` | `60s` | How long between exports. The first lands one interval after the dog starts. |
+| `otlp_timeout` | `10s` | One export's budget, connect through response. |
+| `otlp_headers` | empty | Extra headers, the shape an authenticated collector needs. Never printed. |
+
+Export is a cargo feature, off in the shipped binary:
+
+```bash
+cargo install shep --features otel
+```
+
+A build without it refuses `otlp_endpoint` at startup, exiting
+`invalid_config` and naming the feature, rather than running a dog that
+exports nothing while `shep list` reports it online.
+
+The body is OTLP/JSON. Every series above is a `gauge` except
+`shep_sheep_restart_total`, which is a monotonic cumulative `sum` whose
+`startTimeUnixNano` is the dog's own start, so a collector can difference
+two exports and get the restarts inside the interval. Integers are decimal
+strings, rates are numbers, and every Prometheus label is a string
+attribute, so the two paths report the same series with the same labels.
+Resource attributes are `service.name = "shep"`, `service.version` and
+`host.name`. Channel samples are not exported yet.
+
+One failed export is one line in the dog's log, on the first failure after
+a success and again on recovery, never once per tick. A 2xx whose body names
+a `partialSuccess` counts as one: the line carries its
+`rejectedDataPoints` and `errorMessage`, and an empty `partialSuccess` is a
+clean export. The answer's body is read for that and nothing else, up to
+8 KiB. It never touches the scrape server or the dog's
+exit code, and there is no final flush on stop: the next tick sends current
+values anyway.
+
+The feature adds no dependency, and its cost is code only. Measured on this
+machine (macOS, Apple Silicon, raw file size, not #292's corrected
+install-size method):
+
+| Build | `target/release/shep` |
+|---|---|
+| default | 18,994,592 bytes |
+| `--features otel` | 19,090,064 bytes |
+| delta | 95,472 bytes |
+
 ## The bark dog
 
 `shep enable bark` subscribes to the shepherd's event bus and watches for

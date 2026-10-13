@@ -119,7 +119,13 @@ export const BUDGETS: Record<string, number> = {
   // a running dog through the reload and nowhere else. Raised again the same
   // day for the review's correction to that rule: what a successor leaves
   // behind is a parked dog, and a marked one still holding a process crosses.
-  dogs: 3325, // 3321
+  //
+  // Raised again for the metrics dog's OTLP export: four config keys an
+  // operator has to be told the defaults of, the `--features otel` install
+  // line, what a build without the feature does with `otlp_endpoint`, and
+  // the measured binary size #292 asked for. All of it is operator-facing
+  // surface for a shipped feature, not prose to trim back out.
+  dogs: 3650, // 3641
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's

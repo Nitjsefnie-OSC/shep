@@ -490,5 +490,17 @@ shutdown message. A dog that did not ask answers a trigger with
 `dog_no_channel`. `PROTOCOL_VERSION` stays at 11: the new `DogSource` key
 and outcome are additive.
 
+**The metrics dog can push its series to an OTLP endpoint.** The `otel`
+cargo feature, off by default and carrying no new dependency, adds
+`otlp_endpoint`, `otlp_interval`, `otlp_timeout` and `otlp_headers` to
+`[dog.metrics]`. The dog POSTs OTLP/JSON to `{endpoint}/v1/metrics` on an
+interval, with the same series and the same labels `/metrics` serves;
+`shep_sheep_restart_total` is the one monotonic cumulative sum, started at
+the dog's own start. A 2xx naming a `partialSuccess` is a
+failed export, not a clean one. A build without the feature refuses
+`otlp_endpoint` at startup rather than running a dog that exports nothing. `otlp_headers` is a
+secret: redacted in `Debug`, marked in the schema, and never printed. No
+wire change.
+
 Project memory (cross-session state) tracks decisions; docs above are the
 source of truth.
