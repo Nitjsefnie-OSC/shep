@@ -332,6 +332,8 @@ impl<R: ProcessRunner> Actor<R> {
     /// two live processes under one name, dog or not. A dog entry at rest is
     /// the exception, since no process stands behind it: it spawns in place
     /// from `app` and `source`, which win over what it was registered with.
+    /// A dog that ran and stopped is not at rest, so a boot that names it
+    /// again leaves it stopped.
     pub(super) fn do_start_dog(
         &mut self,
         app: ResolvedApp,
@@ -345,16 +347,16 @@ impl<R: ProcessRunner> Actor<R> {
             .sheep
             .iter()
             .find(|(_, slot)| slot.entry.spec.config().name == name)
-            .map(|(id, slot)| (*id, slot.entry.dog.is_some(), slot.entry.status));
+            .map(|(id, slot)| {
+                (
+                    *id,
+                    is_at_rest(&slot.entry),
+                    to_info(&slot.entry, &self.smits),
+                )
+            });
         let at_rest = match held {
-            Some((id, true, ProcStatus::Stopped)) => Some(id),
-            Some((id, ..)) => {
-                let slot = self
-                    .sheep
-                    .get(&id)
-                    .expect("the entry was found a moment ago");
-                return Ok(to_info(&slot.entry, &self.smits));
-            }
+            Some((id, true, _)) => Some(id),
+            Some((_, false, info)) => return Ok(info),
             None => None,
         };
         // Cleared whether or not the spawn lands: the operator's word is
@@ -542,4 +544,15 @@ impl<R: ProcessRunner> Actor<R> {
         sort_flock(&mut results);
         Ok(results)
     }
+}
+
+/// Whether `entry` is a dog that has never had a process: registered, not
+/// started.
+///
+/// Every process exit writes `last_exit`, an operator's `stop` included, so a
+/// dog that ran and stopped is not at rest and is not respawned by a boot
+/// that names it again. `last_exit` rides a handover, so the answer holds
+/// across one.
+fn is_at_rest(entry: &ProcessEntry) -> bool {
+    entry.dog.is_some() && entry.status == ProcStatus::Stopped && entry.last_exit.is_none()
 }

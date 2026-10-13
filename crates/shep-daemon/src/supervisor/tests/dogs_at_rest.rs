@@ -189,3 +189,29 @@ async fn a_dog_at_rest_that_cannot_spawn_is_errored_and_keeps_its_id() {
     assert_eq!(rows[0].status, ProcStatus::Errored);
     assert_eq!(rows[0].dog, Some(DogSource::BuiltIn));
 }
+
+/// A dog the operator stopped is `Stopped` like one at rest, and a boot that
+/// names it again (a handover successor's) must leave it stopped.
+#[tokio::test(start_paused = true)]
+async fn a_dog_that_ran_and_stopped_is_not_started_again_by_a_second_start_dog() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut actor = actor_with_an_empty_flock(&dir, vec![ProcScript::never_exits()]);
+    let running = actor
+        .do_start_dog(dog_from("metrics", "/dogs/metrics"), DogSource::BuiltIn)
+        .unwrap();
+    let slot = actor.sheep.get_mut(&running.id).unwrap();
+    slot.entry.status = ProcStatus::Stopped;
+    slot.entry.pid = None;
+    slot.entry.last_exit = Some(ExitInfo {
+        code: None,
+        signal: Some(15),
+    });
+
+    let again = actor
+        .do_start_dog(dog_from("metrics", "/dogs/metrics"), DogSource::BuiltIn)
+        .unwrap();
+
+    assert_eq!(again.id, running.id);
+    assert_eq!(again.status, ProcStatus::Stopped);
+    assert_eq!(actor.runner.spawn_count(), 1, "nothing was spawned again");
+}
