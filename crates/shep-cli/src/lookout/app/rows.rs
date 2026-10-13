@@ -43,6 +43,9 @@ impl Row {
     /// silent by a stray `handshook`.
     #[must_use]
     pub(crate) fn reported(&self) -> Reported {
+        if self.info.disabled == Some(true) && self.info.status == ProcStatus::Stopped {
+            return Reported::Disabled;
+        }
         if self.info.dog.is_none() {
             return Reported::Live(self.info.status);
         }

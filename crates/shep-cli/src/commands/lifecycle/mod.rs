@@ -13,6 +13,7 @@ pub mod resolve;
 pub(crate) mod respawn;
 pub(crate) mod selectors;
 pub(crate) mod start;
+pub(crate) mod toggle;
 
 pub(crate) use configure::{any_restart_failed, default_cwd_to_flockfile_dir};
 pub(crate) use deadline::staged_start_deadline;

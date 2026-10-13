@@ -28,7 +28,7 @@ use std::path::PathBuf;
 
 use help::{HELP_TEMPLATE, version_text};
 
-pub use dogs::{AdoptArgs, DogArgs, DogsArgs, EnableArgs};
+pub use dogs::{AdoptArgs, DisableArgs, DogArgs, DogsArgs, EnableArgs};
 pub use flock::{FlockArgs, FoldArgs, LookoutArgs};
 pub use import::{ImportArgs, ImportCommand, ImportEnvArgs, ImportPm2Args};
 pub use logs::{BarksArgs, BleatsArgs, FlushArgs, ReopenArgs};

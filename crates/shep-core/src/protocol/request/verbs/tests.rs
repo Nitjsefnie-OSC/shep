@@ -527,3 +527,34 @@ fn the_dog_verbs_serialize_snake_case_with_their_payloads_under_data() {
     assert_eq!(serde_json::to_string(&section).unwrap(), wire);
     assert_eq!(serde_json::from_str::<Response>(wire).unwrap(), section);
 }
+
+/// Bytes an older shepherd cannot read and answers `Unsupported` to, which
+/// is how the CLI knows to say the shepherd needs upgrading.
+#[test]
+fn the_enable_and_disable_requests_and_their_replies_have_their_own_tags() {
+    for (request, wire) in [
+        (
+            Request::Disable {
+                selector: SelectorSpec::Name("api".to_string()),
+            },
+            r#"{"kind":"disable","selector":{"kind":"name","value":"api"}}"#,
+        ),
+        (
+            Request::Enable {
+                selector: SelectorSpec::Name("api".to_string()),
+            },
+            r#"{"kind":"enable","selector":{"kind":"name","value":"api"}}"#,
+        ),
+    ] {
+        assert_eq!(serde_json::to_string(&request).unwrap(), wire);
+        assert_eq!(serde_json::from_str::<Request>(wire).unwrap(), request);
+    }
+    assert_eq!(
+        serde_json::to_string(&Response::Disabled(vec![])).unwrap(),
+        r#"{"kind":"disabled","data":[]}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&Response::Enabled(vec![])).unwrap(),
+        r#"{"kind":"enabled","data":[]}"#
+    );
+}

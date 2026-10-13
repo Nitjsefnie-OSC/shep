@@ -92,7 +92,11 @@ export const BUDGETS: Record<string, number> = {
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   secrets: 2080, // 1977
-  lifecycle: 2020, // 1919
+  // Raised from 2020 on 2026-10-13 for `disable` and `enable`: two verbs
+  // with a refusal an operator has to be told about (an id or `name:slot`
+  // exits 2, and `start`, `restart` and `stock` refuse a disabled app) are
+  // operator-facing surface, not prose to trim back out.
+  lifecycle: 2190, // 2088
   logs: 1900, // 1805
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim
@@ -105,7 +109,11 @@ export const BUDGETS: Record<string, number> = {
   // fourth key beside `data`, and its three spellings are three different
   // answers a script has to tell apart: an object, `null`, and no key at
   // all.
-  "json-output": 1410, // 1362
+  //
+  // Raised from 1410 on 2026-10-13 for `disabled`: a key that is absent
+  // unless true, beside a `status` that still reads `stopped`, is a shape
+  // a script has to be told about.
+  "json-output": 1470, // 1413
   startup: 1250, // 1192
   examples: 1200, // 1156
   "not-built": 1080, // 1020

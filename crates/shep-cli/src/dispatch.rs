@@ -12,6 +12,7 @@ use commands::import;
 use commands::kv;
 use commands::lifecycle;
 use commands::lifecycle::Load;
+use commands::lifecycle::toggle::{Toggle, toggle};
 use commands::logs;
 use commands::muster;
 use commands::query;
@@ -419,9 +420,11 @@ pub(crate) async fn run(
                 )
                 .await
             }
-            None => dogs::enable(&mut streams, &paths, &args.name).await,
+            None => toggle(&mut streams, &paths, Toggle::Enable, &args.name).await,
         },
-        Commands::Disable(ref args) => dogs::disable(&mut streams, &paths, &args.name).await,
+        Commands::Disable(ref args) => {
+            toggle(&mut streams, &paths, Toggle::Disable, &args.name).await
+        }
         Commands::Adopt(ref args) => dogs::adopt(&mut streams, &paths, args).await,
         Commands::Rehome(ref args) => dogs::rehome(&mut streams, &paths, &args.name).await,
         Commands::Describe(ref args) => match connect_client(&mut streams, &paths, guard).await {

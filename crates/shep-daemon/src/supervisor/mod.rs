@@ -76,6 +76,7 @@ use crate::secrets::ProviderSecrets;
 mod actor_actions;
 mod actor_config;
 mod actor_core;
+mod actor_disable;
 mod actor_dog_tables;
 mod actor_exit;
 mod actor_lifecycle;
@@ -233,6 +234,11 @@ struct Actor<R: ProcessRunner> {
     /// makes a second reload of the same app refusable, and what tells a
     /// sheep's exit whether it is a swap's business or its own.
     reloads: HashMap<String, ReloadJob>,
+    /// Every app an operator disabled, by name. The mark belongs to the app:
+    /// a scale-up, a reload's replacement and a second start of a held name
+    /// each create an entry a per-instance flag would miss. Pruned of names
+    /// with no registered instance after every message.
+    disabled: BTreeSet<String>,
 }
 
 #[cfg(test)]

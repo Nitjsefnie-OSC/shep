@@ -137,7 +137,7 @@ fn adopted_source(cfg: &ShepToml, name: &str) -> Option<DogSource> {
 /// # Errors
 /// The exit code and message [`Streams::fail`] already wrote, when the
 /// shepherd answered and refused rather than being absent.
-async fn connect_or_absent(
+pub(crate) async fn connect_or_absent(
     paths: &ShepPaths,
     streams: &mut Streams<'_>,
 ) -> Result<Option<Client>, ExitCode> {
