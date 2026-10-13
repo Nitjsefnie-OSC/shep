@@ -594,7 +594,7 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
     <p>
       A nested struct in the schema is a table row with its keys indented
       under it. The first level starts open. <code>→</code> opens a table,{" "}
-      <code>←</code> closes it or, on a key, moves up to its table, and{" "}
+      <code>←</code> closes it or, on a key or a closed table, moves to its parent, and{" "}
       <code>Enter</code> toggles it. A secret
       reads <code>&lt;set&gt;</code>. A list of strings or integers opens
       the sheep pane's list sub-screen. <code>Esc</code> writes the whole
