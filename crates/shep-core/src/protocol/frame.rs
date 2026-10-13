@@ -226,6 +226,7 @@ mod tests {
                 max_memory: None,
                 level_rules: Vec::new(),
                 reload_deadline_ms: None,
+                disabled: None,
             },
             manually: false,
             at_ms: 1_700_000_000_000,
