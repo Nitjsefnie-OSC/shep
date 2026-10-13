@@ -14,6 +14,8 @@ use shep_core::config::template::RenderError;
 use shep_core::config::{AppConfig, ResolvedApp, normalize};
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::DogSource;
+use shep_core::protocol::ProcessInfo;
+use shep_core::status::ProcStatus;
 
 use crate::bus::Bus;
 use crate::supervisor::SupervisorHandle;
@@ -176,9 +178,11 @@ pub fn dog_app(spec: &DogSpec, paths: &ShepPaths) -> Result<ResolvedApp, DogErro
 ///
 /// A dog outside `enabled` is registered `Stopped` and disabled; one in it is
 /// registered `Stopped` all the same, for [`spawn_enabled_dogs`] to start.
-/// A dog already registered under its name, running or a sheep, is left as it
-/// is. Entries land in the order given, `enabled` first, so a dog's id does
-/// not depend on which of two lists named it.
+/// A dog already registered under its name, running or a sheep, keeps its row
+/// and its mark, except for the one [`stop_unenabled_dogs`] takes back: a dog
+/// this config does not enable that is still running. Entries land in the
+/// order given, `enabled` first, so a dog's id does not depend on which of two
+/// lists named it.
 ///
 /// Never fails the boot, for [`spawn_enabled_dogs`]'s reason: a dog that
 /// cannot be assembled is warned about and left out.
@@ -204,8 +208,53 @@ pub async fn register_dogs_at_rest(
         .map(|spec| spec.name.clone())
         .filter(|name| !enabled.iter().any(|spec| spec.name == *name))
         .collect();
-    if let Err(err) = supervisor.register_dogs_at_rest(dogs, disabled).await {
-        tracing::warn!(%err, "the dogs were not listed");
+    let registered = match supervisor
+        .register_dogs_at_rest(dogs, disabled.clone())
+        .await
+    {
+        Ok(registered) => registered,
+        Err(err) => {
+            tracing::warn!(%err, "the dogs were not listed");
+            return;
+        }
+    };
+    stop_unenabled_dogs(&registered, &disabled, supervisor).await;
+}
+
+/// Stops and marks every registered dog `disabled` names that is not already
+/// stopped and marked.
+///
+/// The case is a handover successor's. A predecessor booted while `shep.toml`
+/// named the dog, ran it, and carried it across the `execve`; this boot read a
+/// file that has since dropped the name, by hand or through `shep disable`
+/// against a shepherd that has since been replaced. The successor owns the
+/// dog's row now, and a row it inherited running is not one its config says
+/// should run: it goes down through the operator's own door, which marks the
+/// app as it stops it, so `shep flock` reads `disabled` and
+/// `shep enable <name>` is the way back. A cold boot never reaches this: it
+/// spawns only the dogs it enables, so every dog it registers at rest is
+/// already in the shape this passes by.
+///
+/// Awaits each dog's kill ladder, since the reply the supervisor owes is the
+/// exit's. Bounded by the dog's own `shutdown_timeout` and `kill_timeout`, and
+/// it delays the readiness this boot reports by that much.
+async fn stop_unenabled_dogs(
+    registered: &[ProcessInfo],
+    disabled: &BTreeSet<String>,
+    supervisor: &SupervisorHandle,
+) {
+    for info in registered {
+        let parked = info.disabled == Some(true) && info.status == ProcStatus::Stopped;
+        if info.dog.is_none() || parked || !disabled.contains(&info.name) {
+            continue;
+        }
+        if let Err(err) = supervisor.disable_dog(info.name.clone()).await {
+            tracing::warn!(
+                dog = %info.name,
+                %err,
+                "a dog this shepherd's config does not enable was left running"
+            );
+        }
     }
 }
 
