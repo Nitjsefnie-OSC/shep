@@ -244,7 +244,7 @@ fn a_bad_shep_toml_refuses_the_reload_and_leaves_the_flock_supervised() {
         .unwrap();
     assert_success(&after);
     let envelope: serde_json::Value = serde_json::from_slice(&after.stdout).unwrap();
-    let sheep = &envelope["data"][0];
+    let sheep = &sheep_rows(&envelope["data"])[0];
     assert_eq!(sheep["status"], "online", "still supervised: {sheep}");
     assert_eq!(
         sheep["pid"].as_u64(),
@@ -313,7 +313,7 @@ fn a_refused_dog_migration_refuses_the_reload_and_leaves_the_flock_supervised() 
         .unwrap();
     assert_success(&after);
     let envelope: serde_json::Value = serde_json::from_slice(&after.stdout).unwrap();
-    let sheep = &envelope["data"][0];
+    let sheep = &sheep_rows(&envelope["data"])[0];
     assert_eq!(sheep["status"], "online", "still supervised: {sheep}");
     assert_eq!(
         sheep["pid"].as_u64(),
@@ -379,7 +379,7 @@ fn a_bad_shep_toml_an_env_var_would_rescue_is_still_refused() {
         .unwrap();
     assert_success(&after);
     let envelope: serde_json::Value = serde_json::from_slice(&after.stdout).unwrap();
-    let sheep = &envelope["data"][0];
+    let sheep = &sheep_rows(&envelope["data"])[0];
     assert_eq!(sheep["status"], "online", "still supervised: {sheep}");
     assert_eq!(
         sheep["pid"].as_u64(),

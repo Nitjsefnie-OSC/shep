@@ -46,9 +46,10 @@ fn wait_for_dev_online(dev_home: &Path, deadline: Duration) -> serde_json::Value
             .unwrap();
         if output.status.success()
             && let Ok(envelope) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
-            && envelope["data"][0]["status"] == "online"
+            && let Some(sheep) = sheep_rows(&envelope["data"]).into_iter().next()
+            && sheep["status"] == "online"
         {
-            return envelope["data"][0].clone();
+            return sheep;
         }
         if start.elapsed() >= deadline {
             panic!(

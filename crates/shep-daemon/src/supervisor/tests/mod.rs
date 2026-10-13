@@ -42,6 +42,7 @@ mod credentials;
 mod disable_in_flight;
 mod disabled_respawn;
 mod dogs;
+mod dogs_at_rest;
 mod env_batch;
 mod flush;
 #[cfg(unix)]

@@ -38,6 +38,20 @@ pub(crate) enum Command {
         /// Answers with every entry now registered, in the order given.
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     },
+    /// Registers each dog as a flock member without spawning it, marked with
+    /// where it came from.
+    ///
+    /// The dog twin of [`Self::RegisterAtRest`], for the boot that lists every
+    /// dog it knows about. Answered during a shutdown, as that one is.
+    RegisterDogsAtRest {
+        /// Each dog's already-validated app spec and its source.
+        dogs: Vec<(ResolvedApp, DogSource)>,
+        /// The names in `dogs` to mark disabled as they register. A dog that
+        /// was already registered keeps the mark it has.
+        disabled: BTreeSet<String>,
+        /// Answers with one entry per dog now registered, in the order given.
+        reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
+    },
     /// Reports which of `apps` name a sheep registered under a different
     /// config.
     ///
@@ -51,7 +65,9 @@ pub(crate) enum Command {
     /// Registers + spawns one dog, marked with where it came from.
     ///
     /// Separate from [`Self::Start`] only for the marker and for being
-    /// idempotent by name. A dog is supervised exactly as a sheep is.
+    /// idempotent by name. A dog is supervised exactly as a sheep is. A dog
+    /// registered at rest is spawned in its own entry, from this command's
+    /// source.
     StartDog {
         /// The dog's already-validated app spec, built by the daemon rather
         /// than read from a Flockfile.
