@@ -295,6 +295,29 @@ mod tests {
     }
 
     #[test]
+    fn a_null_default_is_no_default_so_the_new_entry_still_reads_back() {
+        let mut schema = defaulted_schema();
+        schema["$defs"]["Client"]["properties"]["name"]["default"] = Value::Null;
+        schema["$defs"]["Client"]["properties"]["limits"]["properties"]["burst"]["default"] =
+            Value::Null;
+        let pane = ConfigPane::dog(
+            "paddock".into(),
+            None,
+            schema,
+            super::super::fixtures::entries_section(),
+        );
+        let mut pane = on_new(pane, "clients");
+        pane.begin_new_entry();
+        let whole = filed(&pane, "clients").expect("the array is filed");
+        assert_eq!(
+            whole[3],
+            json!({ "enabled": true, "key": "change-me", "limits": { "rate": 5 } }),
+            "no null leaf for name or burst"
+        );
+        assert!(written(&pane).contains("[[clients]]\nenabled = true"));
+    }
+
+    #[test]
     fn the_new_entry_opens_and_the_cursor_lands_on_its_first_field() {
         let mut pane = on_new(defaulted_pane(), "clients");
         pane.begin_new_entry();

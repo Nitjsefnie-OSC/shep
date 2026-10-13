@@ -150,8 +150,8 @@ pub fn entries_dog_schema() -> serde_json::Value {
 }
 
 /// [`entries_dog_schema`] with defaults on the items: a new client is
-/// enabled, with a secret `key` of `change-me` and a `retries` of its own,
-/// and a new model has a `context` of 4096. No `name`, `id`, or `provider`.
+/// enabled, with a secret `key` of `change-me`, and a new model has a
+/// `context` of 4096. No `name`, `id`, or `provider`.
 pub fn entries_dog_defaults_schema() -> serde_json::Value {
     let mut schema = entries_dog_schema();
     let defs = &mut schema["$defs"];
