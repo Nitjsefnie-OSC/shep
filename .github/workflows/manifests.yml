@@ -1,10 +1,19 @@
 name: manifests
-# Rejects a pull request whose intra-workspace dev-dependency carries a
-# version. `cargo publish` keeps a versioned dev-dependency and has to resolve
+# Two checks that need a Python and nothing else, both on the machinery that
+# cuts a release rather than on the code a release ships.
+#
+# The first rejects a pull request whose intra-workspace dev-dependency carries
+# a version. `cargo publish` keeps a versioned dev-dependency and has to resolve
 # it, so shep-macros dev-depending on shep-client with a version while
 # shep-client depends on shep-macros normally means neither can publish first.
 # `workspace = true` inherits a version without looking like it does. Runs
 # locally in about a second: `python3 scripts/check-dev-deps.py`.
+#
+# The second runs the tests for the release guard. It rewrites a branch and
+# pushes, so it is the one script in this repository whose bug would be a bad
+# release pull request rather than a failed check, and its tests build a
+# throwaway repository with a bare remote rather than read this one.
+# `python3 -m unittest discover --start-directory scripts`.
 
 on:
   pull_request:
@@ -24,3 +33,17 @@ jobs:
       # ubuntu-latest ships 3.12; tomllib landed in 3.11.
       - name: Check every intra-workspace dev-dependency is path-only
         run: python3 scripts/check-dev-deps.py
+
+  release-guard:
+    name: release guard
+    runs-on: ubuntu-latest
+    # Building a fixture repository per test is the whole cost, and it is
+    # about half a minute.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The tests build their own history in a temp directory, so a default
+      # shallow checkout of this repository is enough: they read its two
+      # release-plz config files and nothing else from it.
+      - name: Run the release guard's tests
+        run: python3 -m unittest discover --start-directory scripts --verbose

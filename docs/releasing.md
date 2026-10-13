@@ -148,7 +148,7 @@ does, produces four tags that can only ever hold the same number.
 Keep the `v` prefix, in either shape. It is what GitHub's release UI and most
 changelog tooling expect.
 
-## A breaking commit can go missing from the bump
+## Commits can go missing from the bump, and the guard writes them back
 
 **release-plz does not read one `git log`.** It walks each package's history a
 commit at a time, checking each one out and asking the commit it is standing
@@ -175,17 +175,74 @@ objected either. The same commits rebased into a line produced 0.9.0 with the
 entry present, which is what pins the cause on the topology rather than on
 `release-plz-changelog.toml`.
 
-`git log --full-history` prunes neither leg.
-`scripts/check-breaking-bump.py` uses it to list the breaking commits since
-the last `shep-v*` tag, and refuses a release pull request whose bump is too
-small to carry them. `release-plz-pr.yml` runs it as the second of that step's
-three guards, before the empty-changelog one, so a lost commit reports itself
-instead of arriving as an empty section with a misleading explanation.
+Measured again 2026-10-13, the same shape at a larger scale.
+[#807](https://github.com/shep-pm/shep/pull/807),
+[#803](https://github.com/shep-pm/shep/pull/803) and
+[#812](https://github.com/shep-pm/shep/pull/812) were cut from one base and
+merged in turn, and release pull request
+[#809](https://github.com/shep-pm/shep/pull/809) came out at 0.13.1 with
+`feat(daemon)!: list every known dog at rest` missing from the bump and none
+of the three in its changelogs. Run against that branch as it stands, the
+script reports 0.14.0 and a line for each of the three.
 
-Two things it does not do. It does not catch two breaking commits where
-release-plz saw one and missed the other, since the version is then right and
-only the changelog is a line short. It does not fix the walk, so an ordinary
-`feat` or `fix` line can still go missing the same way.
+`git log --full-history` prunes neither leg, and
+`scripts/fix-release-bump.py` reads that range. Whatever it finds that the
+release pull request does not already account for, it writes onto the release
+branch and pushes:
+
+- the version, in `[workspace.package]`, in the `[workspace.dependencies]`
+  literals and in `Cargo.lock`, raised only when the whole range implies a
+  larger bump than the one release-plz took, and measured by release-plz's own
+  rule: a break moves the minor from 0.x and the major from 1.0, a `feat` moves
+  the minor from 1.0, or pre-1.0 where `features_always_increment_minor` is
+  true for a package the feature reached, and a pre-1.0 `feat` is a patch. The
+  option is worked out per package, a package's own value over the `[workspace]`
+  one, and one shared version takes the largest bump any package it reached asks
+  for
+- the changelog line each commit owes each package, written under the heading
+  release-plz already wrote for that release, grouped and filtered by
+  `release-plz-changelog.toml` the way release-plz would have written it, a
+  breaking one marked `**(BREAKING)**`
+- the pull request title, with only the number in it moved
+- the `release bump` status, on the head it just wrote
+
+It writes to the release branch and nowhere else, so nothing publishes: the
+release still waits for a human to merge it. release-plz rewrites the branch on
+every push to main, so the guard runs again each time and corrects it again,
+and a branch it already corrected is left alone.
+
+The bump rule is release-plz's and not a stricter one. Measured across this
+repository's own 74 tag transitions, every minor bump carries a breaking commit
+and every range with a `feat` and no break came out a patch. Replayed against
+three releases this repository shipped, `0.12.0` to `0.12.1`, `0.12.3` to
+`0.12.4` and `0.12.4` to `0.12.5`, each a patch that shipped `### Added`
+entries, the script reports the number the release already carries and moves
+nothing. Replayed against `0.6.1` to `0.6.2`, where a break did ship as a
+patch, it reports 0.7.0. `release-plz.toml` sets
+`features_always_increment_minor` nowhere, so every package sits on
+release-plz's default.
+
+It refuses rather than push when it cannot read the branch, and when the version
+it worked out is not one it can actually write: after the rewrite it re-reads
+`[workspace.package]`, the `[workspace.dependencies]` literals and `Cargo.lock`
+with a TOML parser and refuses if any of them still names the old version. A
+release pull request titled one version and built at another is the mistake this
+guard exists to catch, so it is the one outcome the guard will not produce.
+
+`release-plz-pr.yml` runs it as the middle of that step's three guards. The
+other two still fail for a human: a release pull request that bumps no version,
+and one whose new changelog section is empty, are both shapes a person has to
+decide which case they are.
+
+`scripts/test_fix_release_bump.py` builds a throwaway repository with a diamond
+in its history, a release branch cut the way release-plz cuts one, and a bare
+remote standing in for github.com, then asserts the branch comes back at 0.14.0
+with a changelog entry for every commit the walk missed, and that the same
+fixture with the break taken out leaves 0.13.1 where it is. `manifests.yml` runs
+it.
+
+What the guard does not do: it does not fix the walk. The next release pull
+request is built from the same under-read range and corrected again.
 
 The structural fix is a history with no diamonds in it. Requiring branches to
 be up to date before merging would deliver that, at the cost of re-running
