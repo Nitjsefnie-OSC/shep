@@ -291,10 +291,10 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
     <VerbSignature verb="delete" usage="shep delete <selector>...">
       <p>
         Runs the same kill ladder if the sheep is running, then removes the
-        registration entirely. In table format the listing that follows is
-        the whole remaining flock, the same as every other lifecycle verb;
-        the ids it removed are named on stderr because their own rows are
-        gone by the time anything could print them.
+        registration entirely. In table format the listing that follows is the
+        whole remaining flock; the ids it removed are named on stderr, because
+        their rows are gone by then. A <code>shep.toml</code> this verb cannot
+        read refuses a name rather than guess at one.
       </p>
       <p>
         A dog's name takes this verb too: it is struck from

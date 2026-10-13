@@ -133,7 +133,10 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 2200 for `shep delete` reaching a dog: the verb an operator
   // already reads on this page now has a second path, and the page has to say
   // which names take it. The dog's own detail stays on the dogs page.
-  lifecycle: 2235, // 2230
+  //
+  // Raised again for the same verb refusing a name it cannot judge, which is
+  // an exit an operator hits. Paid for by tightening the sentence above it.
+  lifecycle: 2245, // 2235
   logs: 1900, // 1805
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim
