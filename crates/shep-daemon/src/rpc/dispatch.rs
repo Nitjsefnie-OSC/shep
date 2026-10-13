@@ -734,12 +734,30 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 .into_iter()
                 .map(|(key, value)| (key, value.into_string()))
                 .collect();
-            match ctx.provider_secrets.put(
+            // Asked before the push so a namespace nobody names costs one
+            // file read and nothing else.
+            let named = crate::dogs::dogs_referencing(&ctx.dogs_config, &namespace);
+            let pushed = ctx.provider_secrets.put(
+                &ctx.host_environment,
                 &namespace,
                 &environment,
                 values,
                 persists(&ctx.dogs_config, &namespace),
-            ) {
+            );
+            let (changed, cache) = match pushed {
+                Ok(pushed) => (pushed.changed, Ok(pushed.accepted)),
+                Err(failed) => (failed.changed, Err(failed.source)),
+            };
+            // Before the cache result is looked at: the values are live in
+            // memory either way, and a dog told nothing keeps the secret
+            // that was just rotated away.
+            let affected: Vec<String> = named
+                .into_iter()
+                .filter(|(_, keys)| !keys.is_disjoint(&changed))
+                .map(|(dog, _)| dog)
+                .collect();
+            crate::bus::publish_dog_config_changed(&ctx.events, &affected);
+            match cache {
                 Ok(accepted) => reply(Ok(Response::SecretsPut { accepted })),
                 // The values are already in memory and already resolvable;
                 // what failed is only their surviving a restart. Reported

@@ -91,7 +91,10 @@ export const BUDGETS: Record<string, number> = {
   dogs: 3100, // 3059
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
-  secrets: 2080, // 1977
+  // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
+  // push now reaches a running dog, which an operator rotating a secret has
+  // to be told. The page had drifted to 2067 against a recorded 1977.
+  secrets: 2150, // 2123
   lifecycle: 2020, // 1919
   logs: 1900, // 1805
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`

@@ -59,7 +59,13 @@ fn push(ctx: &RpcContext, namespace: &str, environment: &str, pairs: &[(&str, &s
         .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
         .collect();
     ctx.provider_secrets
-        .put(namespace, environment, entries, false)
+        .put(
+            &ctx.host_environment,
+            namespace,
+            environment,
+            entries,
+            false,
+        )
         .unwrap();
 }
 

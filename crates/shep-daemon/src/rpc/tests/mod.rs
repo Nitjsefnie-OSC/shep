@@ -132,6 +132,7 @@ mod dog_env;
 mod dog_fields;
 mod dog_lifecycle;
 mod dog_secrets;
+mod dog_secrets_rotation;
 mod dog_table_events;
 mod dog_tables;
 mod lambs_staleness;
