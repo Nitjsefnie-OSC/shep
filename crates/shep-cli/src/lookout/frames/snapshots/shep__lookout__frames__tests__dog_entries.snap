@@ -1,0 +1,52 @@
+---
+source: crates/shep-cli/src/lookout/frames/mod.rs
+expression: render_text(&buffer)
+---
+shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
+                                                                                                                                                                
+  paddock  (dog config)                                                                                                                                         
+ ~ ▾ clients                  3 entries                                                  FOCUSED  key  text                                                     
+     ▾ alpha                                                                  entry                                                                             
+ ~     id                     (unset)                                                                                                                           
+>~     key                    <set>                                                                                                                             
+ ~     name                   alpha                                                                                                                             
+ ~     timeout                30                                                                                                                                
+     ▸ b-2                                                                    entry                                                                             
+     ▸ #2                                                                     entry                                                                             
+ ~ ▸ models                   2 entries                                                                                                                         
+   retries                    3                                                                                                                                 
+  shep publishes the change; paddock decides what to reload                                                                                                     
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit   control enabled

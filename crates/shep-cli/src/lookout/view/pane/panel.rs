@@ -9,10 +9,11 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use super::super::super::field::Field;
-use super::super::super::pane::{ConfigPane, PaneRow};
+use super::super::super::pane::{ConfigPane, EntryBody, PaneRow};
 use super::super::super::theme::Palette;
 use super::super::super::validation;
 use super::chrome::hairline_line;
+use super::entry_row::ENTRY_LABEL;
 use super::field_row::{TABLE_LABEL, impact_tag, type_label};
 use super::layout::{BLURB_WRAP, PANEL_MAX, clipped, mask_secret, wrap};
 use crate::vocabulary::Role;
@@ -186,6 +187,7 @@ pub(in crate::lookout::view) fn panel_lines(
     let index = match pane.cursor() {
         Some(PaneRow::Field(index)) => index,
         Some(PaneRow::Table(index)) => return panel_for_table(pane, index, palette, width),
+        Some(PaneRow::Entry(index)) => return panel_for_entry(pane, index, palette, width),
         Some(PaneRow::Env(_) | PaneRow::AddEnv) | None => return Vec::new(),
     };
     let Some(field) = pane.fields().fields().get(index) else {
@@ -207,15 +209,41 @@ fn panel_for_table(
     let Some(path) = pane.table_path(index) else {
         return Vec::new();
     };
+    chip_line(path, TABLE_LABEL, palette, width)
+}
+
+/// The panel for a row under an array or map of tables: the chip with the
+/// row's label and its type, and nothing under it. An entry holds no value
+/// of its own, and the fields in one are read-only.
+fn panel_for_entry(
+    pane: &ConfigPane,
+    index: usize,
+    palette: Palette,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let Some(row) = pane.entry_row(index) else {
+        return Vec::new();
+    };
+    let label = match &row.body {
+        EntryBody::Node { entry: true, .. } => ENTRY_LABEL,
+        EntryBody::Node { .. } => TABLE_LABEL,
+        EntryBody::Leaf { field, .. } => type_label(field),
+    };
+    chip_line(&row.label, label, palette, width)
+}
+
+/// The `FOCUSED` chip, `text` clipped to what `width` leaves room for, and
+/// `type_label` after it.
+fn chip_line(text: &str, type_label: &str, palette: Palette, width: u16) -> Vec<Line<'static>> {
     let chip = " FOCUSED ";
-    let label = format!("  {TABLE_LABEL}");
+    let label = format!("  {type_label}");
     let taken = chip.chars().count() + 1 + label.chars().count();
     let budget = width
         .min(PANEL_MAX)
         .saturating_sub(u16::try_from(taken).unwrap_or(u16::MAX));
     vec![Line::from(vec![
         Span::styled(chip, palette.band(Role::Butter)),
-        Span::raw(format!(" {}", clipped(path, budget))),
+        Span::raw(format!(" {}", clipped(text, budget))),
         Span::styled(label, palette.muted()),
     ])]
 }

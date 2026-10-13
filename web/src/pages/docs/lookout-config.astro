@@ -650,6 +650,17 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       map and a secret list get <code>~</code> and stay read-only.
     </p>
     <p>
+      An array or map of tables reads as a count, such as{" "}
+      <code>3 entries</code>, <code>1 entry</code> or{" "}
+      <code>(unset)</code>, and never as JSON, so a credential inside one
+      cannot show. <code>→</code> opens it onto one closed row per entry. A
+      map's entries are named by key. An array's are named by{" "}
+      <code>name</code>, else <code>id</code>, else{" "}
+      <code>#&lt;index&gt;</code>, never by a secret. Everything under an
+      entry is read-only for now, and <code>r</code> keeps an entry open by
+      its key or its position.
+    </p>
+    <p>
       Edits file into the same change set a sheep's pane uses, and{" "}
       <code>u</code> undoes them the same way; nothing reaches the dog's
       section until <code>Esc</code> closes the pane. A section edited
