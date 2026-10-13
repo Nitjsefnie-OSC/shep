@@ -405,7 +405,9 @@ Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
       <div class="row"><span><code>otlp_headers</code></span> <span data-label="Meaning">Extra headers, for a collector that needs auth. Empty by default, and never printed.</span></div>
     </div>
     <p>
-      Export is a cargo feature, off in the shipped binary:
+      Export is a cargo feature: on in every prebuilt release binary and
+      the <code>.deb</code>, off in <code>cargo install shep</code> and the
+      Homebrew formula:
     </p>
     <CodeBlock>{`$ cargo install shep --features otel`}</CodeBlock>
     <p>
