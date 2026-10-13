@@ -61,6 +61,8 @@ mod bleats;
 mod close_dialog;
 mod config_pane;
 mod config_pane_edits;
+#[cfg(test)]
+mod disabled_tests;
 mod dog_pane;
 mod keys;
 mod lambs;

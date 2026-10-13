@@ -12,6 +12,8 @@
 //! `catalogue` (`#[cfg(test)]` only) renders `docs/whistle/tools.md`.
 
 pub mod control;
+#[cfg(test)]
+mod disabled_tests;
 pub mod facts;
 pub mod gate;
 pub mod read;
