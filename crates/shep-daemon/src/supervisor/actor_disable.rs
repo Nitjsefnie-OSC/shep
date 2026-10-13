@@ -308,6 +308,16 @@ impl<R: ProcessRunner> Actor<R> {
             .map(|slot| slot.entry.spec.config().name.clone())
     }
 
+    /// Whether `entry` is a dog an operator disabled, whether or not its stop
+    /// has finished.
+    ///
+    /// The mark is the operator's word about the app, so it stands while the
+    /// kill ladder is still running. [`Self::is_parked_dog`] is this with the
+    /// stop finished.
+    pub(super) fn is_disabled_dog(&self, entry: &ProcessEntry) -> bool {
+        entry.dog.is_some() && self.disabled.contains(&entry.spec.config().name)
+    }
+
     /// Whether `entry` is a dog an operator disabled and that has finished
     /// stopping: it holds no process, and `enable` spawns it afresh in its
     /// own row.
@@ -315,9 +325,7 @@ impl<R: ProcessRunner> Actor<R> {
     /// A disabled dog still on its kill ladder is `Online`, not parked: a
     /// spawn then would run beside the process being stopped.
     pub(super) fn is_parked_dog(&self, entry: &ProcessEntry) -> bool {
-        entry.dog.is_some()
-            && entry.status == ProcStatus::Stopped
-            && self.disabled.contains(&entry.spec.config().name)
+        entry.status == ProcStatus::Stopped && self.is_disabled_dog(entry)
     }
 
     /// Cancels the disable of the dog `name` while its stop is still in

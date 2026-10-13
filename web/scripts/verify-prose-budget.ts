@@ -113,15 +113,22 @@ export const BUDGETS: Record<string, number> = {
   // removals, and the page has to say what survives it and that a built-in
   // is refused. Required content, not prose to trim back out.
   //
+  // Raised from 3254 on 2026-10-14 for what `shep daemon reload` does with a
+  // dog: which ones cross, which one the successor registers afresh, and which
+  // one it stops. An operator has to know a hand-edited `enabled_dogs` reaches
+  // a running dog through the reload and nowhere else. Raised again the same
+  // day for the review's correction to that rule: what a successor leaves
+  // behind is a parked dog, and a marked one still holding a process crosses.
+  //
   // Raised again for the metrics dog's OTLP export: four config keys an
   // operator has to be told the defaults of, the `--features otel` install
   // line, what a build without the feature does with `otlp_endpoint`, and
   // the measured binary size #292 asked for. All of it is operator-facing
   // surface for a shipped feature, not prose to trim back out.
-  dogs: 3820, // 3814
-  // Raised from 3600 for the "Channel samples" section: the grammar and caps
-  // a sheep's own samples are held to, and the refusal counter. New content
-  // rather than a correction.
+  // Raised again from 3650 for the "Channel samples" section: the grammar and
+  // caps a sheep's own samples are held to, and the refusal counter. New
+  // content rather than a correction.
+  dogs: 3900, // 3881
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
@@ -183,7 +190,10 @@ export const BUDGETS: Record<string, number> = {
   // behaviour in that section. A parked sheep stays down and loses its refusals
   // rather than coming straight back up, and saying that correctly costs 28
   // more words than saying it wrongly.
-  upgrading: 675, // 671
+  // Raised from 675 on 2026-10-14 for the `enabled_dogs` half of the reload
+  // the page already describes: a successor stops a dog the new file dropped
+  // and registers a parked one at rest. Required content, not prose.
+  upgrading: 710, // 704
   kv: 550, // 519
   // Raised from 440 on 2026-09-21 for the prebuilt-binary download list,
   // which is new content rather than a correction. The page was sitting at
