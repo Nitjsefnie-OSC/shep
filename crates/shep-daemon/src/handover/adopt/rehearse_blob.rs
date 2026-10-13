@@ -367,6 +367,8 @@ mod tests {
         // would have stopped it.
         crate::sys::adoptable_fd(not_a_pipe.as_raw_fd())
             .expect("the number must be open, or this proves nothing");
+        crate::sys::OpenFd::new(not_a_pipe.as_raw_fd())
+            .expect("carrying it must not refuse it either");
 
         let err = dry_run(&blob).expect_err("/dev/null is not a readable pipe");
 

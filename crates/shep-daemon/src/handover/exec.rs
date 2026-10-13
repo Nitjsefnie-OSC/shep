@@ -63,6 +63,20 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// failed. Each leaves this process still itself, with no blob on disk and
 /// every descriptor close-on-exec as before.
 pub fn hand_over(blob: &Handover, paths: &ShepPaths) -> Result<Infallible, HandOverError> {
+    hand_over_tuned(blob, paths, |handover| {
+        handover.probe_timeout(PROBE_TIMEOUT)
+    })
+}
+
+/// [`hand_over`], with `tune` free to change the crate's description of the
+/// handover before it runs, so a test can aim the exec at a target that fails.
+fn hand_over_tuned(
+    blob: &Handover,
+    paths: &ShepPaths,
+    tune: impl for<'a> FnOnce(
+        shep_handover::Handover<'a, Handover>,
+    ) -> shep_handover::Handover<'a, Handover>,
+) -> Result<Infallible, HandOverError> {
     let mut open = Vec::new();
     for number in blob.named_fds() {
         let fd = OpenFd::new(number).map_err(|source| HandOverError::Descriptor {
@@ -72,13 +86,11 @@ pub fn hand_over(blob: &Handover, paths: &ShepPaths) -> Result<Infallible, HandO
         open.push((number.to_string(), fd));
     }
 
-    let mut handover = shep_handover::Handover::new(blob)
-        .blob_dir(&paths.run)
-        .probe_timeout(PROBE_TIMEOUT);
+    let mut handover = shep_handover::Handover::new(blob).blob_dir(&paths.run);
     for (key, fd) in &open {
         handover = handover.carry(key.clone(), fd);
     }
-    handover.exec(&|_: &Path| Verdict::Carryable)
+    tune(handover).exec(&|_: &Path| Verdict::Carryable)
 }
 
 /// Whether this image is a successor of a shepherd that handed over through
@@ -313,6 +325,131 @@ mod tests {
             "{err}"
         );
         assert!(std::fs::read_dir(&paths.run).unwrap().next().is_none());
+    }
+
+    /// The five kinds of descriptor a shepherd carries, each open and, as the
+    /// daemon opens everything, close-on-exec.
+    struct FiveKinds {
+        listener: std::fs::File,
+        pidfile: std::fs::File,
+        out_log: std::fs::File,
+        stdin: std::io::PipeWriter,
+        channel: std::os::unix::net::UnixStream,
+        // Held so the other ends stay open.
+        _peers: (std::io::PipeReader, std::os::unix::net::UnixStream),
+    }
+
+    impl FiveKinds {
+        fn new() -> Self {
+            let (child_end, stdin) = std::io::pipe().unwrap();
+            let (channel, child_channel) = std::os::unix::net::UnixStream::pair().unwrap();
+            Self {
+                listener: tempfile::tempfile().unwrap(),
+                pidfile: tempfile::tempfile().unwrap(),
+                out_log: tempfile::tempfile().unwrap(),
+                stdin,
+                channel,
+                _peers: (child_end, child_channel),
+            }
+        }
+
+        fn all(&self) -> [std::os::fd::BorrowedFd<'_>; 5] {
+            use std::os::fd::AsFd as _;
+            [
+                self.listener.as_fd(),
+                self.pidfile.as_fd(),
+                self.out_log.as_fd(),
+                self.stdin.as_fd(),
+                self.channel.as_fd(),
+            ]
+        }
+
+        /// A blob naming all five: the daemon's own two come from the blob
+        /// itself and the other three from the one sheep.
+        fn blob(&self) -> Handover {
+            handover_with_fds(
+                &entry_fixture(|_| {}),
+                self.listener.as_raw_fd(),
+                self.pidfile.as_raw_fd(),
+                CarriedFds {
+                    out_pipe: None,
+                    err_pipe: None,
+                    out_log: Some(self.out_log.as_raw_fd()),
+                    err_log: None,
+                    stdin: Some(self.stdin.as_raw_fd()),
+                    channel: Some(self.channel.as_raw_fd()),
+                },
+            )
+        }
+    }
+
+    fn is_close_on_exec(fd: std::os::fd::BorrowedFd<'_>) -> bool {
+        use nix::fcntl::{FcntlArg, FdFlag, fcntl};
+        let flags = fcntl(std::os::fd::AsRawFd::as_raw_fd(&fd), FcntlArg::F_GETFD).unwrap();
+        FdFlag::from_bits_retain(flags).contains(FdFlag::FD_CLOEXEC)
+    }
+
+    /// `named_fds` yields them from two different places, the blob's own two
+    /// and each sheep's, and a handover carries exactly what it yields.
+    #[test]
+    fn the_blob_names_the_listener_the_pidfile_and_each_sheeps_descriptors() {
+        let kinds = FiveKinds::new();
+
+        let mut named: Vec<_> = kinds.blob().named_fds().collect();
+        named.sort_unstable();
+
+        let mut expected = kinds.all().map(|fd| std::os::fd::AsRawFd::as_raw_fd(&fd));
+        expected.sort_unstable();
+        assert_eq!(named, expected);
+    }
+
+    /// The exec is aimed at a file that cannot run, so it fails after the
+    /// descriptors were made inheritable.
+    fn failed_handover(kinds: &FiveKinds, paths: &ShepPaths, target: &Path) -> HandOverError {
+        hand_over_tuned(&kinds.blob(), paths, |handover| {
+            handover.target(target).unprobed()
+        })
+        .unwrap_err()
+    }
+
+    #[test]
+    fn a_failed_exec_leaves_no_blob_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = selftest_paths(dir.path());
+        let target = dir.path().join("not-a-binary");
+        std::fs::write(&target, "this will never execute").unwrap();
+        let kinds = FiveKinds::new();
+
+        let err = failed_handover(&kinds, &paths, &target);
+
+        assert!(
+            std::fs::read_dir(&paths.run).unwrap().next().is_none(),
+            "a failed exec left a blob behind: {err}"
+        );
+    }
+
+    #[test]
+    fn a_failed_exec_makes_every_descriptor_close_on_exec_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = selftest_paths(dir.path());
+        let target = dir.path().join("not-a-binary");
+        std::fs::write(&target, "this will never execute").unwrap();
+        let kinds = FiveKinds::new();
+        // The precondition, so the assertion below cannot pass on a
+        // descriptor that was never inheritable in the first place.
+        for fd in kinds.all() {
+            assert!(is_close_on_exec(fd), "the daemon opens everything so");
+        }
+
+        let err = failed_handover(&kinds, &paths, &target);
+
+        assert!(matches!(err, HandOverError::Exec(_)), "{err}");
+        for fd in kinds.all() {
+            assert!(
+                is_close_on_exec(fd),
+                "a handover that failed left a descriptor open to every child: {err}"
+            );
+        }
     }
 
     #[test]

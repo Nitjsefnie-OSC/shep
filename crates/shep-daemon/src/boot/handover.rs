@@ -45,34 +45,36 @@ pub(super) fn apps_for_the_roll(
 /// what the release before it left, and it is read here so a reload from that
 /// release onto this one still hands over. The first wins.
 ///
-/// An unusable blob logs at `error` and boots as if fresh: the predecessor has
-/// already replaced itself, so refusing leaves the operator no shepherd. A
-/// genuinely lost legacy blob is self-limiting, since a real successor also
-/// inherited the locked pidfile descriptor and the fresh boot stops at
-/// [`BootError::AlreadyRunning`] before restoring anything. One
-/// `shep-handover` refused has closed its descriptors, the pidfile among them,
-/// so the fresh boot does not stop there.
+/// An unusable legacy blob logs at `error` and boots as if fresh: the
+/// predecessor has already replaced itself, so refusing leaves the operator no
+/// shepherd. That is self-limiting, since a real successor also inherited the
+/// locked pidfile descriptor and the fresh boot stops at
+/// [`BootError::AlreadyRunning`] before restoring anything.
+///
+/// One `shep-handover` refused is not, and boots nothing. It has closed the
+/// descriptors it carried, the pidfile among them, so a fresh boot would take
+/// the lock, restore the roll and run every sheep a second time beside the
+/// originals. The boot is refused instead, as a failed adoption is.
 ///
 /// Also answers a predecessor's probe, and exits.
 ///
+/// # Errors
+///
+/// - [`BootError::Adopt`] if `shep-handover` found the blob unreadable, in a
+///   format this build does not read, or naming a descriptor that was not
+///   inherited.
+///
 /// Unix only: Windows has no `execve`, so no image can be a successor.
-#[must_use]
-pub(crate) fn successor_handover() -> Option<Successor> {
+pub(crate) fn successor_handover() -> Result<Option<Successor>, BootError> {
     match crate::handover::arrive() {
-        Ok(Some(arrival)) => return Some(Successor::Arrived(arrival)),
+        Ok(Some(arrival)) => return Ok(Some(Successor::Arrived(arrival))),
         Ok(None) => {}
-        Err(error) => {
-            tracing::error!(
-                %error,
-                "this process was handed a handover it cannot use, and is booting as if it \
-                 were fresh; if a flock was running, it is no longer supervised"
-            );
-            return None;
-        }
+        Err(error) => return Err(BootError::Adopt(Box::new(error))),
     }
-    let path = PathBuf::from(std::env::var_os(crate::handover::HANDOVER_ENV)?);
-    let blob = successor_handover_at(&path)?;
-    Some(Successor::Written { path, blob })
+    let Some(path) = std::env::var_os(crate::handover::HANDOVER_ENV).map(PathBuf::from) else {
+        return Ok(None);
+    };
+    Ok(successor_handover_at(&path).map(|blob| Successor::Written { path, blob }))
 }
 
 /// Rebuild everything a successor was handed: the lock, the listener, and
@@ -772,10 +774,59 @@ mod tests {
         );
     }
 
+    /// The environment variable that tells the child of
+    /// [`a_refused_envelope_refuses_the_boot_rather_than_booting_fresh`] to be
+    /// the successor stage.
+    const REFUSED_STAGE: &str = "SHEP_HANDOVER_REFUSED_STAGE";
+
+    /// The full path of that test, as libtest's `--exact` wants it.
+    const REFUSED_NAME: &str =
+        "boot::handover::tests::a_refused_envelope_refuses_the_boot_rather_than_booting_fresh";
+
+    /// A successor whose envelope names a blob that is gone.
+    ///
+    /// `shep-handover` closes every descriptor it carried when it refuses, the
+    /// pidfile among them, so a fresh boot would take the lock and run the
+    /// flock a second time. The boot is refused instead.
+    #[test]
+    fn a_refused_envelope_refuses_the_boot_rather_than_booting_fresh() {
+        if std::env::var_os(REFUSED_STAGE).is_some() {
+            let refused = successor_handover();
+            println!("refused: {}", matches!(refused, Err(BootError::Adopt(_))));
+            std::process::exit(0);
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        // The marker names its reader's pid, and a shell that `exec`s keeps
+        // its own: `$$` is the successor's.
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!(
+                "{}=$$:\"$1\" exec \"$2\" \"$3\" --exact --nocapture",
+                shep_handover::HANDOVER_ENV
+            ))
+            .arg("sh")
+            .arg(dir.path().join("lost.json"))
+            .arg(std::env::current_exe().unwrap())
+            .arg(REFUSED_NAME)
+            .env(REFUSED_STAGE, "1")
+            .env_remove(crate::handover::HANDOVER_ENV)
+            .output()
+            .unwrap();
+
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("running 1 test"),
+            "the child ran no test, so `{REFUSED_NAME}` is not where this test lives any more: \
+             {stdout}"
+        );
+        assert!(stdout.contains("refused: true"), "{stdout}");
+    }
+
     /// The successor stage: take the flock the way `boot` does, and read what
     /// the predecessor left in the pipe the blob names.
     fn legacy_successor_stage() -> ! {
-        let Some(Successor::Written { blob, .. }) = successor_handover() else {
+        let Ok(Some(Successor::Written { blob, .. })) = successor_handover() else {
             panic!("a blob where SHEP_HANDOVER points is a legacy successor");
         };
         let mut buf = [0_u8; 64];

@@ -272,6 +272,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_code_and_a_signal_are_never_collapsed_into_one_another() {
+        let exited = adopted("exit 3");
+        let signalled = adopted("kill -TERM $$; sleep 30");
+        let reaper = AdoptedReaper::new();
+        let (exited, signalled) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(reaper.wait(exited.id()), reaper.wait(signalled.id()))
+        })
+        .await
+        .expect("both waits answered within the budget");
+        assert_eq!(
+            exited.expect("the first child was reapable"),
+            ExitOutcome {
+                code: Some(3),
+                signal: None
+            }
+        );
+        assert_eq!(
+            signalled.expect("the second child was reapable"),
+            ExitOutcome {
+                code: None,
+                signal: Some(15)
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn pid_zero_is_refused_rather_than_becoming_a_group_wide_wait() {
         let reaper = AdoptedReaper::new();
         let error = reaper.wait(0).await.expect_err("pid 0 is refused");
