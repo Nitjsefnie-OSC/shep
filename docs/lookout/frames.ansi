@@ -7,9 +7,9 @@ These are real frames, rendered headlessly through ratatui's TestBackend by
 
 Nothing here is a mockup.
 
-frames.ansi renders all sixty-five scenes through the same coloured
+frames.ansi renders all sixty-six scenes through the same coloured
 palette the pinned `.snap` tests use; read it with `less -R`. frames.txt
-renders the same sixty-five scenes through the flattened NO_COLOR palette
+renders the same sixty-six scenes through the flattened NO_COLOR palette
 instead, the one an operator with $NO_COLOR set or a 16-colour terminal
 actually gets. The two files are deliberately different pictures of the
 same dashboard, not one file with the colour removed.
@@ -1809,10 +1809,10 @@ A dog's pane over a paddock-shaped schema at 160x48: clients and models each rea
        timeout                30                                                                                                                                [0m
  [0m[38;5;245m    ▸ b-2                                                                    entry     [0m                                                                        [0m
  [0m[38;5;245m    ▸ #2                                                                     entry     [0m                                                                        [0m
+     + new                                                                                                                                                      [0m
  [0m[38;5;245m~ ▸ models                   2 entries                                                 [0m                                                                        [0m
    retries                    3                                                                                                                                 [0m
 [0m[38;5;245m  shep publishes the change; paddock decides what to reload                                                                                                     [0m
-                                                                                                                                                                [0m
                                                                                                                                                                 [0m
                                                                                                                                                                 [0m
                                                                                                                                                                 [0m
@@ -1863,10 +1863,10 @@ The same pane at 88 columns: narrow enough that the explanation panel is gone, s
        timeout                30                                                        [0m
  [0m[38;5;245m    ▸ b-2                                                                    entry     [0m
  [0m[38;5;245m    ▸ #2                                                                     entry     [0m
+     + new                                                                              [0m
  [0m[38;5;245m~ ▸ models                   2 entries                                                 [0m
    retries                    3                                                         [0m
 [0m[38;5;245m  shep publishes the change; paddock decides what to reload                             [0m
-                                                                                        [0m
                                                                                         [0m
                                                                                         [0m
                                                                                         [0m
@@ -1915,6 +1915,7 @@ The same pane at 160x48 with the b-2 client open and a name being typed into it:
  [0m[38;5;245m~     peers                  (unset)                                                   [0m                                                                        [0m
        timeout                (unset)                                                                                                                           [0m
  [0m[38;5;245m    ▸ #2                                                                     entry     [0m                                                                        [0m
+     + new                                                                                                                                                      [0m
  [0m[38;5;245m~ ▸ models                   2 entries                                                 [0m                                                                        [0m
    retries                    3                                                                                                                                 [0m
 [0m[38;5;245m  shep publishes the change; paddock decides what to reload                                                                                                     [0m
@@ -1949,8 +1950,60 @@ The same pane at 160x48 with the b-2 client open and a name being typed into it:
                                                                                                                                                                 [0m
                                                                                                                                                                 [0m
                                                                                                                                                                 [0m
-                                                                                                                                                                [0m
 [0m[38;5;221m[48;5;235mediting clients[1].name  beta▏   enter applies   esc cancels                                                                                    [0m[38;5;245m[48;5;235m control enabled[0m
+
+
+=== dog_entries_new  (160x48) ===
+Enter on the + new row under models: the key editor opens in the status bar, labelled new models key, with gpt-5 typed and the cursor after it. Nothing is filed until the key is applied, so the title band counts no edit. An empty key would abandon, and a key models already holds is refused with a sentence naming it.
+
+[0m[7m[38;5;29mshep lookout   /home/ada/.shep                                                                                                                    6 in the flock[0m
+                                                                                                                                                                [0m
+[0m[38;5;245m  paddock  (dog config)                                                                                                                                         [0m
+ [0m[38;5;245m~ ▸ clients                  3 entries                                                 [0m[7m[38;5;221m FOCUSED [0m + new[0m[38;5;245m  adds an entry[0m                                          [0m
+ [0m[38;5;245m~ ▾ models                   2 entries                                                 [0m                                                                        [0m
+ [0m[38;5;245m    ▸ large                                                                  entry     [0m                                                                        [0m
+ [0m[38;5;245m    ▸ small                                                                  entry     [0m                                                                        [0m
+[0m[38;5;221m[48;5;235m>[0m[48;5;235m    + new                  [0m                                                                                                                                    [0m
+   retries                    3                                                                                                                                 [0m
+[0m[38;5;245m  shep publishes the change; paddock decides what to reload                                                                                                     [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+                                                                                                                                                                [0m
+[0m[38;5;221m[48;5;235mnew models key  gpt-5▏   enter applies   esc cancels                                                                                            [0m[38;5;245m[48;5;235m control enabled[0m
 
 
 === close_dialog  (160x48) ===

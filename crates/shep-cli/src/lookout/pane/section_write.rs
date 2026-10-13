@@ -338,7 +338,7 @@ fn element_at(
 
 /// A table `toml_edit` will not print a header for while it has no values of
 /// its own, which is what keeps a created parent from showing as `[models]`.
-fn implicit_table() -> toml_edit::Item {
+pub(super) fn implicit_table() -> toml_edit::Item {
     let mut table = toml_edit::Table::new();
     table.set_implicit(true);
     toml_edit::Item::Table(table)
@@ -348,7 +348,7 @@ fn implicit_table() -> toml_edit::Item {
 /// its values and its inline tables and nothing else, so a regular
 /// [`toml_edit::Item::Table`] inserted there reports a set and renders as
 /// though nothing was written.
-fn inline_child() -> toml_edit::Item {
+pub(super) fn inline_child() -> toml_edit::Item {
     toml_edit::Item::Value(toml_edit::Value::InlineTable(toml_edit::InlineTable::new()))
 }
 

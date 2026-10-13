@@ -375,12 +375,274 @@ fn a_removal_that_also_unsets_a_key_of_a_table_that_stays_removes_that_key() {
     assert_eq!(out, THREE.replace("name = \"gamma\"\n", ""));
 }
 
+/// Two clients, a comment on each and one inside the second, and a table
+/// that follows them.
+const BEFORE_SERVER: &str = concat!(
+    "# first\n",
+    "[[clients]]\n",
+    "name = \"alpha\"\n",
+    "\n",
+    "# second\n",
+    "[[clients]]\n",
+    "id = \"b-2\" # the id\n",
+    "\n",
+    "[server]\n",
+    "port = 80\n",
+);
+
 #[test]
-fn a_whole_value_with_a_table_the_section_lacks_is_refused() {
+fn an_added_client_lands_after_the_last_one_and_before_the_next_section() {
+    let out = written(
+        &pane(BEFORE_SERVER),
+        &[(
+            "clients",
+            json!([{ "name": "alpha" }, { "id": "b-2" }, { "name": "new" }]),
+        )],
+    );
+    assert_eq!(
+        out,
+        concat!(
+            "# first\n",
+            "[[clients]]\n",
+            "name = \"alpha\"\n",
+            "\n",
+            "# second\n",
+            "[[clients]]\n",
+            "id = \"b-2\" # the id\n",
+            "\n",
+            "[[clients]]\n",
+            "name = \"new\"\n",
+            "\n",
+            "[server]\n",
+            "port = 80\n",
+        )
+    );
+}
+
+#[test]
+fn an_added_client_with_nothing_in_it_is_an_empty_table() {
+    let out = written(
+        &pane(THREE),
+        &[(
+            "clients",
+            json!([{ "name": "alpha" }, { "id": "b-2", "name": "beta" }, { "name": "gamma" }, {}]),
+        )],
+    );
+    assert_eq!(out, format!("{THREE}\n[[clients]]\n"));
+}
+
+#[test]
+fn a_client_added_to_a_section_without_any_creates_the_array() {
+    let out = written(
+        &pane("retries = 3\n"),
+        &[("clients", json!([{ "name": "new" }]))],
+    );
+    assert_eq!(out, "retries = 3\n\n[[clients]]\nname = \"new\"\n");
+    let out = written(&pane(""), &[("clients", json!([{ "name": "new" }]))]);
+    assert_eq!(out, "[[clients]]\nname = \"new\"\n");
+}
+
+#[test]
+fn an_added_client_keeps_its_nested_default_table() {
+    let out = written(
+        &pane(THREE),
+        &[(
+            "clients",
+            json!([
+                { "name": "alpha" },
+                { "id": "b-2", "name": "beta" },
+                { "name": "gamma" },
+                { "name": "new", "limits": { "rate": 9 } },
+            ]),
+        )],
+    );
+    assert_eq!(
+        out,
+        format!("{THREE}\n[[clients]]\nname = \"new\"\n\n[clients.limits]\nrate = 9\n")
+    );
+}
+
+#[test]
+fn a_client_added_after_a_removal_leaves_the_others_their_comments() {
+    let out = written(
+        &pane(THREE),
+        &[(
+            "clients",
+            json!([{ "id": "b-2", "name": "beta" }, { "name": "gamma" }, { "name": "new" }]),
+        )],
+    );
+    assert_eq!(
+        out,
+        THREE
+            .replace("# first\n[[clients]]\nname = \"alpha\"\n\n", "")
+            .to_owned()
+            + "\n[[clients]]\nname = \"new\"\n"
+    );
+}
+
+#[test]
+fn a_client_added_next_to_an_edit_of_a_single_key_table_keeps_the_order() {
+    let section = "[[clients]]\nname = \"alpha\"\n\n[[clients]]\nname = \"beta\"\n";
+    let out = written(
+        &pane(section),
+        &[(
+            "clients",
+            json!([{ "name": "ALPHA" }, { "name": "beta" }, { "name": "new" }]),
+        )],
+    );
+    assert_eq!(
+        out,
+        "[[clients]]\nname = \"ALPHA\"\n\n[[clients]]\nname = \"beta\"\n\n[[clients]]\nname = \"new\"\n"
+    );
+}
+
+#[test]
+fn a_client_added_to_an_array_of_inline_tables_joins_it() {
+    let section = "clients = [{ name = \"alpha\" }, { name = \"beta\" }]\nretries = 3\n";
+    let out = written(
+        &pane(section),
+        &[(
+            "clients",
+            json!([{ "name": "alpha" }, { "name": "beta" }, { "name": "new", "id": "n-1" }]),
+        )],
+    );
+    assert_eq!(
+        out,
+        "clients = [{ name = \"alpha\" }, { name = \"beta\" }, { id = \"n-1\", name = \"new\" }]\nretries = 3\n"
+    );
+}
+
+/// Two models with a comment above each, and a table after them.
+const MODELS: &str = concat!(
+    "# the small one\n",
+    "[models.gpt-3]\n",
+    "provider = \"local\"\n",
+    "\n",
+    "# the big one\n",
+    "[models.gpt-4]\n",
+    "provider = \"remote\" # hosted\n",
+    "\n",
+    "[server]\n",
+    "port = 80\n",
+);
+
+#[test]
+fn an_added_model_lands_after_the_last_model_and_before_the_next_section() {
+    let out = written(
+        &pane(MODELS),
+        &[(
+            "models",
+            json!({
+                "gpt-3": { "provider": "local" },
+                "gpt-4": { "provider": "remote" },
+                "gpt-5": { "provider": "edge" },
+            }),
+        )],
+    );
+    assert_eq!(
+        out,
+        MODELS.replace(
+            "\n[server]",
+            "\n[models.gpt-5]\nprovider = \"edge\"\n\n[server]"
+        )
+    );
+}
+
+#[test]
+fn an_added_model_with_a_dot_or_a_space_in_its_key_is_written_quoted() {
+    for (key, header) in [("a.b", "[models.\"a.b\"]"), ("a b", "[models.\"a b\"]")] {
+        let out = written(
+            &pane(MODELS),
+            &[(
+                "models",
+                json!({
+                    "gpt-3": { "provider": "local" },
+                    "gpt-4": { "provider": "remote" },
+                    key: {},
+                }),
+            )],
+        );
+        assert_eq!(
+            out,
+            MODELS.replace("\n[server]", &format!("\n{header}\n\n[server]")),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn a_model_added_to_a_section_without_any_creates_its_table() {
+    let out = written(
+        &pane("retries = 3\n"),
+        &[("models", json!({ "gpt-5": { "provider": "edge" } }))],
+    );
+    assert_eq!(out, "retries = 3\n\n[models.gpt-5]\nprovider = \"edge\"\n");
+}
+
+#[test]
+fn a_model_added_to_an_inline_map_joins_it() {
+    let section = "models = { gpt-3 = { provider = \"local\" } }\nretries = 3\n";
+    let out = written(
+        &pane(section),
+        &[(
+            "models",
+            json!({ "gpt-3": { "provider": "local" }, "gpt-5": { "provider": "edge" } }),
+        )],
+    );
+    assert_eq!(
+        out,
+        "models = { gpt-3 = { provider = \"local\" }, gpt-5 = { provider = \"edge\" } }\nretries = 3\n"
+    );
+}
+
+#[test]
+fn a_model_added_next_to_a_removal_lands_after_the_one_that_stays() {
+    let out = written(
+        &pane(MODELS),
+        &[(
+            "models",
+            json!({
+                "gpt-3": { "provider": "local" },
+                "gpt-5": { "provider": "new" },
+            }),
+        )],
+    );
+    assert_eq!(
+        out,
+        concat!(
+            "# the small one\n",
+            "[models.gpt-3]\n",
+            "provider = \"local\"\n",
+            "\n",
+            "[models.gpt-5]\n",
+            "provider = \"new\"\n",
+            "\n",
+            "[server]\n",
+            "port = 80\n",
+        )
+    );
+}
+
+#[test]
+fn a_secret_in_an_added_table_is_written_like_any_other_value() {
+    let out = written(
+        &pane("retries = 3\n"),
+        &[("clients", json!([{ "key": "hunter9" }]))],
+    );
+    assert_eq!(out, "retries = 3\n\n[[clients]]\nkey = \"hunter9\"\n");
+}
+
+#[test]
+fn a_whole_value_whose_added_table_has_no_toml_type_is_refused() {
     assert_eq!(
         pane(THREE).edited_section_with(&edits_of(&[(
             "clients",
-            json!([{ "name": "a" }, { "name": "b" }, { "name": "c" }, { "name": "d" }]),
+            json!([
+                { "name": "alpha" },
+                { "id": "b-2", "name": "beta" },
+                { "name": "gamma" },
+                { "peers": [{ "name": "x" }] },
+            ]),
         )])),
         SectionWrite::Refused
     );

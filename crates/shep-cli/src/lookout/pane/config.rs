@@ -19,7 +19,7 @@ use super::super::field::{
 };
 use super::super::viewport::Viewport;
 use super::entries::{EntryBody, EntryRows};
-use super::entry_remove::Removal;
+use super::entry_remove::Reshape;
 use super::fields::{entries_text, render_json, resolved_by_kind, resolved_display, sheep_fields};
 use super::sheep_dog::SheepDogTable;
 
@@ -107,10 +107,10 @@ pub struct ConfigPane {
     /// The tables currently drawn open, by their dotted path. See
     /// [`Self::rows`].
     pub(super) open: BTreeSet<String>,
-    /// What each entry removal took out of the set, newest last, so `u` can
-    /// hand it back. See [`Self::file_entry_removal`]. Shared, like
+    /// What each entry removal or addition replaced in the set, newest last,
+    /// so `u` can hand it back. See [`Self::file_whole`]. Shared, like
     /// [`Self::entries`], so the pane stays small enough to sit in `Body`.
-    pub(super) removals: Arc<Vec<Removal>>,
+    pub(super) reshapes: Arc<Vec<Reshape>>,
 }
 
 impl core::fmt::Debug for ConfigPane {
@@ -152,7 +152,7 @@ impl ConfigPane {
             dogs: None,
             section: None,
             dog_table: None,
-            removals: Arc::default(),
+            reshapes: Arc::default(),
             section_paths: Arc::default(),
             outline: Arc::new(Outline::default()),
             entries: Arc::default(),
@@ -224,7 +224,7 @@ impl ConfigPane {
             dogs: None,
             section: Some(section),
             dog_table: None,
-            removals: Arc::default(),
+            reshapes: Arc::default(),
             section_paths: Arc::new(paths),
             open: outline.top_level_paths(),
             outline: Arc::new(outline),
@@ -251,7 +251,7 @@ impl ConfigPane {
             PaneRow::Field(index) => self.fields.fields().get(index)?,
             PaneRow::Entry(index) => match &self.entries.row(index)?.body {
                 EntryBody::Leaf { field, .. } => field,
-                EntryBody::Node { .. } => return None,
+                EntryBody::Node { .. } | EntryBody::New { .. } => return None,
             },
             PaneRow::Choice { field, .. } => self.fields.fields().get(field)?,
             PaneRow::Table(_) | PaneRow::Env(_) | PaneRow::AddEnv => return None,
@@ -266,7 +266,7 @@ impl ConfigPane {
             PaneRow::Field(index) => self.fields.fields().get(index),
             PaneRow::Entry(index) => match &self.entries.row(index)?.body {
                 EntryBody::Leaf { field, .. } => Some(field),
-                EntryBody::Node { .. } => None,
+                EntryBody::Node { .. } | EntryBody::New { .. } => None,
             },
             PaneRow::Table(_) | PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => None,
         }
@@ -297,7 +297,7 @@ impl ConfigPane {
             PaneRow::Field(index) => self.fields.fields().get(index).map(|field| &field.kind),
             PaneRow::Entry(index) => match &self.entries.row(index)?.body {
                 EntryBody::Leaf { field, .. } => Some(&field.kind),
-                EntryBody::Node { .. } => None,
+                EntryBody::Node { .. } | EntryBody::New { .. } => None,
             },
             PaneRow::Table(_) | PaneRow::Choice { .. } | PaneRow::Env(_) | PaneRow::AddEnv => None,
         }

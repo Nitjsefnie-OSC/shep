@@ -24,6 +24,7 @@ mod dogs;
 mod edit;
 mod entries;
 mod entries_write;
+mod entry_add;
 #[cfg(test)]
 mod entry_edit;
 mod entry_remove;

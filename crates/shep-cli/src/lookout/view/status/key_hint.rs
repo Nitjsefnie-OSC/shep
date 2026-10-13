@@ -24,10 +24,11 @@ pub(super) const FROZEN_HINT: &str = "q quit   h keymap   j/k g/G move   \
 
 /// What the pane's open editor is labelled, and what is in it.
 ///
-/// Three editors, one slot: a field edit is labelled with the field, an
+/// Four editors, one slot: a field edit is labelled with the field, an
 /// env edit with `env` and the key, a list edit with the field and the
-/// element's position, and either `+ new`/`+ add a key` row with what it
-/// wants, since there is nothing yet to name.
+/// element's position, a map's `+ new` entry with the map, and either
+/// `+ new`/`+ add a key` row with what it wants, since there is nothing yet
+/// to name.
 pub(super) fn pane_editor(pane: &ConfigPane) -> Option<(String, &TextBox)> {
     if let Some(list) = pane.list() {
         return match list.typing()? {
@@ -42,6 +43,9 @@ pub(super) fn pane_editor(pane: &ConfigPane) -> Option<(String, &TextBox)> {
         };
     }
     let typing = pane.typing()?;
+    if let Some(entries) = pane.new_entry_editor() {
+        return Some((format!("new {entries} key"), &typing.buffer));
+    }
     Some((format!("editing {}", typing.key), &typing.buffer))
 }
 

@@ -63,7 +63,7 @@ fn cursor_key(pane: &ConfigPane) -> Option<String> {
     };
     match &pane.entry_row(index)?.body {
         super::EntryBody::Leaf { field, .. } => Some(field.key.clone()),
-        super::EntryBody::Node { .. } => None,
+        super::EntryBody::Node { .. } | super::EntryBody::New { .. } => None,
     }
 }
 

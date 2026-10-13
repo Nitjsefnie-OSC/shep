@@ -15,10 +15,10 @@ shep lookout   /home/ada/.shep                                            6 in t
        timeout                30                                                        
      ▸ b-2                                                                    entry     
      ▸ #2                                                                     entry     
+     + new                                                                              
  ~ ▸ models                   2 entries                                                 
    retries                    3                                                         
   shep publishes the change; paddock decides what to reload                             
-                                                                                        
                                                                                         
                                                                                         
                                                                                         
