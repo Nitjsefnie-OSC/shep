@@ -116,8 +116,10 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3254 on 2026-10-14 for what `shep daemon reload` does with a
   // dog: which ones cross, which one the successor registers afresh, and which
   // one it stops. An operator has to know a hand-edited `enabled_dogs` reaches
-  // a running dog through the reload and nowhere else.
-  dogs: 3320, // 3315
+  // a running dog through the reload and nowhere else. Raised again the same
+  // day for the review's correction to that rule: what a successor leaves
+  // behind is a parked dog, and a marked one still holding a process crosses.
+  dogs: 3325, // 3321
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's

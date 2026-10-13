@@ -192,10 +192,10 @@ pub fn dog_app(spec: &DogSpec, paths: &ShepPaths) -> Result<ResolvedApp, DogErro
 /// A dog outside `enabled` is registered `Stopped` and disabled; one in it is
 /// registered `Stopped` all the same, for [`spawn_enabled_dogs`] to start.
 /// A dog already registered under its name, running or a sheep, keeps its row
-/// and its mark, except for the one `stop_unenabled_dogs` takes back: a dog
-/// this config does not enable that is still running. Entries land in the
-/// order given, `enabled` first, so a dog's id does not depend on which of two
-/// lists named it.
+/// and its mark, except for the ones `stop_unenabled_dogs` takes back: every
+/// dog row this config does not enable that is not already stopped and marked.
+/// Entries land in the order given, `enabled` first, so a dog's id does not
+/// depend on which of two lists named it.
 ///
 /// Never fails the boot, for [`spawn_enabled_dogs`]'s reason: a dog that
 /// cannot be assembled is warned about and left out.
@@ -221,21 +221,25 @@ pub async fn register_dogs_at_rest(
         .map(|spec| spec.name.clone())
         .filter(|name| !enabled.iter().any(|spec| spec.name == *name))
         .collect();
-    let registered = match supervisor
-        .register_dogs_at_rest(dogs, disabled.clone())
-        .await
-    {
-        Ok(registered) => registered,
+    if let Err(err) = supervisor.register_dogs_at_rest(dogs, disabled).await {
+        tracing::warn!(%err, "the dogs were not listed");
+        return;
+    }
+    // The flock, and not what this call handed the actor: a dog whose own
+    // config failed to assemble never reached the actor at all, and a carried
+    // one is running there regardless.
+    let flock = match supervisor.list_checked().await {
+        Ok(flock) => flock,
         Err(err) => {
-            tracing::warn!(%err, "the dogs were not listed");
+            tracing::warn!(%err, "the flock could not be read to check its dogs against");
             return;
         }
     };
-    stop_unenabled_dogs(&registered, &disabled, supervisor).await;
+    stop_unenabled_dogs(&flock, enabled, supervisor).await;
 }
 
-/// Stops and marks every registered dog `disabled` names that is not already
-/// stopped and marked.
+/// Stops and marks every dog row in `flock` that `enabled` does not name,
+/// except one already stopped and marked.
 ///
 /// The case is a handover successor's. A predecessor booted while `shep.toml`
 /// named the dog, ran it, and carried it across the `execve`; this boot read a
@@ -244,21 +248,29 @@ pub async fn register_dogs_at_rest(
 /// dog's row now, and a row it inherited running is not one its config says
 /// should run: it goes down through the operator's own door, which marks the
 /// app as it stops it, so `shep flock` reads `disabled` and
-/// `shep enable <name>` is the way back. A cold boot never reaches this: it
-/// spawns only the dogs it enables, so every dog it registers at rest is
-/// already in the shape this passes by.
+/// `shep enable <name>` is the way back. A dog an operator stopped with
+/// `shep stop` and the config then dropped is marked by the same call, so the
+/// row does not go on reading as startable.
+///
+/// Reads the whole flock rather than the rows this boot registered, so a
+/// carried dog whose own config failed to assemble is stopped too: the process
+/// is in the flock and the assembly that would have described it is the half
+/// that failed. A cold boot never reaches the stop: it spawns only the dogs it
+/// enables, so every dog it registers at rest is already in the shape this
+/// passes by.
 ///
 /// Awaits each dog's kill ladder, since the reply the supervisor owes is the
 /// exit's. Bounded by the dog's own `shutdown_timeout` and `kill_timeout`, and
 /// it delays the readiness this boot reports by that much.
 async fn stop_unenabled_dogs(
-    registered: &[ProcessInfo],
-    disabled: &BTreeSet<String>,
+    flock: &[ProcessInfo],
+    enabled: &[DogSpec],
     supervisor: &SupervisorHandle,
 ) {
-    for info in registered {
+    for info in flock {
+        let named = enabled.iter().any(|spec| spec.name == info.name);
         let parked = info.disabled == Some(true) && info.status == ProcStatus::Stopped;
-        if info.dog.is_none() || parked || !disabled.contains(&info.name) {
+        if info.dog.is_none() || named || parked {
             continue;
         }
         if let Err(err) = supervisor.disable_dog(info.name.clone()).await {

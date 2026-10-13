@@ -27,10 +27,11 @@ fn names(wanted: &[&str]) -> BTreeSet<String> {
 
 /// The blob describes the flock this daemon supervises, minus the dogs its
 /// caller's config leaves out. A dog an operator stopped with `shep stop`
-/// carries, since the config still names it: only the mark decides.
+/// carries, since the config still names it: only a mark with no process on it
+/// leaves a dog behind.
 #[cfg(unix)]
 #[tokio::test(start_paused = true)]
-async fn a_snapshot_carries_every_dog_that_is_not_disabled_and_leaves_one_that_is() {
+async fn a_snapshot_carries_every_dog_that_is_not_parked_and_leaves_one_that_is() {
     let dir = tempfile::tempdir().unwrap();
     let paths = test_paths(&dir);
     let (events, _rx) = crate::bus::test_bus(64);
@@ -80,6 +81,52 @@ async fn a_snapshot_carries_every_dog_that_is_not_disabled_and_leaves_one_that_i
             ("bark", Some(DogSource::BuiltIn)),
         ],
         "a parked dog belongs to the successor's file, not to this flock's blob"
+    );
+}
+
+/// The shape `shep disable` holds from the moment it sets the mark until its
+/// stop finishes: marked, and still holding a process. It carries, because the
+/// snapshot is the only way a successor learns a pid, and a process no
+/// successor learned is one no successor can stop.
+///
+/// The mark arrives through [`SupervisorHandle::register_at_rest`], the actor's
+/// door for a mark with no stop attached. It leaves the actor in the state a
+/// disable mid-ladder leaves it, and it gets there without a kill ladder that a
+/// paused clock has to hold mid-flight.
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn a_snapshot_carries_a_disabled_dog_that_still_holds_a_process() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = test_paths(&dir);
+    let (events, _rx) = crate::bus::test_bus(64);
+    let (fds, _held) = daemon_fds(&dir);
+    let runner = ScriptedRunner::new(vec![ProcScript::never_exits(); 2]);
+    let sup = spawn_supervisor(runner, paths.clone(), events);
+    sup.start(vec![normalize(AppConfig::minimal("api", "./srv")).unwrap()])
+        .await
+        .unwrap();
+    sup.start_dog(dog_app("metrics", &paths), DogSource::BuiltIn)
+        .await
+        .unwrap();
+    sup.register_at_rest(vec![dog_app("metrics", &paths)], names(&["metrics"]))
+        .await
+        .unwrap();
+
+    let flock = sup.list().await;
+    let metrics = flock.iter().find(|row| row.name == "metrics").unwrap();
+    assert_eq!(metrics.status, ProcStatus::Online, "{metrics:?}");
+    assert_eq!(metrics.disabled, Some(true), "{metrics:?}");
+
+    let (_candidates, blob, _parked) = sup.handover_snapshot(fds).await.unwrap();
+    let carried: Vec<(&str, Option<DogSource>)> = blob
+        .sheep()
+        .iter()
+        .map(|sheep| (sheep.name(), sheep.dog().cloned()))
+        .collect();
+    assert_eq!(
+        carried,
+        [("api", None), ("metrics", Some(DogSource::BuiltIn))],
+        "a marked dog still holding a process must cross the exec described"
     );
 }
 
@@ -182,4 +229,105 @@ async fn a_successor_leaves_a_carried_dog_its_config_still_enables_running() {
         "a dog the config enables must keep the process it carried"
     );
     assert_eq!(metrics.disabled, None, "{metrics:?}");
+}
+
+/// The other way a name leaves the file: the dog was already down, by `shep
+/// stop` rather than `shep disable`, so it carried with its row and no mark.
+/// The successor's config does not enable it either, so the same call marks
+/// it, and the row stops reading as one `shep restart` could start.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_successor_marks_a_carried_dog_it_stopped_and_the_config_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = test_paths(&dir);
+    let (events, _rx) = crate::bus::test_bus(64);
+    let sup = SupervisorBuilder::new(TokioRunner::new(), paths.clone(), events)
+        .spawn_adopted(
+            vec![without_handles(carried("metrics", 1, None, |entry| {
+                entry.dog = Some(DogSource::BuiltIn);
+                entry.status = ProcStatus::Stopped;
+            }))],
+            counters(2),
+            Vec::new(),
+        )
+        .expect("a carried flock installs");
+
+    crate::dogs::register_dogs_at_rest(&[dog("metrics")], &[], &paths, &sup).await;
+
+    let rows = sup.list().await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let metrics = &rows[0];
+    assert_eq!(
+        metrics.id, 1,
+        "a stopped row the predecessor left is the successor's to mark, not to reissue"
+    );
+    assert_eq!(metrics.status, ProcStatus::Stopped, "{metrics:?}");
+    assert_eq!(metrics.disabled, Some(true), "{metrics:?}");
+}
+
+/// The other way a carried dog escapes what this boot registered: its own
+/// config would not assemble, so it never reached the actor at all, while the
+/// process it carried is in the flock regardless. `stop_unenabled_dogs` reads
+/// the flock, so that dog goes down too.
+///
+/// The assembly fails on the shape `adopted_dogs = { metrics = "" }` gives: an
+/// adopted source with no binary, which `normalize` refuses as `MissingScript`.
+/// A dog's name is checked where its app is assembled, not where the config
+/// names it.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_successor_stops_a_carried_dog_whole_config_could_not_assemble() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = test_paths(&dir);
+    let (events, _rx) = crate::bus::test_bus(64);
+    let pid = adoptable_child("sleep 30");
+    let sup = SupervisorBuilder::new(TokioRunner::new(), paths.clone(), events)
+        .spawn_adopted(
+            vec![without_handles(carried("metrics", 1, Some(pid), |entry| {
+                entry.dog = Some(DogSource::BuiltIn);
+            }))],
+            counters(2),
+            Vec::new(),
+        )
+        .expect("a carried flock installs");
+
+    let unassemblable = crate::dogs::DogSpec {
+        name: "metrics".to_string(),
+        source: DogSource::Adopted {
+            path: String::new(),
+            channel: false,
+        },
+    };
+    crate::dogs::register_dogs_at_rest(&[unassemblable], &[], &paths, &sup).await;
+
+    let rows = flock_until(
+        &sup,
+        |rows| {
+            rows.iter()
+                .any(|row| row.name == "metrics" && row.status == ProcStatus::Stopped)
+        },
+        "a carried dog this boot could not assemble must still stop",
+    )
+    .await;
+
+    let metrics = rows.iter().find(|row| row.name == "metrics").unwrap();
+    assert_eq!(metrics.id, 1, "the carried row is the successor's to stop");
+    assert_eq!(metrics.pid, None, "{metrics:?}");
+    assert_eq!(metrics.disabled, Some(true), "{metrics:?}");
+    assert_eq!(
+        metrics.last_exit,
+        Some(ExitInfo {
+            code: None,
+            signal: Some(15),
+        }),
+        "the dog must have gone down the ordinary ladder"
+    );
+    assert!(
+        nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(i32::try_from(pid).unwrap()),
+            None
+        )
+        .is_err(),
+        "the process must have been reaped, not merely marked"
+    );
 }

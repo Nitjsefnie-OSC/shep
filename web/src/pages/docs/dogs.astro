@@ -213,12 +213,13 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
       channel</a>. Such a dog takes <code>shep trigger</code>.
     </p>
     <p class="fine">
-      <code>shep daemon reload</code> carries every dog the config enables,
-      running or stopped, and leaves a disabled one behind: the successor
-      registers it at rest the way a cold boot does, under a new id. A dog{" "}
-      <code>enabled_dogs</code> dropped by hand while it ran is carried, then
-      stopped and marked, so it reads <code>disabled</code> and{" "}
-      <code>shep enable &lt;name&gt;</code> is the way back.
+      <code>shep daemon reload</code> carries every dog holding a process,
+      marked or not, and leaves a parked one behind: a dog that is disabled
+      and stopped is registered at rest by the successor the way a cold boot
+      registers it, under a new id. A dog <code>enabled_dogs</code> dropped is
+      stopped and marked, running or already stopped, so it reads{" "}
+      <code>disabled</code> and <code>shep enable &lt;name&gt;</code> is the
+      way back.
     </p>
 
     <h2 id="configuration-lives-on-the-socket-not-the-environment">Configuration lives on the socket, not the environment</h2>
