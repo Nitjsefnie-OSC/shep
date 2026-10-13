@@ -21,6 +21,11 @@ use shep_core::values::{MemSize, UpDuration};
 
 use super::sinks::{self, Sink, SinkConfigError};
 
+mod log_match;
+
+pub use log_match::LogStream;
+use log_match::{LogRule, Source};
+
 /// How long, by default, a rule stays quiet for a subject after firing.
 ///
 /// Five minutes: long enough that a flapping sheep does not page an
@@ -94,6 +99,15 @@ pub enum Trigger {
         /// The ceiling.
         bytes: MemSize,
     },
+    /// A line a sheep printed matches `pattern`, read from the bus's log
+    /// frames.
+    LogMatch {
+        /// A regex, unanchored: a line matches when any part of it does.
+        pattern: String,
+        /// Which stream to read; both when omitted.
+        #[serde(default)]
+        stream: LogStream,
+    },
 }
 
 /// What a [`Trigger::GaveUp`] firing says about `name`.
@@ -116,6 +130,7 @@ fn trigger_name(when: &Trigger) -> &'static str {
         Trigger::GaveUp {} => "gave_up",
         Trigger::RestartRate { .. } => "restart_rate",
         Trigger::MemoryAbove { .. } => "memory_above",
+        Trigger::LogMatch { .. } => "log_match",
     }
 }
 
@@ -187,6 +202,14 @@ pub enum RulesError {
     /// webhook over `http://`, or a url carrying credentials before the
     /// host. See [`sinks::require_usable_url`].
     UnusableSink(SinkConfigError),
+    /// Rule at position `index`'s `LogMatch` pattern is empty, is not a
+    /// regex, or compiles to more than 1 MiB.
+    BadPattern {
+        /// Position in the configured rule list.
+        index: usize,
+        /// What was wrong with it.
+        reason: String,
+    },
 }
 
 impl fmt::Display for RulesError {
@@ -203,6 +226,9 @@ impl fmt::Display for RulesError {
                 "rule {index}'s event trigger names \"{kind}\", which is not an event kind on the wire"
             ),
             Self::UnusableSink(source) => write!(f, "{source}"),
+            Self::BadPattern { index, reason } => {
+                write!(f, "rule {index}'s log_match pattern is refused: {reason}")
+            }
         }
     }
 }
@@ -211,7 +237,10 @@ impl core::error::Error for RulesError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Self::UnusableSink(source) => Some(source),
-            Self::UnknownSink { .. } | Self::NoSinks { .. } | Self::UnknownKind { .. } => None,
+            Self::UnknownSink { .. }
+            | Self::NoSinks { .. }
+            | Self::UnknownKind { .. }
+            | Self::BadPattern { .. } => None,
         }
     }
 }
@@ -266,6 +295,45 @@ fn subject_state<'a>(
 pub struct Rules {
     rules: Vec<Rule>,
     subjects: BTreeMap<String, SubjectState>,
+    /// The `LogMatch` rules, compiled, so a log frame walks these and never
+    /// the whole rule list.
+    log_rules: Vec<LogRule>,
+    /// Sheep id to name, kept only while a log rule exists: a log frame
+    /// carries an id and no name.
+    names: BTreeMap<u32, String>,
+}
+
+/// [`Rules::fire`] over the two fields it touches, so a caller holding a
+/// borrow of another field (the log route's `subject` is a name in `names`)
+/// need not clone it before the debounce has said whether to fire.
+fn fire_rule(
+    rules: &[Rule],
+    subjects: &mut BTreeMap<String, SubjectState>,
+    idx: usize,
+    subject: &str,
+    now_ms: u64,
+    message: impl FnOnce() -> String,
+) -> Option<Firing> {
+    let debounce = rules[idx].debounce;
+    let state = subject_state(subjects, subject);
+    let ready = state
+        .last_fired
+        .get(&idx)
+        .is_none_or(|&last| now_ms.saturating_sub(last) >= debounce.as_millis());
+    if !ready {
+        return None;
+    }
+    state.last_fired.insert(idx, now_ms);
+    Some(Firing {
+        bark: Bark {
+            at_ms: now_ms,
+            rule: trigger_name(&rules[idx].when).to_owned(),
+            subject: subject.to_owned(),
+            message: message(),
+            sinks: Vec::new(),
+        },
+        sinks: rules[idx].sinks.clone(),
+    })
 }
 
 impl Rules {
@@ -277,6 +345,8 @@ impl Rules {
     /// - [`RulesError::NoSinks`]: a rule routes to no sink.
     /// - [`RulesError::UnknownKind`]: an `Event` rule names a kind that is
     ///   not on the wire.
+    /// - [`RulesError::BadPattern`]: a `LogMatch` rule's pattern is empty,
+    ///   not a regex, or compiles to more than 1 MiB.
     /// - [`RulesError::UnusableSink`]: a `[dog.bark.sinks]` entry is a
     ///   Discord or Slack webhook using `http://`, or carries credentials
     ///   before its host. Both are checked whether or not any rule routes
@@ -285,6 +355,7 @@ impl Rules {
         for (name, sink) in sinks {
             sinks::require_usable_url(name, sink)?;
         }
+        let mut log_rules = Vec::new();
         for (index, rule) in rules.iter().enumerate() {
             if rule.sinks.is_empty() {
                 return Err(RulesError::NoSinks { index });
@@ -297,20 +368,28 @@ impl Rules {
                     });
                 }
             }
-            if let Trigger::Event { kinds } = &rule.when {
-                for kind in kinds {
-                    if !is_known_kind(kind) {
-                        return Err(RulesError::UnknownKind {
-                            index,
-                            kind: kind.clone(),
-                        });
+            match &rule.when {
+                Trigger::Event { kinds } => {
+                    for kind in kinds {
+                        if !is_known_kind(kind) {
+                            return Err(RulesError::UnknownKind {
+                                index,
+                                kind: kind.clone(),
+                            });
+                        }
                     }
                 }
+                Trigger::LogMatch { pattern, stream } => {
+                    log_rules.push(LogRule::compile(index, pattern, *stream)?);
+                }
+                Trigger::GaveUp {} | Trigger::RestartRate { .. } | Trigger::MemoryAbove { .. } => {}
             }
         }
         Ok(Self {
             rules,
             subjects: BTreeMap::new(),
+            log_rules,
+            names: BTreeMap::new(),
         })
     }
 
@@ -330,29 +409,23 @@ impl Rules {
     /// route, so an event both see fires once.
     ///
     /// The caller decides whether the rule triggered at all and supplies
-    /// the `message`; everything from the debounce onward is the same on
-    /// both routes.
-    fn fire(&mut self, idx: usize, subject: &str, now_ms: u64, message: String) -> Option<Firing> {
-        let debounce = self.rules[idx].debounce;
-        let state = subject_state(&mut self.subjects, subject);
-        let ready = state
-            .last_fired
-            .get(&idx)
-            .is_none_or(|&last| now_ms.saturating_sub(last) >= debounce.as_millis());
-        if !ready {
-            return None;
-        }
-        state.last_fired.insert(idx, now_ms);
-        Some(Firing {
-            bark: Bark {
-                at_ms: now_ms,
-                rule: trigger_name(&self.rules[idx].when).to_owned(),
-                subject: subject.to_owned(),
-                message,
-                sinks: Vec::new(),
-            },
-            sinks: self.rules[idx].sinks.clone(),
-        })
+    /// `message`, which runs only when the debounce has elapsed; everything
+    /// from the debounce onward is the same on both routes.
+    fn fire(
+        &mut self,
+        idx: usize,
+        subject: &str,
+        now_ms: u64,
+        message: impl FnOnce() -> String,
+    ) -> Option<Firing> {
+        fire_rule(
+            &self.rules,
+            &mut self.subjects,
+            idx,
+            subject,
+            now_ms,
+            message,
+        )
     }
 
     /// Whether a `RestartRate` rule has accumulated `threshold` or more
@@ -387,9 +460,10 @@ impl Rules {
             event: kind, info, ..
         } = event
         else {
-            return Vec::new();
+            return self.on_log_event(event, now_ms);
         };
         let kind = *kind;
+        self.note_name(kind, info);
         let kind_wire = wire_spelling(kind);
         let mut firings = Vec::new();
         for idx in 0..self.rules.len() {
@@ -403,9 +477,84 @@ impl Rules {
                 _ => None,
             };
             let Some(message) = message else { continue };
-            firings.extend(self.fire(idx, &info.name, now_ms, message));
+            firings.extend(self.fire(idx, &info.name, now_ms, || message));
         }
         firings
+    }
+
+    /// What one log frame fires: each log rule that reads its stream and
+    /// matches its line, after debounce.
+    ///
+    /// Walks only the log rules, and a line matching none costs a regex
+    /// scan and nothing else. A line whose id has no known name is skipped.
+    fn on_log_event(&mut self, event: &BusEvent, now_ms: u64) -> Vec<Firing> {
+        let (id, line, source) = match event {
+            BusEvent::LogOut { id, line } => (*id, line, Source::Out),
+            BusEvent::LogErr { id, line } => (*id, line, Source::Err),
+            _ => return Vec::new(),
+        };
+        let mut firings = Vec::new();
+        for rule in &self.log_rules {
+            if !rule.matches(source, line) {
+                continue;
+            }
+            let Some(name) = self.names.get(&id) else {
+                continue;
+            };
+            // The message closure runs after the debounce, so a flood of
+            // matching lines inside one window builds nothing.
+            firings.extend(fire_rule(
+                &self.rules,
+                &mut self.subjects,
+                rule.idx,
+                name,
+                now_ms,
+                || log_match::message(name, source, line),
+            ));
+        }
+        firings
+    }
+
+    /// Keeps `names` in step with one lifecycle event.
+    fn note_name(&mut self, kind: ProcessEventKind, info: &ProcessInfo) {
+        if self.log_rules.is_empty() {
+            return;
+        }
+        if kind == ProcessEventKind::Delete {
+            self.names.remove(&info.id);
+        } else if self.names.get(&info.id) != Some(&info.name) {
+            self.names.insert(info.id, info.name.clone());
+        }
+    }
+
+    /// Replaces the id-to-name map with `flock`'s, evaluating no rule.
+    ///
+    /// For a caller that needs log lines to resolve before the first poll,
+    /// and the one place the map is rebuilt whole: a lag may have dropped a
+    /// `delete`. Does nothing when no rule reads logs.
+    pub fn learn(&mut self, flock: &[ProcessInfo]) {
+        if self.log_rules.is_empty() {
+            return;
+        }
+        self.names = flock
+            .iter()
+            .map(|info| (info.id, info.name.clone()))
+            .collect();
+    }
+
+    /// Takes `previous`'s id-to-name map, for the rules a config reload
+    /// builds, so the first lines after it still resolve their sheep.
+    pub fn take_names_from(&mut self, previous: &mut Self) {
+        if !self.log_rules.is_empty() {
+            self.names = core::mem::take(&mut previous.names);
+        }
+    }
+
+    /// The bus topics the log rules need: `log.out` and/or `log.err`, and
+    /// none when no rule reads logs.
+    #[must_use]
+    pub fn log_topics(&self) -> Vec<String> {
+        LogRule::topics(&self.log_rules)
     }
 
     /// What the reconciliation poll fires: everything the bus should have
@@ -417,13 +566,14 @@ impl Rules {
     /// what the shepherd acts on.
     #[must_use]
     pub fn on_poll(&mut self, flock: &[ProcessInfo], now_ms: u64) -> Vec<Firing> {
+        self.learn(flock);
         let mut firings = Vec::new();
         for info in flock {
             for idx in 0..self.rules.len() {
                 // Owned: the `RestartRate` arm needs `&mut self` while matching.
                 let trigger = self.rules[idx].when.clone();
                 let message = match &trigger {
-                    Trigger::Event { .. } => None,
+                    Trigger::Event { .. } | Trigger::LogMatch { .. } => None,
                     Trigger::GaveUp {} => (info.status == ProcStatus::Errored)
                         .then(|| gave_up_message(&info.name)),
                     Trigger::RestartRate { restarts, within } => self
@@ -452,7 +602,7 @@ impl Rules {
                     }),
                 };
                 let Some(message) = message else { continue };
-                firings.extend(self.fire(idx, &info.name, now_ms, message));
+                firings.extend(self.fire(idx, &info.name, now_ms, || message));
             }
         }
         firings

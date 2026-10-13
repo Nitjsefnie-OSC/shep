@@ -396,6 +396,24 @@ sinks = ["oncall"]`}</CodeBlock>
       routes share one debounce record per subject, so an{" "}
       <code>Errored</code> seen by both fires once, not twice.
     </p>
+    <p>
+      To alert on a line a sheep prints, add a <code>log_match</code> rule:
+    </p>
+    <CodeBlock label="dogs.toml">{`[[bark.rules]]
+on = "log_match"
+pattern = "FATAL|panicked at"
+stream = "err"
+sinks = ["oncall"]`}</CodeBlock>
+    <p>
+      <code>pattern</code> is a regex, unanchored, and can't be empty.{" "}
+      <code>stream</code> is <code>out</code>, <code>err</code> or{" "}
+      <code>both</code> (the default). The first matching line per sheep
+      per debounce window is the one sent; later ones in the window are
+      dropped. The shepherd forwards log lines to bark only while a{" "}
+      <code>log_match</code> rule exists, and bark can miss lines when a
+      sheep outruns it: the poll can't recover a line. The line goes to
+      the sink as written, so it can carry a secret.
+    </p>
     <p class="fine">
       Every fired alert is appended to <code>$SHEP_HOME/barks.jsonl</code>, a
       byte-capped ring (1MiB by default) that evicts the oldest record
