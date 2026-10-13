@@ -88,6 +88,14 @@ and removes it from the boot list either way. The dog stays registered, so
 in the same row. It carries no name check of its own, deliberately, so it is
 what takes a hand-written entry back out of `enabled_dogs`.
 
+A `shep daemon reload` carries every dog holding a process, marked or not,
+and leaves a parked one behind. The predecessor never reads `shep.toml`; the
+successor boots from it, so a dog that is disabled and stopped is registered
+at rest there the way a cold boot registers it, under a new id. A dog
+`enabled_dogs` dropped is stopped and marked by the successor, whether it
+crossed the `execve` running or already sat stopped, and the successor keeps
+that row rather than issuing a second one.
+
 Running two of these at once is safe. A provisioning script that
 backgrounds `shep adopt` and `shep enable` together has each of them take
 an exclusive lock on `shep.toml` for its whole read-edit-write, so the

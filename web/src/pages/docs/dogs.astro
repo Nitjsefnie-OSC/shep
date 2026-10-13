@@ -212,6 +212,15 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
       href="/docs/writing-a-dog#asking-for-the-channel">asks for the shepherd
       channel</a>. Such a dog takes <code>shep trigger</code>.
     </p>
+    <p class="fine">
+      <code>shep daemon reload</code> carries every dog holding a process,
+      marked or not, and leaves a parked one behind: a dog that is disabled
+      and stopped is registered at rest by the successor the way a cold boot
+      registers it, under a new id. A dog <code>enabled_dogs</code> dropped is
+      stopped and marked, running or already stopped, so it reads{" "}
+      <code>disabled</code> and <code>shep enable &lt;name&gt;</code> is the
+      way back.
+    </p>
 
     <h2 id="configuration-lives-on-the-socket-not-the-environment">Configuration lives on the socket, not the environment</h2>
     <p>

@@ -75,6 +75,23 @@ impl<R: ProcessRunner> Actor<R> {
     ///
     /// Every registered sheep is described, with no selector: a handover
     /// carries one process image, so the flock goes whole or not at all.
+    ///
+    /// One group is left behind: every dog that is parked, which
+    /// [`Self::is_parked_dog`] spells as the disabled mark and no process.
+    /// Whether a dog runs is `shep.toml`'s decision, and this daemon never
+    /// reads that file while a successor boots from it, so the successor
+    /// registers a parked dog at rest exactly as a cold boot does, under a new
+    /// id. Carrying it would pin the id this flock issued and hand the
+    /// successor a stopped dog its idempotent [`Self::do_start_dog`] could
+    /// never start.
+    ///
+    /// Everything holding a process carries, marked or not. This snapshot is
+    /// the only way a successor learns a pid, and a process it never learned
+    /// is one it cannot stop: `shep disable` sets the mark before its stop
+    /// begins and answers only once the stop has finished, so a reload racing
+    /// that disable meets a marked dog still on its kill ladder. A dog an
+    /// operator stopped with `shep stop` carries too, mark or no mark: its row
+    /// and its history are the successor's to inherit.
     #[cfg(unix)]
     pub(super) fn handle_handover_snapshot(
         &self,
@@ -84,6 +101,7 @@ impl<R: ProcessRunner> Actor<R> {
         let mut drafts: Vec<HandoverDraft> = self
             .sheep
             .values()
+            .filter(|slot| !self.is_parked_dog(&slot.entry))
             .map(|slot| HandoverDraft {
                 entry: slot.entry.clone(),
                 // Whole, not `is_some()`: the kind decides what the
