@@ -5,19 +5,19 @@ expression: render_text(&buffer)
 shep lookout   /home/ada/.shep                                            6 in the flock
                                                                                         
   paddock  (dog config)                                                                 
+  key                                                                                   
  ~ ▾ clients                  3 entries                                                 
      ▾ alpha                                                                  entry     
- ~     id                     (unset)                                                   
->~     key                    <set>                                                     
- ~     name                   alpha                                                     
- ~     timeout                30                                                        
+       id                     (unset)                                                   
+>      key                    <set>                                                     
+       name                   alpha                                                     
+ ~     peers                  (unset)                                                   
+       timeout                30                                                        
      ▸ b-2                                                                    entry     
      ▸ #2                                                                     entry     
  ~ ▸ models                   2 entries                                                 
    retries                    3                                                         
   shep publishes the change; paddock decides what to reload                             
-                                                                                        
-                                                                                        
                                                                                         
                                                                                         
                                                                                         

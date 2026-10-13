@@ -6,6 +6,7 @@
 //! unchanged table is written and the pane closes. A moved one stays on
 //! screen under the operator's edits.
 
+use super::super::dog_pane::moved_entries;
 use super::super::*;
 
 impl App {
@@ -56,14 +57,17 @@ impl App {
                     return self.write_and_close();
                 }
                 self.refresh_sheep_dog_pane(&view);
-                return self.hold(format!("{sheep}: its {dog} table"));
+                return self.hold(format!("{sheep}: its {dog} table"), 0);
             }
             (Ok(Response::DogSection { toml }), PaneTarget::Dog { .. }) => {
                 if pane.holds_section(toml.as_str()) {
                     return self.write_and_close();
                 }
-                let _ = self.on_dog_section(name, Ok(Response::DogSection { toml }));
-                return self.hold(format!("{name}: its section in dogs.toml"));
+                let dropped = match self.dog_target.clone() {
+                    Some(probe) => self.rebuild_dog_pane(probe, toml.as_str()),
+                    None => 0,
+                };
+                return self.hold(format!("{name}: its section in dogs.toml"), dropped);
             }
             (Ok(_unrecognised), _) => {
                 "the shepherd answered something this lookout does not understand".to_owned()
@@ -100,12 +104,18 @@ impl App {
     }
 
     /// Says why a pane that took a moved table is still up. `subject`
-    /// names the table and never a value in it.
-    fn hold(&mut self, subject: String) -> Effect {
+    /// names the table and never a value in it. `dropped` is how many edits
+    /// the new table took no further.
+    fn hold(&mut self, subject: String, dropped: usize) -> Effect {
+        let lost = if dropped > 0 {
+            format!("; {}", moved_entries(dropped))
+        } else {
+            String::new()
+        };
         self.notice = Some(Notice {
             text: format!(
                 "{subject} changed while this pane was open, so nothing was written; \
-                 esc writes your edits over the new values"
+                 esc writes your edits over the new values{lost}"
             ),
             grave: true,
         });

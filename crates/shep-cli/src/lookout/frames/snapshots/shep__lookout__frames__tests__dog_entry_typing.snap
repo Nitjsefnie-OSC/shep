@@ -1,0 +1,52 @@
+---
+source: crates/shep-cli/src/lookout/frames/mod.rs
+expression: render_text(&buffer)
+---
+shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
+                                                                                                                                                                
+  paddock  (dog config)                                                                                                                                         
+ ~ ▾ clients                  3 entries                                                  FOCUSED  clients[1].name  text                                         
+     ▸ alpha                                                                  entry       name                                                                  
+     ▾ b-2                                                                    entry                                                                             
+       id                     b-2                                                         now     (unset)                                                       
+       key                    <set>                                                       default (none)                                                        
+>      name                   beta▏                                                       example (none)                                                        
+ ~     peers                  (unset)                                                                                                                           
+       timeout                (unset)                                                                                                                           
+     ▸ #2                                                                     entry                                                                             
+ ~ ▸ models                   2 entries                                                                                                                         
+   retries                    3                                                                                                                                 
+  shep publishes the change; paddock decides what to reload                                                                                                     
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+editing clients[1].name  beta▏   enter applies   esc cancels                                                                                     control enabled

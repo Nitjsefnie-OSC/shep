@@ -21,12 +21,16 @@ mod config;
 mod dogs;
 mod edit;
 mod entries;
+#[cfg(test)]
+mod entry_edit;
 mod env;
 mod fields;
 #[cfg(test)]
 mod fixtures;
 mod list;
 mod section_write;
+#[cfg(test)]
+mod section_write_entries;
 mod sheep_dog;
 mod tree;
 mod types;
@@ -41,4 +45,5 @@ pub use env::EnvTyping;
 pub(crate) use fields::{resolved_display, sheep_fields};
 pub use list::{ListPane, ListRow};
 pub(in crate::lookout) use tree::TreeRow;
+pub(in crate::lookout) use types::PathStep;
 pub use types::{FieldValue, Lock, PaneEdit, PaneRow, PaneTarget, SectionWrite};
