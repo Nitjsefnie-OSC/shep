@@ -38,9 +38,8 @@ fn enter_on_plus_new_in_an_array_appends_at_once_and_sends_nothing_until_esc() {
         Some("4 entries")
     );
     let written = close_with(&mut app, &entries_dog_section());
-    let mut want =
+    let want =
         entries_dog_section().replace("[models.large]", &format!("{NEW_CLIENT}[models.large]"));
-    want = want.replace("hunter4\"\n\n[[clients]]", "hunter4\"\n\n[[clients]]");
     assert_eq!(written, want);
 }
 
