@@ -16,10 +16,10 @@
 //!
 //! A handover that does not happen leaves the old image running and returns
 //! why, as a [`HandOverError`]. The caller falls back to a stop and a start.
-//! One that happens cannot be undone: the old image is gone, so a build that
-//! cannot read the state refuses it from [`boot`] and has no predecessor left
-//! to hand back to. Put that check in the [`Fitness`] gate, which sees the
-//! target before the exec.
+//! That includes a target that cannot read the state's format: before the
+//! exec, [`Handover::exec`] starts the target as a probe, and its [`boot`]
+//! answers for its [`State`] and exits, so [`boot`] has to be the first thing
+//! a target's `main` does. A handover that does happen cannot be undone.
 //!
 //! Unix only. On Windows the crate builds, and [`Handover::exec`], [`boot`]
 //! and [`wait_for_child`] answer "not supported".
@@ -78,6 +78,8 @@ mod exec;
 mod fitness;
 mod incoming;
 mod outgoing;
+#[cfg(unix)]
+mod probe;
 mod reap;
 mod state;
 #[cfg(unix)]

@@ -934,9 +934,13 @@ other shep crate, so a dog built against an older shep line can use it.
 - **A handover that does not happen** (a refusal, an unreadable target, a
   failed `execve`) returns the reason with the old image still running. Fall
   back to a stop and a start.
-- **A state your new build cannot read** is refused by `boot` with both
-  format numbers. By then the old image is gone, so check the target in the
-  gate when you can: the gate is given the path it will exec.
+- **A state your new build cannot read** is found out before the exec. The
+  old image starts the target with a probe variable set, and the target's
+  `boot` answers for its `State` and exits, so `boot` must run before `main`
+  does anything it would not want done twice. A target that cannot read the
+  format refuses the handover, and the old image keeps running. A target that
+  never reaches `boot` is killed after ten seconds and refuses it too;
+  `.unprobed()` skips the question for a target that cannot answer it.
 
 The blob is a `0600` file under the temp directory (or `blob_dir`), named in
 `SHEP_PROCESS_HANDOVER` and removed by `boot`. That is not the shepherd's own

@@ -19,10 +19,9 @@ pub enum Verdict {
 /// before anything is written, cleared or exec'd.
 ///
 /// It refuses whole: one refusal sends the caller down its stop-and-start
-/// path. It is also the old image's one chance to look at the target, for
-/// instance to run it with a flag and read which state formats it reads,
-/// since a build that cannot read the state can only refuse it after the old
-/// image is gone.
+/// path. The gate does not need to check that the target reads the state's
+/// format: [`Handover::exec`](crate::Handover::exec) asks the target itself
+/// once the gate has said yes.
 ///
 /// Any `Fn(&Path) -> Verdict` is a gate.
 pub trait Fitness {

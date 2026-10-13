@@ -8,7 +8,7 @@ use nix::fcntl::{FcntlArg, FdFlag, fcntl};
 
 /// Descriptors 0 to 2 are the standard streams, which the new image already
 /// owns through `std`.
-const RESERVED_FD_FLOOR: RawFd = 3;
+pub(crate) const RESERVED_FD_FLOOR: RawFd = 3;
 
 fn flags(fd: RawFd) -> io::Result<FdFlag> {
     Ok(FdFlag::from_bits_truncate(fcntl(fd, FcntlArg::F_GETFD)?))
@@ -22,12 +22,26 @@ fn set_cloexec(fd: RawFd, on: bool) -> io::Result<()> {
 }
 
 /// Clear `FD_CLOEXEC` on `fd`, so it survives this process's next `execve`.
+/// Returns whether the bit was set, so whether this call changed anything: a
+/// caller that undoes it must not set the bit on a descriptor that was
+/// inherited without it.
 ///
 /// # Errors
 ///
 /// `fcntl` failed, which is what a number naming no open descriptor looks like.
-pub(crate) fn keep_across_exec(fd: RawFd) -> io::Result<()> {
-    set_cloexec(fd, false)
+pub(crate) fn keep_across_exec(fd: RawFd) -> io::Result<bool> {
+    let was_set = flags(fd)?.contains(FdFlag::FD_CLOEXEC);
+    if was_set {
+        set_cloexec(fd, false)?;
+    }
+    Ok(was_set)
+}
+
+/// Close `fd` if it is an inherited descriptor, as a refused handover must:
+/// the same checks as [`adopt_inherited`], then dropped. A number that names
+/// nothing, or that this process opened, is left alone.
+pub(crate) fn release_inherited(fd: RawFd) {
+    drop(adopt_inherited(fd));
 }
 
 /// Set `FD_CLOEXEC` on `fd`, undoing a [`keep_across_exec`] whose exec never
@@ -114,6 +128,31 @@ mod tests {
         assert!(!is_close_on_exec(fd).unwrap());
         close_on_exec(fd).unwrap();
         assert!(is_close_on_exec(fd).unwrap());
+    }
+
+    #[test]
+    fn keeping_reports_whether_it_changed_the_bit() {
+        let (read, _write) = std::io::pipe().unwrap();
+        let fd = read.as_raw_fd();
+        assert!(
+            keep_across_exec(fd).unwrap(),
+            "it was set, and is clear now"
+        );
+        assert!(
+            !keep_across_exec(fd).unwrap(),
+            "already clear, so no change"
+        );
+    }
+
+    #[test]
+    fn releasing_closes_an_inherited_descriptor_and_spares_one_opened_here() {
+        let fd = inherited();
+        release_inherited(fd);
+        assert!(flags(fd).is_err(), "closed");
+
+        let (read, _write) = std::io::pipe().unwrap();
+        release_inherited(read.as_raw_fd());
+        assert!(is_close_on_exec(read.as_raw_fd()).unwrap(), "still open");
     }
 
     #[test]

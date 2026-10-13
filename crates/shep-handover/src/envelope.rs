@@ -59,6 +59,24 @@ pub(crate) enum EnvelopeError {
     Version(Option<u64>),
 }
 
+/// The descriptor numbers a blob names, as far as they can be told.
+///
+/// Best effort and never an error: a refused boot closes whatever the blob
+/// carried, including from an envelope too broken to decode, so this reads the
+/// `fds` object off the raw JSON and skips what is not a number.
+pub(crate) fn carried_numbers(bytes: &[u8]) -> Vec<i32> {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return Vec::new();
+    };
+    value
+        .get("fds")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(serde_json::Map::values)
+        .filter_map(|number| i32::try_from(number.as_i64()?).ok())
+        .collect()
+}
+
 /// Read a blob.
 ///
 /// The envelope version and the format are read off the raw JSON before the
@@ -188,6 +206,20 @@ mod tests {
             decode::<Two>(br#"{"format":2}"#),
             Err(EnvelopeError::Version(None))
         ));
+    }
+
+    #[test]
+    fn the_numbers_a_blob_names_come_back_even_when_the_envelope_is_unusable() {
+        let mut numbers = carried_numbers(br#"{"envelope":9,"fds":{"a":5,"b":7}}"#);
+        numbers.sort_unstable();
+        assert_eq!(numbers, [5, 7]);
+        assert_eq!(
+            carried_numbers(br#"{"fds":{"a":5,"b":"x","c":99999999999,"d":null}}"#),
+            [5]
+        );
+        assert!(carried_numbers(b"not json").is_empty());
+        assert!(carried_numbers(br#"{"fds":[1,2]}"#).is_empty());
+        assert!(carried_numbers(b"{}").is_empty());
     }
 
     #[test]

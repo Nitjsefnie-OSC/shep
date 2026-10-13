@@ -5,6 +5,7 @@ use core::fmt;
 use std::ffi::OsString;
 use std::marker::PhantomData;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::error::HandOverError;
 use crate::fitness::Fitness;
@@ -26,9 +27,18 @@ pub struct Handover<'a, S: State> {
     arg0: Option<OsString>,
     args: Option<Vec<OsString>>,
     dir: Option<PathBuf>,
+    /// How long to wait for the target's answer, or `None` to not ask.
+    probe: Option<Duration>,
     /// Ties the borrowed descriptors to `'a` on a platform that stores none.
     borrow: PhantomData<&'a ()>,
 }
+
+/// How long the target gets to answer, unless
+/// [`probe_timeout`](Handover::probe_timeout) says otherwise.
+#[cfg(unix)]
+const DEFAULT_PROBE_TIMEOUT: Duration = crate::probe::DEFAULT_TIMEOUT;
+#[cfg(not(unix))]
+const DEFAULT_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl<S: State> fmt::Debug for Handover<'_, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -62,6 +72,7 @@ impl<'a, S: State> Handover<'a, S> {
             arg0: None,
             args: None,
             dir: None,
+            probe: Some(DEFAULT_PROBE_TIMEOUT),
             borrow: PhantomData,
         }
     }
@@ -124,20 +135,53 @@ impl<'a, S: State> Handover<'a, S> {
         self
     }
 
+    /// Wait this long for the target's answer to the probe, instead of the
+    /// default of ten seconds.
+    #[must_use]
+    pub const fn probe_timeout(mut self, timeout: Duration) -> Self {
+        self.probe = Some(timeout);
+        self
+    }
+
+    /// Do not start the target to ask whether it reads the state's format.
+    ///
+    /// For a target that does not call [`boot`](crate::boot) first thing, which
+    /// would otherwise run as a second instance until the probe times out, or
+    /// for a caller that checks the target itself in its
+    /// [`Fitness`] gate. A target that then cannot read the
+    /// state refuses it from [`boot`](crate::boot), after the old image is
+    /// gone.
+    #[must_use]
+    pub const fn unprobed(mut self) -> Self {
+        self.probe = None;
+        self
+    }
+
     /// Replace this process's image with the target, carrying the state and
     /// the named descriptors.
     ///
-    /// In order: resolve the target, ask `gate`, check the keys, encode the
-    /// state, write the blob, clear close-on-exec on the carried descriptors
-    /// and only those, and `execve`. The children this image started stay its
-    /// children across the exec.
+    /// In order: resolve the target, ask `gate`, check the descriptors, start
+    /// the target as a probe and wait for its [`boot`](crate::boot) to say it
+    /// reads the state's format, encode the state, write the blob, clear
+    /// close-on-exec on the carried descriptors and only those, and `execve`.
+    /// The children this image started stay its children across the exec.
+    ///
+    /// The probe runs the target's `main` with `SHEP_PROCESS_HANDOVER_PROBE`
+    /// set, with the arguments the exec would pass and no standard streams.
+    /// Its [`boot`](crate::boot) exits the probe, so a target that calls it
+    /// first thing never goes further. One that does not runs until the probe
+    /// times out and is killed; see [`unprobed`](Self::unprobed).
+    ///
+    /// This blocks the calling thread for as long as the probe takes.
     ///
     /// # Errors
     ///
     /// Returns only if the handover did not happen, and then this image is
-    /// still running with every descriptor close-on-exec again and no blob on
-    /// disk; see [`HandOverError`] for each way. On a platform with no
-    /// `execve` that is [`HandOverError::Unsupported`], always.
+    /// still running with every descriptor it had, as close-on-exec as before,
+    /// and no blob on disk; see [`HandOverError`] for each way. That includes
+    /// [`HandOverError::Format`], a target that cannot read the state. On a
+    /// platform with no `execve` the error is [`HandOverError::Unsupported`],
+    /// always.
     pub fn exec(self, gate: &impl Fitness) -> Result<Infallible, HandOverError> {
         #[cfg(unix)]
         {
@@ -152,6 +196,7 @@ impl<'a, S: State> Handover<'a, S> {
                 &self.arg0,
                 &self.args,
                 &self.dir,
+                &self.probe,
             );
             Err(HandOverError::Unsupported)
         }
@@ -172,12 +217,27 @@ impl<'a, S: State> Handover<'a, S> {
         }
 
         let mut numbers = std::collections::BTreeMap::new();
+        let mut keys_by_fd = std::collections::BTreeMap::new();
         for (key, fd) in &self.fds {
             if numbers.insert(key.clone(), *fd).is_some() {
                 return Err(HandOverError::DuplicateKey { key: key.clone() });
             }
+            // The new image refuses both of these, and by then it is too late
+            // to say no.
+            let wrong = if *fd < crate::sys::RESERVED_FD_FLOOR {
+                Some("a standard stream cannot be carried".to_owned())
+            } else {
+                keys_by_fd
+                    .insert(*fd, key.clone())
+                    .map(|first| format!("the same descriptor is already carried as '{first}'"))
+            };
+            if let Some(wrong) = wrong {
+                return Err(HandOverError::Descriptor {
+                    key: key.clone(),
+                    source: std::io::Error::new(std::io::ErrorKind::InvalidInput, wrong),
+                });
+            }
         }
-        let blob = crate::envelope::encode(&numbers, self.state).map_err(HandOverError::State)?;
 
         let mut own = std::env::args_os();
         let own_arg0 = own.next();
@@ -186,8 +246,22 @@ impl<'a, S: State> Handover<'a, S> {
             .or(own_arg0)
             .unwrap_or_else(|| target.clone().into_os_string());
         let rest = self.args.unwrap_or_else(|| own.collect());
-        let argv = std::iter::once(arg0).chain(rest).collect();
+        let argv: Vec<OsString> = std::iter::once(arg0).chain(rest).collect();
 
+        if let Some(timeout) = self.probe {
+            match crate::probe::ask(&target, &argv, S::FORMAT, timeout) {
+                Ok(crate::probe::Reply::Reads) => {}
+                Ok(crate::probe::Reply::Refuses) => {
+                    return Err(HandOverError::Format {
+                        format: S::FORMAT,
+                        target,
+                    });
+                }
+                Err(source) => return Err(HandOverError::Probe { target, source }),
+            }
+        }
+
+        let blob = crate::envelope::encode(&numbers, self.state).map_err(HandOverError::State)?;
         let plan = crate::exec::Plan {
             target,
             argv,
@@ -279,6 +353,102 @@ mod tests {
             .exec(&|_: &Path| -> Verdict { panic!("the gate should not run") })
             .unwrap_err();
         assert!(matches!(err, HandOverError::Target(_)), "{err}");
+    }
+
+    #[test]
+    fn a_standard_stream_is_refused_before_the_exec() {
+        let state = Secret {
+            token: "t".to_owned(),
+        };
+        let stdout = std::io::stdout();
+        let err = Handover::new(&state)
+            .carry("out", &stdout)
+            .exec(&|_: &Path| Verdict::Carryable)
+            .unwrap_err();
+        assert!(
+            matches!(&err, HandOverError::Descriptor { key, source }
+                if key == "out" && source.to_string().contains("standard stream")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn one_descriptor_carried_under_two_keys_is_refused_before_the_exec() {
+        let state = Secret {
+            token: "t".to_owned(),
+        };
+        let (read, _write) = std::io::pipe().unwrap();
+        let err = Handover::new(&state)
+            .carry("a", &read)
+            .carry("b", &read)
+            .exec(&|_: &Path| Verdict::Carryable)
+            .unwrap_err();
+        assert!(
+            matches!(&err, HandOverError::Descriptor { key, source }
+                if key == "b" && source.to_string().contains("already carried as 'a'")),
+            "{err}"
+        );
+    }
+
+    fn shell(script: &str) -> Vec<String> {
+        vec!["sh".to_owned(), "-c".to_owned(), script.to_owned()]
+    }
+
+    #[test]
+    fn a_target_that_cannot_read_the_format_is_refused_and_nothing_is_written() {
+        let state = Secret {
+            token: "t".to_owned(),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let err = Handover::new(&state)
+            .target("/bin/sh")
+            .args(&shell("exit 95")[1..])
+            .blob_dir(dir.path())
+            .exec(&|_: &Path| Verdict::Carryable)
+            .unwrap_err();
+        assert!(
+            matches!(&err, HandOverError::Format { format: 3, target } if target == Path::new("/bin/sh")),
+            "{err}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "the target /bin/sh does not read state format 3"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_target_that_does_not_answer_the_probe_is_refused_with_why() {
+        let state = Secret {
+            token: "t".to_owned(),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let err = Handover::new(&state)
+            .target("/bin/sh")
+            .args(&shell("exit 0")[1..])
+            .blob_dir(dir.path())
+            .exec(&|_: &Path| Verdict::Carryable)
+            .unwrap_err();
+        assert!(matches!(err, HandOverError::Probe { .. }), "{err}");
+        assert!(err.to_string().contains("never reached `boot`"), "{err}");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_target_that_is_slow_to_answer_is_given_up_on_at_the_timeout() {
+        let state = Secret {
+            token: "t".to_owned(),
+        };
+        let err = Handover::new(&state)
+            .target("/bin/sh")
+            .args(["-c", "exec sleep 30"])
+            .probe_timeout(std::time::Duration::from_millis(50))
+            .exec(&|_: &Path| Verdict::Carryable)
+            .unwrap_err();
+        assert!(
+            matches!(&err, HandOverError::Probe { source, .. } if source.kind() == std::io::ErrorKind::TimedOut),
+            "{err}"
+        );
     }
 
     #[test]

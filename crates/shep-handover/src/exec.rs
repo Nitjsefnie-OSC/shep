@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::HandOverError;
+use crate::probe::PROBE_ENV;
 use crate::state::HANDOVER_ENV;
 use crate::sys;
 
@@ -70,8 +71,9 @@ pub(crate) fn run(plan: &Plan) -> Result<Infallible, HandOverError> {
 
 /// [`run`]'s clear-and-exec, recording what it cleared as it goes.
 ///
-/// `cleared` is pushed to only after a clear succeeds, so it never names a
-/// descriptor this process did not change.
+/// `cleared` is pushed to only when a descriptor was close-on-exec and is not
+/// any more, so it never names one this process did not change: a descriptor
+/// inherited without the bit keeps it clear after a failed exec.
 fn keep_and_exec(
     plan: &Plan,
     path: &CString,
@@ -80,11 +82,13 @@ fn keep_and_exec(
     cleared: &mut Vec<RawFd>,
 ) -> Result<Infallible, HandOverError> {
     for (key, fd) in &plan.fds {
-        sys::keep_across_exec(*fd).map_err(|source| HandOverError::Descriptor {
+        let changed = sys::keep_across_exec(*fd).map_err(|source| HandOverError::Descriptor {
             key: key.clone(),
             source,
         })?;
-        cleared.push(*fd);
+        if changed {
+            cleared.push(*fd);
+        }
     }
     // `execve` rather than `execv`: `execv` inherits this process's `environ`,
     // so pointing the successor at the blob would need `std::env::set_var`,
@@ -127,10 +131,12 @@ fn write_blob(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// `blob_path`.
 ///
 /// Any inherited value of that variable is dropped: a stale entry from an
-/// earlier handover names a file that has already been read and unlinked.
+/// earlier handover names a file that has already been read and unlinked. So is
+/// the probe variable, which would make the successor answer a question nobody
+/// asked.
 fn successor_env(blob_path: &Path) -> Result<Vec<CString>, HandOverError> {
     let mut env = std::env::vars_os()
-        .filter(|(name, _)| name != HANDOVER_ENV)
+        .filter(|(name, _)| name != HANDOVER_ENV && name != PROBE_ENV)
         .map(|(name, value)| {
             let mut entry = name.into_vec();
             entry.push(b'=');
@@ -189,6 +195,33 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_exec_restores_only_the_bits_it_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let not_executable = dir.path().join("not-a-binary");
+        std::fs::write(&not_executable, "this will never execute").unwrap();
+        let (cleared_by_us, _w1) = std::io::pipe().unwrap();
+        let (inherited_clear, _w2) = std::io::pipe().unwrap();
+        sys::keep_across_exec(inherited_clear.as_raw_fd()).unwrap();
+        let mut failing = plan(
+            dir.path(),
+            vec![
+                ("ours".to_owned(), cleared_by_us.as_raw_fd()),
+                ("theirs".to_owned(), inherited_clear.as_raw_fd()),
+            ],
+        );
+        failing.target = not_executable;
+
+        let err = run(&failing).unwrap_err();
+
+        assert!(matches!(err, HandOverError::Exec(_)), "{err}");
+        assert!(sys::is_close_on_exec(cleared_by_us.as_raw_fd()).unwrap());
+        assert!(
+            !sys::is_close_on_exec(inherited_clear.as_raw_fd()).unwrap(),
+            "a descriptor inherited without the bit is left as it came"
+        );
+    }
+
+    #[test]
     fn an_argument_with_an_interior_nul_is_refused_before_anything_is_written() {
         let dir = tempfile::tempdir().unwrap();
         let mut bad = plan(dir.path(), Vec::new());
@@ -215,6 +248,15 @@ mod tests {
     fn two_blobs_in_one_directory_never_share_a_path() {
         let dir = tempfile::tempdir().unwrap();
         assert_ne!(blob_path(dir.path()), blob_path(dir.path()));
+    }
+
+    #[test]
+    fn the_successor_env_never_carries_a_probe() {
+        let env = successor_env(Path::new("/tmp/blob.json")).unwrap();
+        assert!(
+            env.iter()
+                .all(|e| !e.to_bytes().starts_with(PROBE_ENV.as_bytes()))
+        );
     }
 
     #[test]

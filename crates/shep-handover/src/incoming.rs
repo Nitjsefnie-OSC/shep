@@ -37,6 +37,11 @@ impl<S> fmt::Debug for Arrival<S> {
 /// and removed, and the carried descriptors are made close-on-exec again so
 /// this image's own children do not inherit them.
 ///
+/// A predecessor checks, before it execs, that its target reads the state's
+/// format, by starting the target as a probe. When this image is that probe,
+/// `boot` answers for `S` and exits the process without returning. So it has to
+/// run before `main` does anything it would not want done twice.
+///
 /// The children the predecessor started are this process's children still;
 /// [`wait_for_child`](crate::wait_for_child) reaps them by pid.
 ///
@@ -45,11 +50,20 @@ impl<S> fmt::Debug for Arrival<S> {
 /// The predecessor is gone, so an error here has nothing to hand back to; see
 /// [`BootError`] for each way. A build that cannot read the state's format
 /// gets [`BootError::Format`] naming both numbers, with the blob removed and
-/// every descriptor closed. On a platform with no `execve` it is
+/// every descriptor closed. That is only reachable when the predecessor did not
+/// probe, since a probed handover to a build that cannot read the format never
+/// happens. On a platform with no `execve` it is
 /// [`BootError::Unsupported`], always.
 pub fn boot<S: State>() -> Result<Option<Arrival<S>>, BootError> {
     #[cfg(unix)]
     {
+        if let Some(code) =
+            crate::probe::answer::<S>(std::env::var_os(crate::probe::PROBE_ENV).as_deref())
+        {
+            // A predecessor is asking whether this build reads its state,
+            // before it commits to the exec: answer and leave.
+            std::process::exit(code);
+        }
         boot_from(std::env::var_os(crate::HANDOVER_ENV), std::process::id())
     }
     #[cfg(not(unix))]
@@ -67,8 +81,6 @@ fn boot_from<S: State>(
 ) -> Result<Option<Arrival<S>>, BootError> {
     use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
     use std::path::PathBuf;
-
-    use crate::envelope::{EnvelopeError, Unreadable};
 
     let Some(marker) = marker else {
         return Ok(None);
@@ -89,11 +101,28 @@ fn boot_from<S: State>(
 
     let read = std::fs::read(&path);
     let _ = std::fs::remove_file(&path);
-    let inbound =
-        crate::envelope::decode::<S>(&read.map_err(BootError::Blob)?).map_err(|err| match err {
-            EnvelopeError::Malformed(err) => BootError::Malformed(err),
-            EnvelopeError::Version(found) => BootError::Envelope { found },
-        })?;
+    let bytes = read.map_err(BootError::Blob)?;
+
+    // Whatever goes wrong from here, the predecessor is gone and the
+    // descriptors it carried belong to nobody: close every one the blob names,
+    // not only those adopted before the failure.
+    adopt::<S>(&bytes).map(Some).inspect_err(|_| {
+        crate::envelope::carried_numbers(&bytes)
+            .into_iter()
+            .for_each(crate::sys::release_inherited)
+    })
+}
+
+/// Decode `bytes` and adopt the descriptors it names, all or nothing: an error
+/// drops every descriptor adopted so far.
+#[cfg(unix)]
+fn adopt<S: State>(bytes: &[u8]) -> Result<Arrival<S>, BootError> {
+    use crate::envelope::{EnvelopeError, Unreadable};
+
+    let inbound = crate::envelope::decode::<S>(bytes).map_err(|err| match err {
+        EnvelopeError::Malformed(err) => BootError::Malformed(err),
+        EnvelopeError::Version(found) => BootError::Envelope { found },
+    })?;
 
     // Adopted before the format is judged, so a refusal closes them.
     let mut fds = std::collections::BTreeMap::new();
@@ -109,10 +138,10 @@ fn boot_from<S: State>(
         Unreadable::Format { found, supported } => BootError::Format { found, supported },
         Unreadable::Malformed(err) => BootError::State(err),
     })?;
-    Ok(Some(Arrival {
+    Ok(Arrival {
         state,
         fds: Carried::new(fds),
-    }))
+    })
 }
 
 #[cfg(all(test, unix))]
@@ -250,6 +279,78 @@ mod tests {
             matches!(&err, BootError::Descriptor { key, .. } if key == "out"),
             "{err}"
         );
+    }
+
+    fn is_open(fd: i32) -> bool {
+        nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFD).is_ok()
+    }
+
+    #[test]
+    fn a_refusal_partway_through_the_descriptors_closes_the_ones_it_never_reached() {
+        let dir = tempfile::tempdir().unwrap();
+        let blob = dir.path().join("blob.json");
+        let (later, _writer, _) = inherited(true);
+        // "a" sorts first and is a standard stream, so adopting it fails before
+        // "b" is looked at.
+        std::fs::write(
+            &blob,
+            format!(
+                r#"{{"envelope":1,"format":1,"fds":{{"a":1,"b":{later}}},"state":{{"text":"x"}}}}"#
+            ),
+        )
+        .unwrap();
+
+        let err = boot_from::<Note>(marker(7, &blob), 7).unwrap_err();
+
+        assert!(
+            matches!(&err, BootError::Descriptor { key, .. } if key == "a"),
+            "{err}"
+        );
+        assert!(
+            !is_open(later),
+            "the descriptor it never reached was closed"
+        );
+    }
+
+    #[test]
+    fn an_envelope_it_cannot_decode_still_closes_what_the_blob_names() {
+        for (name, body) in [
+            ("unknown layout", r#"{"envelope":9,"fds":{"out":FD}}"#),
+            (
+                "fds of the wrong shape",
+                r#"{"envelope":1,"fds":{"out":FD,"bad":"x"}}"#,
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let blob = dir.path().join("blob.json");
+            let (fd, _writer, _) = inherited(true);
+            std::fs::write(&blob, body.replace("FD", &fd.to_string())).unwrap();
+
+            let err = boot_from::<Note>(marker(7, &blob), 7).unwrap_err();
+
+            assert!(
+                matches!(err, BootError::Envelope { .. } | BootError::Malformed(_)),
+                "{name}: {err}"
+            );
+            assert!(!is_open(fd), "{name}: the carried descriptor was closed");
+        }
+    }
+
+    #[test]
+    fn a_state_that_does_not_fit_closes_the_descriptors_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let blob = dir.path().join("blob.json");
+        let (fd, _writer, _) = inherited(true);
+        std::fs::write(
+            &blob,
+            format!(r#"{{"envelope":1,"format":1,"fds":{{"out":{fd}}},"state":{{"text":5}}}}"#),
+        )
+        .unwrap();
+
+        let err = boot_from::<Note>(marker(7, &blob), 7).unwrap_err();
+
+        assert!(matches!(err, BootError::State(_)), "{err}");
+        assert!(!is_open(fd));
     }
 
     #[test]

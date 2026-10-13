@@ -41,8 +41,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - `Handover::carry` names each descriptor to carry. Only those have
   close-on-exec cleared; every other descriptor is closed in the new image.
-- `State` is the blob, under a format number. A build that cannot read the
-  format refuses it from `boot` with a reason.
+- `State` is the blob, under a format number. Before the exec, the target is
+  started as a probe and its `boot` says whether it reads the format, so a
+  target that cannot refuses the handover with a reason and the old image keeps
+  running. `boot` has to be the first thing the target's `main` does.
 - `Fitness` is the caller's gate. A refusal, an unreadable target or a failed
   `execve` leaves the old image running and returns the reason, so the caller
   can fall back to a stop and a start.

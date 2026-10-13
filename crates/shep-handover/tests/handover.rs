@@ -204,7 +204,44 @@ mod unix {
     }
 
     #[test]
-    fn a_state_in_a_format_the_new_build_cannot_read_is_refused_with_a_reason() {
+    fn a_target_that_cannot_read_the_format_is_refused_and_the_old_image_keeps_running() {
+        // First thing, as a target must: when the old image probes this
+        // binary, this exits with the answer and goes no further.
+        assert!(shep_handover::boot::<Older>().unwrap().is_none());
+        if is_old_image() {
+            let state = Newer {
+                note: "from the future".to_owned(),
+            };
+            let err = Handover::new(&state)
+                .exec(&|_: &Path| Verdict::Carryable)
+                .unwrap_err();
+            assert!(
+                matches!(err, HandOverError::Format { format: 2, .. }),
+                "{err}"
+            );
+            println!(
+                "refused: {}",
+                err.to_string().replace(
+                    &std::env::current_exe().unwrap().display().to_string(),
+                    "<this binary>",
+                )
+            );
+            println!("still running");
+            return;
+        }
+
+        let stdout = run_old_image(
+            "a_target_that_cannot_read_the_format_is_refused_and_the_old_image_keeps_running",
+        );
+        assert!(
+            stdout.contains("refused: the target <this binary> does not read state format 2"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("still running"), "{stdout}");
+    }
+
+    #[test]
+    fn an_unprobed_state_in_a_format_the_new_build_cannot_read_is_refused_by_boot() {
         if std::env::var_os(shep_handover::HANDOVER_ENV).is_some() {
             let refusal = shep_handover::boot::<Older>().unwrap_err();
             assert!(matches!(
@@ -222,13 +259,15 @@ mod unix {
                 note: "from the future".to_owned(),
             };
             let err = Handover::new(&state)
+                .unprobed()
                 .exec(&|_: &Path| Verdict::Carryable)
                 .unwrap_err();
             panic!("the exec should not have returned: {err}");
         }
 
-        let stdout =
-            run_old_image("a_state_in_a_format_the_new_build_cannot_read_is_refused_with_a_reason");
+        let stdout = run_old_image(
+            "an_unprobed_state_in_a_format_the_new_build_cannot_read_is_refused_by_boot",
+        );
         assert!(
             stdout
                 .contains("refused: the handover state is format 2, and this build reads format 1"),
@@ -274,6 +313,7 @@ mod unix {
         let err = Handover::new(&Nothing {})
             .carry("pipe", &read)
             .target(&not_executable)
+            .unprobed()
             .blob_dir(dir.path())
             .exec(&|_: &Path| Verdict::Carryable)
             .unwrap_err();

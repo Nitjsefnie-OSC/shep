@@ -1,6 +1,7 @@
 //! Why a handover did not happen, and why a boot found nothing to adopt.
 
 use std::io;
+use std::path::PathBuf;
 
 /// Why [`Handover::exec`](crate::Handover::exec) returned.
 ///
@@ -30,12 +31,28 @@ pub enum HandOverError {
     State(serde_json::Error),
     /// The blob could not be written.
     Blob(io::Error),
-    /// A descriptor to carry could not be kept across the exec, which is what
-    /// one that is not open looks like.
+    /// A descriptor cannot be carried: it is a standard stream, it is carried
+    /// under another key as well, or it could not be kept across the exec,
+    /// which is what one that is not open looks like.
     Descriptor {
         /// The key the descriptor was carried under.
         key: String,
-        /// What `fcntl` said.
+        /// What is wrong with it.
+        source: io::Error,
+    },
+    /// The target does not read the state's format.
+    Format {
+        /// The format the state is written in.
+        format: u32,
+        /// The binary that was asked.
+        target: PathBuf,
+    },
+    /// The target could not be asked whether it reads the state's format, so
+    /// the handover cannot be known to work.
+    Probe {
+        /// The binary that was to be asked.
+        target: PathBuf,
+        /// Why no answer came.
         source: io::Error,
     },
     /// An argument or an environment entry holds an interior NUL.
@@ -59,6 +76,16 @@ impl core::fmt::Display for HandOverError {
                 f,
                 "the descriptor carried as '{key}' could not be kept across the exec: {source}"
             ),
+            Self::Format { format, target } => write!(
+                f,
+                "the target {} does not read state format {format}",
+                target.display()
+            ),
+            Self::Probe { target, source } => write!(
+                f,
+                "the target {} could not be asked whether it reads the state: {source}",
+                target.display()
+            ),
             Self::Argument(err) => write!(f, "the handover cannot pass an argument: {err}"),
             Self::Exec(err) => write!(f, "the exec failed: {err}"),
         }
@@ -71,9 +98,12 @@ impl core::error::Error for HandOverError {
             Self::Target(err) | Self::Blob(err) | Self::Argument(err) | Self::Exec(err) => {
                 Some(err)
             }
-            Self::Descriptor { source, .. } => Some(source),
+            Self::Descriptor { source, .. } | Self::Probe { source, .. } => Some(source),
             Self::State(err) => Some(err),
-            Self::Unsupported | Self::Refused { .. } | Self::DuplicateKey { .. } => None,
+            Self::Unsupported
+            | Self::Refused { .. }
+            | Self::DuplicateKey { .. }
+            | Self::Format { .. } => None,
         }
     }
 }
