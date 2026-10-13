@@ -106,7 +106,9 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3100 on 2026-10-13 for the `secrets.json` rotation: a
   // `shep secret set` now reaches a running dog, which the live-updates
   // passage has to list.
-  dogs: 3130, // 3118
+  // Raised from 3130 on 2026-10-13 for dog names: a sheep cannot take a
+  // dog's name, and one that already holds a built-in's keeps it.
+  dogs: 3200, // 3179
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
@@ -143,7 +145,9 @@ export const BUDGETS: Record<string, number> = {
   folds: 900, // 852
   whistle: 710, // 675
   containers: 560, // 526
-  upgrading: 560, // 526
+  // Raised from 560 on 2026-10-13 for dog names: an upgrade must say a sheep
+  // named after a built-in keeps its name.
+  upgrading: 610, // 604
   kv: 550, // 519
   // Raised from 440 on 2026-09-21 for the prebuilt-binary download list,
   // which is new content rather than a correction. The page was sitting at

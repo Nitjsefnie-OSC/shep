@@ -138,6 +138,14 @@ $ shep disable metrics`}</CodeBlock>
       where the refusal itself shows up.
     </p>
     <p class="fine">
+      A dog's name is not a sheep's to take, built-in or adopted. Starting a
+      new sheep named <code>metrics</code> is refused, whether the dog runs
+      or sits disabled. A sheep that already holds the name keeps it: the
+      shepherd skips the dog, warns at boot to rename one of the two, and{" "}
+      <code>shep enable metrics</code> says a sheep is already registered
+      under it.
+    </p>
+    <p class="fine">
       The dogs table shares its column order with the sheep table above it,
       so a dog and a sheep read the same way. <code>SOURCE</code> is the one
       column only dogs have, and <code>CFG</code>, <code>FOLD</code> and{" "}

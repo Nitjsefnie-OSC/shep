@@ -160,10 +160,9 @@ fn a_dog_enabled_under_a_sheeps_name_does_not_start_and_does_not_fail_the_boot()
     let mut boot_result = None;
     let logs = capture_logs(|| {
         boot_result = Some(rt.block_on(boot_with_idle_sweep(
-            // One script: the restored sheep's own spawn. `start_dog`
-            // finds the name already registered and returns early
-            // without ever touching the runner, so a second script
-            // here would go unconsumed if that held.
+            // One script: the restored sheep's own spawn. The dog gives
+            // way before it reaches the runner, so a second script here
+            // would go unconsumed if that held.
             ScriptedRunner::new(vec![ProcScript::never_exits()]),
             paths.clone(),
             BootOptions {
@@ -196,68 +195,6 @@ fn a_dog_enabled_under_a_sheeps_name_does_not_start_and_does_not_fail_the_boot()
     assert!(
         logs.contains("metrics"),
         "the warning must name the collision: {logs:?}"
-    );
-
-    drop(daemon); // no run() needed; SignalTasks::drop stops the listeners
-}
-
-/// fails if a promoted dog takes a saved sheep's name in silence. The
-/// unpromoted case above is the opposite way round: there the restore has
-/// already registered the sheep and `start_dog` returns over it, and here
-/// the dog registers against an empty flock and the sheep is what is
-/// lost. Nothing refuses either collision, so a warning is all the
-/// operator gets.
-///
-/// `#[test]` plus `capture_logs` for the reason
-/// `a_dog_that_will_not_start_does_not_fail_the_boot` gives.
-#[test]
-fn a_promoted_dog_that_takes_a_saved_sheeps_name_says_so() {
-    let _guard = SIGNAL_TEST_LOCK.blocking_lock();
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    init_dirs(&paths).unwrap();
-    let roll = roll_of(vec![AppConfig::minimal("metrics", "./srv")]);
-    crate::snapshot::write_atomic(&paths.snapshot, &roll).unwrap();
-
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    let mut boot_result = None;
-    let logs = capture_logs(|| {
-        boot_result = Some(rt.block_on(boot_with_idle_sweep(
-            // One script, and the dog is what consumes it: the restore
-            // reads `metrics` as already running and starts nothing.
-            ScriptedRunner::new(vec![ProcScript::never_exits()]),
-            paths.clone(),
-            BootOptions {
-                restore: true,
-                dogs: vec![DogSpec {
-                    name: "metrics".to_string(),
-                    source: DogSource::BuiltIn,
-                }],
-                boot_first_dogs: vec!["metrics".to_string()],
-                ..BootOptions::default()
-            },
-        )));
-    });
-    let daemon = boot_result
-        .unwrap()
-        .expect("a name collision must not fail the boot");
-
-    let flock = rt
-        .block_on(daemon.context().supervisor.list_checked())
-        .unwrap();
-    assert_eq!(flock.len(), 1, "one name is one entry: {flock:?}");
-    assert!(
-        flock[0].dog.is_some(),
-        "the promoted dog is what holds the name: {:?}",
-        flock[0]
-    );
-    assert!(
-        logs.contains("is not restored"),
-        "the lost sheep must be named out loud: {logs:?}"
     );
 
     drop(daemon); // no run() needed; SignalTasks::drop stops the listeners

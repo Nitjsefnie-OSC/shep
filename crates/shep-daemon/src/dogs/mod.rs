@@ -8,6 +8,7 @@
 
 mod config;
 mod contacts;
+mod held;
 mod narrate;
 mod refusals;
 mod rotation;
@@ -21,6 +22,7 @@ mod watch;
 
 pub use config::{dog_section, set_dog_section};
 pub use contacts::{Contact, PeerContacts};
+pub(crate) use held::{leave_held_names, saved_sheep_names};
 pub(crate) use narrate::{narrate, narrate_by_name};
 pub use refusals::{DogRefusals, Refusal, record_refused_dog};
 pub use rotation::dogs_referencing;

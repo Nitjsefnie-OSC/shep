@@ -347,6 +347,16 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
     #[cfg(windows)]
     let inherited_flock = false;
 
+    // A saved sheep keeps its name against a dog, built-in or adopted: an
+    // upgrade that starts listing the built-ins must not cost anyone an app.
+    if options.restore && !inherited_flock {
+        crate::dogs::leave_held_names(
+            &mut options.dogs,
+            &mut options.known_dogs,
+            &crate::dogs::saved_sheep_names(&paths.snapshot),
+        );
+    }
+
     // Split around the restore rather than run whole after it: a log-rotation
     // dog has to be running before a sheep starts writing, while a metrics dog
     // must not answer for a flock that is not up. Both are true in one flock,

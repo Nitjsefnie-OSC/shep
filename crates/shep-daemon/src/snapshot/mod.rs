@@ -560,11 +560,12 @@ fn warn_about_disabled_dependencies(to_start: &[ResolvedApp], disabled: &BTreeSe
 
 /// Warns for every saved sheep whose name a running dog has taken.
 ///
-/// A `[daemon] boot_first_dogs` dog spawns before this restore and registers
-/// under its own name against an empty flock, so [`muster`]'s `known` finds
-/// the name running and filters the roll's sheep of that name out of both the
-/// membership pass and the start. Nothing refuses that collision, and without
-/// this line an operator loses a sheep in silence.
+/// A boot that restores the roll leaves out any dog a saved sheep names, so
+/// this fires on an operator's `Muster` into a flock whose dog took the name
+/// since: [`muster`]'s `known` finds the dog running and filters the roll's
+/// sheep of that name out of both the membership pass and the start. Without
+/// this line that sheep is lost in silence. A handover successor neither
+/// filters nor restores, so it never reaches this.
 ///
 /// The name stays in the restored list. It really is in the flock, and
 /// dropping it would report the loss as an absence on a terminal that has no
