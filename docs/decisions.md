@@ -2462,6 +2462,14 @@ A sheep started under the name of a registered dog, built-in or adopted, running
 
 `verified crates/shep-daemon/src/dogs/held.rs, crates/shep-daemon/src/boot/mod.rs (boot_with_sweep), crates/shep-daemon/src/supervisor/actor_core.rs (refuse_dog_names), crates/shep-daemon/src/rpc/dispatch.rs (EnableDog)`
 
+### A handover leaves a disabled dog behind, and a successor stops a carried dog its config no longer enables
+
+A handover snapshot describes every registered entry except a dog whose app carries the disabled mark. The successor registers those from the `known_dogs` list it assembled from `shep.toml`, at rest and marked, under the next id it has: a parked dog's id dies with the predecessor. A dog that crossed the `execve` running and is absent from the successor's enabled list is stopped and marked through the same `DisableDog` path an operator uses, and keeps the row it inherited rather than being replaced by a second one. A dog an operator stopped with `shep stop` carries, since the config still names it, and a successor whose config still enables it keeps its pid, its row and its process.
+
+**Why:** #771, under #754. Carrying a parked dog would pin an id the successor has no reason to honour and hand it a stopped dog its idempotent `start_dog` cannot start: a row that ran and stopped is one `start_dog` deliberately leaves down, so a carried parked dog would sit `disabled` with no path back to a spawn. Leaving it out makes the successor's registration the code a cold boot already runs, which is the whole rule for a dog: `shep.toml` decides whether it runs, and only a boot reads that file. Stopping a carried dog the file dropped is the same rule read from the other side: the successor owns the row now, and a running row its own config says nothing about is a dog an operator has already turned off, by hand or by a `shep disable` against a shepherd since replaced. The alternative, teaching the daemon to watch its own config, would put `shep.toml` inside the shepherd, which the `BootOptions` decision exists to keep out.
+
+`verified crates/shep-daemon/src/supervisor/actor_exit.rs (handle_handover_snapshot), crates/shep-daemon/src/supervisor/actor_disable.rs (is_disabled_dog), crates/shep-daemon/src/dogs/spec.rs (register_dogs_at_rest, stop_unenabled_dogs), crates/shep-daemon/src/supervisor/tests/adopt/dogs.rs, crates/shep-cli/tests/cli_e2e/handover_dogs.rs`
+
 ## A first-party dog's docs page
 
 ### The site fetches each first-party dog's README from its latest release at build time, never vendored or pinned

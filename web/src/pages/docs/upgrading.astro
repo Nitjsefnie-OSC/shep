@@ -86,6 +86,11 @@ import Callout from "../../components/docs/Callout.astro";
       shepherd's own config and an app's Flockfile are two separate things
       that happen to share a word.
     </p>
+    <p class="fine">
+      It re-reads <code>enabled_dogs</code> with it. A dog the new file no
+      longer names is stopped and marked <code>disabled</code>, and one that
+      was already disabled is registered at rest under a new id.
+    </p>
 
     <h2 id="version-skew">Version skew</h2>
     <Callout variant="careful">

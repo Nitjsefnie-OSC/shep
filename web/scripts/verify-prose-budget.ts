@@ -108,7 +108,12 @@ export const BUDGETS: Record<string, number> = {
   // passage has to list.
   // Raised from 3130 on 2026-10-13 for dog names: a sheep cannot take a
   // dog's name, and one that already holds a built-in's keeps it.
-  dogs: 3200, // 3179
+  //
+  // Raised from 3200 on 2026-10-14 for what `shep daemon reload` does with a
+  // dog: which ones cross, which one the successor registers afresh, and which
+  // one it stops. An operator has to know a hand-edited `enabled_dogs` reaches
+  // a running dog through the reload and nowhere else.
+  dogs: 3250, // 3240
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
@@ -160,7 +165,10 @@ export const BUDGETS: Record<string, number> = {
   // behaviour in that section. A parked sheep stays down and loses its refusals
   // rather than coming straight back up, and saying that correctly costs 28
   // more words than saying it wrongly.
-  upgrading: 675, // 671
+  // Raised from 675 on 2026-10-14 for the `enabled_dogs` half of the reload
+  // the page already describes: a successor stops a dog the new file dropped
+  // and registers a parked one at rest. Required content, not prose.
+  upgrading: 710, // 704
   kv: 550, // 519
   // Raised from 440 on 2026-09-21 for the prebuilt-binary download list,
   // which is new content rather than a correction. The page was sitting at
