@@ -26,7 +26,7 @@ async fn toggle_against(
             style: crate::style::Presentation::BARE,
             fmt,
         };
-        toggle_sheep(client, &mut streams, verb, name).await
+        toggle_sheep(client, &mut streams, verb, name, &[]).await
     };
     (
         code,

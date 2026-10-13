@@ -53,7 +53,7 @@ pub use vet::{DogSchema, warn_of_a_dog_a_restart_would_break};
 // back `shep lookout`'s own dog-toggle edits; `lifecycle::restart` reads
 // `VERSION_BUDGET`.
 pub(crate) use disable::disable_in_config;
-pub(crate) use enable::{EnableRefusal, enable_in_config};
+pub(crate) use enable::{EnableRefusal, enable_in_config, join_with_and};
 pub(crate) use vet::{VERSION_BUDGET, ask_schema, dog_env};
 
 /// [`DogActionRow`]'s status when

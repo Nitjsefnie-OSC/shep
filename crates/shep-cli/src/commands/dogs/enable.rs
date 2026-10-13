@@ -109,7 +109,7 @@ fn fail_enable_unknown_dog(streams: &mut Streams<'_>, name: &str, adopted: &[Str
 /// Joins `items` as an English list: `a`, `a and b`, `a, b, and c`.
 ///
 /// The empty slice answers with the empty string, and no caller reaches it.
-fn join_with_and(items: &[String]) -> String {
+pub(crate) fn join_with_and(items: &[String]) -> String {
     match items {
         [] => String::new(),
         [only] => only.clone(),
