@@ -413,9 +413,11 @@ impl<R: ProcessRunner> Actor<R> {
         policy: BatchPolicy,
         gate: &BTreeSet<String>,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        // Before any app is registered, so a disabled one costs the batch
-        // nothing but the refusal. A dog is never marked.
+        // Before any app is registered, so a refused one costs the batch
+        // nothing but the refusal. A dog is never marked, and a dog's name
+        // is not a sheep's to take.
         if dog.is_none() {
+            self.refuse_dog_names(apps.iter().map(|app| app.config().name.as_str()))?;
             self.refuse_disabled(apps.iter().map(|app| app.config().name.as_str()))?;
         }
         // One sequence rather than two: a zip against `apps` misaligns the
@@ -552,6 +554,31 @@ impl<R: ProcessRunner> Actor<R> {
         // than the one every other listing takes.
         sort_flock(&mut results);
         Ok(results)
+    }
+
+    /// Refuses the first of `names` that a registered dog already holds.
+    ///
+    /// A sheep started under a dog's name would join the dog's entries as one
+    /// more instance of it, leaving a name that answers to both.
+    ///
+    /// # Errors
+    ///
+    /// [`SupervisorError::IsADog`] naming that dog.
+    fn refuse_dog_names<'a>(
+        &self,
+        names: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), SupervisorError> {
+        let held = |name: &str| {
+            self.sheep
+                .values()
+                .any(|slot| slot.entry.dog.is_some() && slot.entry.spec.config().name == name)
+        };
+        match names.into_iter().find(|name| held(name)) {
+            Some(name) => Err(SupervisorError::IsADog(format!(
+                "{name} is a dog, so a sheep cannot take its name; rename the sheep"
+            ))),
+            None => Ok(()),
+        }
     }
 }
 
