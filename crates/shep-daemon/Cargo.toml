@@ -76,6 +76,9 @@ notify-debouncer-full.workspace = true
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true, features = ["fs", "time"] }
 command-fds.workspace = true
+# The handover's mechanism: carrying descriptors, the envelope, the exec and
+# the reaping across it. This crate keeps only what the flock puts in it.
+shep-handover.workspace = true
 
 # The job object that stands in for a unix process group. Confined to
 # `sys_windows.rs`, which is this crate's only unsafe surface on Windows

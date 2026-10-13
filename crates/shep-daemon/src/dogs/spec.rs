@@ -221,22 +221,34 @@ mod tests {
     use crate::testing::test_paths;
 
     /// `current_exe` cannot safely be made to return `" (deleted)"`, so this
-    /// drives `crate::handover::resolve_target`, which `builtin_program`
-    /// delegates to. Unix only, because `handover` is.
+    /// pins what `builtin_program` does with the answer it gets: it is the
+    /// shared resolution's, which is never a deleted inode and always a file.
     #[cfg(unix)]
     #[test]
-    fn a_deleted_inode_answer_from_current_exe_never_becomes_a_dogs_script() {
-        let refusal = crate::handover::resolve_target(
-            [None, Some(PathBuf::from("/opt/shep/shep (deleted)"))],
-            None,
-        )
-        .unwrap_err();
+    fn a_built_in_dogs_program_is_the_resolved_exec_target_and_never_a_deleted_inode() {
+        let program = builtin_program().expect("the test binary resolves");
+
+        assert_eq!(program, crate::handover::exec_target().unwrap());
+        assert!(program.is_file(), "{}", program.display());
+        assert!(
+            !program.to_string_lossy().ends_with(" (deleted)"),
+            "{}",
+            program.display()
+        );
+    }
+
+    #[test]
+    fn an_unresolvable_binary_says_so_and_keeps_the_refusal_as_its_source() {
+        use core::error::Error as _;
+
+        let refusal = std::io::Error::new(std::io::ErrorKind::NotFound, "no binary to exec");
         let err = DogError::NoBinary(refusal);
+
         assert_eq!(
             err.to_string(),
-            "this binary's own path is unresolvable: no binary to exec: \
-             /opt/shep/shep (deleted) (names a deleted inode, not a file)"
+            "this binary's own path is unresolvable: no binary to exec"
         );
+        assert_eq!(err.source().unwrap().to_string(), "no binary to exec");
     }
 
     /// Asserted over the assembled spec rather than the config, because
