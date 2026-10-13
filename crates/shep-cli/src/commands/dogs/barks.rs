@@ -41,17 +41,7 @@ mod tests {
     use shep_core::barks::{self, Bark, SinkOutcome};
 
     use super::*;
-    use crate::cli::Format;
-
-    /// Every test here drives a dog verb under `--format table`.
-    fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        }
-    }
+    use crate::commands::dogs::test_support::streams;
 
     /// A bark named `subject`, at `at_ms`, delivered to one sink named
     /// `ops`; every other field fixed.

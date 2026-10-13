@@ -24,7 +24,7 @@ use shep_core::protocol::DogSource;
 
 use crate::commands::shep_toml::{ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
-use crate::output::Streams;
+use crate::output::{DogActionRow, Streams, emit, write_outcome};
 
 mod adopt;
 mod barks;
@@ -32,6 +32,11 @@ mod disable;
 mod enable;
 mod rehome;
 mod vet;
+
+#[cfg(all(test, unix))]
+mod emit_dog_action_tests;
+#[cfg(all(test, unix))]
+mod test_support;
 
 pub use adopt::adopt;
 pub use barks::barks;
@@ -64,6 +69,29 @@ const NO_SHEPHERD_DISABLE_STATUS: &str = "not running; will not start with the n
 /// [`DogActionRow`](crate::output::DogActionRow)'s status when a
 /// shepherd stopped the dog.
 const DISABLED_STATUS: &str = "stopped";
+
+/// Writes `verb`'s [`DogActionRow`] to stdout in the invocation's format
+/// and returns the exit code the write earns.
+///
+/// Every dog verb ends here, from the branch where no shepherd answered
+/// (`shepherd_acted: false`) and from the one where it did.
+fn emit_dog_action(
+    streams: &mut Streams<'_>,
+    verb: &str,
+    name: &str,
+    source: impl Into<Option<DogSource>>,
+    status: impl Into<&'static str>,
+    shepherd_acted: bool,
+) -> ExitCode {
+    let row = DogActionRow::new(name, source, status, shepherd_acted);
+    write_outcome(emit(
+        &mut *streams.out,
+        streams.fmt,
+        verb,
+        row,
+        streams.style,
+    ))
+}
 
 /// Renders `err` and returns the exit code a config-write failure reports.
 ///
