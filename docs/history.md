@@ -496,8 +496,9 @@ cargo feature, off by default and carrying no new dependency, adds
 `[dog.metrics]`. The dog POSTs OTLP/JSON to `{endpoint}/v1/metrics` on an
 interval, with the same series and the same labels `/metrics` serves;
 `shep_sheep_restart_total` is the one monotonic cumulative sum, started at
-the dog's own start. A build without the feature refuses `otlp_endpoint` at
-startup rather than running a dog that exports nothing. `otlp_headers` is a
+the dog's own start. A 2xx naming a `partialSuccess` is a
+failed export, not a clean one. A build without the feature refuses
+`otlp_endpoint` at startup rather than running a dog that exports nothing. `otlp_headers` is a
 secret: redacted in `Debug`, marked in the schema, and never printed. No
 wire change.
 

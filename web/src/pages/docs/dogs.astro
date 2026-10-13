@@ -405,14 +405,17 @@ Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
     </p>
     <p>
       One failed export is one line in the dog's log, on the first failure
-      after a success and again on recovery, never once per tick. It never
-      touches the scrape server or the dog's exit code, and there is no
-      final flush on stop: the next tick sends current values anyway.
+      after a success and again on recovery, never once per tick. A 2xx
+      whose body names a <code>partialSuccess</code> counts as one: the
+      collector took some points and said why, and its reason is that line.
+      Its body is read for that alone, up to 8 KiB. It never touches the
+      scrape server or the dog's exit code, and there is no final flush on
+      stop: the next tick sends current values anyway.
     </p>
     <p class="fine">
       The feature adds no dependency, and its cost is code only. Measured on
-      one machine (macOS, Apple Silicon, one toolchain, raw file size, not
-      the corrected install-size method #292 is still sorting out):
+      one machine (macOS, Apple Silicon, raw file size, not #292's corrected
+      install-size method):
     </p>
     <div class="metrics-table">
       <div class="row header">
@@ -420,8 +423,8 @@ Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
         <span>target/release/shep</span>
       </div>
       <div class="row"><span>default</span> <span data-label="target/release/shep">18,994,048 bytes</span></div>
-      <div class="row"><span><code>--features otel</code></span> <span data-label="target/release/shep">19,053,088 bytes</span></div>
-      <div class="row"><span>delta</span> <span data-label="target/release/shep">59,040 bytes</span></div>
+      <div class="row"><span><code>--features otel</code></span> <span data-label="target/release/shep">19,071,024 bytes</span></div>
+      <div class="row"><span>delta</span> <span data-label="target/release/shep">76,976 bytes</span></div>
     </div>
 
     <h2 id="the-bark-dog">The bark dog</h2>

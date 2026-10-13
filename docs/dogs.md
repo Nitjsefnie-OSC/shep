@@ -291,19 +291,22 @@ Resource attributes are `service.name = "shep"`, `service.version` and
 `host.name`. Channel samples are not exported yet.
 
 One failed export is one line in the dog's log, on the first failure after
-a success and again on recovery, never once per tick. It never touches the
-scrape server or the dog's exit code, and there is no final flush on stop:
-the next tick sends current values anyway.
+a success and again on recovery, never once per tick. A 2xx whose body names
+a `partialSuccess` counts as one: the collector took some points and said
+why, and its reason is that line. The answer's body is read for that and
+nothing else, up to 8 KiB. It never touches the scrape server or the dog's
+exit code, and there is no final flush on stop: the next tick sends current
+values anyway.
 
 The feature adds no dependency, and its cost is code only. Measured on this
-machine (macOS, Apple Silicon, one toolchain, raw file size, not the
-corrected install-size method #292 is still sorting out):
+machine (macOS, Apple Silicon, raw file size, not #292's corrected
+install-size method):
 
 | Build | `target/release/shep` |
 |---|---|
 | default | 18,994,048 bytes |
-| `--features otel` | 19,053,088 bytes |
-| delta | 59,040 bytes |
+| `--features otel` | 19,071,024 bytes |
+| delta | 76,976 bytes |
 
 ## The bark dog
 
