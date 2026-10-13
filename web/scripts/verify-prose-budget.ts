@@ -64,7 +64,12 @@ export const BUDGETS: Record<string, number> = {
   //
   // Raised from 3290 on 2026-10-01 for the dogs tab: a ninth group with its
   // own key is new operator-facing surface, not prose to trim back out.
-  "lookout-config": 3310, // 3301
+  //
+  // Raised from 3310 for the list sub-screen refusing an element: an item
+  // schema's minLength, pattern, enum and integer bounds are now checked
+  // before the element is filed, and an operator has to be told the editor
+  // refuses and names the rule. The page measured 3309 before the sentence.
+  "lookout-config": 3330, // 3325
   // Raised from 2930 on 2026-09-14 for the host line, which `shep flock`
   // began printing on a one-shot listing and not only under `--follow`. It
   // shows above every table on this page, so four transcripts gained a line

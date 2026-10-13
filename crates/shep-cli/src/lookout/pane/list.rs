@@ -6,10 +6,10 @@
 //! has to reconcile two representations of one field.
 //!
 //! An element is checked against the bounds its item schema published
-//! ([`super::field::Bounds::items`]) before it is filed, which is the only
-//! gate a dog's `Request::SetSheepDogSettings` has: that write replaces the
-//! whole table without the shepherd reading it, so an element the dog cannot
-//! deserialize is a table the operator has already saved.
+//! ([`super::super::field::Bounds::items`]) before it is filed, which is
+//! the only gate a dog's `Request::SetSheepDogSettings` has: that write
+//! replaces the whole table without the shepherd reading it, so an element
+//! the dog cannot deserialize is a table the operator has already saved.
 
 use serde_json::Value;
 
@@ -95,6 +95,13 @@ impl ListPane {
     #[must_use]
     pub fn item(&self) -> ListItem {
         self.item
+    }
+
+    /// Whether the field is a secret: what masks an element's value on the
+    /// screen, and what decides whether a refusal may print one.
+    #[must_use]
+    pub fn is_secret(&self) -> bool {
+        self.secret
     }
 
     /// The elements, in the order the array holds them.
