@@ -5,6 +5,7 @@
 //! stop or restart is in flight against a set of ids, so the exits it causes
 //! are read as that command finishing rather than as fresh crashes.
 
+use super::actor_disable::Sweep;
 use super::*;
 
 impl<R: ProcessRunner> Actor<R> {
@@ -372,16 +373,28 @@ impl<R: ProcessRunner> Actor<R> {
 
     /// Every registered id `selector` names, in id order.
     ///
-    /// The one place selection happens. A dog is included only for a selector
-    /// that named it ([`ProcessSelector::is_exact`]), so `stop all`, `reload
-    /// all`, `delete all` and a `/regex/` sweep pass every dog by while `shep
-    /// restart bark` still reaches one.
+    /// The one place selection happens. A wildcard reaches a sheep that is
+    /// neither a dog nor disabled, so `stop all`, `reload all`, `delete all`
+    /// and a `/regex/` sweep pass every dog and every parked app by, while
+    /// `shep restart bark` and `shep stop api` still reach one that was named
+    /// ([`ProcessSelector::is_exact`]).
     pub(super) fn matching_ids(&self, selector: &ProcessSelector) -> Vec<u32> {
+        self.reached_ids(selector, Sweep::Enabled)
+    }
+
+    /// [`Self::matching_ids`] with the sweep's side of the disabled mark
+    /// chosen: `enable` is the one verb whose wildcard wants the parked apps
+    /// and nothing else.
+    pub(super) fn reached_ids(&self, selector: &ProcessSelector, sweep: Sweep) -> Vec<u32> {
         let exact = selector.is_exact();
         let mut ids: Vec<u32> = self
             .sheep
             .iter()
-            .filter(|(_, slot)| exact || slot.entry.dog.is_none())
+            .filter(|(id, slot)| {
+                exact
+                    || (slot.entry.dog.is_none()
+                        && self.is_disabled_id(**id) == (sweep == Sweep::Disabled))
+            })
             .filter_map(|(id, slot)| {
                 let config = slot.entry.spec.config();
                 selector

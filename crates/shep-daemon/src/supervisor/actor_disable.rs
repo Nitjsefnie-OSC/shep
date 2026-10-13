@@ -3,6 +3,17 @@
 
 use super::*;
 
+/// Which side of the disabled mark a wildcard reaches.
+///
+/// An exact selector ignores it and reaches its target either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Sweep {
+    /// Sheep that are not disabled: every verb but `enable`.
+    Enabled,
+    /// Sheep that are disabled: `enable`.
+    Disabled,
+}
+
 impl<R: ProcessRunner> Actor<R> {
     /// Disables the app of every sheep `selector` reaches and stops it.
     ///
@@ -14,7 +25,7 @@ impl<R: ProcessRunner> Actor<R> {
         selector: &ProcessSelector,
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     ) {
-        let names = match self.apps_reached(selector) {
+        let names = match self.apps_reached(selector, Sweep::Enabled) {
             Ok(names) => names,
             Err(err) => {
                 let _ = reply.send(Err(err));
@@ -96,8 +107,14 @@ impl<R: ProcessRunner> Actor<R> {
         selector: &ProcessSelector,
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     ) {
-        let names = match self.apps_reached(selector) {
+        let names = match self.apps_reached(selector, Sweep::Disabled) {
             Ok(names) => names,
+            // A sweep over sheep none of which is parked has nothing to
+            // enable, which is the answer an exact name gets too.
+            Err(SupervisorError::NotFound) if !self.matching_ids(selector).is_empty() => {
+                let _ = reply.send(Ok(Vec::new()));
+                return;
+            }
             Err(err) => {
                 let _ = reply.send(Err(err));
                 return;
@@ -201,8 +218,9 @@ impl<R: ProcessRunner> Actor<R> {
     fn apps_reached(
         &self,
         selector: &ProcessSelector,
+        sweep: Sweep,
     ) -> Result<BTreeSet<String>, SupervisorError> {
-        let matched = self.matching_ids(selector);
+        let matched = self.reached_ids(selector, sweep);
         if matched.is_empty() {
             return Err(SupervisorError::NotFound);
         }
