@@ -2226,6 +2226,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "shep-handover"
+version = "0.12.5"
+dependencies = [
+ "nix 0.29.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "shep-macros"
 version = "0.12.5"
 dependencies = [
