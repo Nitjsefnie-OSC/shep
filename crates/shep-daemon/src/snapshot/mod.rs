@@ -12,7 +12,8 @@
 //! saved (`instances_running > 0`) and `autostart` is still true; one the flock
 //! already has is left where it stands, still reported as restored. Nothing
 //! about the graph refuses a restore: a cycle, a name nothing answers to and a
-//! dependency that opted out of `autostart` are each warned about and started
+//! dependency that opted out of `autostart` or is disabled are each warned
+//! about and started
 //! around, because the machine this runs on has nobody watching it.
 
 use core::fmt;
@@ -88,6 +89,10 @@ pub struct SavedApp {
     pub app: AppConfig,
     /// How many instances of this sheep were running when the roll was built
     pub instances_running: u32,
+    /// Whether an operator disabled the app, so a restore keeps it down. A
+    /// roll written before the mark existed has no key and reads `false`.
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 /// The daemon's record of the config each registered sheep was started from
@@ -200,9 +205,13 @@ impl FlockRegistry {
         // One pass over the listing: a name present at all survives the
         // prune, and its value is how many of its instances are up.
         let mut running: BTreeMap<&str, u32> = BTreeMap::new();
+        let mut parked: BTreeSet<&str> = BTreeSet::new();
         for info in infos {
             let up = running.entry(info.name.as_str()).or_default();
             *up = up.saturating_add(u32::from(is_running(info.status)));
+            if info.disabled == Some(true) {
+                parked.insert(info.name.as_str());
+            }
         }
         apps.retain(|name, _| running.contains_key(name.as_str()));
         let saved = apps
@@ -210,6 +219,7 @@ impl FlockRegistry {
             .map(|(name, app)| SavedApp {
                 app: app.clone(),
                 instances_running: running.get(name.as_str()).copied().unwrap_or(0),
+                disabled: parked.contains(name.as_str()),
             })
             .collect();
         FlockSnapshot {
@@ -350,6 +360,9 @@ pub(crate) struct Restorable {
     /// The subset of [`Self::members`] that was up when the roll was written
     /// and still opts into `autostart`.
     pub(crate) to_start: Vec<ResolvedApp>,
+    /// The names in [`Self::members`] the roll marks disabled. None of them is
+    /// in [`Self::to_start`].
+    pub(crate) disabled: BTreeSet<String>,
     /// Sheep name, and why its saved config failed to normalize
     pub(crate) rejected: Vec<(String, NormalizeError)>,
 }
@@ -359,7 +372,8 @@ pub(crate) struct Restorable {
 ///
 /// Membership survives everything but `delete`: a sheep stopped when the roll
 /// was written comes back registered and `Stopped`. What to START is a
-/// separate question, answered by `instances_running > 0 && autostart`.
+/// separate question, answered by `instances_running > 0 && autostart`. A
+/// disabled entry is never started, whatever its count says.
 ///
 /// The roll is a file a human can edit, so every entry is run back through
 /// [`normalize()`] like peer input, and a bad one is collected into `rejected`
@@ -368,6 +382,7 @@ pub(crate) struct Restorable {
 pub(crate) fn restorable(snapshot: FlockSnapshot) -> Restorable {
     let mut members = Vec::new();
     let mut to_start = Vec::new();
+    let mut disabled = BTreeSet::new();
     let mut rejected = Vec::new();
     for saved in snapshot.apps {
         let name = saved.app.name.clone();
@@ -375,7 +390,9 @@ pub(crate) fn restorable(snapshot: FlockSnapshot) -> Restorable {
         let autostart = saved.app.autostart;
         match normalize(saved.app) {
             Ok(resolved) => {
-                if was_up && autostart {
+                if saved.disabled {
+                    disabled.insert(name);
+                } else if was_up && autostart {
                     to_start.push(resolved.clone());
                 }
                 members.push(resolved);
@@ -386,6 +403,7 @@ pub(crate) fn restorable(snapshot: FlockSnapshot) -> Restorable {
     Restorable {
         members,
         to_start,
+        disabled,
         rejected,
     }
 }
@@ -460,7 +478,10 @@ pub(crate) async fn muster(
         .collect();
     if !members.is_empty() {
         registry.record(&members);
-        if let Err(err) = supervisor.register_at_rest(members).await {
+        if let Err(err) = supervisor
+            .register_at_rest(members, restorable.disabled.clone())
+            .await
+        {
             tracing::warn!(%err, "muster roll restore could not register one or more apps");
         }
     }
@@ -488,6 +509,7 @@ pub(crate) async fn muster(
         dogs,
         boot_first_dogs,
     );
+    warn_about_disabled_dependencies(&to_start, &restorable.disabled);
     // `BatchPolicy::PerApp`, not `AllOrNothing`: a whole-batch refusal over an
     // app whose script provably is not there is right for an operator typing
     // `shep start` and wrong at an unattended boot, where a binary missing
@@ -506,6 +528,25 @@ pub(crate) async fn muster(
         tracing::warn!(%err, "muster roll restore could not start one or more apps");
     }
     Ok(restored)
+}
+
+/// Warns for every dependency of a sheep this restore starts that the roll
+/// marks disabled.
+///
+/// Nothing refuses: a disabled dependency is simply not there, so the
+/// dependent starts without it, as with `autostart = false`.
+fn warn_about_disabled_dependencies(to_start: &[ResolvedApp], disabled: &BTreeSet<String>) {
+    for app in to_start {
+        for target in &app.config().depends_on {
+            if disabled.contains(target) {
+                tracing::warn!(
+                    sheep = %app.config().name,
+                    dependency = %target,
+                    "the dependency is disabled; starting without it"
+                );
+            }
+        }
+    }
 }
 
 /// Warns for every saved sheep whose name a running dog has taken.
@@ -820,6 +861,7 @@ mod tests {
             .build()
     }
 
+    mod disabled;
     mod graph;
     mod io;
     mod muster;
@@ -833,6 +875,7 @@ mod tests {
         let roll = FlockSnapshot::with_apps(vec![SavedApp {
             app: AppConfig::minimal("api-auth", "./api-auth"),
             instances_running: 0,
+            disabled: false,
         }]);
         let restorable = restorable(roll);
         assert_eq!(restorable.members.len(), 1, "stopping is not forgetting");

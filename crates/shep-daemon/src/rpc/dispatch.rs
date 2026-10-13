@@ -7,7 +7,7 @@
 use core::future::Future;
 use core::time::Duration;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use shep_core::config::{NormalizeError, ResolvedApp, normalize_all};
 use shep_core::protocol::{
@@ -168,7 +168,11 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 Err(err) => reply(Err(err)),
                 Ok(_) => {
                     ctx.registry.record(&resolved);
-                    match ctx.supervisor.register_at_rest(resolved).await {
+                    match ctx
+                        .supervisor
+                        .register_at_rest(resolved, BTreeSet::new())
+                        .await
+                    {
                         Ok(infos) => reply(Ok(Response::Added(infos))),
                         Err(err) => reply(Err(rpc_error(&err))),
                     }

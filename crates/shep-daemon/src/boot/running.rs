@@ -194,6 +194,7 @@ mod tests {
         let roll = FlockSnapshot::with_apps(vec![SavedApp {
             app: AppConfig::minimal("web", "./srv"),
             instances_running: 99,
+            disabled: false,
         }]);
         crate::snapshot::write_atomic(&paths.snapshot, &roll).unwrap();
 
