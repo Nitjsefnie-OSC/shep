@@ -22,6 +22,21 @@ impl<R: ProcessRunner> Actor<R> {
             }
         };
         let ids = self.ids_of_apps(&names);
+        // The mark wins over what is in flight: a restart's kill marker
+        // becomes a stop, and a serial reload mid-drain is abandoned so the
+        // drained exit leaves a stopped row rather than a replacement.
+        for slot in self.sheep.values_mut() {
+            let restarting = slot.manual.is_some_and(|m| m.kind == ManualKind::Restart);
+            if restarting && names.contains(&slot.entry.spec.config().name) {
+                slot.manual = Some(PendingManual {
+                    kind: ManualKind::Stop,
+                    origin: CommandOrigin::Operator,
+                });
+            }
+        }
+        for name in &names {
+            self.abandon_serial_drain(name);
+        }
         self.disabled.extend(names);
         self.begin_manual_ids(
             ids,
@@ -29,6 +44,35 @@ impl<R: ProcessRunner> Actor<R> {
             CommandOrigin::Operator,
             ReplyKind::Info(reply),
         );
+    }
+
+    /// Ends `name`'s reload while it is draining an instance before any
+    /// replacement exists, and takes the drain marker off that instance so
+    /// its exit is an ordinary stop.
+    ///
+    /// Any other phase is left alone. A serial reload's replacement is
+    /// already registered and phased `DrainOld` by then, so its exit under the
+    /// disable's stop goes the ordinary route and leaves a `Stopped` row; an
+    /// overlap swap keeps the old instance's row the same way.
+    fn abandon_serial_drain(&mut self, name: &str) {
+        let Some(job) = self.reloads.get(name) else {
+            return;
+        };
+        if job.swap.phase != ReloadPhase::DrainFirst {
+            return;
+        }
+        let old_id = job.swap.old_id;
+        tracing::warn!(
+            name,
+            old_id,
+            "reload abandoned: the app was disabled, so no replacement is spawned"
+        );
+        self.reloads.remove(name);
+        self.clear_reload(old_id);
+        if let Some(slot) = self.sheep.get(&old_id) {
+            let info = to_info(&slot.entry, &self.smits);
+            self.emit(ProcessEventKind::ReloadAbandoned, info, true);
+        }
     }
 
     /// Marks the apps of `apps` that `names` lists disabled, ahead of their
