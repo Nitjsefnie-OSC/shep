@@ -118,7 +118,7 @@ const fn binding(press: &KeyPress) -> Binding {
             "char / word move",
         ),
         KeyPress::TextEdit(TextEdit::Home | TextEdit::End) => {
-            row("ctrl-a/e", Group::Moving, "line start / end")
+            row("ctrl-a/e", Group::Moving, "home/end in a box")
         }
         KeyPress::Confirm => row("\u{21b5}", Group::Moving, "open selection"),
         KeyPress::Escape => row("esc", Group::Moving, "back one level"),

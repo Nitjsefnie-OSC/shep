@@ -9,7 +9,7 @@ J/K          next / prev sheep  F            gather by fold
 ctrl-d/u     page the feed      z            collapse a fold          
 ←/→          environment tab    o            out / err / both         
 ←/→ alt-b/f  char / word move   m            minimum level            
-ctrl-a/e     line start / end   f            follow the tail          
+ctrl-a/e     home/end in a box  f            follow the tail          
 tab/S-tab    next / prev group  w            wrap long lines          
 1-9          jump to a group    /            filter, or match         
 n/N          next / prev match  r            refresh now              

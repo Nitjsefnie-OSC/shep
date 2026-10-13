@@ -1977,7 +1977,7 @@ host  load  ██░░░░░░░░ 2.31 4.10 3.88 / 10 cores     host me
                 ▐ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                    ▌                
                 ▐←/→          environment tab    o            out / err / both   d            restore default      ▟█████▙                     ▌                
                 ▐←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit       ▟███████▙                    ▌                
-                ▐ctrl-a/e     line start / end   f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
+                ▐ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
                 ▐tab/S-tab    next / prev group  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌                
                 ▐1-9          jump to a group    /            filter, or match   D            delete a secret                                  ▌                
                 ▐n/N          next / prev match  r            refresh now        c            leave it running                                 ▌                
@@ -2029,7 +2029,7 @@ host  load  ██░░░░░░░░ 2.31 4.10 3.88 / 10 cores     host me
  ▐ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                    ▌ 
  ▐←/→          environment tab    o            out / err / both   d            restore default      ▟█████▙                     ▌ 
  ▐←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit       ▟███████▙                    ▌ 
- ▐ctrl-a/e     line start / end   f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌ 
+ ▐ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌ 
  ▐tab/S-tab    next / prev group  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌ 
  ▐1-9          jump to a group    /            filter, or match   D            delete a secret                                  ▌ 
  ▐n/N          next / prev match  r            refresh now        c            leave it running                                 ▌ 
@@ -2066,7 +2066,7 @@ J/K          next / prev sheep  F            gather by fold     e            the
 ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                       
 ←/→          environment tab    o            out / err / both   d            restore default                                     
 ←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit                                       
-ctrl-a/e     line start / end   f            follow the tail    s            shepherd settings                                   
+ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings                                   
 tab/S-tab    next / prev group  w            wrap long lines    S            secrets                                             
 1-9          jump to a group    /            filter, or match   D            delete a secret                                     
 n/N          next / prev match  r            refresh now        c            leave it running                                    
@@ -2118,7 +2118,7 @@ J/K          next / prev sheep  F            gather by fold     e            the
 ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value          
 ←/→          environment tab    o            out / err / both   d            restore default        
 ←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit          
-ctrl-a/e     line start / end   f            follow the tail    s            shepherd settings      
+ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings      
 tab/S-tab    next / prev group  w            wrap long lines    S            secrets                
 1-9          jump to a group    /            filter, or match   D            delete a secret        
 n/N          next / prev match  r            refresh now        c            leave it running       
@@ -2170,7 +2170,7 @@ J/K          next / prev sheep  F            gather by fold
 ctrl-d/u     page the feed      z            collapse a fold          
 ←/→          environment tab    o            out / err / both         
 ←/→ alt-b/f  char / word move   m            minimum level            
-ctrl-a/e     line start / end   f            follow the tail          
+ctrl-a/e     home/end in a box  f            follow the tail          
 tab/S-tab    next / prev group  w            wrap long lines          
 1-9          jump to a group    /            filter, or match         
 n/N          next / prev match  r            refresh now              
@@ -2237,7 +2237,7 @@ host  load  ██░░░░░░░░ 2.31 4.10 3.88 / 10 cores     host me
                 ▐ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                    ▌                
                 ▐←/→          environment tab    o            out / err / both   d            restore default      ▟█████▙                     ▌                
                 ▐←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit       ▟███████▙                    ▌                
-                ▐ctrl-a/e     line start / end   f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
+                ▐ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
                 ▐tab/S-tab    next / prev group  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌                
                 ▐1-9          jump to a group    /            filter, or match   D            delete a secret                                  ▌                
                 ▐n/N          next / prev match  r            refresh now        c            leave it running                                 ▌                
@@ -2289,7 +2289,7 @@ host  load  ██░░░░░░░░ 2.31 4.10 3.88 / 10 cores     host me
                 ▐ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                    ▌                
                 ▐←/→          environment tab    o            out / err / both   d            restore default      ▟█████▙                     ▌                
                 ▐←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit       ▟███████▙                    ▌                
-                ▐ctrl-a/e     line start / end   f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
+                ▐ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
                 ▐tab/S-tab    next / prev group  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌                
                 ▐1-9          jump to a group    /            filter, or match   D            delete a secret                                  ▌                
                 ▐n/N          next / prev match  r            refresh now        c            leave it running                                 ▌                
@@ -2326,7 +2326,7 @@ J/K          next / prev sheep  F            gather by fold     e            the
 ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                                                      
 ←/→          environment tab    o            out / err / both   d            restore default                                                                    
 ←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit                                                                      
-ctrl-a/e     line start / end   f            follow the tail    s            shepherd settings                                                                  
+ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings                                                                  
 tab/S-tab    next / prev group  w            wrap long lines    S            secrets                                                                            
 1-9          jump to a group    /            filter, or match   D            delete a secret                                                                    
 n/N          next / prev match  r            refresh now        c            leave it running                                                                   
