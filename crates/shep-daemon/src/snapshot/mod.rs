@@ -560,11 +560,12 @@ fn warn_about_disabled_dependencies(to_start: &[ResolvedApp], disabled: &BTreeSe
 
 /// Warns for every saved sheep whose name a running dog has taken.
 ///
-/// `boot` leaves out any dog a saved sheep names, so this fires only on an
-/// operator's `Muster` into a flock whose dog took the name since: [`muster`]'s
-/// `known` finds it running and filters the roll's sheep of that name out of
-/// both the membership pass and the start. Without this line that sheep is
-/// lost in silence.
+/// A boot that restores the roll leaves out any dog a saved sheep names, so
+/// this fires on an operator's `Muster` into a flock whose dog took the name
+/// since, and on a handover successor, which inherits its flock and skips that
+/// filter: [`muster`]'s `known` finds the dog running and filters the roll's
+/// sheep of that name out of both the membership pass and the start. Without
+/// this line that sheep is lost in silence.
 ///
 /// The name stays in the restored list. It really is in the flock, and
 /// dropping it would report the loss as an absence on a terminal that has no
