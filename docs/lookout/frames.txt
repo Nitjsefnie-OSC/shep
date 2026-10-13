@@ -1693,22 +1693,22 @@ shep lookout   /home/ada/.shep                                                  
 esc back   j/k select   g/G first/last   r refresh   enter open   d remove   q quit                                                              control enabled
 
 === sheep_dog_table  (160x48) ===
-Enter on jobs opens its table pane: dotted rows for the nested hours and models.worker tables, and models.worker.token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame.
+Enter on jobs opens its table pane as a tree: hours and models open at the first level, models.worker opened onto token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame.
 
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
   api › jobs  (dog table)                                                                                                                                       
->  concurrency                2                                                          FOCUSED  concurrency  integer                                          
-   hours.end                  17:00                                                       concurrency                                                           
-   hours.start                09:00                                                                                                                             
-   merge                      ask                                                         now     2                                                             
-   models.worker.model        small                                                       default (none)                                                        
-   models.worker.token        <set>                                                       example (none)                                                        
-                                                                                                                                                                
-                                                                                          ──────────────────────────────────────────────────────────────────────
-                                                                                          VALIDATION                                                            
-                                                                                          █ a whole number                                                      
+   concurrency                2                                                          FOCUSED  models.worker.token  text                                     
+   ▾ hours                                                                    table       token                                                                 
+     end                      17:00                                                                                                                             
+     start                    09:00                                                       now     <set>                                                         
+   merge                      ask                                                         default (none)                                                        
+   ▾ models                                                                   table       example (none)                                                        
+     ▾ worker                                                                 table                                                                             
+       model                  small                                                                                                                             
+>      token                  <set>                                                                                                                             
   shep publishes the change; jobs decides what to reload                                                                                                        
+                                                                                                                                                                
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 

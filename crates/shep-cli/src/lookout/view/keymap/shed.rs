@@ -1,5 +1,5 @@
 use super::super::super::app::App;
-use super::super::super::keymap::{Binding, ENTRY_ROWS, Group, rows};
+use super::super::super::keymap::{Binding, ENTRY_ROWS, Group, rows_over};
 use super::super::super::theme::Palette;
 use super::super::overlay;
 use super::keymap_rows::{
@@ -116,7 +116,7 @@ pub(in crate::lookout::view) fn draw(app: &App, area: Rect, buffer: &mut Buffer)
 /// trailing decoration this many rows, after paying for every bank beyond
 /// the first, still has room for.
 pub(super) fn draw_borderless(app: &App, area: Rect, buffer: &mut Buffer, palette: Palette) {
-    let all_rows = rows();
+    let all_rows = rows_over(app.over_a_tree());
     let columns = usize::from(columns_for(area.width));
     let banks: Vec<&[Group]> = Group::DRAWN.chunks(columns).collect();
     // Each bank beyond the first costs its own floor (`HEIGHT_FLOOR`) plus

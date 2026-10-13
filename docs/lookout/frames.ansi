@@ -1742,22 +1742,22 @@ The same sub-screen with jobs's table removal armed by d: the title asks remove 
 
 
 === sheep_dog_table  (160x48) ===
-Enter on jobs opens its table pane: dotted rows for the nested hours and models.worker tables, and models.worker.token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame.
+Enter on jobs opens its table pane as a tree: hours and models open at the first level, models.worker opened onto token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame.
 
 [0m[7m[38;5;29mshep lookout   /home/ada/.shep                                                                                                                    6 in the flock[0m
                                                                                                                                                                 [0m
 [0m[38;5;245m  api › jobs  (dog table)                                                                                                                                       [0m
-[0m[38;5;221m[48;5;235m>[0m[48;5;235m  concurrency                2                                                         [0m[7m[38;5;221m FOCUSED [0m concurrency[0m[38;5;245m  integer[0m                                          [0m
-   hours.end                  17:00                                                       concurrency                                                           [0m
-   hours.start                09:00                                                                                                                             [0m
-   merge                      ask                                                       [0m[38;5;245m  now     [0m2                                                             [0m
-   models.worker.model        small                                                     [0m[38;5;245m  default [0m(none)                                                        [0m
-   models.worker.token        <set>                                                     [0m[38;5;245m  example [0m(none)                                                        [0m
-                                                                                                                                                                [0m
-                                                                                        [0m[38;5;238m  ──────────────────────────────────────────────────────────────────────[0m
-                                                                                        [0m[38;5;245m  VALIDATION[0m                                                            [0m
-                                                                                        [0m[7m[38;5;29m  █ [0ma whole number                                                      [0m
+   concurrency                2                                                         [0m[7m[38;5;221m FOCUSED [0m models.worker.token[0m[38;5;245m  text[0m                                     [0m
+ [0m[38;5;245m  ▾ hours                                                                    table     [0m  token                                                                 [0m
+     end                      17:00                                                                                                                             [0m
+     start                    09:00                                                     [0m[38;5;245m  now     [0m<set>                                                         [0m
+   merge                      ask                                                       [0m[38;5;245m  default [0m(none)                                                        [0m
+ [0m[38;5;245m  ▾ models                                                                   table       example [0m(none)                                                        [0m
+ [0m[38;5;245m    ▾ worker                                                                 table     [0m                                                                        [0m
+       model                  small                                                                                                                             [0m
+[0m[38;5;221m[48;5;235m>[0m[48;5;235m      token                  <set>                                                     [0m                                                                        [0m
 [0m[38;5;245m  shep publishes the change; jobs decides what to reload                                                                                                        [0m
+                                                                                                                                                                [0m
                                                                                                                                                                 [0m
                                                                                                                                                                 [0m
                                                                                                                                                                 [0m

@@ -73,8 +73,16 @@ impl ConfigPane {
     /// keys" summary beside them would be the same fact said twice. A
     /// dog's schema is somebody else's and can declare a field named
     /// `env` of its own, which stays.
+    ///
+    /// A dog's pane draws its outline instead: a table's row, then what is
+    /// under it while it is open. See [`Self::open_table`].
     #[must_use]
     pub fn rows(&self) -> Vec<PaneRow> {
+        if self.is_tree() {
+            let mut rows = Vec::new();
+            self.push_tree_rows(&self.outline.roots, &mut rows);
+            return rows;
+        }
         let group = self.group();
         let is_sheep = matches!(self.target, PaneTarget::Sheep { .. });
         let mut rows: Vec<PaneRow> = self
@@ -93,7 +101,7 @@ impl ConfigPane {
         rows
     }
 
-    /// [`Self::rows`]'s own [`PaneRow::Field`] entries, alone: what the
+    /// [`Self::rows`]'s own [`PaneRow::Field`] and [`PaneRow::Table`] entries, alone: what the
     /// field body's own scroll walk lays out. [`Self::rows`] is the
     /// cursor's whole walk, env rows included; this is the narrower list
     /// the renderer needs to lay the field portion out on its own, since
@@ -103,7 +111,7 @@ impl ConfigPane {
     pub(in crate::lookout) fn field_rows(&self) -> Vec<PaneRow> {
         self.rows()
             .into_iter()
-            .filter(|row| matches!(row, PaneRow::Field(_)))
+            .filter(|row| matches!(row, PaneRow::Field(_) | PaneRow::Table(_)))
             .collect()
     }
 
@@ -140,7 +148,8 @@ impl ConfigPane {
 
     /// Switches to `key`'s own group, then walks the cursor onto it, the
     /// way an operator reaches a field in a different group than the one
-    /// the pane opened on. A no-op for a name no field carries.
+    /// the pane opened on, and opens the tables above it on a tree pane. A
+    /// no-op for a name no field carries.
     #[cfg(test)]
     pub(crate) fn move_to_key(&mut self, key: &str) {
         let Some(field) = self.fields.by_key(key) else {
@@ -151,9 +160,10 @@ impl ConfigPane {
         {
             self.group = index;
         }
+        self.open_down_to(key);
         if let Some(row_index) = self.rows().iter().position(|row| match row {
             PaneRow::Field(field_index) => self.fields.fields()[*field_index].key == key,
-            PaneRow::Env(_) | PaneRow::AddEnv => false,
+            PaneRow::Table(_) | PaneRow::Env(_) | PaneRow::AddEnv => false,
         }) {
             let len = self.rows().len();
             self.view.move_to(row_index, len);

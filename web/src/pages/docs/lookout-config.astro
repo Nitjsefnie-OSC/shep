@@ -138,16 +138,15 @@ esc back   j/k select   g/G first/last   r refresh   enter open   d remove   q q
 const sheepDogTable = `shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
 
   api › jobs  (dog table)
->  concurrency                2                                                          FOCUSED  concurrency  integer
-   hours.end                  17:00                                                       concurrency
-   hours.start                09:00
-   merge                      ask                                                         now     2
-   models.worker.model        small                                                       default (none)
-   models.worker.token        <set>                                                       example (none)
-
-                                                                                          ──────────────────────────────────────────────────────────────────────
-                                                                                          VALIDATION
-                                                                                          █ a whole number
+   concurrency                2                                                          FOCUSED  models.worker.token  text
+   ▾ hours                                                                    table       token
+     end                      17:00
+     start                    09:00                                                       now     <set>
+   merge                      ask                                                         default (none)
+   ▾ models                                                                   table       example (none)
+     ▾ worker                                                                 table
+       model                  small
+>      token                  <set>
   shep publishes the change; jobs decides what to reload
 
 esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit   control enabled`;
@@ -593,8 +592,10 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       <code>Esc</code> writes them.
     </p>
     <p>
-      A nested struct in the schema becomes dotted rows here,{" "}
-      like <code>models.worker.model</code>. A secret
+      A nested struct in the schema is a table row with its keys indented
+      under it. The first level starts open. <code>→</code> opens a table,{" "}
+      <code>←</code> closes it or, on a key or a closed table, moves to its parent, and{" "}
+      <code>Enter</code> toggles it. A secret
       reads <code>&lt;set&gt;</code>. A list of strings or integers opens
       the sheep pane's list sub-screen. <code>Esc</code> writes the whole
       table and lands on the dashboard, not back on the sub-screen. If the
@@ -630,16 +631,18 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       not write. A built-in dog is shep's own binary and is never spawned.
     </Callout>
     <p>
-      The pane is flat, with no section headers: a dog's schema carries no
-      groups, and inventing some would be shep deciding how somebody else's
-      config reads. The cost column is empty on every row, because shep does
+      The pane has no section headers: a dog's schema carries no groups, and
+      inventing some would be shep deciding how somebody else's config
+      reads. The cost column is empty on every row, because shep does
       not know what a dog's field costs. The foot of the pane says so once,
       naming the dog:
     </p>
     <CodeBlock>{`shep publishes the change; bark decides what to reload`}</CodeBlock>
     <p>
-      A nested table becomes dotted rows here too, like{" "}
-      <code>models.worker.model</code>. A credential reads{" "}
+      A nested table is a row marked <code>▸</code> closed or{" "}
+      <code>▾</code> open, typed <code>table</code>, with its keys indented
+      under it. The first level starts open, and <code>r</code> keeps what
+      you opened. A credential reads{" "}
       <code>&lt;set&gt;</code> at any depth and never its value, and its editor
       opens empty. A list or a map gets <code>~</code>, the same glyph a
       sheep's <code>args</code> gets and for the same reason.
