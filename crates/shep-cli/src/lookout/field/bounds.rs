@@ -82,16 +82,24 @@ pub(super) fn bounds_of(schema: &Value, defs: &Map<String, Value>) -> Bounds {
     bounds_opening(schema, defs, &mut Vec::new())
 }
 
-/// [`bounds_of`]'s walk. `open` holds the resolved schemas on the current
-/// path, by identity: an array whose `items` names its own type, which
-/// `schemars` emits for a recursive one, publishes no item bounds rather
-/// than recursing until the stack is gone.
+/// [`bounds_of`]'s walk. `open` holds the schemas on the current path, by
+/// identity, each one twice: as written, and as [`resolved`] reads it.
+///
+/// An array whose `items` names its own type, which `schemars` emits for a
+/// recursive one, publishes no item bounds rather than recursing until the
+/// stack is gone. The raw form is what makes that hold for a `$defs` entry
+/// that is only an alias: `B` resolves to `A`, so a path of resolved values
+/// alone never meets `B`, and the walk resolves `B` to `A`, pushes `A`, and
+/// finds `B` again for as long as it has stack.
 fn bounds_opening<'a>(
     schema: &'a Value,
     defs: &'a Map<String, Value>,
     open: &mut Vec<&'a Value>,
 ) -> Bounds {
+    let depth = open.len();
+    let written = schema;
     let schema = resolved(schema, defs);
+    open.push(written);
     open.push(schema);
     let items = schema
         .get("items")
@@ -99,7 +107,7 @@ fn bounds_opening<'a>(
         .map(|items| resolved(items, defs))
         .filter(|item| !open.iter().any(|seen| core::ptr::eq(*seen, *item)))
         .map(|item| Box::new(bounds_opening(item, defs, open)));
-    open.pop();
+    open.truncate(depth);
     let minimum = schema.get("minimum").and_then(Value::as_f64).map(f64::ceil);
     let maximum = schema
         .get("maximum")
@@ -322,6 +330,55 @@ mod tests {
             None,
             "the hop back to a schema already on the path says nothing"
         );
+    }
+
+    /// The same loop, spelled through a `$defs` entry that is only an alias
+    /// for another one, which is how a schema author names a type twice.
+    ///
+    /// The guard has to hold each schema as written beside the one it
+    /// resolves to. `B` resolves to `A`, so a path that holds only resolved
+    /// values never meets `B` again: the walk saw `B`, resolved it to `A`,
+    /// pushed `A`, and found `B` once more for as long as it had stack.
+    /// This is a third party's schema, so the crash is an operator's
+    /// `shep lookout` opening a dog pane.
+    #[test]
+    fn an_item_schema_that_is_only_an_alias_for_another_ends_the_walk() {
+        let p = props(json!({ "tree": { "$ref": "#/$defs/A" } }));
+        let defs = props(json!({
+            "A": { "type": "array", "items": { "$ref": "#/$defs/B" }, "minLength": 1 },
+            "B": { "$ref": "#/$defs/A" },
+        }));
+        let set = FieldSet::from_properties(&p, &defs, &[]);
+        let bounds = &set.by_key("tree").unwrap().bounds;
+        assert_eq!(bounds.min_length, Some(1), "the property's own def");
+        let item = bounds.items.as_deref().expect("A declares an item schema");
+        assert_eq!(
+            item.min_length,
+            Some(1),
+            "the alias resolves to A, whose bounds are read"
+        );
+        assert_eq!(
+            item.items.as_deref(),
+            None,
+            "the hop back to A says nothing, and the walk stops one level deeper"
+        );
+    }
+
+    /// The same loop behind two `anyOf: [T, {type: null}]` arms, which is
+    /// how a dog spells an optional field, and the shape the finding named.
+    #[test]
+    fn an_item_schema_behind_two_nullable_aliases_ends_the_walk() {
+        let p = props(json!({ "tree": { "$ref": "#/$defs/A" } }));
+        let defs = props(json!({
+            "A": { "type": "array", "items": { "$ref": "#/$defs/B" }, "minLength": 1 },
+            "B": { "anyOf": [{ "$ref": "#/$defs/C" }, { "type": "null" }] },
+            "C": { "anyOf": [{ "$ref": "#/$defs/A" }, { "type": "null" }] },
+        }));
+        let set = FieldSet::from_properties(&p, &defs, &[]);
+        let bounds = &set.by_key("tree").unwrap().bounds;
+        let item = bounds.items.as_deref().expect("A declares an item schema");
+        assert_eq!(item.min_length, Some(1));
+        assert_eq!(item.items.as_deref(), None, "the hop back to A ends it");
     }
 
     /// An `enum` on an item is the one closed set a list editor can meet: a
