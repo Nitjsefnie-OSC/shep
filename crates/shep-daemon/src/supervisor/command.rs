@@ -94,6 +94,14 @@ pub(crate) enum Command {
         /// Answers once every instance of each app is terminal.
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     },
+    /// Marks the dog registered as `name` disabled and stops it, leaving it
+    /// registered.
+    DisableDog {
+        /// The dog's name; a name only a sheep holds is not found.
+        name: String,
+        /// Answers once the dog is terminal, with its id.
+        reply: oneshot::Sender<Result<Vec<u32>, SupervisorError>>,
+    },
     /// Clears the disabled mark on the app of every sheep matching
     /// `selector` and starts it.
     Enable {

@@ -291,6 +291,10 @@ impl<R: ProcessRunner> Actor<R> {
                 self.handle_disable(&selector, reply);
                 false
             }
+            Command::DisableDog { name, reply } => {
+                self.handle_disable_dog(&name, reply);
+                false
+            }
             Command::Enable { selector, reply } => {
                 self.handle_enable(&selector, reply);
                 false
@@ -350,7 +354,7 @@ impl<R: ProcessRunner> Actor<R> {
             .map(|(id, slot)| {
                 (
                     *id,
-                    is_at_rest(&slot.entry),
+                    is_at_rest(&slot.entry) || self.is_parked_dog(&slot.entry),
                     to_info(&slot.entry, &self.smits),
                 )
             });
