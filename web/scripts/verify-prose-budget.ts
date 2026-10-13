@@ -109,11 +109,15 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3130 on 2026-10-13 for dog names: a sheep cannot take a
   // dog's name, and one that already holds a built-in's keeps it.
   //
-  // Raised from 3200 on 2026-10-14 for what `shep daemon reload` does with a
+  // Raised from 3200 for `shep delete` on a dog: one verb now carries both
+  // removals, and the page has to say what survives it and that a built-in
+  // is refused. Required content, not prose to trim back out.
+  //
+  // Raised from 3254 on 2026-10-14 for what `shep daemon reload` does with a
   // dog: which ones cross, which one the successor registers afresh, and which
   // one it stops. An operator has to know a hand-edited `enabled_dogs` reaches
   // a running dog through the reload and nowhere else.
-  dogs: 3250, // 3240
+  dogs: 3320, // 3315
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
@@ -130,7 +134,14 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 2190 on 2026-10-13 for the handover half of the same pair of
   // verbs: the mark now survives `shep daemon reload`, and the recorded `2088`
   // was 95 words stale before that sentence went in.
-  lifecycle: 2200, // 2194
+  //
+  // Raised from 2200 for `shep delete` reaching a dog: the verb an operator
+  // already reads on this page now has a second path, and the page has to say
+  // which names take it. The dog's own detail stays on the dogs page.
+  //
+  // Raised again for the same verb refusing a name it cannot judge, which is
+  // an exit an operator hits. Paid for by tightening the sentence above it.
+  lifecycle: 2245, // 2235
   logs: 1900, // 1805
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim

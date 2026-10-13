@@ -32,6 +32,19 @@ pub struct DogSpec {
     pub source: DogSource,
 }
 
+/// The sentence this shepherd answers a request to delete a built-in dog with.
+///
+/// A built-in dog is an argv branch of the shep binary, so nothing removes it:
+/// `delete` has no registration to forget and no binary to lose. `disable` is
+/// the verb that exists for it, and the refusal names it.
+///
+/// Public because `shep-cli` reports it for a shepherd that is not running and
+/// cannot be asked, so an operator reads one sentence either way.
+#[must_use]
+pub fn built_in_dog_refusal(name: &str) -> String {
+    format!("{name} is built in: `shep disable {name}`")
+}
+
 /// Error assembling a dog's app config, or reading its section
 ///
 /// `Debug` needs no redaction: a path, a normalizer complaint, or a TOML

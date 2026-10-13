@@ -107,6 +107,18 @@ const dogLogDemo = `2026-09-02T14:22:31.412+02:00 [shep] shep started this dog; 
         <code>enabled_dogs</code> entry back out.
       </p>
     </VerbSignature>
+    <VerbSignature verb="delete" usage="shep delete <name>">
+      <p>
+        The one way to remove a dog: it is stopped, deregistered, and struck
+        from <code>enabled_dogs</code>, <code>adopted_dogs</code> and{" "}
+        <code>channel_dogs</code> in <code>shep.toml</code>, so the next boot
+        does not bring it back. Its <code>&lt;name&gt;</code> section in{" "}
+        <code>dogs.toml</code> stays, webhook URLs and all, and the verb
+        says so: those settings are yours rather than the adoption's. A
+        built-in dog is refused by the shepherd, and the refusal names{" "}
+        <code>shep disable</code> as the verb that exists for one.
+      </p>
+    </VerbSignature>
     <CodeBlock>{`$ shep enable metrics
 NAME     SOURCE    SHEPHERD  STATUS
 metrics  built-in  true      online

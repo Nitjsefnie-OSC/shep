@@ -372,10 +372,9 @@ pub(crate) async fn run(
             Ok(client) => lifecycle::reload(&client, &mut streams, args).await,
             Err(code) => code,
         },
-        Commands::Delete(ref args) => match connect_client(&mut streams, &paths, guard).await {
-            Ok(client) => lifecycle::delete(&client, &mut streams, args).await,
-            Err(code) => code,
-        },
+        // Not `connect_client` at this arm: `delete` removes a dog from
+        // `shep.toml` too, and that half works with no shepherd running.
+        Commands::Delete(ref args) => lifecycle::delete(&mut streams, &paths, guard, args).await,
         Commands::Stock(ref args) => match connect_client(&mut streams, &paths, guard).await {
             Ok(client) => lifecycle::stock(&client, &mut streams, args).await,
             Err(code) => code,

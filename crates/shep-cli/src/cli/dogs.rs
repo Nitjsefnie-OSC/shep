@@ -1,5 +1,5 @@
 //! Arguments for the dog verbs: `dogs`, `enable`, `disable`, `adopt`,
-//! `rehome`, and the hidden `dog` re-exec target.
+//! the hidden `rehome`, and the hidden `dog` re-exec target.
 //!
 //! `enable` and `disable` also take a sheep's name, so each carries a
 //! sheep-and-dog `name` of its own. The rest name a dog and never select
@@ -23,7 +23,8 @@ pub struct DogsArgs {
     pub filter: Option<String>,
 }
 
-/// Arguments to `shep rehome`, and to the hidden `shep dog` re-exec target.
+/// Arguments to the hidden `shep rehome`, and to the hidden `shep dog`
+/// re-exec target.
 ///
 /// One struct for both, matching [`StartupArgs`](crate::cli::StartupArgs)'s own precedent: a
 /// dog is named, never selected — `SelectorArgs`' grammar (`all`, `/regex/`,
