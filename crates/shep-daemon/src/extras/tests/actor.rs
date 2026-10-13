@@ -168,6 +168,13 @@ fn backoff_app() -> shep_core::config::ResolvedApp {
 /// something is wrong: a wait returns the moment it is satisfied.
 const SETTLE_DEADLINE: Duration = Duration::from_secs(10);
 
+/// How far a settle wait may carry the paused clock. The rounds advance it
+/// 1ms at a time when the runtime is idle, so without this a long real-time
+/// wait would also run virtual time on, past a cron occurrence or a backoff
+/// and into side effects the test is not about. Far below either, and far
+/// above the few rounds a wait that is going to succeed needs.
+const SETTLE_VIRTUAL_LIMIT: Duration = Duration::from_secs(5);
+
 /// Waits until the armed cron worker has taken its first reading of `clock`.
 ///
 /// The worker derives its occurrence from that reading, so time advanced
@@ -194,13 +201,16 @@ async fn wait_for_cron_worker(clock: &TestClock) {
 /// A round waits on the paused clock, not on `yield_now`: a stop's lamb walk
 /// runs on the blocking pool, and the runtime holds the clock still until it
 /// returns, where a yield would spend its rounds before the pool answers.
-/// The bound is on the real clock, not a count of rounds: a count is spent
-/// faster or slower depending on how loaded the machine is, where a
-/// satisfied wait returns on its first round either way.
+/// Bounded on both clocks: [`SETTLE_DEADLINE`] of real time, for a wait that
+/// runs off the paused clock and so spends no virtual time while it lasts,
+/// and [`SETTLE_VIRTUAL_LIMIT`] of paused time, so a wait that spins cannot
+/// carry the clock past an occurrence. A satisfied wait returns on its first
+/// round either way.
 async fn settle_into(supervisor: &SupervisorHandle, id: u32, status: ProcStatus) {
     let started = std::time::Instant::now();
+    let virtual_start = tokio::time::Instant::now();
     let mut last = Vec::new();
-    while started.elapsed() < SETTLE_DEADLINE {
+    while started.elapsed() < SETTLE_DEADLINE && virtual_start.elapsed() < SETTLE_VIRTUAL_LIMIT {
         tokio::time::sleep(Duration::from_millis(1)).await;
         last = supervisor.list().await;
         if last
