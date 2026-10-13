@@ -213,6 +213,56 @@ fn an_event_rule_does_not_fire_on_a_kind_it_was_not_given() {
     assert_eq!(exit.len(), 1, "exit was, and should still fire");
 }
 
+/// Each rule routes to a sink of its own, so the firings name the rules
+/// that fired.
+#[test]
+fn on_event_walks_a_mixed_rule_set_and_fires_only_the_matching_rules() {
+    let rule = |when: Trigger, sink: &str| Rule {
+        when,
+        sinks: vec![sink.to_owned()],
+        debounce: default_debounce(),
+    };
+    let mut sinks = BTreeMap::new();
+    for name in ["event", "gave_up", "restart_rate", "memory"] {
+        sinks.extend(one_sink(name));
+    }
+    let mut rules = Rules::new(
+        vec![
+            rule(
+                Trigger::Event {
+                    kinds: vec!["errored".to_owned()],
+                },
+                "event",
+            ),
+            rule(Trigger::GaveUp {}, "gave_up"),
+            rule(
+                Trigger::RestartRate {
+                    restarts: 1,
+                    within: UpDuration::from_millis(60_000),
+                },
+                "restart_rate",
+            ),
+            rule(
+                Trigger::MemoryAbove {
+                    bytes: MemSize::from_bytes(1),
+                },
+                "memory",
+            ),
+        ],
+        &sinks,
+    )
+    .unwrap();
+
+    let fired = rules.on_event(&errored_event("web"), 1_000);
+
+    let routes: Vec<&[String]> = fired.iter().map(|f| f.sinks.as_slice()).collect();
+    assert_eq!(
+        routes,
+        [["event".to_owned()], ["gave_up".to_owned()]],
+        "the Event and GaveUp rules fire, in rule order"
+    );
+}
+
 #[test]
 fn restart_rate_fires_at_the_threshold_and_not_one_below_it() {
     let mut rules = restart_rate_rules(5, UpDuration::from_millis(60_000));
