@@ -12,6 +12,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use super::app::{ActionVerb, InputMode, KeyPress};
 use super::input::map_key;
+use super::textbox::TextEdit;
 use crate::vocabulary::Role;
 
 /// How many entry rows one column of the overlay has.
@@ -87,10 +88,10 @@ pub(super) struct Binding {
 /// compile. That is the whole guard against a binding that dispatches and
 /// does not print.
 const fn binding(press: &KeyPress) -> Binding {
-    // `row` keeps each arm to one line, so a reader checks thirty-six
-    // captions rather than thirty-six struct literals. `the_rows_are_
+    // `row` keeps each arm to one line, so a reader checks thirty-nine
+    // captions rather than thirty-nine struct literals. `the_rows_are_
     // deduplicated` asserts the count; `rows`'s own doc gives the
-    // thirty-five that land in a DRAWN column.
+    // thirty-eight that land in a DRAWN column.
     const fn row(keys: &'static str, group: Group, does: &'static str) -> Binding {
         Binding { keys, group, does }
     }
@@ -109,6 +110,16 @@ const fn binding(press: &KeyPress) -> Binding {
         }
         KeyPress::Group(_) => row("1-9", Group::Moving, "jump to a group"),
         KeyPress::MatchNext | KeyPress::MatchPrev => row("n/N", Group::Moving, "next / prev match"),
+        KeyPress::TextEdit(
+            TextEdit::Left | TextEdit::Right | TextEdit::WordLeft | TextEdit::WordRight,
+        ) => row(
+            "\u{2190}/\u{2192} alt-b/f",
+            Group::Moving,
+            "char / word move",
+        ),
+        KeyPress::TextEdit(TextEdit::Home | TextEdit::End) => {
+            row("ctrl-a/e", Group::Moving, "line start / end")
+        }
         KeyPress::Confirm => row("\u{21b5}", Group::Moving, "open selection"),
         KeyPress::Escape => row("esc", Group::Moving, "back one level"),
 
@@ -134,11 +145,17 @@ const fn binding(press: &KeyPress) -> Binding {
         KeyPress::SecretDelete => row("D", Group::Changing, "delete a secret"),
         KeyPress::Continue => row("c", Group::Changing, "leave it running"),
         KeyPress::TextChar(_) => row("any char", Group::Changing, "types into a box"),
-        KeyPress::TextBackspace | KeyPress::TextApply | KeyPress::TextAbandon => row(
-            "\u{232b} \u{21b5} esc",
+        KeyPress::TextBackspace
+        | KeyPress::TextEdit(TextEdit::Delete)
+        | KeyPress::TextApply
+        | KeyPress::TextAbandon => row(
+            "\u{232b}/del \u{21b5} esc",
             Group::Changing,
             "erase, file, drop",
         ),
+        KeyPress::TextEdit(
+            TextEdit::DeleteWordBack | TextEdit::DeleteToStart | TextEdit::DeleteToEnd,
+        ) => row("ctrl-w/u/k", Group::Changing, "cut word, to ends"),
 
         KeyPress::Action(ActionVerb::Stop) => row("x", Group::Doing, "stop"),
         KeyPress::Action(ActionVerb::Restart) => row("R", Group::Doing, "restart"),
@@ -165,6 +182,8 @@ const PROBE: &[(KeyCode, KeyModifiers)] = &[
     (KeyCode::Char('J'), KeyModifiers::SHIFT),
     (KeyCode::Char('d'), KeyModifiers::CONTROL),
     (KeyCode::Left, KeyModifiers::NONE),
+    (KeyCode::Char('b'), KeyModifiers::ALT),
+    (KeyCode::Char('a'), KeyModifiers::CONTROL),
     (KeyCode::Tab, KeyModifiers::NONE),
     (KeyCode::BackTab, KeyModifiers::SHIFT),
     (KeyCode::Char('1'), KeyModifiers::NONE),
@@ -193,6 +212,8 @@ const PROBE: &[(KeyCode, KeyModifiers)] = &[
     (KeyCode::Char('c'), KeyModifiers::NONE),
     (KeyCode::Char('a'), KeyModifiers::NONE),
     (KeyCode::Backspace, KeyModifiers::NONE),
+    (KeyCode::Delete, KeyModifiers::NONE),
+    (KeyCode::Char('w'), KeyModifiers::CONTROL),
     (KeyCode::Char('x'), KeyModifiers::NONE),
     (KeyCode::Char('R'), KeyModifiers::SHIFT),
     (KeyCode::Char('L'), KeyModifiers::SHIFT),
@@ -382,10 +403,10 @@ mod tests {
         }
     }
 
-    /// Thirty-six rows, thirty-five of them in a drawn column, and no two
+    /// Thirty-nine rows, thirty-eight of them in a drawn column, and no two
     /// share a key caption.
     ///
-    /// The thirty-sixth is `q  ctrl-c`, in `Group::Closing`: it has no row
+    /// The thirty-ninth is `q  ctrl-c`, in `Group::Closing`: it has no row
     /// of its own in the box, which is what bought `Looking` its twelfth
     /// entry. Both counts are asserted, because one alone would pass if a
     /// row migrated between a column and the closing line.
@@ -393,12 +414,12 @@ mod tests {
     fn the_rows_are_deduplicated() {
         let rows = rows();
         let captions: Vec<&str> = rows.iter().map(|row| row.keys).collect();
-        assert_eq!(rows.len(), 36, "{captions:?}");
+        assert_eq!(rows.len(), 39, "{captions:?}");
         assert_eq!(
             rows.iter()
                 .filter(|row| Group::DRAWN.contains(&row.group))
                 .count(),
-            35,
+            38,
             "{captions:?}"
         );
         for (index, row) in rows.iter().enumerate() {
@@ -533,7 +554,8 @@ mod tests {
         }
     }
 
-    /// Every `KeyCode` variant `map_key` can match, bare and with CONTROL.
+    /// Every `KeyCode` variant `map_key` can match, bare and with CONTROL,
+    /// SHIFT and ALT.
     fn every_key() -> Vec<(KeyCode, KeyModifiers)> {
         let mut keys: Vec<KeyCode> = (0x20u8..=0x7E).map(|b| KeyCode::Char(b as char)).collect();
         keys.extend([
@@ -548,6 +570,7 @@ mod tests {
             KeyCode::Right,
             KeyCode::Home,
             KeyCode::End,
+            KeyCode::Delete,
         ]);
         keys.extend((1..=12).map(KeyCode::F));
         keys.into_iter()
@@ -556,6 +579,7 @@ mod tests {
                     (code, KeyModifiers::NONE),
                     (code, KeyModifiers::CONTROL),
                     (code, KeyModifiers::SHIFT),
+                    (code, KeyModifiers::ALT),
                 ]
             })
             .collect()

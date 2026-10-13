@@ -14,6 +14,7 @@
 use std::io::{self, Stdout, Write};
 
 use crossterm::cursor::{Hide, Show};
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -27,7 +28,7 @@ use crate::serve::auth::base64_encode;
 /// mean skipping the steps after it. Safe to call twice, and routinely is.
 pub fn restore() {
     let mut out = io::stdout();
-    let _ = crossterm::execute!(out, LeaveAlternateScreen, Show);
+    let _ = crossterm::execute!(out, DisableBracketedPaste, LeaveAlternateScreen, Show);
     let _ = disable_raw_mode();
     let _ = out.flush();
 }
@@ -58,7 +59,8 @@ pub fn probe_panic_for_test() -> ! {
     panic!("shep_term_panic_probe: deliberate panic exercising restore-before-backtrace ordering");
 }
 
-/// Enters raw mode and the alternate screen, and hides the cursor.
+/// Enters raw mode and the alternate screen, hides the cursor and turns on
+/// bracketed paste, so a paste arrives as one event instead of as keys.
 ///
 /// Raw mode goes on before the alternate screen, so a failure entering the
 /// alternate screen restores the terminal before returning the error rather
@@ -70,7 +72,7 @@ pub fn probe_panic_for_test() -> ! {
 pub fn enter() -> io::Result<Stdout> {
     enable_raw_mode()?;
     let mut out = io::stdout();
-    if let Err(err) = crossterm::execute!(out, EnterAlternateScreen, Hide) {
+    if let Err(err) = crossterm::execute!(out, EnterAlternateScreen, Hide, EnableBracketedPaste) {
         restore();
         return Err(err);
     }

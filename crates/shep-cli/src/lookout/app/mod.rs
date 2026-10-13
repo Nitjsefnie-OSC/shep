@@ -49,6 +49,7 @@ use super::pane_bleats::BleatsPane;
 use super::pane_sheep::SheepPane;
 use super::secrets::{SecretRow, SecretsModel, Source};
 use super::tail::Stream;
+use super::textbox::{TextBox, TextEdit};
 use super::theme::Palette;
 use super::viewport::Viewport;
 use crate::commands::settings::{SettingEdit, SettingField, SettingsSnapshot, settings_field_set};
@@ -141,7 +142,7 @@ pub struct App {
     /// Case-insensitive `contains`, taken literally with no trimming. Not the
     /// CLI's selector grammar, which is exact-match and so cannot narrow as you
     /// type.
-    filter: String,
+    filter: TextBox,
     /// Which keymap [`super::input::map_key`] is called with. Normal until `/`
     /// opens the box; the reducer, not the keymap, owns this state.
     mode: InputMode,

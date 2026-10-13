@@ -168,6 +168,7 @@ impl App {
             // silently into an arm that ignores it.
             | KeyPress::TextChar(_)
             | KeyPress::TextBackspace
+            | KeyPress::TextEdit(_)
             | KeyPress::TextApply
             | KeyPress::TextAbandon
             | KeyPress::Settings
@@ -210,19 +211,9 @@ impl App {
     pub(super) fn on_bleats_text_key(&mut self, key: KeyPress) -> Effect {
         match key {
             KeyPress::Quit => Effect::Quit,
-            KeyPress::TextChar(typed) => {
+            KeyPress::TextChar(_) | KeyPress::TextBackspace | KeyPress::TextEdit(_) => {
                 if let Some(pane) = self.bleats_pane_mut() {
-                    let mut text = pane.filters().match_text().unwrap_or_default().to_string();
-                    text.push(typed);
-                    pane.set_match(text);
-                }
-                Effect::None
-            }
-            KeyPress::TextBackspace => {
-                if let Some(pane) = self.bleats_pane_mut() {
-                    let mut text = pane.filters().match_text().unwrap_or_default().to_string();
-                    text.pop();
-                    pane.set_match(text);
+                    pane.edit_match_box(|text| text.handle(key));
                 }
                 Effect::None
             }

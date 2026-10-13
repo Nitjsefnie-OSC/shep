@@ -251,6 +251,7 @@ impl App {
             | KeyPress::Confirm
             | KeyPress::TextChar(_)
             | KeyPress::TextBackspace
+            | KeyPress::TextEdit(_)
             | KeyPress::TextApply
             | KeyPress::TextAbandon
             | KeyPress::Settings
@@ -287,19 +288,9 @@ impl App {
     pub(super) fn on_sheep_feed_text_key(&mut self, key: KeyPress) -> Effect {
         match key {
             KeyPress::Quit => Effect::Quit,
-            KeyPress::TextChar(typed) => {
+            KeyPress::TextChar(_) | KeyPress::TextBackspace | KeyPress::TextEdit(_) => {
                 if let Some(feed) = self.sheep_feed_mut() {
-                    let mut text = feed.filters().match_text().unwrap_or_default().to_string();
-                    text.push(typed);
-                    feed.set_match(text);
-                }
-                Effect::None
-            }
-            KeyPress::TextBackspace => {
-                if let Some(feed) = self.sheep_feed_mut() {
-                    let mut text = feed.filters().match_text().unwrap_or_default().to_string();
-                    text.pop();
-                    feed.set_match(text);
+                    feed.edit_match_box(|text| text.handle(key));
                 }
                 Effect::None
             }

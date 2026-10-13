@@ -66,6 +66,30 @@ pub fn banner_line(app: &App, width: u16) -> Option<Line<'static>> {
 #[must_use]
 pub fn status_line(app: &App, width: u16) -> Line<'static> {
     let palette = app.palette();
+    // Always rendered, in both states. An operator who does not know whether
+    // their dashboard can act is one keystroke from finding out the wrong
+    // way. The bleats pane borrows this slot while it is following the
+    // tail: control state means nothing on a screen with no action keys of
+    // its own, and whether the view is pinned to the newest line is the
+    // fact this screen's own operator needs a keystroke away from.
+    let right = if matches!(app.link(), Link::Lost { .. }) {
+        // Ahead of both: whether this dashboard is reading a live shepherd
+        // outranks whether a pane is pinned to the newest line, and it
+        // outranks a control state that no longer decides anything.
+        "\u{2588} frozen"
+    } else if app.bleats_pane().is_some_and(BleatsPane::following) {
+        "\u{2588} following"
+    } else {
+        match app.control() {
+            Control::ReadOnly => READ_ONLY_LABEL,
+            Control::Allowed => CONTROL_ENABLED_LABEL,
+        }
+    };
+    let right_len = u16::try_from(right.chars().count()).unwrap_or(0);
+    // `+ 1` reserves one column of gap so a truncated left side's `…` never
+    // butts against the label. The gap rides inside the right span, styled
+    // like the label, keeping the line two spans rather than three.
+    let left_width = width.saturating_sub(right_len).saturating_sub(1);
     let (left, left_style) = if let Some(prompt) = app.settings().and_then(Settings::pending) {
         // The settings screen's armed scalar or dog edit, or its in-flight
         // sentence once sent. Opening clears `self.action`. `on_key` routes
@@ -83,7 +107,7 @@ pub fn status_line(app: &App, width: u16) -> Line<'static> {
         // dashboard's name filter, and falling through would label the
         // dashboard's own untouched query as this pane's match.
         (
-            format!("match  {buffer}\u{258f}   enter applies   esc cancels"),
+            buffer.line("match  ", "   enter applies   esc cancels", left_width),
             palette.attention(),
         )
     } else if let Some(buffer) = app
@@ -96,7 +120,7 @@ pub fn status_line(app: &App, width: u16) -> Line<'static> {
         // this feed's match, the same mislabel the branch above already
         // guards against for the full-screen pane.
         (
-            format!("match  {buffer}\u{258f}   enter applies   esc cancels"),
+            buffer.line("match  ", "   enter applies   esc cancels", left_width),
             palette.attention(),
         )
     } else if let Some((label, buffer)) = app.config_pane().and_then(pane_editor) {
@@ -105,7 +129,11 @@ pub fn status_line(app: &App, width: u16) -> Line<'static> {
         // bar that fell through would render the dashboard's untouched
         // query under the label `filter` instead.
         (
-            format!("{label}  {buffer}\u{258f}   enter applies   esc cancels"),
+            buffer.line(
+                &format!("{label}  "),
+                "   enter applies   esc cancels",
+                left_width,
+            ),
             palette.attention(),
         )
     } else if let Some(action) = app.action().filter(|a| !a.sent) {
@@ -118,9 +146,10 @@ pub fn status_line(app: &App, width: u16) -> Line<'static> {
         // `max_cron_sleep`, not `App::filter`. `field_label` is shared with
         // `view::settings` so the two panes agree on the field's name.
         (
-            format!(
-                "editing {}  {buffer}\u{258f}   enter applies   esc cancels",
-                field_label(*field)
+            buffer.line(
+                &format!("editing {}  ", field_label(*field)),
+                "   enter applies   esc cancels",
+                left_width,
             ),
             palette.attention(),
         )
@@ -129,7 +158,11 @@ pub fn status_line(app: &App, width: u16) -> Line<'static> {
         // pane's own free-text branch above gives: this shares
         // `InputMode::Text` with `App::filter` too.
         (
-            format!("{label}  {buffer}\u{258f}   enter applies   esc cancels"),
+            buffer.line(
+                &format!("{label}  "),
+                "   enter applies   esc cancels",
+                left_width,
+            ),
             palette.attention(),
         )
     } else if let Some(key) = secrets_armed(app) {
@@ -147,9 +180,10 @@ pub fn status_line(app: &App, width: u16) -> Line<'static> {
         // would erase a half-typed query. The cursor is a character, not
         // a style: the ANSI gallery renders foregrounds only.
         (
-            format!(
-                "filter  {}\u{258f}   enter applies   esc cancels   ctrl-c quits",
-                app.filter()
+            app.filter_box().line(
+                "filter  ",
+                "   enter applies   esc cancels   ctrl-c quits",
+                left_width,
             ),
             palette.attention(),
         )
@@ -243,30 +277,6 @@ pub fn status_line(app: &App, width: u16) -> Line<'static> {
             palette.attention(),
         )
     };
-    // Always rendered, in both states. An operator who does not know whether
-    // their dashboard can act is one keystroke from finding out the wrong
-    // way. The bleats pane borrows this slot while it is following the
-    // tail: control state means nothing on a screen with no action keys of
-    // its own, and whether the view is pinned to the newest line is the
-    // fact this screen's own operator needs a keystroke away from.
-    let right = if matches!(app.link(), Link::Lost { .. }) {
-        // Ahead of both: whether this dashboard is reading a live shepherd
-        // outranks whether a pane is pinned to the newest line, and it
-        // outranks a control state that no longer decides anything.
-        "\u{2588} frozen"
-    } else if app.bleats_pane().is_some_and(BleatsPane::following) {
-        "\u{2588} following"
-    } else {
-        match app.control() {
-            Control::ReadOnly => READ_ONLY_LABEL,
-            Control::Allowed => CONTROL_ENABLED_LABEL,
-        }
-    };
-    let right_len = u16::try_from(right.chars().count()).unwrap_or(0);
-    // `+ 1` reserves one column of gap so a truncated left side's `…` never
-    // butts against the label. The gap rides inside the right span, styled
-    // like the label, keeping the line two spans rather than three.
-    let left_width = width.saturating_sub(right_len).saturating_sub(1);
     // `patch`, not a fresh `Style`: `ground` sets only the background, so
     // patching it onto each span's own foreground paints the bar's ground
     // ([`Palette::ground`]) without disturbing what the span already means.

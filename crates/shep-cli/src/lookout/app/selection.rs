@@ -42,7 +42,7 @@ impl App {
     /// sequence and nothing else.
     #[must_use]
     pub fn visible_rows(&self) -> Vec<RowKey> {
-        let needle = self.filter.to_lowercase();
+        let needle = self.filter.as_str().to_lowercase();
         let mut visible: Vec<RowEntry<'_>> = self
             .flock
             .iter()
@@ -277,7 +277,7 @@ impl App {
     /// Every sheep the name filter keeps, in whatever order the map holds
     /// them. [`Self::rows_len`] counts these.
     fn filtered_rows(&self) -> impl Iterator<Item = &Row> {
-        let needle = self.filter.to_lowercase();
+        let needle = self.filter.as_str().to_lowercase();
         self.flock
             .values()
             .filter(move |row| needle.is_empty() || row.info.name.to_lowercase().contains(&needle))
@@ -536,7 +536,7 @@ impl App {
     /// Sets the filter directly, bypassing [`Self::set_filter`]'s reseat.
     #[cfg(test)]
     pub(crate) fn set_filter_for_tests(&mut self, query: &str) {
-        self.filter = query.to_string();
+        self.filter = TextBox::from(query);
     }
 
     /// Points the cursor at `key` without simulating keypresses.
@@ -698,7 +698,7 @@ mod tests {
     fn a_dog_only_flock_draws_no_flock_header_and_selects_past_the_dogs_one() {
         let mut app = fixtures::app_with_a_dog();
         // A filter that leaves only the dog, so the sheep side is empty.
-        app.set_filter("otel".to_string());
+        app.set_filter(TextBox::from("otel"));
         let rows = app.visible_rows();
         assert!(!rows.contains(&RowKey::Section("Flock")), "{rows:?}");
         assert_eq!(rows.first(), Some(&RowKey::Section("Dogs")), "{rows:?}");
@@ -1062,13 +1062,13 @@ mod tests {
             rows: vec![sheep(1, "WebEdge", ProcStatus::Online)],
             at: t0,
         });
-        app.set_filter("webedge".to_string());
+        app.set_filter(TextBox::from("webedge"));
         assert_eq!(
             app.rows().len(),
             1,
             "a lowercase query against a mixed name"
         );
-        app.set_filter("WEBEDGE".to_string());
+        app.set_filter(TextBox::from("WEBEDGE"));
         assert_eq!(app.rows().len(), 1, "and an uppercase one");
     }
 
@@ -1116,7 +1116,7 @@ mod tests {
             Some(RowKey::Sheep(4)),
             "web-worker, position 3 of 4"
         );
-        app.set_filter("web".to_string());
+        app.set_filter(TextBox::from("web"));
         assert_eq!(
             app.selected(),
             Some(RowKey::Sheep(4)),
@@ -1154,7 +1154,7 @@ mod tests {
     #[test]
     fn an_empty_query_is_the_same_as_no_filter() {
         let mut app = filtered("zzz");
-        app.set_filter(String::new());
+        app.set_filter(TextBox::new());
         assert_eq!(app.rows().len(), 4);
         assert_eq!(app.selected(), Some(RowKey::Sheep(1)), "seated again");
     }

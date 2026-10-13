@@ -69,7 +69,7 @@ pub(super) fn field_line(
         .filter(|typing| typing.key == field.key)
         .map(|typing| &typing.buffer);
     let value = match typing {
-        Some(buffer) => format!("{buffer}\u{258f}"),
+        Some(buffer) => buffer.drawn(value_w),
         None => mask_secret(field.secret, raw),
     };
 

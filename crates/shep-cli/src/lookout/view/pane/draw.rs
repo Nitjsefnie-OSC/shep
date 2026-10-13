@@ -380,6 +380,7 @@ mod tests {
     use super::super::layout::{FULL_WIDTH, LANDS_WITH_PANEL_MIN};
     use super::*;
     use crate::lookout::app::{Effect, KeyPress, Msg};
+    use crate::lookout::textbox::TextEdit;
     use crate::lookout::view::MIN_TERM_WIDTH;
     use crate::lookout::view::fixtures;
     use crate::output::width::visible_width;
@@ -391,6 +392,24 @@ mod tests {
     fn a_sheep_pane_at_a_comfortable_width() {
         let lines = pane_lines(&web_pane(), fixtures::plain(), 120, 0);
         insta::assert_snapshot!("sheep_pane_wide", text_of(&lines).join("\n"));
+    }
+
+    /// The editor draws the cursor where it is. The snapshot is the
+    /// assertion: the open row reads the value with the cursor inside it,
+    /// and every other row is untouched.
+    #[test]
+    fn an_open_editor_draws_its_cursor_in_the_middle_of_the_value() {
+        let mut pane = web_pane();
+        pane.move_to_key("max_restarts");
+        pane.begin_typing();
+        pane.edit_text(TextEdit::Left);
+        let lines = pane_lines(&pane, fixtures::plain(), 120, 0);
+        let text = text_of(&lines);
+        assert!(
+            text.iter().any(|line| line.contains("3\u{258f}2")),
+            "the cursor sits between the 3 and the 2: {text:?}"
+        );
+        insta::assert_snapshot!("sheep_pane_editor_cursor_mid_value", text.join("\n"));
     }
 
     /// `Buffer::set_line` clips in silence, so an overrun renders as a
