@@ -288,8 +288,15 @@ pub(crate) fn refused_line(verb: &str, refused: &[SheepRefusal]) -> Option<Strin
     Some(format!("did not {verb}: {}", listed.join("; ")))
 }
 
-/// Deletes (stops and deregisters) the sheep matching `args.selector`.
-pub async fn delete(client: &Client, streams: &mut Streams<'_>, args: &SelectorArgs) -> ExitCode {
+/// Deletes (stops and deregisters) the sheep matching `args.selectors`
+///
+/// The sheep half of `shep delete`; see [`super::remove::delete`] for the
+/// verb an operator types, which sends a dog's name elsewhere.
+pub async fn delete_sheep(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    args: &SelectorArgs,
+) -> ExitCode {
     let selectors = match parse_selectors(streams, &args.selectors) {
         Ok(selectors) => selectors,
         Err(code) => return code,

@@ -40,6 +40,7 @@ mod daemon_log;
 mod dev;
 mod dispatch;
 mod dog_channel;
+mod dog_delete;
 mod dogs_kv;
 mod fixtures;
 mod flockfile_disabled;
