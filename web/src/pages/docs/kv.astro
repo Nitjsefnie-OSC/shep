@@ -110,6 +110,12 @@ KEY  VALUE`;
       quietly becoming a blob store.
     </p>
 
+    <p>
+      A sheep's own settings are not in this store. <code>shep copy</code>{" "}
+      moves one of them from one sheep onto another, over the socket, because
+      it reads what the running flock holds.
+    </p>
+
     <h2 id="no-shepherd-required">No shepherd required</h2>
     <p>
       <code>shep set</code>/<code>get</code>/<code>unset</code> never touch

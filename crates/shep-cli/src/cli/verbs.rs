@@ -7,8 +7,8 @@
 //! are alias and visibility pins rather than grammar ones.
 
 use super::{
-    AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, DaemonArgs, DevArgs, DisableArgs, DogArgs,
-    DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, ImportArgs, InitArgs, KvGetArgs,
+    AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DisableArgs,
+    DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, ImportArgs, InitArgs, KvGetArgs,
     KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs, SelectorArgs,
     ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs, TriggerArgs, WhisperArgs,
 };
@@ -382,6 +382,45 @@ pub enum Commands {
     /// `$SHEP_HOME/shep.toml`. `secret list` needs nothing: it names keys and
     /// the environments each has a value for, never a value.
     Secret(SecretArgs),
+    /// Copy one setting, or one dog's table, from one sheep onto another.
+    ///
+    /// Each side is an address: a sheep name, then a path in its config.
+    ///
+    /// `shep copy web.restart_delay api.restart_delay` copies one field.
+    /// `shep copy web.dogs.kelpie api.dogs.kelpie` copies a dog's whole table.
+    /// `shep copy web.dogs.kelpie.rulings api.dogs.kelpie.rulings` copies one
+    /// key or sub-table inside it.
+    ///
+    /// A dog name and a key inside a table may each contain a dot, and each is
+    /// read as the longest name the copy's tables actually hold: `web.dogs.foo.bar`
+    /// is the dog `foo.bar` when a side has a table under that name, and the dog
+    /// `foo` with the key `bar` when neither does, even in a flock that runs a
+    /// dog named `foo.bar` with no table for it.
+    ///
+    /// The path is the same on both sides: a copy moves values, and
+    /// `web.restart_delay` onto `api.kill_timeout` is two different settings.
+    ///
+    /// A dog table merges by default. Keys the source has overwrite the
+    /// target's, and keys only the target has stay. `--replace` makes the
+    /// target exactly the source at that path. `--except <key>` leaves one key
+    /// out, named under the path you are copying: a dog's `git.checkout` names
+    /// one project's repo, and shep cannot tell which of a dog's keys belong
+    /// to a sheep. A copy refuses when one side holds something that is not a
+    /// table where the copy has to write through one.
+    ///
+    /// `env` and secrets are not copied: a client is never sent a sheep's env
+    /// values, so there is nothing to read. `shep import env` writes a `.env`
+    /// into a sheep's env, and `shep secret` holds the values a Flockfile
+    /// refers to. `name`, `instances` and the whole `dogs` map are refused for
+    /// the same reason the shepherd refuses them.
+    ///
+    /// Nothing is written until you confirm. The change list prints first,
+    /// naming every key added, changed or removed with its old and new value.
+    /// With `--format json` that list prints on stderr, so stdout stays the one
+    /// envelope the run writes after the answer. `--yes` skips the question,
+    /// `--dry-run` prints the list and writes nothing, and with no terminal to
+    /// ask on the run refuses instead of writing.
+    Copy(CopyArgs),
     /// Check whether the shepherd answers.
     Ping,
     /// Shut the shepherd down.

@@ -520,5 +520,32 @@ and is dropped from the export. The drift guard
 carries samples as well as a flock, and compares every series' own labels and
 not only its name, type and point count. No wire change.
 
+**A setting, or a whole dog table, copies from one sheep onto another.**
+`shep copy <from>.<path> <to>.<path>` takes three address forms: a field
+(`web.restart_delay`), a dog's table (`web.dogs.kelpie`), and a key or
+sub-table inside one (`web.dogs.kelpie.rulings`). A dog name and a key inside
+a table may each contain a dot, so each step past the sheep name is the
+longest name the copy's tables actually hold: `web.dogs.foo.bar` is the dog
+`foo.bar` when a side has a table under that name, and the dog `foo` with the
+key `bar` when neither does, even in a flock that runs a dog named `foo.bar`
+with no table for it. The path is the same on
+both sides. A dog table merges by default, so a key only the target has
+survives, `--replace` makes the target exactly the source at that path, and
+`--except <key>` leaves one key out because shep cannot tell that a dog's
+`git.checkout` names one project's repo. A copy refuses when one side holds
+something that is not a table where the copy has to write through one, rather
+than turning that value into a table on the way to the key it was asked to
+write. `env`, `name`, `instances` and the
+whole `dogs` map are refused, the first because a client is never sent a
+sheep's env values and the rest because the shepherd refuses them too. The
+change list prints before anything is written, and the run asks before it
+writes: `--yes` skips the question, `--dry-run` writes nothing, and with no
+terminal to ask on the run refuses rather than guessing. The list prints where
+the operator is reading it, on stdout for the table form and on stderr for
+`--format json`, whose stdout is the one envelope written after the answer. No
+wire change: the
+write is `Request::SetSheepField` for a field and
+`Request::SetSheepDogSettings` for a table.
+
 Project memory (cross-session state) tracks decisions; docs above are the
 source of truth.
