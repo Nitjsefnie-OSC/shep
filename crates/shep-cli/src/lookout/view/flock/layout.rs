@@ -9,7 +9,7 @@ use ratatui::style::Style;
 use ratatui::text::Span;
 
 use super::super::super::theme::Palette;
-use crate::output::width::char_columns;
+use crate::output::width::{char_columns, text_columns};
 
 /// The narrowest terminal the table will draw into.
 ///
@@ -83,7 +83,7 @@ pub fn gutter(selected: bool, palette: Palette) -> (&'static str, Style) {
 /// way, so the rule stays in one place.
 #[must_use]
 pub fn fit_owned(mut text: String, width: u16) -> String {
-    let columns: usize = text.chars().map(char_columns).sum();
+    let columns: usize = text_columns(&text);
     let width = usize::from(width);
     if columns <= width {
         text.extend(core::iter::repeat_n(' ', width - columns));
@@ -95,7 +95,7 @@ pub fn fit_owned(mut text: String, width: u16) -> String {
 #[must_use]
 pub fn fit(text: &str, width: u16) -> String {
     let width = usize::from(width);
-    let columns: usize = text.chars().map(char_columns).sum();
+    let columns: usize = text_columns(text);
     if columns <= width {
         let mut out = String::from(text);
         out.extend(core::iter::repeat_n(' ', width - columns));
@@ -161,7 +161,6 @@ pub fn scroll_offset(selected: usize, viewport: usize, total: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::width::char_columns;
     use std::ffi::OsStr;
 
     #[test]
@@ -223,7 +222,7 @@ mod tests {
         // Truncate branch. Budget is 4 columns plus the `…`: two characters
         // fit, the third would draw past the cell.
         assert_eq!(fit("日本語アプリ", 5), "日本…");
-        assert_eq!(columns_of(&fit("日本語アプリ", 5)), 5);
+        assert_eq!(text_columns(&fit("日本語アプリ", 5)), 5);
         // A `char` count would call this a pad (3 chars into 3 columns) and
         // emit `日本語`, six columns wide, with no `…` to say it was cut.
         assert_eq!(fit("日本語", 3), "日…");
@@ -231,7 +230,7 @@ mod tests {
         // budget, `本` does not, and half a character is not drawable, so
         // the leftover column is a space rather than a short cell.
         assert_eq!(fit("日本語", 4), "日… ");
-        assert_eq!(columns_of(&fit("日本語", 4)), 4);
+        assert_eq!(text_columns(&fit("日本語", 4)), 4);
         // Nothing but the marker fits, at either width.
         assert_eq!(fit("日本語", 1), "…");
         assert_eq!(fit("日本語", 2), "… ");
@@ -255,7 +254,7 @@ mod tests {
             for width in 0..=12u16 {
                 let cell = fit(name, width);
                 assert_eq!(
-                    columns_of(&cell),
+                    text_columns(&cell),
                     usize::from(width),
                     "fit({name:?}, {width}) == {cell:?}"
                 );
@@ -271,16 +270,9 @@ mod tests {
     fn an_escape_sequence_is_measured_as_the_text_it_will_be_drawn_as() {
         let styled = "\u{1b}[32mup";
         // ESC is zero-width; `[32mup` is six columns.
-        assert_eq!(columns_of(styled), 6);
-        assert_eq!(columns_of(&fit(styled, 4)), 4);
+        assert_eq!(text_columns(styled), 6);
+        assert_eq!(text_columns(&fit(styled, 4)), 4);
         assert!(fit(styled, 4).ends_with('…'));
-    }
-
-    /// The columns a rendered cell actually draws in, by the same rule
-    /// [`fit`] pads by. Not `chars().count()`: that is the measurement
-    /// under test.
-    fn columns_of(s: &str) -> usize {
-        s.chars().map(char_columns).sum()
     }
 
     /// Colour and a `REVERSED` modifier are both rejected: every signal on
