@@ -125,7 +125,11 @@ export const BUDGETS: Record<string, number> = {
   // line, what a build without the feature does with `otlp_endpoint`, and
   // the measured binary size #292 asked for. All of it is operator-facing
   // surface for a shipped feature, not prose to trim back out.
-  dogs: 3650, // 3641
+  //
+  // Raised from 3650 on 2026-10-13 for the `shep copy` sentence: a per-sheep
+  // dog table is operator-facing config, and #830 is the verb that moves one
+  // onto another sheep.
+  dogs: 3700, // 3641
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's

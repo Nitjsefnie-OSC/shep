@@ -13,7 +13,7 @@ Run things       start add serve stop restart reload delete stock enable disable
 See what's up    flock describe bleats lookout fold barks
 Survive reboots  save muster startup unstartup
 Talk to a sheep  trigger signal whisper
-The shepherd     ping kill reopen flush set get unset secret
+The shepherd     ping kill reopen flush set get unset copy secret
 Dogs and agents  dogs adopt whistle
 Foreground runs  runtime dev
 Coming from pm2  import
@@ -1365,7 +1365,7 @@ Arguments:
           name, id, `name:slot`, `all`, `/regex/`, or `fold:<name>`
 
   <LINE>
-          The line, without a trailing newline — shep adds exactly one
+          The line, without a trailing newline - shep adds exactly one
 
 Options:
       --format <FORMAT>
@@ -2270,6 +2270,96 @@ Options:
           flock from every directory.
           
           [env: SHEP_HOME=]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+@@VERB:copy@@
+Copy one setting, or one dog's table, from one sheep onto another.
+
+Each side is an address: a sheep name, then a path in its config.
+
+`shep copy web.restart_delay api.restart_delay` copies one field. `shep copy web.dogs.kelpie
+api.dogs.kelpie` copies a dog's whole table. `shep copy web.dogs.kelpie.rulings
+api.dogs.kelpie.rulings` copies one key or sub-table inside it.
+
+The path is the same on both sides: a copy moves values, and `web.restart_delay` onto
+`api.kill_timeout` is two different settings.
+
+A dog table merges by default. Keys the source has overwrite the target's, and keys only the target
+has stay. `--replace` makes the target exactly the source at that path. `--except <key>` leaves one
+key out, named under the path you are copying: a dog's `git.checkout` names one project's repo, and
+shep cannot tell which of a dog's keys belong to a sheep.
+
+`env` and secrets are not copied: a client is never sent a sheep's env values, so there is nothing
+to read. `shep import env` writes a `.env` into a sheep's env, and `shep secret` holds the values a
+Flockfile refers to. `name`, `instances` and the whole `dogs` map are refused for the same reason
+the shepherd refuses them.
+
+Nothing is written until you confirm. The change list prints first, naming every key added, changed
+or removed with its old and new value. `--yes` skips the question, `--dry-run` prints the list and
+writes nothing, and with no terminal to ask on the run refuses instead of writing.
+
+Usage: shep copy [OPTIONS] <FROM> <TO>
+
+Arguments:
+  <FROM>
+          The sheep and the path to copy from, such as `web.restart_delay`, `web.dogs.kelpie`, or
+          `web.dogs.kelpie.rulings`
+
+  <TO>
+          The sheep and the same path to copy onto, such as `api.restart_delay`
+
+Options:
+      --format <FORMAT>
+          Output format
+
+          Possible values:
+          - table: Human-readable columns (the default)
+          - json:  A versioned JSON envelope, one object per invocation
+          
+          [default: table]
+
+      --replace
+          Make the target exactly the source at that path, instead of merging into it
+
+      --except <KEY>
+          Leave this key out, named under the path you are copying; repeat it for more than one
+
+  -q, --quiet
+          Suppress non-essential output
+          
+          Currently narrows `bleats`' own notices (a dropped-events count, a daemon-shutdown notice,
+          ...): diagnostics distinct from a sheep's own line or a real error, both of which still
+          print regardless.
+
+      --dry-run
+          Print what would change and write nothing
+
+      --style <STYLE>
+          How much this invocation dresses up its output: `full`, `plain`, or `bare`
+          
+          Wins over `$SHEP_STYLE` and `shep.toml`'s `[style] level`. Omit to let those decide; `shep
+          style` reports which one answered.
+
+          Possible values:
+          - full:  Sheep, boxes and colour
+          - plain: Boxes and colour, no sheep
+          - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --home <HOME>
+          Talk to a different shepherd
+          
+          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
+          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
+          flock from every directory.
+          
+          [env: SHEP_HOME=]
+
+      --yes
+          Write without asking
 
   -h, --help
           Print help (see a summary with '-h')

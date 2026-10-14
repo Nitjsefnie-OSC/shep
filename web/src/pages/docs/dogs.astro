@@ -257,6 +257,11 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
       a sheep's own table</a> for how a dog gets it.
     </p>
     <p>
+      <code>shep copy web.dogs.kelpie api.dogs.kelpie</code> moves one
+      sheep's table for a dog onto another sheep, merging into what that
+      sheep already holds unless <code>--replace</code> says otherwise.
+    </p>
+    <p>
       A third place, <code>[dog.&lt;name&gt;]</code> at the top level of a
       Flockfile, is read and discarded: shep parses it so the file still
       loads, but keeps nothing from it. It exists for a dog that reads its

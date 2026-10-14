@@ -502,5 +502,21 @@ failed export, not a clean one. A build without the feature refuses
 secret: redacted in `Debug`, marked in the schema, and never printed. No
 wire change.
 
+**A setting, or a whole dog table, copies from one sheep onto another.**
+`shep copy <from>.<path> <to>.<path>` takes three address forms: a field
+(`web.restart_delay`), a dog's table (`web.dogs.kelpie`), and a key or
+sub-table inside one (`web.dogs.kelpie.rulings`). The path is the same on
+both sides. A dog table merges by default, so a key only the target has
+survives, `--replace` makes the target exactly the source at that path, and
+`--except <key>` leaves one key out because shep cannot tell that a dog's
+`git.checkout` names one project's repo. `env`, `name`, `instances` and the
+whole `dogs` map are refused, the first because a client is never sent a
+sheep's env values and the rest because the shepherd refuses them too. The
+change list prints before anything is written, and the run asks before it
+writes: `--yes` skips the question, `--dry-run` writes nothing, and with no
+terminal to ask on the run refuses rather than guessing. No wire change: the
+write is `Request::SetSheepField` for a field and
+`Request::SetSheepDogSettings` for a table.
+
 Project memory (cross-session state) tracks decisions; docs above are the
 source of truth.

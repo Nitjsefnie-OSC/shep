@@ -534,6 +534,20 @@ const store = `$ cat $SHEP_HOME/overrides.json
       <a href="/docs/secrets">secrets</a> carry the value instead.
     </Callout>
 
+    <h2 id="copying-a-setting-onto-another-sheep">Copying a setting onto another sheep</h2>
+    <p>
+      An override belongs to one sheep, so a second sheep has the first one's
+      tuning written out again. <code>shep copy</code>{" "}
+      does it: <code>shep copy web.restart_delay api.restart_delay</code>{" "}
+      moves one setting, and <code>shep copy web.dogs.kelpie
+      api.dogs.kelpie</code> moves a dog's whole table. The path is the same
+      on both sides, a dog table merges into what the target holds unless{" "}
+      <code>--replace</code> says otherwise, and nothing is written until the
+      change list is confirmed. <code>env</code> is never copied: a client is
+      never sent env values. The flags are in the <a
+      href="/docs/cli#managing-a-sheep">CLI reference</a>.
+    </p>
+
     <details>
       <summary><h2 id="a-template-may-add-never-overwrite">A template may add, never overwrite</h2></summary>
     <p>
