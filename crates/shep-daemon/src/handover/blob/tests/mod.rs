@@ -7,7 +7,8 @@
 //!
 //! [`old_blobs`] is the half these cannot do: bytes a named release wrote,
 //! committed under `fixtures/handover/`, which a rename in this image cannot
-//! follow.
+//! follow. Those fixtures carry nothing in flight, so [`old_blob_state`] is
+//! the same releases' bytes with every optional field filled in.
 
 use std::os::unix::fs::PermissionsExt;
 
@@ -18,6 +19,7 @@ use crate::testing::test_paths;
 
 mod compat;
 mod disabled;
+mod old_blob_state;
 mod old_blobs;
 
 fn handover_over(entry: &ProcessEntry) -> Handover {

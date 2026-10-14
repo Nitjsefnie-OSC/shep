@@ -116,7 +116,7 @@ fn fixture_path(tag: &str) -> PathBuf {
 
 /// A fixture as raw JSON, so a test can name the keys it holds rather than
 /// only the fields this image has a place for.
-fn fixture_value(tag: &str) -> serde_json::Value {
+pub(super) fn fixture_value(tag: &str) -> serde_json::Value {
     let path = fixture_path(tag);
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("the fixture {} is not readable: {error}", path.display()));
@@ -565,9 +565,11 @@ fn the_dropped_app_config_key_is_in_the_fixtures_that_wrote_it() {
     }
 }
 
-/// The fixtures on disk and the tags [`LOADERS`] pairs with tests are one set.
-/// A tag with no test is a compile error in that table; a tag with no file is
-/// a claim about bytes that do not exist, which is what this case catches.
+/// The fixtures on disk and the tags [`LOADERS`] and
+/// [`POPULATED_FIXTURES`](super::old_blob_state::POPULATED_FIXTURES) pair with
+/// tests are one set. A tag with no test is a compile error in those tables; a
+/// tag with no file is a claim about bytes that do not exist, which is what
+/// this case catches.
 #[test]
 fn every_fixture_has_a_test_and_every_test_has_a_fixture() {
     let mut on_disk: Vec<String> = std::fs::read_dir(fixtures_dir())
@@ -583,12 +585,20 @@ fn every_fixture_has_a_test_and_every_test_has_a_fixture() {
         .collect();
     on_disk.sort();
 
-    let mut named: Vec<String> = LOADERS.iter().map(|(tag, _)| (*tag).to_owned()).collect();
+    let mut named: Vec<String> = LOADERS
+        .iter()
+        .map(|(tag, _)| (*tag).to_owned())
+        .chain(
+            super::old_blob_state::POPULATED_FIXTURES
+                .iter()
+                .map(|(stem, _)| (*stem).to_owned()),
+        )
+        .collect();
     named.sort();
 
     assert_eq!(
         on_disk, named,
-        "fixtures/handover and this file's list of tags have drifted apart"
+        "fixtures/handover and these files' lists of fixtures have drifted apart"
     );
 }
 
@@ -597,15 +607,24 @@ fn every_fixture_has_a_test_and_every_test_has_a_fixture() {
 /// record of that machine, not of the release.
 #[test]
 fn no_fixture_carries_the_machine_that_dumped_it() {
-    for (tag, _) in LOADERS {
-        let text = std::fs::read_to_string(fixture_path(tag)).expect("the fixture is readable");
+    let stems: Vec<String> = LOADERS
+        .iter()
+        .map(|(tag, _)| (*tag).to_owned())
+        .chain(
+            super::old_blob_state::POPULATED_FIXTURES
+                .iter()
+                .map(|(stem, _)| (*stem).to_owned()),
+        )
+        .collect();
+    for stem in stems {
+        let text = std::fs::read_to_string(fixture_path(&stem)).expect("the fixture is readable");
         assert!(
             !text.contains("/Users") && !text.contains("/home"),
-            "{tag} carries a home path from the machine that dumped it"
+            "{stem} carries a home path from the machine that dumped it"
         );
         assert!(
             text.contains("\"name\":\"web\""),
-            "{tag} is not the `web` app the handover fixtures build"
+            "{stem} is not the `web` app the handover fixtures build"
         );
     }
 }
