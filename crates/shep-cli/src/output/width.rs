@@ -197,7 +197,8 @@ mod tests {
     // --- text_columns --------------------------------------------------
 
     /// The lookout view's measure: an escape there is data a `Span` draws,
-    /// not styling a terminal interprets, so it costs its own characters.
+    /// not styling a terminal interprets, so its printable characters cost
+    /// columns and only the `Cc` introducer does not.
     #[test]
     fn text_columns_counts_a_wide_character_as_two_and_an_escape_as_its_characters() {
         assert_eq!(text_columns("羊"), 2, "columns, not chars");
