@@ -9,6 +9,7 @@ use shep_client::dogs::{Stop, parse_section};
 use shep_core::protocol::BusEvent;
 use tokio::time::{Instant, MissedTickBehavior};
 
+use super::clock::Clock;
 use super::config::{BarkConfig, rules_for};
 use super::delivery::{Delivery, spawn_firings};
 use super::rules::Rules;
@@ -67,6 +68,9 @@ impl LagPacing {
 /// Appends serialize behind an in-process [`tokio::sync::Mutex`]; the
 /// cross-process race is `barks::append`'s own `flock(2)`.
 ///
+/// One [`Clock`] for the whole run: one view of the wall clock, and one
+/// report of a clock that reads before the epoch.
+///
 /// A plain `fn`, not `async fn`: the returned future must borrow neither
 /// `config` nor `barks_path`, so callers can spawn it.
 pub fn run_loop<E: EventSource, F: FlockSource, C: ConfigSource>(
@@ -85,6 +89,7 @@ pub fn run_loop<E: EventSource, F: FlockSource, C: ConfigSource>(
         let mut events = events;
         let mut rules = rules;
         let mut stop = stop;
+        let mut clock = Clock::system();
 
         let mut poll_interval = poll_timer(poll_period);
         let mut pacing = LagPacing::default();
@@ -116,7 +121,7 @@ pub fn run_loop<E: EventSource, F: FlockSource, C: ConfigSource>(
                                 // gone, and the verdict decides nothing
                                 // here: bark debounces on a sheep's name,
                                 // never on an id the shepherd minted.
-                                reconcile(&flock, &mut rules, &delivery).await;
+                                reconcile(&flock, &mut rules, &mut clock, &delivery).await;
                                 pacing.polled();
                             }
                             Err(failed) => break exit_for(&failed),
@@ -152,31 +157,31 @@ pub fn run_loop<E: EventSource, F: FlockSource, C: ConfigSource>(
                                         break exit_for(&failed);
                                     }
                                     // Frames unread on the old stream are gone.
-                                    reconcile(&flock, &mut rules, &delivery).await;
+                                    reconcile(&flock, &mut rules, &mut clock, &delivery).await;
                                     pacing.polled();
                                 }
                             }
                         }
                         Some(Ok(event)) => {
-                            let firings = rules.on_event(&event, now_ms());
+                            let firings = rules.on_event(&event, clock.now_ms());
                             spawn_firings(firings, &delivery);
                         }
                         Some(Err(_dropped)) => {
                             // The drop says nothing about what was lost;
                             // only the shepherd can.
                             if pacing.lag_polls_now() {
-                                reconcile(&flock, &mut rules, &delivery).await;
+                                reconcile(&flock, &mut rules, &mut clock, &delivery).await;
                                 pacing.polled();
                             }
                         }
                     }
                 }
                 () = deferred_poll(pacing.deferred_poll_at()) => {
-                    reconcile(&flock, &mut rules, &delivery).await;
+                    reconcile(&flock, &mut rules, &mut clock, &delivery).await;
                     pacing.polled();
                 }
                 _ = poll_interval.tick() => {
-                    reconcile(&flock, &mut rules, &delivery).await;
+                    reconcile(&flock, &mut rules, &mut clock, &delivery).await;
                     pacing.polled();
                 }
             }
@@ -211,16 +216,21 @@ fn exit_for(failed: &Resubscribe) -> ExitCode {
 }
 
 /// One reconciliation pass: ask `flock` what the flock looks like now, run
-/// it through [`Rules::on_poll`], and spawn a delivery for anything that
-/// fires. Shared by [`run_loop`]'s lag arm and interval arm, so the two
-/// polls are one code path.
+/// it through [`Rules::on_poll`] stamped by `clock`, and spawn a delivery
+/// for anything that fires. Shared by [`run_loop`]'s lag arm and interval
+/// arm, so the two polls are one code path.
 ///
 /// A failed poll is logged and dropped: the next bus event or interval
 /// tick tries again.
-pub(super) async fn reconcile<F: FlockSource>(flock: &F, rules: &mut Rules, delivery: &Delivery) {
+pub(super) async fn reconcile<F: FlockSource>(
+    flock: &F,
+    rules: &mut Rules,
+    clock: &mut Clock,
+    delivery: &Delivery,
+) {
     match flock.flock().await {
         Ok(snapshot) => {
-            let firings = rules.on_poll(&snapshot, now_ms());
+            let firings = rules.on_poll(&snapshot, clock.now_ms());
             spawn_firings(firings, delivery);
         }
         Err(err) => eprintln!("shep dog bark: reconciliation poll failed: {err}"),
@@ -281,17 +291,6 @@ fn poll_timer(period: Duration) -> tokio::time::Interval {
     let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
     interval
-}
-
-/// Wall-clock milliseconds since the Unix epoch.
-///
-/// [`Rules::on_event`] and [`Rules::on_poll`] take a caller-supplied
-/// timestamp so a test can fix it; this is the production caller.
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

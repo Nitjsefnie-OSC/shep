@@ -3,7 +3,9 @@
 //! [`run`] reads `[bark]`, subscribes, and hands over to [`run_loop`],
 //! which reads the shepherd's bus and polls the flock. [`rules`] decides
 //! which events and poll snapshots become a [`rules::Firing`], and
-//! [`sinks`] renders and posts each one. [`source`] holds the traits the
+//! [`sinks`] renders and posts each one. [`clock`] stamps every one, and
+//! keeps the stamp moving while the wall clock reads before the epoch.
+//! [`source`] holds the traits the
 //! loop reads the shepherd through, and their implementations over a real
 //! client.
 //!
@@ -13,6 +15,7 @@
 //! per-subject debounce is what lets an `Errored` seen by both routes fire
 //! once.
 
+mod clock;
 mod config;
 mod delivery;
 mod event_loop;
