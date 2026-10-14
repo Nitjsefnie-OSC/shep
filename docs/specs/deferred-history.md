@@ -878,8 +878,8 @@ own dog-restart-budget record write to. Operator-facing contract:
 `docs/dogs.md`. `[daemon] enabled_dogs` and `[dog.<name>]`
 (`DaemonSection`, `crates/shep-core/src/config/daemon.rs`) have a reader
 now: boot starts every enabled dog from the first, and a dog asks for the
-second over the socket. What §8 still promises beyond this — OTLP export
-— is separate work and remains open, above.
+second over the socket. What §8 promised beyond this — OTLP export — shipped
+2026-10-13, below.
 
 `shep trigger` (custom actions over the shepherd channel, spec §7/§9)
 **shipped**: the fd-3 wire (`ShepherdMessage::Action`/
@@ -1135,6 +1135,30 @@ used to name:
   race, with a startup notice and, in the default mode on refusal, a
   per-request stderr line naming the path so the choice and its cost are
   never silent.
+
+**OTLP export (metrics dog)** (spec §8) **shipped**, 2026-10-13: the `otel`
+cargo feature (`crates/shep-cli/src/dog/metrics/otlp/`) POSTs OTLP/JSON to
+`{otlp_endpoint}/v1/metrics` on `otlp_interval`, over the same hand-rolled
+HTTP/1.1 `crate::fetch` bark delivers webhooks with, so export adds no
+dependency. There is no retry and no queue: one failed export is one line in
+the dog's log, a 2xx naming a `partialSuccess` counts as one, and the next
+tick sends current values anyway. `shep_sheep_restart_total` is a monotonic
+cumulative sum started at the exporter's own start, and so is every channel
+sample reported as a counter; everything else is a gauge. A sample's help text
+is its metric's `description`, its labels are string attributes in the order
+the store built them, and a value OTLP/JSON has no number for is dropped
+rather than encoded. `shep_channel_samples_refused_total` goes out as `asInt`,
+the spelling the built-in counters use for a count. 64-bit values are decimal
+strings. `otlp_headers` is a secret: redacted in `Debug`, marked in the
+schema, never printed. Operator contract: `docs/dogs.md`.
+
+**The half this file kept open was the samples** (#736, closing #347's queue
+entry, 2026-10-14). What a sheep sends on its shepherd channel reached
+`/metrics` first, and an exporter that skipped it left those numbers on one
+path only. They are on both paths now, and the guard that keeps them together
+is `the_payload_names_every_series_the_exposition_names`, which compares
+names, types, descriptions, point counts and every series' own labels between
+the two renderers over a reading that carries samples as well as a flock.
 
 ### Rendering each dog's README as its own docs-site page — rejected
 

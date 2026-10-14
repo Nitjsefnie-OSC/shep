@@ -325,14 +325,19 @@ A build without it refuses `otlp_endpoint` at startup, exiting
 `invalid_config` and naming the feature, rather than running a dog that
 exports nothing while `shep list` reports it online.
 
-The body is OTLP/JSON. Every series above is a `gauge` except
-`shep_sheep_restart_total`, which is a monotonic cumulative `sum` whose
-`startTimeUnixNano` is the dog's own start, so a collector can difference
-two exports and get the restarts inside the interval. Integers are decimal
-strings, rates are numbers, and every Prometheus label is a string
-attribute, so the two paths report the same series with the same labels.
-Resource attributes are `service.name = "shep"`, `service.version` and
-`host.name`. Channel samples are not exported yet.
+The body is OTLP/JSON, and it carries your samples too: they land after the
+built-in groups, named exactly as `/metrics` names them. Every series above
+is a `gauge` except `shep_sheep_restart_total` and the samples you sent as
+counters, which are monotonic cumulative `sum`s whose `startTimeUnixNano` is
+the dog's own start, so a collector can difference two exports and get the
+restarts inside the interval. A sample's help text is its `description`, and
+a sample with none has no description either.
+`shep_channel_samples_refused_total` goes out as an integer sum. Integers are
+decimal strings, rates and sample values are numbers, and every Prometheus
+label is a string attribute, so the two paths report the same series with the
+same labels. A value OTLP has no number for (`NaN`, `+Inf`) is served by
+`/metrics` and dropped from the export. Resource attributes are
+`service.name = "shep"`, `service.version` and `host.name`.
 
 One failed export is one line in the dog's log, on the first failure after
 a success and again on recovery, never once per tick. A 2xx whose body names
@@ -349,9 +354,9 @@ install-size method, 2026-10-14):
 
 | Build | `target/release/shep` |
 |---|---|
-| default | 19,011,424 bytes |
-| `--features otel` | 19,090,384 bytes |
-| delta | 78,960 bytes |
+| default | 19,069,728 bytes |
+| `--features otel` | 19,166,144 bytes |
+| delta | 96,416 bytes |
 
 ## The bark dog
 

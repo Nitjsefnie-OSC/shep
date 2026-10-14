@@ -450,14 +450,21 @@ Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
       reports it online.
     </p>
     <p>
-      The body is OTLP/JSON. Every series above is a <code>gauge</code>
-      except <code>shep_sheep_restart_total</code>, a monotonic cumulative
-      <code>sum</code> whose <code>startTimeUnixNano</code> is the dog's own
-      start, so a collector can difference two exports for the restarts
-      inside the interval. Integers are decimal strings, rates are numbers,
+      The body is OTLP/JSON, and it carries your samples too, after the
+      built-in groups and named exactly as <code>/metrics</code> names them.
+      Every series above is a <code>gauge</code> except
+      <code>shep_sheep_restart_total</code> and the samples you sent as
+      counters, monotonic cumulative <code>sum</code>s whose
+      <code>startTimeUnixNano</code> is the dog's own start, so a collector
+      can difference two exports for the restarts inside the interval. A
+      sample's help text is its <code>description</code>, and a sample with
+      none has no description at all.
+      <code>shep_channel_samples_refused_total</code> goes out as an integer
+      sum. Integers are decimal strings, rates and sample values are numbers,
       and every Prometheus label is a string attribute, so both paths report
-      the same series with the same labels. Channel samples are not exported
-      yet.
+      the same series with the same labels. A value OTLP has no number for
+      (<code>NaN</code>, <code>+Inf</code>) is served by
+      <code>/metrics</code> and dropped from the export.
     </p>
     <p>
       One failed export is one line in the dog's log, on the first failure
@@ -479,9 +486,9 @@ Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
         <span>Build</span>
         <span>target/release/shep</span>
       </div>
-      <div class="row"><span>default</span> <span data-label="target/release/shep">19,011,424 bytes</span></div>
-      <div class="row"><span><code>--features otel</code></span> <span data-label="target/release/shep">19,090,384 bytes</span></div>
-      <div class="row"><span>delta</span> <span data-label="target/release/shep">78,960 bytes</span></div>
+      <div class="row"><span>default</span> <span data-label="target/release/shep">19,069,728 bytes</span></div>
+      <div class="row"><span><code>--features otel</code></span> <span data-label="target/release/shep">19,166,144 bytes</span></div>
+      <div class="row"><span>delta</span> <span data-label="target/release/shep">96,416 bytes</span></div>
     </div>
 
     <h2 id="the-bark-dog">The bark dog</h2>
