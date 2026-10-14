@@ -1365,7 +1365,7 @@ Arguments:
           name, id, `name:slot`, `all`, `/regex/`, or `fold:<name>`
 
   <LINE>
-          The line, without a trailing newline - shep adds exactly one
+          The line, without a trailing newline — shep adds exactly one
 
 Options:
       --format <FORMAT>
