@@ -314,6 +314,13 @@ mod tests {
     /// assertion never races the runner.
     const SWEEP_BUDGET: Duration = Duration::from_secs(5);
 
+    /// How long the fork sweep test keeps watching for a grandchild that
+    /// outlived the sweep. A miss is caught the moment its file appears,
+    /// however long a contended runner takes to notice the dog's death,
+    /// so no fixed grace can be the reason a miss slips through; absence
+    /// at the bound is the sweep.
+    const SURVIVOR_BOUND: Duration = Duration::from_secs(5);
+
     /// The budget for the test that waits for the budget itself: the
     /// wedged dog asserts [`HookOutcome::TimedOut`], which fires on the
     /// budget rather than on the machine's speed, so a short budget is the
@@ -480,7 +487,9 @@ mod tests {
     /// outright when the runner was too slow to fork it inside the budget:
     /// the sweep must have had a fork to reach, not pass on one that never
     /// existed. It then writes its file only once the dog is dead, which
-    /// only a missing sweep allows.
+    /// only a missing sweep allows, and the test watches for that file up
+    /// to [`SURVIVOR_BOUND`] rather than checking once after a fixed
+    /// grace.
     #[tokio::test]
     async fn a_fork_the_dog_left_behind_is_swept_with_it() {
         let dir = tempfile::tempdir().unwrap();
@@ -511,11 +520,23 @@ mod tests {
             "the dog never forked the grandchild inside the budget, so the sweep was never tested"
         );
 
-        // The grandchild writes only once the dog is dead and its 0.1s poll
-        // has noticed, so past a 2s grace a survivor has had its chance.
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // Watch for the survivor under a generous bound rather than check
+        // once past a fixed grace: a contended runner can take longer than
+        // any fixed grace to wake the grandchild, notice the dog is gone
+        // and write, and the sweep must be caught however slow that notice
+        // is. The timeout is the forcing mechanism for the watch; timing
+        // out is absence, and absence is the sweep.
+        let survivor_seen = async {
+            loop {
+                if survivor.exists() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        };
+        let survivor_written = tokio::time::timeout(SURVIVOR_BOUND, survivor_seen).await;
         assert!(
-            !survivor.exists(),
+            survivor_written.is_err(),
             "a fork outliving the dog kept running after the budget killed it"
         );
     }
