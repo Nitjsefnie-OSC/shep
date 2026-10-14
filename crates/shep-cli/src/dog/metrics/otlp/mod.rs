@@ -238,8 +238,12 @@ fn unix_nanos() -> u64 {
 /// Runs `exporter` on its own task. `run` never awaits this handle: an
 /// exporter that stops exporting is a log line, not a reason for the dog to
 /// exit.
-pub fn spawn(exporter: Exporter, client: Arc<ReconnectingClient>) -> JoinHandle<()> {
-    tokio::spawn(export_loop(exporter, client))
+pub fn spawn(
+    exporter: Exporter,
+    client: Arc<ReconnectingClient>,
+    store: Arc<super::samples::SampleStore>,
+) -> JoinHandle<()> {
+    tokio::spawn(export_loop(exporter, client, store))
 }
 
 /// One export per `interval`, until the process ends.
@@ -253,7 +257,11 @@ pub fn spawn(exporter: Exporter, client: Arc<ReconnectingClient>) -> JoinHandle<
 /// `Delay` rather than the default `Burst`: an export that outlived its
 /// interval is a slow collector, and queueing the missed ticks up would send
 /// stale readings back to back. Each tick sends current values anyway.
-async fn export_loop(exporter: Exporter, client: Arc<ReconnectingClient>) {
+async fn export_loop(
+    exporter: Exporter,
+    client: Arc<ReconnectingClient>,
+    store: Arc<super::samples::SampleStore>,
+) {
     let mut ticker = tokio::time::interval(exporter.interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ticker.tick().await;
@@ -262,7 +270,7 @@ async fn export_loop(exporter: Exporter, client: Arc<ReconnectingClient>) {
     let mut healthy = true;
     loop {
         ticker.tick().await;
-        match exporter.export(&client).await {
+        match exporter.export(&client, &store).await {
             Ok(()) => {
                 if !healthy {
                     eprintln!("shep dog metrics: otlp export recovered");
@@ -286,8 +294,12 @@ impl Exporter {
     /// names one is a failed export: the collector took some of the points
     /// and said so, and a tick that reported that as clean would lose the
     /// dropped points with nothing in the log.
-    async fn export(&self, client: &ReconnectingClient) -> Result<(), ExportError> {
-        let reading = super::collect_reading(client)
+    async fn export(
+        &self,
+        client: &ReconnectingClient,
+        store: &super::samples::SampleStore,
+    ) -> Result<(), ExportError> {
+        let reading = super::collect_reading(client, store)
             .await
             .map_err(ExportError::Collect)?;
         let context = ExportContext {
@@ -318,6 +330,7 @@ mod tests {
     use shep_client::testing::fake_reconnecting_client_on;
 
     use crate::dog::metrics::accept_forever;
+    use crate::dog::metrics::samples::SampleStore;
 
     use super::super::HostReading;
     use super::super::{Reading, tests as metrics_tests};
@@ -445,6 +458,7 @@ mod tests {
             flock: vec![],
             daemon_version: "9.9.9".to_string(),
             daemon_pid: 12345,
+            samples: vec![],
             host: Some(HostReading {
                 memory_total_bytes: 16_000_000_000,
                 memory_used_bytes: 8_000_000_000,
@@ -503,9 +517,10 @@ mod tests {
         let socket = shep_client::testing::control_address(dir.path());
         let (client, _daemon) = fake_reconnecting_client_on(&socket).await;
         let exporter = exporter_on(collector.addr, Duration::from_millis(20));
+        let store = SampleStore::new();
 
         let err = exporter
-            .export(&client)
+            .export(&client, &store)
             .await
             .expect_err("a collector answering 500 is a failed export");
         assert!(
@@ -513,7 +528,11 @@ mod tests {
             "{err:?}"
         );
 
-        let handle = tokio::spawn(export_loop(exporter, Arc::new(client)));
+        let handle = tokio::spawn(export_loop(
+            exporter,
+            Arc::new(client),
+            Arc::new(SampleStore::new()),
+        ));
         let seen = collector.wait_for(3).await;
         assert_eq!(seen.len(), 3, "the tick after a failed export must run");
         assert!(!handle.is_finished(), "a failing exporter must not end");
@@ -538,7 +557,7 @@ mod tests {
         let exporter = exporter_on(collector.addr, Duration::from_secs(60));
 
         let err = exporter
-            .export(&client)
+            .export(&client, &SampleStore::new())
             .await
             .expect_err("a 2xx naming dropped points is not a clean export");
         assert!(
@@ -562,7 +581,7 @@ mod tests {
         let exporter = exporter_on(collector.addr, Duration::from_secs(60));
 
         exporter
-            .export(&client)
+            .export(&client, &SampleStore::new())
             .await
             .expect("a 204 that named nothing took everything");
         assert_eq!(collector.wait_for(1).await.len(), 1);
@@ -586,7 +605,7 @@ mod tests {
         let exporter = exporter_on(collector.addr, Duration::from_secs(60));
 
         exporter
-            .export(&client)
+            .export(&client, &SampleStore::new())
             .await
             .expect("an empty `partialSuccess` names nothing the collector dropped");
         assert_eq!(collector.wait_for(1).await.len(), 1);
@@ -607,7 +626,11 @@ mod tests {
         // by value and would leave the exporter without one.
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let served = listener.local_addr().unwrap();
-        let server = tokio::spawn(accept_forever(listener, Arc::clone(&client)));
+        let server = tokio::spawn(accept_forever(
+            listener,
+            Arc::clone(&client),
+            Arc::new(SampleStore::new()),
+        ));
 
         // A port that was bound and let go: a connect to it is refused.
         let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -617,6 +640,7 @@ mod tests {
         let handle = tokio::spawn(export_loop(
             exporter_on(dead, Duration::from_millis(100)),
             Arc::clone(&client),
+            Arc::new(SampleStore::new()),
         ));
 
         // `shep_daemon_up` needs no flock and no host sample, so this says
@@ -648,6 +672,7 @@ mod tests {
         let handle = tokio::spawn(export_loop(
             exporter_on(collector.addr, Duration::from_secs(60)),
             Arc::new(client),
+            Arc::new(SampleStore::new()),
         ));
 
         // One second in, nothing has been sent: the immediate first tick of
