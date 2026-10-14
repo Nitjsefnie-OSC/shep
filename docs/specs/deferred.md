@@ -761,9 +761,11 @@ shape plus a `-populated` sibling for each, every one the bytes that release's
 own serialiser wrote, with a README naming the tag, the command and whether
 that release crossed the blob as `$SHEP_HOME/run/handover.json` or as the state
 of a `shep-handover` envelope (from v0.13.0). `crates/shep-daemon/src/handover/blob/tests/old_blobs.rs`
-loads each plain shape through `Handover::load_value`, asserts the shape, the
-values that shape wrote, and that every key it predates reads as `None` through
-the accessor; loads the oldest through `Handover::read`, which is what the
+loads each plain shape through `Handover::load_value`, asserts the whole key
+set that release wrote at the blob, at `sheep[]`, at `sheep[].fds` and at
+`sheep[].app` (`old_blob_shape.rs` holds those sets as data), the values that
+shape wrote, and that every key it predates reads as `None` through the
+accessor; loads the oldest through `Handover::read`, which is what the
 legacy arm of the boot uses; and guards that the fixture directory and the lists
 of fixtures in those files are the same set. Nothing blesses or regenerates a
 fixture: that is the bug these exist to catch.
@@ -778,6 +780,18 @@ key that release had a place for filled in, round-tripped through that
 release's `Handover` before printing so the release's own deserialiser had to
 accept the blob its own serialiser then wrote. Those two renames then failed
 ten of the populated fixtures and twelve of them.
+
+Review found the same gap twice more on the plain half. From v0.1.22 on a
+per-fixture test pinned only the keys of `sheep[0]`: dropping `reloads` from the
+blob or `channel` from a sheep's descriptors passed, and none of the five
+`AppConfig`-derived shapes pinned the keys of `sheep[0].app`, so dropping
+`depends_on`, `environment` or `level_rules` passed. Every fixture test now
+compares all four levels against the release's key set, plain and populated
+alike. Dropping `reloads` from v0.1.22, `channel` from its descriptors, `stdin`
+from v0.13.0's, `depends_on` from v0.5.0's config, `environment` from v0.8.0's,
+`level_rules` from v0.11.0's, `log_timestamps` from v0.12.0's, renaming `manual`
+in v0.1.22's bytes, adding a key no release wrote to v0.1.30, and dropping
+`kill_timeout` from a populated fixture each fail the test named for that file.
 
 The mutation check this entry asks for, run against `pending_delete` renamed
 to `pending_removed`: it failed each of the ten fixtures that carry the key,

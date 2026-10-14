@@ -6,9 +6,10 @@ produced rather than against this daemon's own serialiser.
 
 `crates/shep-daemon/src/handover/blob/tests/old_blobs.rs` and
 `crates/shep-daemon/src/handover/blob/tests/old_blob_state.rs` load every file
-here. Nothing in this repository regenerates them, and nothing should: a
-fixture written from the current `Handover` follows a field rename, which is
-the failure these exist to catch.
+here, and `crates/shep-daemon/src/handover/blob/tests/old_blob_shape.rs` holds
+the key set each release wrote as data. Nothing in this repository regenerates
+them, and nothing should: a fixture written from the current `Handover` follows
+a field rename, which is the failure these exist to catch.
 
 ## Policy
 
@@ -16,7 +17,10 @@ One file per distinct shape that shipped, named for the first `shep-daemon-v*`
 tag that wrote it. `VERSION` in `crates/shep-daemon/src/handover/blob.rs` has
 stayed 1 since the handover existed, so the release tag is the only key there
 is. A shape is the set of keys a serialised blob holds, at the blob, at
-`sheep[]`, at `sheep[].fds` and at `reloads`.
+`sheep[]`, at `sheep[].fds` and at `sheep[].app`. Every per-fixture test pins
+all four levels, plain and populated alike: trimming a key, adding one, or
+swapping in another release's bytes fails the test named for that file rather
+than loading quietly at a `#[serde(default)]`.
 
 Each of those files also has a `<tag>-populated.json` sibling: the same
 release's blob with every optional field that release could carry filled in.
