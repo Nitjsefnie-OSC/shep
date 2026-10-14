@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-14
+
+### Added
+
+- Disabling a dog stops it and keeps it listed
+- Refuse to delete a built-in dog, in the shepherd
+
+### Fixed
+
+- Enabling a dog mid-stop cancels the disable
+- Refuse a new sheep named after a dog
+- A saved sheep keeps its name against a dog at boot
+- A handover carries every dog that holds a process
+
+
 ## [0.13.0] - 2026-10-13
 
 ### Added
