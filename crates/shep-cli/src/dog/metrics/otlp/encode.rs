@@ -337,7 +337,7 @@ fn sample_attributes<'a>(point: &'a SamplePoint) -> Vec<KeyValue<'a>> {
 /// The text exposition has its own spelling for a non-finite value (`NaN`,
 /// `+Inf`) and OTLP/JSON has none, so the point is dropped rather than
 /// encoded, the same rule a non-finite `cpu_percent` follows.
-fn finite<'a>(points: &'a [SamplePoint]) -> impl Iterator<Item = &'a SamplePoint> {
+fn finite(points: &[SamplePoint]) -> impl Iterator<Item = &SamplePoint> {
     points.iter().filter(|point| point.value.is_finite())
 }
 
@@ -833,7 +833,12 @@ mod tests {
                 Some("Requests served."),
                 vec![
                     point(
-                        &[("sheep", "web"), ("id", "3"), ("fold", "backend"), ("route", "/x")],
+                        &[
+                            ("sheep", "web"),
+                            ("id", "3"),
+                            ("fold", "backend"),
+                            ("route", "/x"),
+                        ],
                         4.0,
                     ),
                     point(&[("dog", "bark"), ("source", "built-in")], 2.0),
@@ -897,16 +902,16 @@ mod tests {
             );
             // An empty `group.help` is the exposition writing no `# HELP`
             // line, which is the payload writing no `description`.
-            let description = metric.get("description").and_then(serde_json::Value::as_str);
+            let description = metric
+                .get("description")
+                .and_then(serde_json::Value::as_str);
             assert_eq!(
                 description.unwrap_or(""),
                 unescape(&group.help),
                 "{}: the description drifted from the HELP text",
                 group.name
             );
-            let points = metric[field]["dataPoints"]
-                .as_array()
-                .expect("dataPoints");
+            let points = metric[field]["dataPoints"].as_array().expect("dataPoints");
             assert_eq!(
                 points.len(),
                 group.lines.len(),
@@ -938,7 +943,12 @@ mod tests {
             MetricType::Gauge,
             Some("Jobs waiting."),
             vec![point(
-                &[("sheep", "web"), ("id", "3"), ("fold", "backend"), ("model", "qwen")],
+                &[
+                    ("sheep", "web"),
+                    ("id", "3"),
+                    ("fold", "backend"),
+                    ("model", "qwen"),
+                ],
                 7.5,
             )],
         )]));
@@ -1004,7 +1014,9 @@ mod tests {
             "a counter sample is not a gauge: {metric}"
         );
 
-        let sum = metric["sum"].as_object().expect("a counter sample is a sum");
+        let sum = metric["sum"]
+            .as_object()
+            .expect("a counter sample is a sum");
         assert_eq!(
             sum["aggregationTemporality"],
             serde_json::Value::from(2u8),
@@ -1108,8 +1120,14 @@ mod tests {
         assert_eq!(points.len(), 2, "{metric}");
         assert_eq!(attributes_of(&points[0]), vec![("reason", "invalid_name")]);
         assert_eq!(attributes_of(&points[1]), vec![("reason", "type_conflict")]);
-        assert_eq!(points[0]["asInt"], serde_json::Value::String("3".to_owned()));
-        assert_eq!(points[1]["asInt"], serde_json::Value::String("1".to_owned()));
+        assert_eq!(
+            points[0]["asInt"],
+            serde_json::Value::String("3".to_owned())
+        );
+        assert_eq!(
+            points[1]["asInt"],
+            serde_json::Value::String("1".to_owned())
+        );
         for point in points {
             assert!(point.get("asDouble").is_none(), "{point}");
             assert_eq!(
