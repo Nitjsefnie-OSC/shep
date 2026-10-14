@@ -500,7 +500,11 @@ the dog's own start. A 2xx naming a `partialSuccess` is a
 failed export, not a clean one. A build without the feature refuses
 `otlp_endpoint` at startup rather than running a dog that exports nothing. `otlp_headers` is a
 secret: redacted in `Debug`, marked in the schema, and never printed. No
-wire change.
+wire change. **Off stopped meaning "absent from what most operators get"**
+on 2026-10-14 (#737): every prebuilt release archive and the `.deb` is now
+built with `features: otel`, so `otlp_endpoint` works out of the box in a
+downloaded binary; `cargo install shep` and the Homebrew formula stay
+featureless and take `--features otel`.
 
 Project memory (cross-session state) tracks decisions; docs above are the
 source of truth.

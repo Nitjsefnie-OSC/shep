@@ -314,7 +314,8 @@ Authorization = "Bearer token-from-a-secret-manager"
 | `otlp_timeout` | `10s` | One export's budget, connect through response. |
 | `otlp_headers` | empty | Extra headers, the shape an authenticated collector needs. Never printed. |
 
-Export is a cargo feature, off in the shipped binary:
+Export is a cargo feature: on in every prebuilt release binary and the
+`.deb`, off in `cargo install shep` and the Homebrew formula:
 
 ```bash
 cargo install shep --features otel
@@ -344,13 +345,13 @@ values anyway.
 
 The feature adds no dependency, and its cost is code only. Measured on this
 machine (macOS, Apple Silicon, raw file size, not #292's corrected
-install-size method):
+install-size method, 2026-10-14):
 
 | Build | `target/release/shep` |
 |---|---|
-| default | 18,994,592 bytes |
-| `--features otel` | 19,090,064 bytes |
-| delta | 95,472 bytes |
+| default | 19,011,424 bytes |
+| `--features otel` | 19,090,384 bytes |
+| delta | 78,960 bytes |
 
 ## The bark dog
 

@@ -125,10 +125,17 @@ export const BUDGETS: Record<string, number> = {
   // line, what a build without the feature does with `otlp_endpoint`, and
   // the measured binary size #292 asked for. All of it is operator-facing
   // surface for a shipped feature, not prose to trim back out.
+  //
   // Raised again from 3650 for the "Channel samples" section: the grammar and
   // caps a sheep's own samples are held to, and the refusal counter. New
   // content rather than a correction.
-  dogs: 3900, // 3881
+  //
+  // Raised from 3900 on 2026-10-14 for #737: the page said the `otel`
+  // feature was "off in the shipped binary", and release artifacts now ship
+  // it on. Naming which channels carry it and which take `--features otel`
+  // is a correction, not prose. The merged page measures 3900, so the 10
+  // words of headroom are for drift, not for this correction.
+  dogs: 3910, // 3900
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
