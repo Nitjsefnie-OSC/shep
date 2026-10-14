@@ -756,17 +756,28 @@ and the dropping of `increment_var` (v0.8.0), `dogs` (v0.11.0), and
 `log_timestamps` (v0.12.0). Those are blob shapes too: a rename there breaks
 a blob on disk exactly as a rename in `CarriedSheep` does.
 
-Built as `crates/shep-daemon/fixtures/handover/`, twelve files, each the bytes
-that release's own serialiser wrote for its own `sample_handover()`, with a
-README naming the tag, the command and whether that release crossed the blob
-as `$SHEP_HOME/run/handover.json` or as the state of a `shep-handover`
-envelope (from v0.13.0). `crates/shep-daemon/src/handover/blob/tests/old_blobs.rs`
-loads each through `Handover::load_value`, asserts the shape, the values that
-shape wrote, and that every key it predates reads as `None` through the
-accessor; loads the oldest through `Handover::read`, which is what the legacy
-arm of the boot uses; and guards that the fixture directory and the list of
-tags in that file are the same set. Nothing blesses or regenerates a fixture:
-that is the bug these exist to catch.
+Built as `crates/shep-daemon/fixtures/handover/`, twenty-four files: one per
+shape plus a `-populated` sibling for each, every one the bytes that release's
+own serialiser wrote, with a README naming the tag, the command and whether
+that release crossed the blob as `$SHEP_HOME/run/handover.json` or as the state
+of a `shep-handover` envelope (from v0.13.0). `crates/shep-daemon/src/handover/blob/tests/old_blobs.rs`
+loads each plain shape through `Handover::load_value`, asserts the shape, the
+values that shape wrote, and that every key it predates reads as `None` through
+the accessor; loads the oldest through `Handover::read`, which is what the
+legacy arm of the boot uses; and guards that the fixture directory and the lists
+of fixtures in those files are the same set. Nothing blesses or regenerates a
+fixture: that is the bug these exist to catch.
+
+Review on the pull request found what a key set on its own cannot do. A shape
+with nothing in it passes a rename: `manual` renamed on the wire failed no
+plain fixture and no `compat` case, and `kill_timeout` renamed on `AppConfig`
+did the same, because an absent key and a `null` read alike and
+`AppConfig` carries `#[serde(default)]`. The `-populated` siblings are the
+answer, dumped the same way from each release's own code with every optional
+key that release had a place for filled in, round-tripped through that
+release's `Handover` before printing so the release's own deserialiser had to
+accept the blob its own serialiser then wrote. Those two renames then failed
+ten of the populated fixtures and twelve of them.
 
 The mutation check this entry asks for, run against `pending_delete` renamed
 to `pending_removed`: it failed each of the ten fixtures that carry the key,
