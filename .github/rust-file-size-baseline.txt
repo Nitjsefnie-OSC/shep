@@ -4,9 +4,6 @@
 #   git ls-files '*.rs' | xargs wc -l | awk '$1 > 1000 && $2 != "total"' | sort -rn
 # Format: <lines> <path>. Read #301 before splitting any of these.
 
-# #528, also counted in #301
-1161 crates/shep-cli/src/lookout/app/selection.rs
-
 # #301
 1197 crates/shep-daemon/tests/real_runner.rs
 1124 crates/shep-cli/src/lookout/app/update.rs
