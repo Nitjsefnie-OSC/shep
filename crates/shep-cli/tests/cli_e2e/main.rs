@@ -40,6 +40,7 @@ mod daemon_log;
 mod dev;
 mod dispatch;
 mod dog_channel;
+mod dog_channel_samples;
 mod dog_delete;
 mod dogs_kv;
 mod fixtures;

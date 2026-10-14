@@ -51,6 +51,71 @@ pub(crate) fn poll_metrics(addr: std::net::SocketAddr) -> String {
     }
 }
 
+#[cfg(unix)]
+/// [`poll_metrics_containing_all`] for the single-needle case.
+pub(crate) fn poll_metrics_containing(addr: std::net::SocketAddr, needle: &str) -> String {
+    poll_metrics_containing_all(addr, &[needle])
+}
+
+#[cfg(unix)]
+/// [`poll_metrics`], retried until one reading carries **every** entry of
+/// `needles` rather than merely until it answers: a dog answering from a cached
+/// reading still answers 200, so only content the predecessor never saw tells
+/// them apart.
+///
+/// The needles have to land in one reading because they are separate events. Two
+/// channel messages are two bus deliveries, and a scrape that lands between them
+/// answers one and not the other: a caller that polled for the first and then
+/// asserted on the second would be reading a flock that had not been told about
+/// the second yet.
+pub(crate) fn poll_metrics_containing_all(addr: std::net::SocketAddr, needles: &[&str]) -> String {
+    let start = Instant::now();
+    let mut last = String::new();
+    loop {
+        if let Ok(body) = scrape_metrics(addr) {
+            if needles.iter().all(|needle| body.contains(needle)) {
+                return body;
+            }
+            last = body;
+        }
+        if start.elapsed() >= METRICS_SCRAPE_DEADLINE {
+            return last;
+        }
+        std::thread::sleep(METRICS_SCRAPE_POLL_INTERVAL);
+    }
+}
+
+#[cfg(unix)]
+/// [`poll_metrics_containing`] for a `needle` that has to be *gone*: a sample
+/// is only worth keeping if it leaves with the process that sent it, and one
+/// reading without it is not enough, since a `503` from a shepherd that never
+/// answered the dog's listing reads as an exposition with nothing in it.
+///
+/// Returns the first `200` body that lacks `needle`, or the last body either
+/// way once [`METRICS_SCRAPE_DEADLINE`] expires, so the failure stays the
+/// caller's own assertion on what is still being served.
+///
+/// Which is why a caller asserting absence has to assert the body is a live
+/// exposition in the same breath: on expiry the body returned here is whatever
+/// the last attempt was, a `503` or an empty string, and "`needle` is not in
+/// it" is true of both for the wrong reason.
+pub(crate) fn poll_metrics_without(addr: std::net::SocketAddr, needle: &str) -> String {
+    let start = Instant::now();
+    let mut last = String::new();
+    loop {
+        if let Ok(body) = scrape_metrics(addr) {
+            if body.contains("HTTP/1.1 200") && !body.contains(needle) {
+                return body;
+            }
+            last = body;
+        }
+        if start.elapsed() >= METRICS_SCRAPE_DEADLINE {
+            return last;
+        }
+        std::thread::sleep(METRICS_SCRAPE_POLL_INTERVAL);
+    }
+}
+
 /// One attempt at a request against a `shep serve` worker. `serve::worker`
 /// answers `Connection: close`, so reading to EOF reads the whole response.
 ///
