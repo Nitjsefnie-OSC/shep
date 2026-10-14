@@ -391,6 +391,11 @@ pub enum Commands {
     /// `shep copy web.dogs.kelpie.rulings api.dogs.kelpie.rulings` copies one
     /// key or sub-table inside it.
     ///
+    /// A dog name and a key inside a table may each contain a dot, and each is
+    /// read as the longest name the copy's tables actually hold: `web.dogs.foo.bar`
+    /// is the dog `foo.bar` when a side has a table under that name, and the dog
+    /// `foo` with the key `bar` when neither does.
+    ///
     /// The path is the same on both sides: a copy moves values, and
     /// `web.restart_delay` onto `api.kill_timeout` is two different settings.
     ///

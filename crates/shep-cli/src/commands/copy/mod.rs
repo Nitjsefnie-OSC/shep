@@ -131,15 +131,15 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
         Ok(names) => names,
         Err(code) => return code,
     };
-    let from = match address::parse(&args.from, &flock) {
-        Ok(address) => address,
+    let from = match address::written(&args.from, &flock) {
+        Ok(written) => written,
         Err(refusal) => return refusal.report(streams),
     };
-    let to = match address::parse(&args.to, &flock) {
-        Ok(address) => address,
+    let to = match address::written(&args.to, &flock) {
+        Ok(written) => written,
         Err(refusal) => return refusal.report(streams),
     };
-    if let Err(refusal) = same_pair(&from, &to) {
+    if let Some(refusal) = same_sheep(&from.sheep, &to.sheep) {
         return refusal.report(streams);
     }
     let except = match plan::except_paths(&args.except) {
@@ -155,6 +155,29 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
         Ok(config) => config,
         Err(code) => return code,
     };
+
+    // The path half is read after the two configs, because a dog name and a
+    // key inside a table may each contain a dot, and only the tables say where
+    // one ends.
+    let dogs = address::dog_names(&flock, &source, &target);
+    let from = match address::path_of(&from, &dogs, &source, &target) {
+        Ok(path) => Address {
+            sheep: from.sheep.clone(),
+            path,
+        },
+        Err(refusal) => return refusal.report(streams),
+    };
+    let to = match address::path_of(&to, &dogs, &source, &target) {
+        Ok(path) => Address {
+            sheep: to.sheep.clone(),
+            path,
+        },
+        Err(refusal) => return refusal.report(streams),
+    };
+    if let Err(refusal) = same_pair(&from, &to) {
+        return refusal.report(streams);
+    }
+
     let plan = match build_plan(&from, &to, &except, args.replace, &source, &target) {
         Ok(plan) => plan,
         Err(refusal) => return refusal.report(streams),
@@ -304,6 +327,15 @@ async fn read_config(
     }
 }
 
+/// The refusal for one sheep named on both sides.
+fn same_sheep(from: &str, to: &str) -> Option<CopyRefusal> {
+    (from == to).then(|| {
+        CopyRefusal::Usage(format!(
+            "`{from}` is on both sides: a copy needs two different sheep"
+        ))
+    })
+}
+
 /// The two sides of one copy: two different sheep, and one path between them.
 ///
 /// # Errors
@@ -319,11 +351,8 @@ fn same_pair(from: &Address, to: &Address) -> Result<(), CopyRefusal> {
             to.path.dotted()
         )));
     }
-    if from.sheep == to.sheep {
-        return Err(CopyRefusal::Usage(format!(
-            "`{}` is on both sides: a copy needs two different sheep",
-            from.sheep
-        )));
+    if let Some(refusal) = same_sheep(&from.sheep, &to.sheep) {
+        return Err(refusal);
     }
     Ok(())
 }
@@ -523,6 +552,22 @@ mod tests {
     use crate::commands::copy::plan::{Change, ChangeKind};
     use crate::output::Render;
 
+    /// An address, resolved with no config in hand.
+    fn address(raw: &str) -> Address {
+        let written = address::written(raw, &flock()).unwrap();
+        let dogs = address::dog_names(&flock(), &serde_json::Value::Null, &serde_json::Value::Null);
+        Address {
+            sheep: written.sheep.clone(),
+            path: address::path_of(
+                &written,
+                &dogs,
+                &serde_json::Value::Null,
+                &serde_json::Value::Null,
+            )
+            .unwrap(),
+        }
+    }
+
     /// The flock every test here resolves against.
     fn flock() -> FlockNames {
         FlockNames {
@@ -548,8 +593,18 @@ mod tests {
         except: &[String],
         replace: bool,
     ) -> Result<Plan, CopyRefusal> {
-        let from = address::parse(from, &flock())?;
-        let to = address::parse(to, &flock())?;
+        let flock = flock();
+        let from = address::written(from, &flock)?;
+        let to = address::written(to, &flock)?;
+        let dogs = address::dog_names(&flock, &source, &target);
+        let from = Address {
+            sheep: from.sheep.clone(),
+            path: address::path_of(&from, &dogs, &source, &target)?,
+        };
+        let to = Address {
+            sheep: to.sheep.clone(),
+            path: address::path_of(&to, &dogs, &source, &target)?,
+        };
         same_pair(&from, &to)?;
         let except = plan::except_paths(except)?;
         build_plan(&from, &to, &except, replace, &source, &target)
@@ -772,8 +827,8 @@ mod tests {
         .expect("the source has this table");
 
         let dry = report_for(
-            &address::parse("web.dogs.kelpie", &flock()).unwrap(),
-            &address::parse("api.dogs.kelpie", &flock()).unwrap(),
+            &address("web.dogs.kelpie"),
+            &address("api.dogs.kelpie"),
             &plan,
             false,
             true,
@@ -913,11 +968,8 @@ mod tests {
     /// A copy onto itself cannot differ, and saying so beats an empty table.
     #[test]
     fn the_same_sheep_on_both_sides_is_refused() {
-        let err = same_pair(
-            &address::parse("web.dogs.kelpie", &flock()).unwrap(),
-            &address::parse("web.dogs.kelpie", &flock()).unwrap(),
-        )
-        .expect_err("one sheep is not a copy");
+        let err = same_pair(&address("web.dogs.kelpie"), &address("web.dogs.kelpie"))
+            .expect_err("one sheep is not a copy");
         assert_eq!(
             err,
             CopyRefusal::Usage(
@@ -941,11 +993,11 @@ mod tests {
         assert!(err.message().contains("one field"), "{err}");
     }
 
-    /// The JSON envelope carries the run's own verdict beside the change list.
+    /// A report prints its changes and its verdict.
     #[test]
     fn a_report_prints_its_changes_and_its_verdict() {
-        let from = address::parse("web.dogs.kelpie", &flock()).unwrap();
-        let to = address::parse("api.dogs.kelpie", &flock()).unwrap();
+        let from = address("web.dogs.kelpie");
+        let to = address("api.dogs.kelpie");
         let plan = Plan {
             changes: vec![Change {
                 key: "rulings.decide".to_string(),

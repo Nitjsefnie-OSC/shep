@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use serde_json::{Map, Value};
 use shep_core::config::DogTable;
 
-use super::CopyRefusal;
+use super::{CopyRefusal, address};
 
 /// The request a plan turns into.
 #[derive(Debug, Clone, PartialEq)]
@@ -138,7 +138,7 @@ pub(crate) fn plan_dog(
         source: from,
         target: to,
     } = sides;
-    let source_table = dogs_of(source).and_then(|dogs| dogs.get(dog));
+    let source_table = address::dog_table(source, dog);
     let source_here = if keys.is_empty() {
         source_table
     } else {
@@ -158,20 +158,30 @@ pub(crate) fn plan_dog(
             ))
         });
     };
-    check_except(source_here, &format!("{from}.dogs.{dog}"), except)?;
-
     let before = Value::Object(
-        dogs_of(target)
-            .and_then(|dogs| dogs.get(dog))
+        address::dog_table(target, dog)
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default(),
     );
+    let target_here: Option<&Value> = if keys.is_empty() {
+        Some(&before)
+    } else {
+        walk(&before, keys)
+    };
+    // An `--except` is read the way the address was: a key holding a dot is
+    // one key when the table it names holds it, so `--except api.token` leaves
+    // out the key `api.token` rather than the key `token` under `api`.
+    let except: Vec<Vec<String>> = except
+        .iter()
+        .map(|spec| address::resolve_keys(spec, Some(source_here), target_here))
+        .collect();
+    check_except(source_here, &format!("{from}.dogs.{dog}"), &except)?;
     let mut after = before.clone();
     if keys.is_empty() {
-        after = merge(Some(&after), source_here, replace, except)?;
+        after = merge(Some(&after), source_here, replace, &except)?;
     } else {
-        let merged = merge(walk(&after, keys), source_here, replace, except)?;
+        let merged = merge(walk(&after, keys), source_here, replace, &except)?;
         set_path(&mut after, keys, merged).map_err(|held| {
             let at = if held.is_empty() {
                 format!("{to}.dogs.{dog}")
@@ -246,11 +256,6 @@ pub(crate) fn except_paths(raw: &[String]) -> Result<Vec<Vec<String>>, CopyRefus
             Ok(parts.into_iter().map(str::to_string).collect())
         })
         .collect()
-}
-
-/// The `dogs` map of one config, as JSON.
-fn dogs_of(config: &Value) -> Option<&Map<String, Value>> {
-    config.get("dogs").and_then(Value::as_object)
 }
 
 /// The value at `keys` under `root`, `None` when any step is missing or is
@@ -700,6 +705,32 @@ mod tests {
             table.as_map()["git"],
             json!({ "checkout": "./other", "remote": "origin" })
         );
+    }
+
+    /// `--except` reads a dotted key the way the address does, so it leaves
+    /// out the key the operator meant and not the one a segment split lands
+    /// on.
+    #[test]
+    fn an_except_leaves_out_the_key_the_table_holds() {
+        let source = table(&[("api.token", json!("src")), ("api", json!({ "limit": 5 }))]);
+        let target = table(&[("api.token", json!("mine")), ("api", json!({ "limit": 9 }))]);
+        let except = [vec!["api".to_string(), "token".to_string()]];
+        let plan = plan_dog(sides(), "kelpie", &[], &except, false, &source, &target).unwrap();
+        let Write::DogTable { table, .. } = plan.write.unwrap() else {
+            panic!("a dog copy writes a dog table");
+        };
+        assert_eq!(
+            table.as_map()["api.token"],
+            json!("mine"),
+            "the table holds `api.token` as one key, so that is the key left out"
+        );
+        assert_eq!(
+            table.as_map()["api"],
+            json!({ "limit": 5 }),
+            "and the key under `api` is copied, which is what the operator did not except"
+        );
+        let keys: Vec<&str> = plan.changes.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(keys, ["api.limit"]);
     }
 
     #[test]

@@ -523,7 +523,11 @@ not only its name, type and point count. No wire change.
 **A setting, or a whole dog table, copies from one sheep onto another.**
 `shep copy <from>.<path> <to>.<path>` takes three address forms: a field
 (`web.restart_delay`), a dog's table (`web.dogs.kelpie`), and a key or
-sub-table inside one (`web.dogs.kelpie.rulings`). The path is the same on
+sub-table inside one (`web.dogs.kelpie.rulings`). A dog name and a key inside
+a table may each contain a dot, so each step past the sheep name is the
+longest name the copy's tables actually hold: `web.dogs.foo.bar` is the dog
+`foo.bar` when a side has a table under that name, and the dog `foo` with the
+key `bar` when neither does. The path is the same on
 both sides. A dog table merges by default, so a key only the target has
 survives, `--replace` makes the target exactly the source at that path, and
 `--except <key>` leaves one key out because shep cannot tell that a dog's
