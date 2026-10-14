@@ -130,7 +130,8 @@ impl ConfigPane {
     /// Files the opposite of what a bool holds, or the next name in a
     /// choice, or a name of a checklist toggled. Does nothing for a locked field, or for one no keystroke
     /// cycles ([`FieldKind::Text`], [`FieldKind::Integer`],
-    /// [`FieldKind::Map`], [`FieldKind::Opaque`], [`FieldKind::Entries`]).
+    /// [`FieldKind::Number`], [`FieldKind::Map`], [`FieldKind::Opaque`],
+    /// [`FieldKind::Entries`]).
     pub fn cycle(&mut self) {
         if let Some(PaneRow::Choice { field, item }) = self.cursor() {
             self.toggle_choice(field, item);
@@ -167,6 +168,7 @@ impl ConfigPane {
             | FieldKind::Suggested(_)
             | FieldKind::Text
             | FieldKind::Integer
+            | FieldKind::Number
             | FieldKind::Map
             | FieldKind::List(_)
             | FieldKind::Entries(_)
@@ -337,7 +339,7 @@ impl ConfigPane {
         if self.lock(&field.key).is_some()
             || !matches!(
                 field.kind,
-                FieldKind::Text | FieldKind::Integer | FieldKind::Suggested(_)
+                FieldKind::Text | FieldKind::Integer | FieldKind::Number | FieldKind::Suggested(_)
             )
         {
             return;
@@ -400,8 +402,9 @@ impl ConfigPane {
     /// The check is [`super::super::validation::refusal`], which reads the
     /// grammar off the field rather than off the key: shep's own two string
     /// types go through their `FromStr`, a dog's own `pattern` through the
-    /// regex it published, and an integer through its schema's `minimum`
-    /// and `maximum`.
+    /// regex it published, an integer through its schema's `minimum` and
+    /// `maximum`, and a decimal through those four plus `exclusiveMinimum` and
+    /// `exclusiveMaximum`.
     ///
     /// This is the only gate a dog's section has. `Request::SetDogConfig`
     /// checks that the table is TOML and writes it, because the dog is the
@@ -459,6 +462,23 @@ impl ConfigPane {
                     return Some(refused);
                 }
             },
+            // The same second parse for a decimal. `validation::refusal` already
+            // refused every text `f64::from_str` cannot hold and every
+            // non-finite one it can, so this arm answers a refusal rather than
+            // filing: `Value::from(f64)` hands back `null` for a non-finite
+            // float, and a dog's section writer reads `null` as "remove this
+            // key".
+            (Some(FieldKind::Number), text) => match text.parse::<f64>() {
+                Ok(number) if number.is_finite() => Value::from(number),
+                _ => {
+                    let shown = field
+                        .as_ref()
+                        .map_or(text, |field| validation::shown_value(field.secret, text));
+                    let refused = validation::not_a_number(&key, shown);
+                    self.typing = Some(PaneTyping { key, buffer });
+                    return Some(refused);
+                }
+            },
             (_, text) => Value::String(text.to_owned()),
         };
         self.file_field(key, value);
@@ -478,7 +498,9 @@ mod tests {
 
     use super::super::Lock;
     use super::super::SectionWrite;
-    use super::super::fixtures::{bark_pane, filed, filed_impact, secret_dog_pane, web};
+    use super::super::fixtures::{
+        bark_pane, filed, filed_impact, money_pane, secret_dog_pane, web,
+    };
     use super::*;
 
     #[test]
@@ -682,6 +704,148 @@ mod tests {
         assert!(
             !matches!(value.as_value(), serde_json::Value::String(_)),
             "an integer field must not travel as a string"
+        );
+    }
+
+    /// `shep-kelpie`'s `budget.per_item_usd`: a money cap the pane drew
+    /// read-only, because `kind_of` had no arm for `type: number` and the field
+    /// fell through to [`FieldKind::Opaque`]. The editor seeds with what the row
+    /// shows, as it does for an integer.
+    #[test]
+    fn typing_a_decimal_into_a_number_field_files_a_float() {
+        let mut pane = money_pane("per_item_usd = 12.5\n");
+        pane.move_to_key("per_item_usd");
+        pane.begin_typing();
+        assert_eq!(
+            pane.typing().expect("the editor is open").buffer.as_str(),
+            "12.5",
+            "the editor opens on what is on screen"
+        );
+        for _ in 0..4 {
+            pane.type_backspace();
+        }
+        for c in "2.5".chars() {
+            pane.type_char(c);
+        }
+        assert_eq!(pane.apply_typing(), None, "the field takes what was typed");
+        assert_eq!(filed(&pane, "per_item_usd"), Some(serde_json::json!(2.5)));
+    }
+
+    /// A whole number typed into a decimal field is filed as a float, so the
+    /// dog reads the type its own schema names rather than the spelling an
+    /// operator happened to type.
+    #[test]
+    fn a_whole_number_typed_into_a_number_field_is_filed_as_a_float() {
+        let mut pane = money_pane("per_item_usd = 12.5\n");
+        pane.move_to_key("per_item_usd");
+        pane.begin_typing();
+        for _ in 0..4 {
+            pane.type_backspace();
+        }
+        for c in "10".chars() {
+            pane.type_char(c);
+        }
+        assert_eq!(pane.apply_typing(), None, "10 is a number");
+        assert_eq!(filed(&pane, "per_item_usd"), Some(serde_json::json!(10.0)));
+    }
+
+    /// The seed is the stored value as the row shows it, which for a whole
+    /// number stored in `dogs.toml` is bare: an operator who only wants to add
+    /// cents starts from `10`, not from `10.0`.
+    #[test]
+    fn a_number_field_seeds_its_editor_with_the_stored_value_as_shown() {
+        let mut pane = money_pane("per_item_usd = 10\n");
+        pane.move_to_key("per_item_usd");
+        pane.begin_typing();
+        assert_eq!(
+            pane.typing().expect("the editor is open").buffer.as_str(),
+            "10"
+        );
+    }
+
+    /// The other half of the gate: `f64::from_str` takes `NaN` and `inf`, and
+    /// `Value::from(f64)` answers a non-finite float with `null`, which a dog's
+    /// section writer reads as "remove this key". Refusing it is what keeps an
+    /// operator typing `NaN` from losing the key.
+    #[test]
+    fn a_number_field_refuses_a_word_and_a_non_finite_number_and_files_nothing() {
+        for typed in ["abc", "NaN", "inf"] {
+            let mut pane = money_pane("per_item_usd = 12.5\n");
+            pane.move_to_key("per_item_usd");
+            pane.begin_typing();
+            for _ in 0..4 {
+                pane.type_backspace();
+            }
+            for c in typed.chars() {
+                pane.type_char(c);
+            }
+            let refused = pane.apply_typing().expect("refused");
+            assert_eq!(
+                refused.text,
+                format!("per_item_usd is \"{typed}\", which is not a number shep accepts"),
+                "{typed}"
+            );
+            assert_eq!(filed(&pane, "per_item_usd"), None, "{typed} filed nothing");
+            assert!(
+                pane.typing().is_some(),
+                "{typed}: the editor stays open on what was typed"
+            );
+        }
+    }
+
+    /// `exclusiveMinimum: 0` is how `shep-kelpie` says "a cap, and not a cap of
+    /// nothing", and this pane is the only gate a dog's section has.
+    #[test]
+    fn a_number_field_refuses_zero_under_its_exclusive_floor_and_takes_the_next() {
+        let mut pane = money_pane("per_item_usd = 12.5\n");
+        pane.move_to_key("per_item_usd");
+        pane.begin_typing();
+        for _ in 0..4 {
+            pane.type_backspace();
+        }
+        pane.type_char('0');
+        let refused = pane.apply_typing().expect("0 is not above a floor of 0");
+        assert_eq!(
+            refused.text,
+            "per_item_usd is \"0\"; per_item_usd must be above 0"
+        );
+        assert_eq!(filed(&pane, "per_item_usd"), None);
+        assert!(pane.typing().is_some(), "the editor stays open on the 0");
+        for c in ".01".chars() {
+            pane.type_char(c);
+        }
+        assert_eq!(pane.apply_typing(), None, "0.01 is above the floor");
+        assert_eq!(
+            filed(&pane, "per_item_usd"),
+            Some(serde_json::json!(0.01)),
+            "and it is filed"
+        );
+    }
+
+    /// An edit carries the key and the JSON value, and the daemon
+    /// deserializes that value into the field it names: a decimal field handed
+    /// `"2.5"` is refused rather than set.
+    #[test]
+    fn a_number_edit_carries_a_float_and_not_the_text_typed() {
+        let mut pane = money_pane("per_item_usd = 12.5\n");
+        pane.move_to_key("per_item_usd");
+        pane.begin_typing();
+        for _ in 0..4 {
+            pane.type_backspace();
+        }
+        for c in "2.5".chars() {
+            pane.type_char(c);
+        }
+        assert_eq!(pane.apply_typing(), None);
+        let writes = pane.close().into_writes();
+        let [PaneEdit::Set { key, value }] = writes.as_slice() else {
+            panic!("{writes:?}");
+        };
+        assert_eq!(key, "per_item_usd");
+        assert_eq!(value.as_value(), &serde_json::json!(2.5));
+        assert!(
+            !matches!(value.as_value(), serde_json::Value::String(_)),
+            "a decimal field must not travel as a string"
         );
     }
 

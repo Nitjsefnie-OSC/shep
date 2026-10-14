@@ -93,7 +93,12 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3785 on 2026-10-13 for a dog setting that is a tagged union:
   // it reads as its tag, opens to that tag's fields and is picked with space,
   // which is new operator-facing surface. The page had no headroom.
-  "lookout-config": 3880, // 3871
+  //
+  // Raised from 3880 for editing a decimal field: the page has to name the
+  // kind that now edits, say a whole number typed into one is filed as a
+  // float, and say a list of numbers is still read-only, which the old text
+  // left implied by silence.
+  "lookout-config": 3920, // 3906
   // Raised from 2930 on 2026-09-14 for the host line, which `shep flock`
   // began printing on a one-shot listing and not only under `--follow`. It
   // shows above every table on this page, so four transcripts gained a line

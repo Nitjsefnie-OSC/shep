@@ -2,19 +2,22 @@
 //!
 //! Separate from [`super::schema`] because the grammar is its own: JSON
 //! Schema writes `minimum` and `maximum` as arbitrary numbers, and a
-//! `Field` needs a pair of `i64` bounds plus an answer for a range that
-//! holds nothing. Normalising one into the other is the whole job here.
+//! `Field` needs a pair of `i64` bounds for an integer, the same bounds as
+//! written for a decimal, and an answer for a range that holds nothing.
+//! Normalising one into the other is the whole job here.
 //!
 //! An array's `items` schema is read the same way and hung under [`Bounds::items`],
 //! so a list element is checked against what the dog published about an
 //! element rather than about the array.
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Number, Value};
 
 use super::schema::resolved;
 
-/// The bounds a property's schema publishes beyond its type, for the two
-/// keywords this pane can actually check a keystroke against.
+/// The bounds a property's schema publishes beyond its type, for the
+/// keywords this pane can actually check a keystroke against: `pattern`,
+/// `minLength`, `enum`, and the numeric range, once normalised for an integer
+/// and once as written for a decimal.
 ///
 /// Read off the resolved schema, so a `$ref` into `$defs` and an
 /// `anyOf: [T, null]` are both followed first: `max_age` on a dog that
@@ -46,6 +49,26 @@ pub struct Bounds {
     pub minimum: Option<i64>,
     /// `maximum`, normalised to the largest `i64` the schema accepts.
     pub maximum: Option<i64>,
+    /// `minimum`, as the schema wrote it, for a [`super::FieldKind::Number`]
+    /// field. Kept beside [`Self::minimum`] rather than in place of it: a
+    /// decimal field's floor is a decimal, and rounding `0.5` up to `1` would
+    /// refuse the value the schema itself names.
+    ///
+    /// A `Number` rather than an `f64` for the same reason `choices` holds
+    /// JSON values: it keeps `Bounds` an `Eq` type, and it renders back to the
+    /// operator as the schema spelled it.
+    pub number_minimum: Option<Number>,
+    /// `maximum`, as the schema wrote it, for a [`super::FieldKind::Number`]
+    /// field.
+    pub number_maximum: Option<Number>,
+    /// `exclusiveMinimum`, as written. JSON Schema's strict form of a floor,
+    /// and the one `shep-kelpie` publishes on `budget.per_item_usd`. Read for
+    /// a decimal field only: an integer's [`Self::minimum`] already carries
+    /// the rounding an exclusive bound would need.
+    pub number_exclusive_minimum: Option<Number>,
+    /// `exclusiveMaximum`, as written. The strict ceiling, read for a decimal
+    /// field only, for [`Self::number_exclusive_minimum`]'s reason.
+    pub number_exclusive_maximum: Option<Number>,
     /// `enum`, kept as JSON values rather than strings so an integer list's
     /// `enum` of numbers compares against a parsed element. Empty is the
     /// common case and means the schema named no `enum`.
@@ -72,7 +95,9 @@ pub struct Bounds {
 /// A numeric bound is read as an `f64` and normalised to the integer it
 /// actually forbids, because JSON Schema's bounds are inclusive: a
 /// `minimum` rounds UP and a `maximum` rounds DOWN, so `minimum: 0.5`
-/// forbids `0` and `maximum: 2.5` forbids `3`.
+/// forbids `0` and `maximum: 2.5` forbids `3`. The same four keywords are
+/// kept unnormalised beside them for a [`super::FieldKind::Number`] field,
+/// which is held to what the schema wrote rather than to a rounding of it.
 ///
 /// Reading them with `as_i64` instead dropped both, and a dropped bound is
 /// an accepted keystroke: the pane filed a `0` its own schema forbade.
@@ -114,6 +139,11 @@ fn bounds_opening<'a>(
         .and_then(Value::as_f64)
         .map(f64::floor);
     let (floor, ceiling) = (minimum.and_then(as_bound), maximum.and_then(as_bound));
+    // The same keywords, unnormalised, for a field whose values are decimals.
+    // A bound the schema wrote as a number is read as one here, so `minimum: 0`
+    // and `minimum: 0.5` reach the gate as what they say, and a bound that is
+    // not a number at all bounds nothing.
+    let number_bound = |keyword: &str| schema.get(keyword).and_then(Value::as_number).cloned();
     Bounds {
         pattern: schema
             .get("pattern")
@@ -127,6 +157,10 @@ fn bounds_opening<'a>(
             .and_then(|count| usize::try_from(count).ok()),
         minimum: floor,
         maximum: ceiling,
+        number_minimum: number_bound("minimum"),
+        number_maximum: number_bound("maximum"),
+        number_exclusive_minimum: number_bound("exclusiveMinimum"),
+        number_exclusive_maximum: number_bound("exclusiveMaximum"),
         choices: schema
             .get("enum")
             .and_then(Value::as_array)
@@ -224,6 +258,72 @@ mod tests {
         assert_eq!(ratio.maximum, Some(2), "2.5 rounds down, so 3 is refused");
         assert!(!ratio.unsatisfiable);
         assert_eq!(set.by_key("plain").unwrap().bounds, Bounds::default());
+    }
+
+    /// The bounds a [`super::FieldKind::Number`] field is held to, kept as the
+    /// schema wrote them. A decimal field's floor is a decimal: normalising
+    /// `minimum: 0.5` up to `1` would refuse `0.5`, the value the schema
+    /// names, and `exclusiveMinimum: 0` is the spelling `shep-kelpie`'s
+    /// `budget.per_item_usd` publishes, which the integer pair does not read
+    /// at all.
+    #[test]
+    fn a_number_fields_bounds_are_kept_as_the_schema_wrote_them() {
+        let p = props(json!({
+            "per_item_usd": { "type": "number", "format": "double", "exclusiveMinimum": 0 },
+            "ratio": { "type": "number", "minimum": 0.5, "maximum": 2.5 },
+            "below": { "type": "number", "exclusiveMaximum": 10 },
+            "plain": { "type": "number" },
+        }));
+        let set = FieldSet::from_properties(&p, &Default::default(), &[]);
+        let bounds = |key: &str| set.by_key(key).expect(key).bounds.clone();
+        let bound = |value: Value| value.as_number().expect("a number").clone();
+        assert_eq!(
+            bounds("per_item_usd").number_exclusive_minimum,
+            Some(bound(json!(0)))
+        );
+        assert_eq!(
+            (
+                bounds("ratio").number_minimum,
+                bounds("ratio").number_maximum
+            ),
+            (Some(bound(json!(0.5))), Some(bound(json!(2.5)))),
+            "a decimal bound is not rounded"
+        );
+        assert_eq!(
+            bounds("below").number_exclusive_maximum,
+            Some(bound(json!(10)))
+        );
+        assert_eq!(
+            bounds("ratio"),
+            Bounds {
+                number_minimum: Some(bound(json!(0.5))),
+                number_maximum: Some(bound(json!(2.5))),
+                // The integer pair sits beside these and is what an
+                // [`super::FieldKind::Integer`] field is held to.
+                minimum: Some(1),
+                maximum: Some(2),
+                ..Default::default()
+            },
+            "both halves are read, and neither replaces the other"
+        );
+        assert_eq!(
+            bounds("plain"),
+            Bounds::default(),
+            "no bound, nothing to check"
+        );
+    }
+
+    /// A bound the schema did not write as a number bounds nothing, the same
+    /// fail-open answer a `pattern` that does not compile gets.
+    #[test]
+    fn a_numeric_bound_that_is_not_a_number_is_read_as_no_bound() {
+        let p = props(json!({
+            "ratio": { "type": "number", "minimum": "0.5", "maximum": null },
+        }));
+        let set = FieldSet::from_properties(&p, &Default::default(), &[]);
+        let bounds = &set.by_key("ratio").expect("ratio").bounds;
+        assert_eq!(bounds.number_minimum, None);
+        assert_eq!(bounds.number_maximum, None);
     }
 
     /// A range no integer satisfies, by each of the three routes into one.

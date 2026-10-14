@@ -72,7 +72,11 @@ impl App {
         let locked = pane.cursor_lock().map(|(key, lock)| (key.to_owned(), lock));
         let opens = matches!(
             kind,
-            FieldKind::List(_) | FieldKind::Text | FieldKind::Integer | FieldKind::Suggested(_)
+            FieldKind::List(_)
+                | FieldKind::Text
+                | FieldKind::Integer
+                | FieldKind::Number
+                | FieldKind::Suggested(_)
         );
         // A row `Enter` was never going to open raises nothing at all: a
         // refusal about a key that was never going to act trains an
