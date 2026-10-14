@@ -141,8 +141,8 @@ mod tests {
         );
     }
 
-    /// `EMFILE` and `ENFILE` are the errors the issue names, and neither is
-    /// an `ErrorKind` this type knows: they land on `Uncategorized`.
+    /// `EMFILE` and `ENFILE` reach this type as `Uncategorized`, not as a
+    /// kind it knows.
     #[cfg(unix)]
     #[test]
     fn descriptor_exhaustion_waits() {
