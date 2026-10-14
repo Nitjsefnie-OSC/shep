@@ -130,10 +130,11 @@ export const BUDGETS: Record<string, number> = {
   // caps a sheep's own samples are held to, and the refusal counter. New
   // content rather than a correction.
   //
-  // Raised from 3650 on 2026-10-14 for #737: the page said the `otel`
+  // Raised from 3900 on 2026-10-14 for #737: the page said the `otel`
   // feature was "off in the shipped binary", and release artifacts now ship
   // it on. Naming which channels carry it and which take `--features otel`
-  // is a correction, not prose.
+  // is a correction, not prose. The merged page measures 3900, so the 10
+  // words of headroom are for drift, not for this correction.
   dogs: 3910, // 3900
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
