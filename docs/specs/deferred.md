@@ -716,15 +716,16 @@ tell it apart from a shep bug.
 The full postmortem, including the wrong diagnosis it took to get here, is in
 [deferred-history.md](deferred-history.md).
 
-### The handover blob's compatibility tests never load an old blob
+### ~~The handover blob's compatibility tests never load an old blob~~ -- done, 2026-10-14
 
 Raised in review on #84, 2026-08-31, and agreed rather than argued away.
 
-Eight cases are named `a_blob_written_before_<field>_was_carried_still_loads`
+Ten cases are named `a_blob_written_before_<field>_was_carried_still_loads`
 -- stdin, the channel, `pending_delete`, the manual marker, a swap in flight,
-`ready_failed`, the restart deadline, and (since phase 3 task 4) the dog
-marker. Every one of them builds a blob from today's `Handover`, serialises
-it, removes one key, and loads the result.
+`ready_failed`, the restart deadline, the dog marker, the parked config
+(`pending` and `pending_reidentifies`), and the disabled mark. Every one of
+them builds a blob from today's `Handover`, serialises it, removes one key,
+and loads the result.
 
 That proves the thing each field's carry actually needs: an absent key loads
 as `None` rather than refusing, so a successor boots against a predecessor
@@ -732,23 +733,73 @@ that never wrote the field. It is not nothing.
 
 **What it cannot prove is that a blob written by an older binary still
 parses**, because it round-trips through today's serialiser. Rename a field
-and every one of these follows the rename and keeps passing, while a real
-blob on disk from v0.1.18 fails. IR-35 asks for exactly the missing half:
+and nine of these follow the rename and keep passing, while a real blob on
+disk from v0.1.18 fails. IR-35 asks for exactly the missing half:
 "committed byte-fixtures from the previous protocol version that must still
 deserialize".
 
-**One wrinkle stops this being a straight IR-35 application, and it needs
-deciding rather than inferring.** The rule says fixtures from the PREVIOUS
-protocol version, and the blob's `VERSION` has never moved from 1. Every
-format worth pinning -- v0.1.18 through v0.1.21, and each phase's additions
-inside them -- is version 1 with fewer optional fields. So the fixture policy
-has to answer what a fixture is keyed to when the version does not move: a
-release, a phase, or every shape that ever shipped.
+**The wrinkle the entry was waiting on, settled by the maintainer:** the rule
+says fixtures from the PREVIOUS protocol version, and the blob's `VERSION`
+has never moved from 1, so there is no version to key a fixture to. The policy
+is **one fixture per distinct shape that shipped, named for the first
+`shep-daemon-v*` tag that wrote it**. A shape is the set of keys a serialised
+blob holds -- at the blob, at `sheep[]`, at `sheep[].fds` and at `reloads`.
 
-Not done in #84 because it is not that PR's test. Covering only the newest
-field would leave one case in a different style from seven siblings and barely
-reduce the risk, since the exposure is the whole blob rather than any one
-key.
+What that turned out to be: every tag from `shep-daemon-v0.1.18` (the first
+with a handover) to `shep-daemon-v0.14.0`, 61 tags, each dumped from its own
+code rather than transcribed. Twelve distinct key sets, not the ten the issue
+predicted. Seven are `shep-daemon`'s own structs adding a key, which is where
+the ten cases come from -- several releases added more than one at a time, so
+ten field additions land on seven shapes. The other five are the `AppConfig`
+a sheep carries: `depends_on` (v0.5.0), `environment` (v0.6.2), `level_rules`
+and the dropping of `increment_var` (v0.8.0), `dogs` (v0.11.0), and
+`log_timestamps` (v0.12.0). Those are blob shapes too: a rename there breaks
+a blob on disk exactly as a rename in `CarriedSheep` does.
+
+Built as `crates/shep-daemon/fixtures/handover/`, twenty-four files: one per
+shape plus a `-populated` sibling for each, every one the bytes that release's
+own serialiser wrote, with a README naming the tag, the command and whether
+that release crossed the blob as `$SHEP_HOME/run/handover.json` or as the state
+of a `shep-handover` envelope (from v0.13.0). `crates/shep-daemon/src/handover/blob/tests/old_blobs.rs`
+loads each plain shape through `Handover::load_value`, asserts the whole key
+set that release wrote at the blob, at `sheep[]`, at `sheep[].fds` and at
+`sheep[].app` (`old_blob_shape.rs` holds those sets as data), the values that
+shape wrote, and that every key it predates reads as `None` through the
+accessor; loads the oldest through `Handover::read`, which is what the
+legacy arm of the boot uses; and guards that the fixture directory and the lists
+of fixtures in those files are the same set. Nothing blesses or regenerates a
+fixture: that is the bug these exist to catch.
+
+Review on the pull request found what a key set on its own cannot do. A shape
+with nothing in it passes a rename: `manual` renamed on the wire failed no
+plain fixture and no `compat` case, and `kill_timeout` renamed on `AppConfig`
+did the same, because an absent key and a `null` read alike and
+`AppConfig` carries `#[serde(default)]`. The `-populated` siblings are the
+answer, dumped the same way from each release's own code with every optional
+key that release had a place for filled in, round-tripped through that
+release's `Handover` before printing so the release's own deserialiser had to
+accept the blob its own serialiser then wrote. Those two renames then failed
+ten of the populated fixtures and twelve of them.
+
+Review found the same gap twice more on the plain half. From v0.1.22 on a
+per-fixture test pinned only the keys of `sheep[0]`: dropping `reloads` from the
+blob or `channel` from a sheep's descriptors passed, and none of the five
+`AppConfig`-derived shapes pinned the keys of `sheep[0].app`, so dropping
+`depends_on`, `environment` or `level_rules` passed. Every fixture test now
+compares all four levels against the release's key set, plain and populated
+alike. Dropping `reloads` from v0.1.22, `channel` from its descriptors, `stdin`
+from v0.13.0's, `depends_on` from v0.5.0's config, `environment` from v0.8.0's,
+`level_rules` from v0.11.0's, `log_timestamps` from v0.12.0's, renaming `manual`
+in v0.1.22's bytes, adding a key no release wrote to v0.1.30, and dropping
+`kill_timeout` from a populated fixture each fail the test named for that file.
+
+The mutation check this entry asks for, run against `pending_delete` renamed
+to `pending_removed`: it failed each of the ten fixtures that carry the key,
+`compat`'s own `a_blob_written_before_pending_delete_was_carried_still_loads`
+(it removes the key by name and asserts the removal found one), and the `Debug`
+redaction case. The nine other `a_blob_written_before_*` cases passed unchanged,
+which is the nine this entry predicted, and the one that failed is the one that
+names the field by hand.
 
 Tracked as https://github.com/shep-pm/shep/issues/358.
 
