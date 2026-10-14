@@ -244,10 +244,29 @@ jobs:
             sleep 1
           done
           "$bin" ping > /dev/null
-          # Long enough for a dog that refuses its config to have exited:
-          # the refusal is read before the dog binds anything.
-          sleep 5
-          "$bin" dogs --format json | tee dogs.json
+          # Poll for the dog to reach a verdict rather than sleeping a fixed
+          # time: a slow spawn must not fail the gate. A dog that refuses its
+          # config exits 4 before binding anything, and `last_exit` is sticky
+          # across a respawn, so a flap is visible too. Stop at the first
+          # snapshot showing a pid or an exit; fail if neither appears in 60s.
+          verdict=
+          for _ in $(seq 1 60); do
+            "$bin" dogs --format json > dogs.json 2>/dev/null || true
+            if jq -e '
+              [.data[] | select(.name == "metrics")][0]
+                | . != null and (.pid != null or .last_exit != null)
+            ' dogs.json > /dev/null 2>&1; then
+              verdict=1
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$verdict" ]; then
+            echo 'the metrics dog never reported a pid or an exit' >&2
+            cat dogs.json >&2
+            exit 1
+          fi
+          cat dogs.json
           jq -e '
             [.data[] | select(.name == "metrics")] as $dogs
             | ($dogs | length) == 1
