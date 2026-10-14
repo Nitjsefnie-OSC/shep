@@ -188,6 +188,15 @@ fn a_real_sheeps_samples_reach_a_real_scrape_and_go_with_it() {
     let stopped = shep(home).arg("stop").arg(SHEEP).output().unwrap();
     assert_success(&stopped);
     let after = poll_metrics_without(addr, "queue_depth");
+    // The absence proves nothing until this reading is the dog serving a real
+    // exposition: a poll that expired hands back whatever its last attempt was,
+    // a `503` or an empty string, and `shep_daemon_up` is the one series a `200`
+    // carries whatever the flock holds.
+    assert!(
+        after.contains("HTTP/1.1 200") && after.contains("shep_daemon_up"),
+        "the dog stopped serving an exposition, which is not the same event as \
+         the sample leaving: {after}"
+    );
     assert!(
         !after.contains("queue_depth"),
         "a stopped sheep is still reporting a value it stopped updating: {after}"
@@ -311,11 +320,12 @@ fn a_sample_survives_a_real_daemon_reload() {
         "the series must be in the scrape BEFORE the reload, or the reload \
          proves nothing: {before}"
     );
-    let boot_before = poll_metrics_containing(addr, &boot);
+    let boot_before = poll_metrics_containing(addr, &format!("{boot} 5\n"));
     assert!(
-        boot_before.contains(&boot),
-        "the one `boot_rps` this sheep sends must already be in the scrape, or \
-         there is nothing for the reload to have kept: {boot_before}"
+        boot_before.contains(&format!("{boot} 5\n")),
+        "the one `boot_rps` this sheep sends, at the value it sent it at, must \
+         already be in the scrape, or there is nothing for the reload to have \
+         kept: {boot_before}"
     );
 
     let reloaded = shep(home).arg("daemon").arg("reload").output().unwrap();
@@ -335,11 +345,11 @@ fn a_sample_survives_a_real_daemon_reload() {
          being served now could have been re-sent: {carried}"
     );
 
-    let after = poll_metrics_containing(addr, &boot);
+    let after = poll_metrics_containing(addr, &format!("{boot} 5\n"));
     assert!(
-        after.contains(&boot),
-        "the reload left the samples the instance it put in place had \
-         already sent: {after}"
+        after.contains(&format!("{boot} 5\n")),
+        "the reload left no `boot_rps` for the instance it put in place, or left \
+         one at a value the sheep never sent: {after}"
     );
 
     // The value moves only now, and only a feed armed on the successor can
@@ -385,17 +395,19 @@ fn a_sample_naming_shep_underscore_is_refused_end_to_end() {
     let sheep = poll_flock(home, |info| info["status"] == "online");
     let id = sheep["id"].as_u64().expect("an online sheep has an id");
 
-    let body = poll_metrics_containing(
-        addr,
-        r#"shep_channel_samples_refused_total{reason="reserved_name"}"#,
-    );
+    // One reading carrying both needles. The refused message is the first of
+    // the two deliveries, so a scrape that lands between them answers the
+    // counter and not yet the sample sent beside it.
+    let refused = r#"shep_channel_samples_refused_total{reason="reserved_name"}"#;
+    let kept = format!("{} 3\n", sheep_series("queue_depth", id, &[]));
+    let body = poll_metrics_containing_all(addr, &[refused, &kept]);
     assert!(
         !body.contains("shep_mine"),
         "the dog serves its own `shep_` namespace and refused this sample by \
          name, so nothing named `shep_mine` may come back out of it: {body}"
     );
     assert!(
-        body.contains(&format!("{} 3\n", sheep_series("queue_depth", id, &[]))),
+        body.contains(&kept),
         "one refused sample stopped the feed rather than that one \
          sample: {body}"
     );
