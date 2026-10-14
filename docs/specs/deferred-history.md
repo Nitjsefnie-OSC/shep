@@ -1155,10 +1155,12 @@ renderers. Operator contract: `docs/dogs.md`.
 queue entry). What a sheep sends on its shepherd channel reached `/metrics`
 first, and an exporter that skipped it left those numbers on one path only.
 They are on both paths now: a sample the sender reported as a gauge is a
-gauge, one reported as a counter a monotonic cumulative `sum` started at the
-exporter's own start, a sample's help text is its metric's `description`, its
-labels are string attributes in the order the store built them, and a value
-OTLP/JSON has no number for is dropped rather than encoded.
+gauge, one reported as a counter a monotonic cumulative `sum` started when its
+sender started (the listing's `uptime_ms`, floored to a second, so a restart
+moves the start and a collector reads the drop as the reset it is), a sample's
+help text is its metric's `description`, its labels are string attributes in
+the order the store built them, and a value OTLP/JSON has no number for is
+dropped rather than encoded.
 `shep_channel_samples_refused_total` goes out as `asInt`, the spelling the
 built-in counters use for a count. The guard covers that path too now, over a
 reading that carries samples as well as a flock, and compares every series'

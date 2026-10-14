@@ -49,8 +49,10 @@ pub struct ExportContext<'a> {
     /// `timeUnixNano`.
     pub now_unix_nano: u64,
     /// Nanoseconds since the Unix epoch, when this exporter started: the
-    /// cumulative sum's `startTimeUnixNano`, so a collector can difference
-    /// two exports and get the restarts inside the interval.
+    /// built-in cumulative sums' `startTimeUnixNano`, and the refusal
+    /// counter's, so a collector can difference two exports and get the
+    /// restarts inside the interval. A channel counter carries its sender's
+    /// own start instead. See [`sample_metrics`].
     pub exporter_start_unix_nano: u64,
     /// `host.name`, when the OS reports one. `None` leaves the attribute
     /// out rather than sending an empty one.
@@ -223,7 +225,7 @@ pub fn encode(reading: &Reading, context: &ExportContext<'_>) -> String {
         }
     }
 
-    metrics.extend(sample_metrics(&reading.samples, start, now));
+    metrics.extend(sample_metrics(&reading.samples, &reading.flock, start, now));
 
     let mut resource = vec![
         attr("service.name", SERVICE_NAME),

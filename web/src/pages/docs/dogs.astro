@@ -456,9 +456,10 @@ Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
       series above is a <code>gauge</code> except
       <code>shep_sheep_restart_total</code> and the samples you sent as
       counters, monotonic cumulative <code>sum</code>s whose
-      <code>startTimeUnixNano</code> is the dog's own start, so a collector
-      can difference two exports for the restarts inside the interval. A
-      sample's help text is its <code>description</code>, and one with none
+      <code>startTimeUnixNano</code> is when their sender started, so a
+      restart moves it and a collector reads the reset; the dog's own
+      counters keep its start. A sample's help text is its
+      <code>description</code>, and one with none
       has none. <code>shep_channel_samples_refused_total</code> goes out as
       an integer sum. Integers are decimal strings, rates and sample values
       are numbers, and every Prometheus label is a string attribute, so both

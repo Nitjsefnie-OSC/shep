@@ -1,6 +1,9 @@
 //! The payload tests: what [`encode`] writes, pinned as exact JSON and
 //! checked against what [`crate::dog::metrics::exposition::render`] serves
 //! for the same reading.
+//!
+//! The fixtures here are `pub(super)` because the channel-sample tests in
+//! [`samples::tests`] read the same payload through the same helpers.
 
 use shep_core::protocol::{DogSource, MetricType, ProcessInfo};
 use shep_core::status::ProcStatus;
@@ -13,7 +16,7 @@ use super::*;
 
 /// One [`SamplePoint`] with `labels`, which is the store's own shape:
 /// the sender's labels first, the sample's own after them.
-fn point(labels: &[(&str, &str)], value: f64) -> SamplePoint {
+pub(super) fn point(labels: &[(&str, &str)], value: f64) -> SamplePoint {
     SamplePoint {
         labels: labels
             .iter()
@@ -25,7 +28,7 @@ fn point(labels: &[(&str, &str)], value: f64) -> SamplePoint {
 
 /// One [`SampleFamily`] as [`crate::dog::metrics::samples::SampleStore`]'s
 /// snapshot hands it over.
-fn family(
+pub(super) fn family(
     name: &str,
     kind: MetricType,
     help: Option<&str>,
@@ -39,16 +42,19 @@ fn family(
     }
 }
 
-/// A [`Reading`] with `samples` on it and nothing else changed.
-fn with_samples(samples: Vec<SampleFamily>) -> Reading {
+/// A [`Reading`] with `samples` on it and the flock those samples' sender
+/// labels name, since a snapshot never carries a point whose sender the
+/// listing does not report.
+pub(super) fn with_samples(samples: Vec<SampleFamily>) -> Reading {
     Reading {
+        flock: sample_flock(),
         samples,
         ..reading()
     }
 }
 
 /// One `dataPoints[]` entry's attributes, as `{key, stringValue}` pairs.
-fn attributes_of(point: &serde_json::Value) -> Vec<(&str, &str)> {
+pub(super) fn attributes_of(point: &serde_json::Value) -> Vec<(&str, &str)> {
     point["attributes"]
         .as_array()
         .expect("attributes")
@@ -66,10 +72,10 @@ fn attributes_of(point: &serde_json::Value) -> Vec<(&str, &str)> {
 
 /// Timestamps every test below pins, so an exact payload is a string
 /// literal rather than a clock reading.
-const NOW: u64 = 1_700_000_000_000_000_000;
-const START: u64 = 1_699_999_900_000_000_000;
+pub(super) const NOW: u64 = 1_700_000_000_000_000_000;
+pub(super) const START: u64 = 1_699_999_900_000_000_000;
 
-fn context() -> ExportContext<'static> {
+pub(super) fn context() -> ExportContext<'static> {
     ExportContext {
         now_unix_nano: NOW,
         exporter_start_unix_nano: START,
@@ -79,7 +85,7 @@ fn context() -> ExportContext<'static> {
 
 /// A baseline [`Reading`]: no flock, no host sample. Tests override what
 /// they care about with `..reading()`.
-fn reading() -> Reading {
+pub(super) fn reading() -> Reading {
     Reading {
         flock: vec![],
         daemon_version: "9.9.9".to_string(),
@@ -102,6 +108,27 @@ fn sample_info(name: &str) -> ProcessInfo {
         .build()
 }
 
+/// An online dog, id `7`, up for 30 seconds: the sender a sample labelled
+/// `dog=` and `source=` belongs to.
+fn sample_dog(name: &str) -> ProcessInfo {
+    ProcessInfo::builder(7, name, ProcStatus::Online)
+        .uptime_ms(30_000)
+        .dog(Some(DogSource::BuiltIn))
+        .build()
+}
+
+/// The flock every sample fixture sends from, so a point's sender is in the
+/// listing the way a real snapshot's is.
+fn sample_flock() -> Vec<ProcessInfo> {
+    vec![sample_info("web"), sample_dog("bark")]
+}
+
+/// The instant `sample_flock`'s sheep started, read off its 65 second uptime
+/// at [`NOW`]: what a counter point from it is stamped with.
+pub(super) const SHEEP_START: u64 = 1_699_999_935_000_000_000;
+/// The same for the dog, up 30 seconds.
+pub(super) const DOG_START: u64 = 1_699_999_970_000_000_000;
+
 fn payload_with(reading: &Reading, context: &ExportContext<'_>) -> serde_json::Value {
     let text = encode(reading, context);
     serde_json::from_str(&text).unwrap_or_else(|err| panic!("{err}: {text}"))
@@ -111,9 +138,12 @@ fn payload(reading: &Reading) -> serde_json::Value {
     payload_with(reading, &context())
 }
 
-/// `scopeMetrics[0].metrics[]`, keyed by metric name.
-fn metrics_by_name(reading: &Reading) -> serde_json::Map<String, serde_json::Value> {
-    payload(reading)
+/// `scopeMetrics[0].metrics[]`, keyed by metric name, from `context`.
+pub(super) fn metrics_with(
+    reading: &Reading,
+    context: &ExportContext<'_>,
+) -> serde_json::Map<String, serde_json::Value> {
+    payload_with(reading, context)
         .pointer("/resourceMetrics/0/scopeMetrics/0/metrics")
         .and_then(serde_json::Value::as_array)
         .expect("the payload carries one scope")
@@ -127,6 +157,34 @@ fn metrics_by_name(reading: &Reading) -> serde_json::Map<String, serde_json::Val
             (name, metric)
         })
         .collect()
+}
+
+/// `scopeMetrics[0].metrics[]`, keyed by metric name, at [`context()`].
+pub(super) fn metrics_by_name(reading: &Reading) -> serde_json::Map<String, serde_json::Value> {
+    metrics_with(reading, &context())
+}
+
+/// A sheep id `3`, fold `backend`, online, up for `uptime_ms`.
+pub(super) fn sheep_up(uptime_ms: u64) -> ProcessInfo {
+    ProcessInfo::builder(3, "web", ProcStatus::Online)
+        .uptime_ms(uptime_ms)
+        .fold(Some("backend".to_string()))
+        .build()
+}
+
+/// One counter metric's first point's `startTimeUnixNano`, as nanoseconds.
+pub(super) fn counter_start(metric: &serde_json::Value) -> u64 {
+    let point = metric["sum"]["dataPoints"]
+        .as_array()
+        .expect("a counter is a sum with points")
+        .first()
+        .expect("at least one point")
+        .clone();
+    point["startTimeUnixNano"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no start on {point}"))
+        .parse()
+        .expect("a decimal start")
 }
 
 /// One `# HELP`/`# TYPE` group out of the exposition text, with the
@@ -358,229 +416,6 @@ fn the_payload_names_every_series_the_exposition_names() {
     }
 }
 
-/// A sample the sender reported as a gauge is an OTLP gauge, and its
-/// labels arrive in the order the exposition renders them: the sender's
-/// own first, the sample's own after.
-#[test]
-fn a_gauge_sample_exports_as_a_gauge_with_its_labels_in_order() {
-    let metrics = metrics_by_name(&with_samples(vec![family(
-        "queue_depth",
-        MetricType::Gauge,
-        Some("Jobs waiting."),
-        vec![point(
-            &[
-                ("sheep", "web"),
-                ("id", "3"),
-                ("fold", "backend"),
-                ("model", "qwen"),
-            ],
-            7.5,
-        )],
-    )]));
-    let metric = &metrics["queue_depth"];
-    assert!(
-        metric.get("sum").is_none(),
-        "a gauge sample is not a sum: {metric}"
-    );
-    assert!(
-        metric.get("unit").is_none(),
-        "the payload names no unit for a sample either: {metric}"
-    );
-
-    let points = metric["gauge"]["dataPoints"]
-        .as_array()
-        .expect("dataPoints");
-    assert_eq!(points.len(), 1, "{metric}");
-    assert_eq!(
-        attributes_of(&points[0]),
-        vec![
-            ("sheep", "web"),
-            ("id", "3"),
-            ("fold", "backend"),
-            ("model", "qwen"),
-        ]
-    );
-    // A sample is an `f64` on the wire, so its point is an `asDouble`
-    // even when the value happens to be a whole number.
-    assert_eq!(points[0]["asDouble"], serde_json::Value::from(7.5f64));
-    assert!(points[0].get("asInt").is_none(), "{}", points[0]);
-    assert_eq!(
-        points[0]["timeUnixNano"],
-        serde_json::Value::String(NOW.to_string())
-    );
-    assert!(
-        points[0].get("startTimeUnixNano").is_none(),
-        "OTLP gives a gauge no start: {}",
-        points[0]
-    );
-}
-
-/// A sample the sender reported as a counter is a monotonic cumulative
-/// sum, so a collector differences two exports instead of reading one
-/// instant. Its `startTimeUnixNano` is the exporter's own start, the same
-/// stamp `shep_sheep_restart_total` carries: the store keeps the time a
-/// retained value last arrived, never the time it first did, and a start
-/// that moved with every sample would tell a collector the counter had
-/// only been growing for a moment.
-#[test]
-fn a_counter_sample_exports_as_a_monotonic_cumulative_sum() {
-    let metrics = metrics_by_name(&with_samples(vec![family(
-        "requests_total",
-        MetricType::Counter,
-        Some("Requests served."),
-        vec![
-            point(&[("sheep", "web"), ("id", "3"), ("fold", "backend")], 4.0),
-            point(&[("dog", "bark"), ("source", "built-in")], 2.0),
-        ],
-    )]));
-    let metric = &metrics["requests_total"];
-    assert!(
-        metric.get("gauge").is_none(),
-        "a counter sample is not a gauge: {metric}"
-    );
-
-    let sum = metric["sum"]
-        .as_object()
-        .expect("a counter sample is a sum");
-    assert_eq!(
-        sum["aggregationTemporality"],
-        serde_json::Value::from(2u8),
-        "{sum:?}"
-    );
-    assert_eq!(sum["isMonotonic"], serde_json::Value::Bool(true));
-
-    let points = sum["dataPoints"].as_array().expect("dataPoints");
-    assert_eq!(points.len(), 2, "{metric}");
-    assert_eq!(
-        attributes_of(&points[1]),
-        vec![("dog", "bark"), ("source", "built-in")]
-    );
-    for point in points {
-        assert_eq!(
-            point["startTimeUnixNano"],
-            serde_json::Value::String(START.to_string()),
-            "{point}"
-        );
-        assert_eq!(
-            point["timeUnixNano"],
-            serde_json::Value::String(NOW.to_string()),
-            "{point}"
-        );
-        assert!(
-            point["asDouble"].is_number(),
-            "a sample is an f64 whatever its kind: {point}"
-        );
-        assert!(point.get("asInt").is_none(), "{point}");
-    }
-    assert_eq!(points[0]["asDouble"], serde_json::Value::from(4.0f64));
-    assert_eq!(points[1]["asDouble"], serde_json::Value::from(2.0f64));
-}
-
-/// A sample's help text is the payload's `description`, and a family the
-/// sender never gave any has no `description` at all: an empty one tells a
-/// collector nothing, the way a family with no help writes no `# HELP`
-/// line in the exposition.
-#[test]
-fn a_sample_help_becomes_the_description_and_no_help_omits_it() {
-    let metrics = metrics_by_name(&with_samples(vec![
-        family(
-            "queue_depth",
-            MetricType::Gauge,
-            Some("Jobs waiting."),
-            vec![point(&[("model", "qwen")], 1.0)],
-        ),
-        family(
-            "in_flight",
-            MetricType::Gauge,
-            None,
-            vec![point(&[("model", "qwen")], 1.0)],
-        ),
-        family(
-            "requests_total",
-            MetricType::Counter,
-            None,
-            vec![point(&[("model", "qwen")], 1.0)],
-        ),
-    ]));
-    assert_eq!(
-        metrics["queue_depth"]["description"],
-        serde_json::Value::String("Jobs waiting.".to_owned())
-    );
-    for name in ["in_flight", "requests_total"] {
-        assert!(
-            metrics[name].get("description").is_none(),
-            "{}: {}",
-            name,
-            metrics[name]
-        );
-    }
-}
-
-/// The counter the dog keeps for its own refusals is a count, not a
-/// measurement, so it goes out as `asInt` on a monotonic cumulative sum:
-/// the same spelling `shep_sheep_restart_total` uses for the same reason.
-#[test]
-fn the_refused_counter_is_exported_when_nonzero() {
-    let metrics = metrics_by_name(&with_samples(vec![family(
-        REFUSED_TOTAL,
-        MetricType::Counter,
-        Some("Channel samples this dog refused, by reason."),
-        vec![
-            point(&[("reason", "invalid_name")], 3.0),
-            point(&[("reason", "type_conflict")], 1.0),
-        ],
-    )]));
-    let metric = &metrics[REFUSED_TOTAL];
-    let sum = metric["sum"]
-        .as_object()
-        .expect("a refused count is a monotonic sum");
-    assert_eq!(sum["isMonotonic"], serde_json::Value::Bool(true));
-    assert_eq!(
-        sum["aggregationTemporality"],
-        serde_json::Value::from(2u8),
-        "{sum:?}"
-    );
-
-    let points = sum["dataPoints"].as_array().expect("dataPoints");
-    assert_eq!(points.len(), 2, "{metric}");
-    assert_eq!(attributes_of(&points[0]), vec![("reason", "invalid_name")]);
-    assert_eq!(attributes_of(&points[1]), vec![("reason", "type_conflict")]);
-    assert_eq!(
-        points[0]["asInt"],
-        serde_json::Value::String("3".to_owned())
-    );
-    assert_eq!(
-        points[1]["asInt"],
-        serde_json::Value::String("1".to_owned())
-    );
-    for point in points {
-        assert!(point.get("asDouble").is_none(), "{point}");
-        assert_eq!(
-            point["startTimeUnixNano"],
-            serde_json::Value::String(START.to_string()),
-            "{point}"
-        );
-    }
-}
-
-/// Nothing has been refused, so the store put no such family on the
-/// reading, and the payload names nothing either: the exposition writes no
-/// `# TYPE shep_channel_samples_refused_total` block either.
-#[test]
-fn the_refused_counter_is_absent_until_the_first_refusal() {
-    let metrics = metrics_by_name(&with_samples(vec![family(
-        "queue_depth",
-        MetricType::Gauge,
-        None,
-        vec![point(&[("model", "qwen")], 1.0)],
-    )]));
-    assert!(
-        metrics.get(REFUSED_TOTAL).is_none(),
-        "{:?}",
-        metrics.keys().collect::<Vec<_>>()
-    );
-}
-
 /// The whole body for one sheep, one dog and one host sample, byte for
 /// byte: the lowerCamelCase spelling, the string timestamps, the order a
 /// collector reads them in.
@@ -604,7 +439,8 @@ fn a_one_sheep_reading_encodes_to_exactly_this_json() {
     );
 }
 
-/// `startTimeUnixNano` is the exporter's own start, not the point's: a
+/// `startTimeUnixNano` is the dog's own start here: the count is the dog's,
+/// read from the listing, and the dog restarting is what starts it again. A
 /// collector that differences two exports gets the restarts inside the
 /// interval, which is what a monotonic cumulative sum is for.
 #[test]

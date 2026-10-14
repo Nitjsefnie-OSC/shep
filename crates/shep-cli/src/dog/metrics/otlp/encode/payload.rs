@@ -30,6 +30,12 @@ impl Nanos {
     pub(super) const fn new(value: u64) -> Self {
         Self(value)
     }
+
+    /// The stamp as the number it wraps, for a mapping that has to do
+    /// arithmetic on one. What it serializes as stays a decimal string.
+    pub(super) const fn as_u64(self) -> u64 {
+        self.0
+    }
 }
 
 impl Serialize for Nanos {
@@ -204,7 +210,8 @@ pub(super) fn double_point<'a>(
     }
 }
 
-/// One cumulative monotonic sum point, started at the exporter's own start.
+/// One cumulative monotonic sum point, started at `start`: the instant the
+/// counter began accumulating, which is the caller's to know.
 pub(super) fn cumulative_point<'a>(
     attributes: Vec<KeyValue<'a>>,
     start: Nanos,
