@@ -10,6 +10,7 @@
 //! [`lifecycle`] for one-shot verb results, [`replies`] for a daemon
 //! action's reply, [`secrets`] for the KV store and `shep secret`.
 
+mod copy;
 mod dogs;
 mod lambs;
 mod lifecycle;
@@ -18,6 +19,7 @@ mod replies;
 mod secrets;
 mod toolkit;
 
+pub use copy::{CopyChange, CopyReport};
 pub use dogs::*;
 pub use lambs::*;
 pub use lifecycle::*;
@@ -238,6 +240,7 @@ pub(crate) mod tests {
         assert_priorities_match_headers::<SavedRollRow>(&["FILE", "APPS"]);
         assert_priorities_match_headers::<ImportRows>(&["NAME"]);
         assert_priorities_match_headers::<ImportEnvRows>(&["KEY", "STORE"]);
+        assert_priorities_match_headers::<CopyReport>(&["KEY", "CHANGE"]);
         assert_priorities_match_headers::<StartupSteps>(&["TARGET", "RESULT"]);
         assert_priorities_match_headers::<TriggeredRows>(&["ID", "NAME", "OUTCOME"]);
         assert_priorities_match_headers::<SignalledRows>(&["ID", "NAME", "OUTCOME"]);

@@ -474,6 +474,12 @@ pub(crate) async fn run(
         // Same rule, same file-first reason: `shep secret set` before a
         // first `shep start` is the ordinary first-run order.
         Commands::Secret(ref args) => secret::secret(&mut streams, &paths, args),
+        // Reads two sheep's configs and writes one, so it needs the shepherd:
+        // the copy is of what the running flock holds, not of a file.
+        Commands::Copy(ref args) => match connect_client(&mut streams, &paths, guard).await {
+            Ok(client) => commands::copy::copy(&client, &mut streams, args).await,
+            Err(code) => code,
+        },
         // Does its own connecting: `connect_client` reports and gives up,
         // which would leave an operator with a live daemon nothing can stop.
         Commands::Kill => admin::kill(&paths, &mut streams).await,
