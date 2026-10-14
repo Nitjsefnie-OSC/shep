@@ -884,8 +884,9 @@ pub(crate) enum HttpReply {
     /// Writes `raw` verbatim, then closes, for a response that is not a
     /// well-formed HTTP status line.
     Raw(String),
-    /// Accepts the connection and never writes a byte, the only way to reach
-    /// `OsProber`'s read-side timeout: any reply resolves the read.
+    /// Accepts the connection and never writes a byte, the way to reach
+    /// `OsProber`'s read-side timeout: a reply queued for the connection
+    /// always resolves the read.
     Hang,
 }
 
@@ -906,6 +907,7 @@ pub(crate) struct LoopbackHttp {
     /// Where it is listening. Already bound by the time this struct exists.
     pub(crate) addr: SocketAddr,
     requests: mpsc::UnboundedReceiver<String>,
+    replies_tx: mpsc::UnboundedSender<HttpReply>,
     accept_loop: tokio::task::JoinHandle<()>,
 }
 
@@ -920,6 +922,19 @@ impl LoopbackHttp {
             .expect("the fake received no request within the deadline")
             .expect("the fake's accept loop ended without sending a request")
     }
+
+    /// Queues the reply this fake writes on its next connection.
+    ///
+    /// The fake answers only what it has been given, script first and then
+    /// whatever is queued here: a connection waits for its reply rather than
+    /// inventing a verdict. That is what lets a test hold a probe failing
+    /// until the moment it chooses to let one pass, instead of pacing the
+    /// flip on the prober's own interval.
+    pub(crate) fn queue_reply(&self, reply: HttpReply) {
+        self.replies_tx
+            .send(reply)
+            .expect("the fake's accept loop had already ended");
+    }
 }
 
 impl Drop for LoopbackHttp {
@@ -933,8 +948,11 @@ pub(crate) async fn loopback_http(script: Vec<HttpReply>) -> LoopbackHttp {
     loopback_http_on("127.0.0.1:0", script).await
 }
 
-/// Binds a loopback HTTP fake on `bind` and serves one scripted reply per
-/// accepted connection, in order, recording each request it read.
+/// Binds a loopback HTTP fake on `bind` and serves one reply per accepted
+/// connection, in queue order: the script first, then anything the test
+/// queues through [`LoopbackHttp::queue_reply`]. A connection with no reply
+/// queued yet waits for one, so the fake never hands out a verdict the test
+/// has not chosen.
 ///
 /// Binds before spawning the accept loop and returns the already-bound
 /// address, so a probe dialing it cannot race the bind. Restructuring this
@@ -949,8 +967,12 @@ pub(crate) async fn loopback_http_on(bind: &str, script: Vec<HttpReply>) -> Loop
         .unwrap_or_else(|err| panic!("bind loopback HTTP fake on {bind}: {err}"));
     let addr = listener.local_addr().expect("read bound loopback address");
     let (requests_tx, requests) = mpsc::unbounded_channel();
+    let (replies_tx, mut replies_rx) = mpsc::unbounded_channel();
+    for reply in script {
+        replies_tx.send(reply).expect("fresh reply receiver");
+    }
     let accept_loop = tokio::spawn(async move {
-        for reply in script {
+        loop {
             let Ok((mut stream, _peer)) = listener.accept().await else {
                 return; // listener gone: nothing left to serve
             };
@@ -960,6 +982,9 @@ pub(crate) async fn loopback_http_on(bind: &str, script: Vec<HttpReply>) -> Loop
             {
                 return; // the owning test dropped its LoopbackHttp
             }
+            let Some(reply) = replies_rx.recv().await else {
+                return; // the owning test dropped its LoopbackHttp
+            };
             match reply {
                 HttpReply::Status(code) => {
                     let response = format!("HTTP/1.1 {code} OK\r\n\r\n");
@@ -980,6 +1005,7 @@ pub(crate) async fn loopback_http_on(bind: &str, script: Vec<HttpReply>) -> Loop
     LoopbackHttp {
         addr,
         requests,
+        replies_tx,
         accept_loop,
     }
 }

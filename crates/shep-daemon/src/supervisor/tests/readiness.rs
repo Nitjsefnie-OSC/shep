@@ -4,10 +4,12 @@
 //! its deadline elapses. The awkward cases are the ones where it is stopped,
 //! restarted or exits while that wait is still outstanding.
 //!
-//! The two probe cases wait on the probe's own traffic (a request reaching the
-//! test's fake, a marker file the probe command writes) rather than on a
-//! wall-clock window, and hold their readiness deadline far past the test's
-//! patience so an `Online` can only have come from a passing probe.
+//! The two probe cases wait on the probe's own traffic (a request reaching
+//! the test's fake, a marker file the probe command writes) rather than on a
+//! wall-clock window, and let the probe pass only where the test itself says
+//! so: a queued 2xx reply, a marker file the test writes. Their readiness
+//! deadlines sit far past the test's patience, so an `Online` can only have
+//! come from a passing probe.
 
 use super::*;
 use crate::testing::{HttpReply, loopback_http};
@@ -52,14 +54,11 @@ async fn readiness_probe_app_stays_starting_until_the_probe_passes() {
     // The fake holds its port for the whole test. A port released between
     // "the probe must fail" and "the probe must pass" is a race: a sibling
     // test could bind that ephemeral port, and the probe would pass against
-    // it. Scripted replies carry the fail-then-pass flip instead: the third
-    // connection is the first the fake answers 2xx.
-    let mut gate = loopback_http(vec![
-        HttpReply::Status(500),
-        HttpReply::Status(500),
-        HttpReply::Status(200),
-    ])
-    .await;
+    // it. The fail-then-pass flip is test-held the same way: the fake
+    // answers only what this test queues, so no probe can pass before the
+    // `queue_reply` that says so, and the `Starting` assertions cannot race
+    // the probe loop's pacing.
+    let mut gate = loopback_http(Vec::new()).await;
 
     let (events, mut rx) = crate::bus::test_bus(64);
     let runner = ScriptedRunner::new(vec![ProcScript::never_exits()]);
@@ -67,12 +66,11 @@ async fn readiness_probe_app_stays_starting_until_the_probe_passes() {
     let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let mut app = AppConfig::minimal("web", "./srv");
     app.readiness_probe = Some(ProbeConfig {
-        // The loop paces `interval` after each probe completes, so this is
-        // the slack the mid-test `Starting` assertion gets against a probe
-        // loop that is already running.
-        interval: UpDuration::from_millis(250),
+        // Quick re-probing costs nothing here: the gate cannot hand a probe
+        // a passing verdict on its own, whatever the interval.
+        interval: UpDuration::from_millis(50),
         // Three orders of magnitude above a loopback round trip, so a
-        // loaded runner cannot turn the passing probe into a flaky timeout.
+        // loaded runner cannot turn a queued reply into a timed-out probe.
         timeout: UpDuration::from_millis(2_000),
         ..probe_config(
             ProbeKind::Http,
@@ -87,19 +85,23 @@ async fn readiness_probe_app_stays_starting_until_the_probe_passes() {
     assert_eq!(handle.list().await[0].status, ProcStatus::Starting);
 
     // Wait on the probe's own traffic: this request is proof the probe loop
-    // is running against a gate that answers 500, and 500 is the only
-    // verdict any probe could have had so far. `next_request` bounds its
-    // own wait at 5s.
+    // is running. Nothing is queued yet, so the fake owes that connection a
+    // reply and no probe could have succeeded.
     gate.next_request().await;
+    gate.queue_reply(HttpReply::Status(500));
     assert_eq!(handle.list().await[0].status, ProcStatus::Starting);
 
+    // The passing reply is queued here and nowhere earlier: the next probe
+    // is the first connection the fake will answer 2xx, so Online can only
+    // follow this point.
     gate.next_request().await;
+    gate.queue_reply(HttpReply::Status(200));
     tokio::time::timeout(
         Duration::from_secs(5),
         await_event(&mut rx, 0, ProcessEventKind::Online),
     )
     .await
-    .expect("Online once the probe starts passing");
+    .expect("Online once the queued reply passes the probe");
     assert_eq!(handle.list().await[0].status, ProcStatus::Online);
 }
 
