@@ -646,11 +646,12 @@ speaks protocol 9, accepts 8 and newer`}</CodeBlock>
     <p>
       A schema's own bounds are checked in the editor rather than after the
       write: a <code>pattern</code>, a <code>minimum</code>, a{" "}
-      <code>maximum</code>, an <code>exclusiveMinimum</code> or an{" "}
-      <code>exclusiveMaximum</code> refuses the value there and says what the
-      field does take, and a range with nothing in it says so once. Another
-      reason to publish the narrow thing over a bare{" "}<code>string</code>,
-      since shep writes the section without reading it.
+      <code>maximum</code>, an <code>exclusiveMinimum</code>, an{" "}
+      <code>exclusiveMaximum</code> or an <code>enum</code> of numbers refuses
+      the value there and says what the field does take, and a range with
+      nothing in it says so once. Another reason to publish the narrow thing
+      over a bare{" "}<code>string</code>, since shep writes the section
+      without reading it.
     </p>
     <Callout variant="note">
       Answering is optional, exactly as <code>--version</code> is. A dog

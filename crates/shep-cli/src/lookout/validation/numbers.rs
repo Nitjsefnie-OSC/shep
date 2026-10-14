@@ -7,13 +7,13 @@
 //! `minimum: 1.2, maximum: 1.8` bounds a decimal at 1.2 and 1.8 while
 //! it leaves the integer pair empty.
 
-use serde_json::Number;
+use serde_json::{Number, Value};
 
 use super::super::field::Bounds;
-use super::{Refusal, not_a_number, not_a_whole_number, takes_no_value};
+use super::{Refusal, enum_refusal, not_a_number, not_a_whole_number, takes_no_value};
 
 /// [`super::refusal`] for a [`crate::lookout::field::FieldKind::Integer`] field: the empty
-/// range, the parse, then the schema's own floor and ceiling.
+/// range, the parse, then the schema's own floor and ceiling, then its `enum`.
 ///
 /// `shown` is what may be printed, which is `typed` for an ordinary field
 /// and [`super::REDACTED`] for a secret one. `typed` is still what gets parsed.
@@ -26,7 +26,10 @@ pub(super) fn integer_refusal(
     shown: &str,
 ) -> Option<Refusal> {
     match integer_of(key, bounds, typed, shown) {
-        Ok(number) => range_refusal(key, bounds, shown, number),
+        Ok(number) => match range_refusal(key, bounds, shown, number) {
+            Some(refused) => Some(refused),
+            None => enum_refusal(key, bounds, &Value::from(number), shown),
+        },
         Err(refused) => Some(refused),
     }
 }
@@ -57,8 +60,10 @@ pub(super) fn integer_of(
 /// The floor and ceiling `bounds` sets on an integer already parsed.
 ///
 /// The pair carries `exclusiveMinimum` and `exclusiveMaximum` folded in at the
-/// next integer in, so the sentence names the value the field really starts and
-/// stops at: `starts at 1` for `exclusiveMinimum: 0`.
+/// next integer in, by exact `i64` arithmetic, so the sentence names the value
+/// the field really starts and stops at: `starts at 1` for `exclusiveMinimum: 0`,
+/// and `starts at 9007199254740993` for a floor at `2^53` that an `f64` could not
+/// step past.
 ///
 /// `pub(super)`: [`super::items`] runs it for one element of an integer list.
 pub(super) fn range_refusal(
@@ -80,7 +85,7 @@ pub(super) fn range_refusal(
 
 /// [`super::refusal`] for a [`crate::lookout::field::FieldKind::Number`] field: the empty
 /// range, the parse, then the four numeric keywords the schema published, each
-/// read as the schema wrote it.
+/// read as the schema wrote it, then its `enum`.
 ///
 /// [`Bounds::unsatisfiable`] is not consulted, because it answers whether a
 /// range admits an *integer*. `minimum: 1.2, maximum: 1.8` admits no integer
@@ -112,6 +117,7 @@ pub(super) fn number_refusal(
         return Some(not_a_number(key, shown));
     }
     number_range_refusal(key, bounds, shown, number)
+        .or_else(|| enum_refusal(key, bounds, &Value::from(number), shown))
 }
 
 /// The four bounds `bounds` sets on a decimal already parsed.
@@ -414,5 +420,91 @@ mod tests {
             None,
             "5 is the one value the schema names"
         );
+    }
+
+    /// The gate reads the folded bound, so a schema that says "above
+    /// 9007199254740992" cannot be answered by typing that number. Folding the
+    /// strict floor through an `f64` gave the bound straight back as if it were
+    /// the next integer up, because `2^53 + 1.0` is `2^53`.
+    #[test]
+    fn an_integer_field_refuses_the_strict_bound_a_float_could_not_increment() {
+        let field = dog_field(
+            "id",
+            serde_json::json!({ "type": "integer", "exclusiveMinimum": 9007199254740992i64 }),
+        );
+        let refused = refusal(&field, "9007199254740992").expect("the bound itself is excluded");
+        assert_eq!(
+            refused.text,
+            "id is \"9007199254740992\"; id starts at 9007199254740993"
+        );
+        assert_eq!(
+            refusal(&field, "9007199254740993"),
+            None,
+            "the next integer up is the one the schema means"
+        );
+        let top = dog_field(
+            "depth",
+            serde_json::json!({ "type": "integer", "exclusiveMinimum": i64::MAX }),
+        );
+        assert_eq!(
+            refusal(&top, "9223372036854775807")
+                .expect("no integer sits above i64::MAX")
+                .text,
+            "depth takes no value: its schema asks for a range with nothing in it"
+        );
+    }
+
+    /// A set of numbers is not a closed set this pane can draw as a cycle widget:
+    /// [`crate::lookout::field::schema::closed_set`] reads strings, so
+    /// `{"type": "number", "enum": [1.5, 2.5]}` is a typed field. The gate is then
+    /// the only thing between an operator and a `3.5` the published schema
+    /// forbids.
+    #[test]
+    fn a_decimal_field_holds_a_typed_value_to_its_own_numeric_enum() {
+        let field = dog_field(
+            "ratio",
+            serde_json::json!({ "type": "number", "enum": [1.5, 2.5] }),
+        );
+        assert_eq!(
+            field.kind,
+            FieldKind::Number,
+            "a numeric enum is typed, not cycled"
+        );
+        assert_eq!(refusal(&field, "1.5"), None, "the value the schema wrote");
+        assert_eq!(refusal(&field, "2.5"), None);
+        let refused = refusal(&field, "3.5").expect("3.5 is not in the set");
+        assert_eq!(
+            refused.text,
+            "ratio is \"3.5\"; ratio takes one of 1.5, 2.5"
+        );
+        // The parse still comes first: a buffer that is not a number never
+        // reaches the set.
+        assert_eq!(
+            refusal(&field, "abc").expect("abc is not a number").text,
+            "ratio is \"abc\", which is not a number shep accepts"
+        );
+    }
+
+    /// The same hole on the integer side, which a numeric `enum` reaches the same
+    /// way. A range and a set are two rules on one field, and the value breaks
+    /// whichever it meets first.
+    #[test]
+    fn an_integer_field_holds_a_typed_value_to_its_own_numeric_enum() {
+        let field = dog_field(
+            "level",
+            serde_json::json!({ "type": "integer", "enum": [1, 2, 3] }),
+        );
+        assert_eq!(field.kind, FieldKind::Integer);
+        assert_eq!(refusal(&field, "2"), None, "the value the schema wrote");
+        let refused = refusal(&field, "4").expect("4 is not in the set");
+        assert_eq!(refused.text, "level is \"4\"; level takes one of 1, 2, 3");
+        let bounded = dog_field(
+            "tier",
+            serde_json::json!({ "type": "integer", "minimum": 10, "enum": [1, 2, 3] }),
+        );
+        let refused = refusal(&bounded, "5").expect("5 is under the floor");
+        assert_eq!(refused.text, "tier is \"5\"; tier starts at 10");
+        let refused = refusal(&bounded, "11").expect("11 is outside the set");
+        assert_eq!(refused.text, "tier is \"11\"; tier takes one of 1, 2, 3");
     }
 }

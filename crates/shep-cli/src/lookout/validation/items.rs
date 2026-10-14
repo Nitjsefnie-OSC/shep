@@ -11,7 +11,7 @@ use serde_json::Value;
 use super::super::field::{Bounds, ListItem};
 use super::numbers::{integer_of, range_refusal};
 use super::patterns::pattern_refusal;
-use super::{Refusal, shown_value};
+use super::{Refusal, enum_refusal, shown_value};
 
 /// Why one typed element of a list field was not filed, in the operator's
 /// words.
@@ -77,56 +77,6 @@ fn min_length_refusal(key: &str, bounds: &Bounds, typed: &str, shown: &str) -> O
     (typed.chars().count() < least).then(|| Refusal {
         text: format!("{key} is \"{shown}\"; {key} needs at least {least} characters"),
     })
-}
-
-/// [`item_refusal`]'s `enum` arm: the element as the JSON value it parsed
-/// to, against the values the schema wrote.
-///
-/// The refusal lists the allowed set because an `enum` is the one rule an
-/// operator can satisfy by copying from it.
-fn enum_refusal(key: &str, bounds: &Bounds, value: &Value, shown: &str) -> Option<Refusal> {
-    if bounds.choices.is_empty()
-        || bounds
-            .choices
-            .iter()
-            .any(|choice| choice_taken(choice, value))
-    {
-        return None;
-    }
-    let allowed: Vec<String> = bounds.choices.iter().map(choice_text).collect();
-    Some(Refusal {
-        text: format!(
-            "{key} is \"{shown}\"; {key} takes one of {}",
-            allowed.join(", ")
-        ),
-    })
-}
-
-/// Whether `value` is the `enum` member `choice` names.
-///
-/// Numbers compare by value, not by the spelling the schema used:
-/// `serde_json` holds `1` and `1.0` as two different numbers, and JSON
-/// Schema means one of them. Comparing the two `Value`s refused a `1` a dog
-/// published as `enum: [1.0]`. Two integers are compared as `i64`, so a set
-/// of them is not collapsed through an `f64` that cannot name every `i64`
-/// near its ends.
-fn choice_taken(choice: &Value, value: &Value) -> bool {
-    match (choice.as_i64(), value.as_i64()) {
-        (Some(written), Some(typed)) => written == typed,
-        _ => match (choice.as_f64(), value.as_f64()) {
-            (Some(written), Some(typed)) => written == typed,
-            _ => choice == value,
-        },
-    }
-}
-
-/// One `enum` member as the operator reads it: bare for a string, compact
-/// JSON for anything else.
-fn choice_text(choice: &Value) -> String {
-    match choice {
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    }
 }
 
 #[cfg(test)]

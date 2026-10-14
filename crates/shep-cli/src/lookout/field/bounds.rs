@@ -105,22 +105,27 @@ pub struct Bounds {
 
 /// The [`Bounds`] the resolved schema publishes.
 ///
-/// A numeric bound is read as an `f64` and normalised to the integer it
-/// actually forbids, because JSON Schema's bounds are inclusive: a
-/// `minimum` rounds UP and a `maximum` rounds DOWN, so `minimum: 0.5`
-/// forbids `0` and `maximum: 2.5` forbids `3`. The same four keywords are
-/// kept unnormalised beside them for a [`super::FieldKind::Number`] field,
-/// which is held to what the schema wrote rather than to a rounding of it.
+/// A numeric bound is normalised to the integer it actually admits, because
+/// JSON Schema's bounds are inclusive: a `minimum` rounds UP and a `maximum`
+/// rounds DOWN, so `minimum: 0.5` forbids `0` and `maximum: 2.5` forbids `3`.
+/// The same four keywords are kept unnormalised beside them for a
+/// [`super::FieldKind::Number`] field, which is held to what the schema wrote
+/// rather than to a rounding of it.
 ///
 /// `exclusiveMinimum` and `exclusiveMaximum` are read on the same two terms:
 /// folded into the integer pair at the next integer in, and kept as written for
 /// a decimal. A reader that took only `minimum` and `maximum` enforced nothing
 /// for `{"type": "integer", "exclusiveMinimum": 0}` and filed a `0`.
 ///
-/// Reading them with `as_i64` instead dropped both, and a dropped bound is
-/// an accepted keystroke: the pane filed a `0` its own schema forbade.
-/// Reading them as `f64` also keeps a bound written as `1e30`, which no
-/// `i64` satisfies, apart from one written as `1`.
+/// The fold is exact `i64` arithmetic whenever the schema wrote a whole number,
+/// because `f64` cannot name every integer: `9007199254740992.0 + 1.0` is
+/// `9007199254740992.0`, so a strict floor at `2^53` folded through a float kept
+/// the very value the schema forbade. See [`integer_end`].
+///
+/// Reading the strict spellings with `as_i64` dropped both, and a dropped bound
+/// is an accepted keystroke: the pane filed a `0` its own schema forbade. Reading
+/// them as `f64` also keeps a bound written as `1e30`, which no `i64` satisfies,
+/// apart from one written as `1`.
 pub(super) fn bounds_of(schema: &Value, defs: &Map<String, Value>) -> Bounds {
     bounds_opening(schema, defs, &mut Vec::new())
 }
@@ -151,33 +156,13 @@ fn bounds_opening<'a>(
         .filter(|item| !open.iter().any(|seen| core::ptr::eq(*seen, *item)))
         .map(|item| Box::new(bounds_opening(item, defs, open)));
     open.truncate(depth);
-    let minimum = schema.get("minimum").and_then(Value::as_f64).map(f64::ceil);
-    let maximum = schema
-        .get("maximum")
-        .and_then(Value::as_f64)
-        .map(f64::floor);
-    // The same two keywords spelled strict. For an integer they name a
-    // different end from the value they carry: the smallest integer above 0 is
-    // 1, the largest integer below 10 is 9. Folding them into the pair is what
-    // makes `{"type": "integer", "exclusiveMinimum": 0}` refuse a `0`, which
-    // reading only `minimum` did not.
-    let exclusive_minimum = schema
-        .get("exclusiveMinimum")
-        .and_then(Value::as_f64)
-        .map(|value| value.floor() + 1.0);
-    let exclusive_maximum = schema
-        .get("exclusiveMaximum")
-        .and_then(Value::as_f64)
-        .map(|value| value.ceil() - 1.0);
+    let minimum = integer_end(schema.get("minimum"), End::Floor);
+    let exclusive_minimum = integer_end(schema.get("exclusiveMinimum"), End::StrictFloor);
+    let maximum = integer_end(schema.get("maximum"), End::Ceiling);
+    let exclusive_maximum = integer_end(schema.get("exclusiveMaximum"), End::StrictCeiling);
     let (floor, ceiling) = (
-        tighter_floor(
-            minimum.and_then(as_bound),
-            exclusive_minimum.and_then(as_bound),
-        ),
-        tighter_ceiling(
-            maximum.and_then(as_bound),
-            exclusive_maximum.and_then(as_bound),
-        ),
+        tighter_floor(minimum.bound, exclusive_minimum.bound),
+        tighter_ceiling(maximum.bound, exclusive_maximum.bound),
     );
     // The same keywords, unnormalised, for a field whose values are decimals.
     // A bound the schema wrote as a number is read as one here, so `minimum: 0`
@@ -223,13 +208,114 @@ fn bounds_opening<'a>(
         // is, which is what `as_bound` already answered `None` for. The two
         // strict spellings are held to the same test, since a strict floor
         // above `i64::MAX` admits nothing either.
-        unsatisfiable: minimum.is_some_and(|value| value > i64::MAX as f64)
-            || maximum.is_some_and(|value| value < i64::MIN as f64)
-            || exclusive_minimum.is_some_and(|value| value > i64::MAX as f64)
-            || exclusive_maximum.is_some_and(|value| value < i64::MIN as f64)
+        // A keyword that names an end no `i64` sits on admits nothing on its
+        // own, and a floor above the ceiling admits nothing between them.
+        unsatisfiable: minimum.empty
+            || exclusive_minimum.empty
+            || maximum.empty
+            || exclusive_maximum.empty
             || matches!((floor, ceiling), (Some(low), Some(high)) if low > high),
         number_unsatisfiable: number_holds_nothing,
         items,
+    }
+}
+
+/// Which end of an integer field's range a numeric keyword names, and whether
+/// the value it carries is inside that range or just outside it.
+#[derive(Clone, Copy)]
+enum End {
+    /// `minimum`: the value itself is admitted.
+    Floor,
+    /// `exclusiveMinimum`: the value itself is not.
+    StrictFloor,
+    /// `maximum`: the value itself is admitted.
+    Ceiling,
+    /// `exclusiveMaximum`: the value itself is not.
+    StrictCeiling,
+}
+
+/// What one keyword says about an integer field's range.
+struct IntegerEnd {
+    /// The smallest, or largest, `i64` the keyword admits, [`None`] when it
+    /// bounds nothing this pane can compare.
+    bound: Option<i64>,
+    /// The keyword admits no `i64` at all: a strict floor sitting on
+    /// `i64::MAX`, or a floor past every `i64`.
+    empty: bool,
+}
+
+/// `keyword` as the integer end it names.
+///
+/// Three readings, in the order they are exact:
+///
+/// - A whole number an `i64` holds, which is what a schema writing
+///   `"exclusiveMinimum": 1` produces, gets `i64` arithmetic.
+/// - A whole number spelled with a decimal point, or one too large for an `i64`
+///   but still a whole number as a float, is converted once and gets the same
+///   arithmetic: an `f64` that is already a whole number converts exactly.
+/// - A fraction is rounded through `f64`, the only reading a fraction has, with
+///   the strict spellings stepping one past the rounding.
+///
+/// A keyword that is not a number at all bounds nothing, the same fail-open
+/// answer a `pattern` that does not compile gets.
+fn integer_end(keyword: Option<&Value>, end: End) -> IntegerEnd {
+    let Some(number) = keyword.and_then(Value::as_number) else {
+        return IntegerEnd {
+            bound: None,
+            empty: false,
+        };
+    };
+    if let Some(written) = number.as_i64() {
+        return exact(written, end);
+    }
+    let Some(value) = number.as_f64() else {
+        return IntegerEnd {
+            bound: None,
+            empty: false,
+        };
+    };
+    // Below `2^63` an integral `f64` names one integer exactly, so the cast is a
+    // reading rather than a rounding. `i64::MAX as f64` is `2^63`, one past the
+    // largest `i64`, so the test is strict at the top and not at the bottom.
+    if value.fract() == 0.0 && value >= i64::MIN as f64 && value < i64::MAX as f64 {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "guarded: the value is integral and inside an i64's reach"
+        )]
+        return exact(value as i64, end);
+    }
+    let rounded = match end {
+        End::Floor => value.ceil(),
+        End::StrictFloor => value.floor() + 1.0,
+        End::Ceiling => value.floor(),
+        End::StrictCeiling => value.ceil() - 1.0,
+    };
+    IntegerEnd {
+        bound: as_bound(rounded),
+        // A floor at or above `2^63` sits past every `i64` and admits nothing,
+        // while one below `i64::MIN` bounds nothing, since every `i64` is above
+        // it. A ceiling is the mirror image.
+        empty: match end {
+            End::Floor | End::StrictFloor => value >= i64::MAX as f64,
+            End::Ceiling | End::StrictCeiling => value <= i64::MIN as f64,
+        },
+    }
+}
+
+/// The end `written` names, computed in `i64`.
+///
+/// A strict floor on `i64::MAX` has no integer above it and a strict ceiling on
+/// `i64::MIN` has none below it, which is a range with nothing in it rather than
+/// a bound to enforce.
+fn exact(written: i64, end: End) -> IntegerEnd {
+    let bound = match end {
+        End::Floor | End::Ceiling => Some(written),
+        End::StrictFloor => written.checked_add(1),
+        End::StrictCeiling => written.checked_sub(1),
+    };
+    IntegerEnd {
+        bound,
+        empty: bound.is_none(),
     }
 }
 
@@ -282,10 +368,11 @@ fn number_range_is_empty(
 /// `value` as the `i64` bound it names, or [`None`] when it sits outside
 /// what an `i64` can hold and so bounds nothing this pane can compare.
 ///
-/// The comparison is in `f64`, which cannot name every `i64` exactly near
-/// its ends. A bound within a few units of `i64::MAX` therefore saturates
-/// to it rather than being refused, which is the right answer for a field
-/// no operator is typing sixteen digits into.
+/// [`integer_end`] reaches this only for a bound that is a fraction, or a whole
+/// number past an `i64`'s reach. The comparison is in `f64`, which cannot name
+/// every `i64` exactly near its ends. A bound within a few units of `i64::MAX`
+/// therefore saturates to it rather than being refused, which is the right
+/// answer for a field no operator is typing sixteen digits into.
 fn as_bound(value: f64) -> Option<i64> {
     #[expect(
         clippy::cast_possible_truncation,
@@ -469,6 +556,59 @@ mod tests {
             Bounds::default(),
             "no bound, nothing to fold"
         );
+    }
+
+    /// An `f64` cannot name every integer, and `9007199254740992.0 + 1.0` is
+    /// `9007199254740992.0`. Folding a strict floor through a float therefore
+    /// kept the very value the schema forbade, and the pane filed it. The fold is
+    /// `i64` arithmetic for any bound the schema wrote as a whole number, spelled
+    /// with a decimal point or not, and a strict bound with no integer past it is
+    /// the empty range it names rather than a bound that admits everything.
+    #[test]
+    fn an_integers_strict_bound_is_folded_past_a_floats_exact_integers() {
+        let p = props(json!({
+            "past_2_53": { "type": "integer", "exclusiveMinimum": 9007199254740992i64 },
+            "past_2_53_as_a_float": {
+                "type": "integer", "exclusiveMinimum": 9007199254740992.0
+            },
+            "under_negative_2_53": { "type": "integer", "exclusiveMaximum": -9007199254740992i64 },
+            "strict_at_i64_max": { "type": "integer", "exclusiveMinimum": i64::MAX },
+            "strict_at_i64_min": { "type": "integer", "exclusiveMaximum": i64::MIN },
+            "inclusive_at_i64_max": { "type": "integer", "minimum": i64::MAX },
+        }));
+        let set = FieldSet::from_properties(&p, &Default::default(), &[]);
+        let bounds = |key: &str| set.by_key(key).expect(key).bounds.clone();
+        assert_eq!(
+            bounds("past_2_53").minimum,
+            Some(9007199254740993),
+            "the next integer up, not the same float read back"
+        );
+        assert_eq!(
+            bounds("past_2_53_as_a_float").minimum,
+            Some(9007199254740993),
+            "the same integer spelled with a decimal point"
+        );
+        assert_eq!(
+            bounds("under_negative_2_53").maximum,
+            Some(-9007199254740993)
+        );
+        for key in ["past_2_53", "past_2_53_as_a_float", "under_negative_2_53"] {
+            assert!(!bounds(key).unsatisfiable, "{key} admits plenty");
+        }
+        let top = bounds("strict_at_i64_max");
+        assert_eq!(top.minimum, None, "no integer sits above i64::MAX");
+        assert!(
+            top.unsatisfiable,
+            "so the schema asks for a range with nothing in it"
+        );
+        let bottom = bounds("strict_at_i64_min");
+        assert_eq!(bottom.maximum, None, "no integer sits below i64::MIN");
+        assert!(bottom.unsatisfiable);
+        // The control: the same value spelled inclusive is a bound, not an empty
+        // range.
+        let inclusive = bounds("inclusive_at_i64_max");
+        assert_eq!(inclusive.minimum, Some(i64::MAX));
+        assert!(!inclusive.unsatisfiable);
     }
 
     /// The decimal half of the answer [`unsatisfiable`] gives an integer, which

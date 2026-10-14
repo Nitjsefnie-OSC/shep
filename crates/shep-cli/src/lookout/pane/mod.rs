@@ -24,6 +24,8 @@ mod config;
 mod config_tests;
 mod dogs;
 mod edit;
+#[cfg(test)]
+mod edit_tests;
 mod entries;
 mod entries_write;
 mod entry_add;

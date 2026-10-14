@@ -32,7 +32,9 @@ pub use items::item_refusal;
 
 use shep_core::values::{MemSize, UpDuration};
 
-use super::field::{Field, FieldKind, ValueKind};
+use serde_json::Value;
+
+use super::field::{Bounds, Field, FieldKind, ValueKind};
 use forms::{DURATION_FORMS, Form, MEMORY_FORMS};
 use numbers::{integer_refusal, number_refusal};
 use patterns::pattern_refusal;
@@ -79,7 +81,7 @@ pub struct Refusal {
 
 /// Whether `field` takes `typed`, and why not when it does not.
 ///
-/// Four checks, and a field reaches at most one of them:
+/// Five checks, and a field reaches at most one of them:
 ///
 /// - A [`FieldKind::Integer`] buffer must parse as an `i64` and sit inside
 ///   whatever `minimum`, `maximum`, `exclusiveMinimum` and `exclusiveMaximum`
@@ -94,6 +96,11 @@ pub struct Refusal {
 /// - Any other string field with a `pattern` is matched against it. This
 ///   is the only door a third-party dog's own grammar has, since shep has
 ///   no parser for a type it has never heard of.
+/// - A numeric field whose `enum` this pane could not turn into a cycle
+///   widget, which is what a set of numbers is, is held to that set by
+///   [`enum_refusal`] once its value parsed. A set of strings is
+///   [`FieldKind::Choice`] instead, chosen from rather than typed, so it
+///   never reaches this door at all.
 ///
 /// [`None`] for everything else, which is most fields: a plain string with
 /// no pattern takes any string, and shep is not the authority on a dog's
@@ -198,6 +205,72 @@ pub(super) fn not_a_number(key: &str, shown: &str) -> Refusal {
 pub(super) fn takes_no_value(key: &str) -> Refusal {
     Refusal {
         text: format!("{key} takes no value: its schema asks for a range with nothing in it"),
+    }
+}
+
+/// The refusal for a value a schema's `enum` does not list, [`None`] when the
+/// schema named no `enum` or `value` is one of the values it named.
+///
+/// The rule is shared because two doors meet it: [`items`] checks one element
+/// of a list against its item schema's `enum`, and [`numbers`] checks a scalar
+/// integer or decimal against the `enum` its own schema published. A set of
+/// strings on a scalar is the case that is not here, because [`FieldKind::Choice`]
+/// draws it as a cycle widget and nothing is typed to check.
+///
+/// The refusal lists the allowed set because an `enum` is the one rule an
+/// operator can satisfy by copying from it.
+///
+/// `value` is what the buffer parsed to, not the buffer: an `enum` of numbers is
+/// the numbers, and comparing a typed `"1"` against a published `1` is a
+/// comparison of strings.
+///
+/// `pub(super)`: [`items`] and [`numbers`] both build their `enum` arm with it.
+pub(super) fn enum_refusal(
+    key: &str,
+    bounds: &Bounds,
+    value: &Value,
+    shown: &str,
+) -> Option<Refusal> {
+    if bounds.choices.is_empty()
+        || bounds
+            .choices
+            .iter()
+            .any(|choice| choice_taken(choice, value))
+    {
+        return None;
+    }
+    let allowed: Vec<String> = bounds.choices.iter().map(choice_text).collect();
+    Some(Refusal {
+        text: format!(
+            "{key} is \"{shown}\"; {key} takes one of {}",
+            allowed.join(", ")
+        ),
+    })
+}
+
+/// Whether `value` is the `enum` member `choice` names.
+///
+/// Numbers compare by value, not by the spelling the schema used:
+/// `serde_json` holds `1` and `1.0` as two different numbers, and JSON Schema
+/// means one of them. Comparing the two `Value`s refused a `1` a dog published
+/// as `enum: [1.0]`. Two integers are compared as `i64`, so a set of them is not
+/// collapsed through an `f64` that cannot name every `i64` near its ends.
+fn choice_taken(choice: &Value, value: &Value) -> bool {
+    match (choice.as_i64(), value.as_i64()) {
+        (Some(written), Some(typed)) => written == typed,
+        _ => match (choice.as_f64(), value.as_f64()) {
+            (Some(written), Some(typed)) => written == typed,
+            _ => choice == value,
+        },
+    }
+}
+
+/// One `enum` member as the operator reads it: bare for a string, compact JSON
+/// for anything else.
+fn choice_text(choice: &Value) -> String {
+    match choice {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
     }
 }
 
