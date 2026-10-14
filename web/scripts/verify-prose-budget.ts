@@ -135,7 +135,13 @@ export const BUDGETS: Record<string, number> = {
   // it on. Naming which channels carry it and which take `--features otel`
   // is a correction, not prose. The merged page measures 3900, so the 10
   // words of headroom are for drift, not for this correction.
-  dogs: 3910, // 3900
+  // Raised from 3910 on 2026-10-14 for the channel samples joining the OTLP
+  // export: the kind mapping, `help` becoming `description`, the refusal
+  // counter going out as an integer sum, and the two values `/metrics` can
+  // render that OTLP/JSON has no number for. Operator-facing surface for a
+  // shipped feature, in the same shape as the raises above, and the page had
+  // no headroom to pay for it.
+  dogs: 3960, // 3947
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's

@@ -371,7 +371,10 @@ impl SampleStore {
 
 /// The labels a sender's own series carry, so a sample from `info` lines up
 /// with the built-in series for the same process.
-fn sender_labels(info: &ProcessInfo) -> Vec<(String, String)> {
+///
+/// Shared with the exporter, which reads a point back to its sender by these
+/// and so has to build them the same way this module does.
+pub(crate) fn sender_labels(info: &ProcessInfo) -> Vec<(String, String)> {
     match &info.dog {
         Some(source) => vec![
             ("dog".to_string(), info.name.clone()),

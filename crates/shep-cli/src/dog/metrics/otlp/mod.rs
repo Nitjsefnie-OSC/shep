@@ -127,7 +127,8 @@ pub struct Exporter {
     timeout: Duration,
     headers: Vec<(String, String)>,
     /// When this dog started, in nanoseconds since the Unix epoch: the
-    /// cumulative sum's `startTimeUnixNano`.
+    /// `startTimeUnixNano` the built-in sums and the dog's own refusal
+    /// counter carry. A channel counter carries its sender's start instead.
     started_unix_nano: u64,
     host_name: Option<String>,
 }

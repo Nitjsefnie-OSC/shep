@@ -35,8 +35,7 @@ import CodeBlock from "../../components/docs/CodeBlock.astro";
         <code>user</code>/<code>group</code>, and no <code>shep startup</code>.
         Five smaller cuts are deferred past v1 on purpose (whistle's HTTP
         transport, cgroup v2 enforcement, the <code>@shep/io</code> shim, VCS
-        metadata, a JSON status endpoint). One item, OTLP export for the
-        metrics dog, is scheduled rather than decided against.
+        metadata, a JSON status endpoint).
       </p>
     </ShortVersion>
 
@@ -172,24 +171,6 @@ import CodeBlock from "../../components/docs/CodeBlock.astro";
         have been a hand-fetched dashboard payload. That's a different
         feature, not a narrower version of this one, so it stays its own
         open item rather than folding into the dog. Tracked as <a href="https://github.com/shep-pm/shep/issues/346">issue 346</a>.
-      </li>
-    </ul>
-
-    <h2 id="scheduled-not-decided-against">Scheduled, not decided against</h2>
-    <p>
-      Named as v1.0 scope in the spec and hasn't reached the front of the
-      queue. Lookout's three items in this section shipped in Phase 16
-      (search and filter, the action keys behind the control gate, and
-      lambs in the detail pane), which leaves one:
-    </p>
-    <ul>
-      <li>
-        <strong>OTLP export for the metrics dog.</strong> The{" "}
-        <code>otel</code> feature pushes the dog's series to an OTLP/HTTP
-        collector. What is left is the channel samples: what a sheep reports
-        over its shepherd channel. Tracked as{" "}
-        <a href="https://github.com/shep-pm/shep/issues/347">issue 347</a>,
-        with <a href="https://github.com/shep-pm/shep/issues/736">issue 736</a>.
       </li>
     </ul>
 </article>

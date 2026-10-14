@@ -386,11 +386,12 @@ shep_host_memory_total_bytes 51539607552`}</CodeBlock>
     <h3 id="channel-samples">Channel samples</h3>
     <p>
       A sheep or a dog can send its own numbers on its shepherd channel. The
-      dog keeps them and appends them to every scrape, after the groups above,
-      under the labels shep already uses for that process: <code>sheep</code>,
-      <code>id</code> and <code>fold</code> for a sheep, <code>dog</code> and
-      <code>source</code> for a dog. <a href="/docs/shepherd-channel">The
-      shepherd channel</a> says what to write on fd 3.
+      dog keeps them and appends them to every scrape, after the groups above
+      and beside every export, under the labels shep already uses for that
+      process: <code>sheep</code>, <code>id</code> and <code>fold</code> for a
+      sheep, <code>dog</code> and <code>source</code> for a dog. <a
+      href="/docs/shepherd-channel">The shepherd channel</a> says what to write
+      on fd 3.
     </p>
     <div class="metrics-table">
       <div class="row header"><span>Rule</span><span>Refused as</span></div>
@@ -450,14 +451,20 @@ Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
       reports it online.
     </p>
     <p>
-      The body is OTLP/JSON. Every series above is a <code>gauge</code>
-      except <code>shep_sheep_restart_total</code>, a monotonic cumulative
-      <code>sum</code> whose <code>startTimeUnixNano</code> is the dog's own
-      start, so a collector can difference two exports for the restarts
-      inside the interval. Integers are decimal strings, rates are numbers,
-      and every Prometheus label is a string attribute, so both paths report
-      the same series with the same labels. Channel samples are not exported
-      yet.
+      The body is OTLP/JSON, your samples included: they land after the
+      built-in groups, named as <code>/metrics</code> names them. Every
+      series above is a <code>gauge</code> except
+      <code>shep_sheep_restart_total</code> and the samples you sent as
+      counters, monotonic cumulative <code>sum</code>s whose
+      <code>startTimeUnixNano</code> is when their sender started, so a
+      restart moves it and a collector reads the reset; the dog's own
+      counters keep its start. A sample's help text is its
+      <code>description</code>, and one with none
+      has none. <code>shep_channel_samples_refused_total</code> goes out as
+      an integer sum. Integers are decimal strings, rates and sample values
+      are numbers, and every Prometheus label is a string attribute, so both
+      paths report the same series with the same labels. <code>NaN</code> and
+      <code>+Inf</code> reach <code>/metrics</code> but not the export.
     </p>
     <p>
       One failed export is one line in the dog's log, on the first failure
@@ -479,9 +486,9 @@ Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
         <span>Build</span>
         <span>target/release/shep</span>
       </div>
-      <div class="row"><span>default</span> <span data-label="target/release/shep">19,011,424 bytes</span></div>
-      <div class="row"><span><code>--features otel</code></span> <span data-label="target/release/shep">19,090,384 bytes</span></div>
-      <div class="row"><span>delta</span> <span data-label="target/release/shep">78,960 bytes</span></div>
+      <div class="row"><span>default</span> <span data-label="target/release/shep">19,069,728 bytes</span></div>
+      <div class="row"><span><code>--features otel</code></span> <span data-label="target/release/shep">19,166,944 bytes</span></div>
+      <div class="row"><span>delta</span> <span data-label="target/release/shep">97,216 bytes</span></div>
     </div>
 
     <h2 id="the-bark-dog">The bark dog</h2>

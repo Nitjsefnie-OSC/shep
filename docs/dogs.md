@@ -263,7 +263,8 @@ decision for you by shipping wide and asking you to lock it down.
 
 A sheep or a dog can send its own numbers on its shepherd channel, and the
 metrics dog keeps them and appends them to every scrape, after the groups
-above. See `docs/shepherd-channel.md` for what to write on fd 3.
+above, and to every OTLP export. See `docs/shepherd-channel.md` for what to
+write on fd 3.
 
 Your samples carry the same sender labels the built-in series carry: a sheep
 gets `sheep`, `id` and `fold`, a dog gets `dog` and `source`. Your own labels
@@ -325,14 +326,23 @@ A build without it refuses `otlp_endpoint` at startup, exiting
 `invalid_config` and naming the feature, rather than running a dog that
 exports nothing while `shep list` reports it online.
 
-The body is OTLP/JSON. Every series above is a `gauge` except
-`shep_sheep_restart_total`, which is a monotonic cumulative `sum` whose
-`startTimeUnixNano` is the dog's own start, so a collector can difference
-two exports and get the restarts inside the interval. Integers are decimal
-strings, rates are numbers, and every Prometheus label is a string
-attribute, so the two paths report the same series with the same labels.
-Resource attributes are `service.name = "shep"`, `service.version` and
-`host.name`. Channel samples are not exported yet.
+The body is OTLP/JSON, and it carries your samples too: they land after the
+built-in groups, named exactly as `/metrics` names them. Every series above
+is a `gauge` except `shep_sheep_restart_total` and the samples you sent as
+counters, which are monotonic cumulative `sum`s. A sum's
+`startTimeUnixNano` is when the process that sent it started, read off the
+listing's uptime and floored to a whole second, so a sheep that restarts
+moves it and a collector reads your counter dropping from 1000 to 3 as the
+reset it is. `shep_sheep_restart_total` and
+`shep_channel_samples_refused_total` carry the dog's own start: both are the
+dog's counters, and the dog restarting restarts the exporter with them. A
+sample's help text is its `description`, and a sample with none has no
+description either. `shep_channel_samples_refused_total` goes out as an
+integer sum. Integers are decimal strings, rates and sample values are
+numbers, and every Prometheus label is a string attribute, so the two paths
+report the same series with the same labels. A value OTLP has no number for
+(`NaN`, `+Inf`) is served by `/metrics` and dropped from the export. Resource attributes are
+`service.name = "shep"`, `service.version` and `host.name`.
 
 One failed export is one line in the dog's log, on the first failure after
 a success and again on recovery, never once per tick. A 2xx whose body names
@@ -349,9 +359,9 @@ install-size method, 2026-10-14):
 
 | Build | `target/release/shep` |
 |---|---|
-| default | 19,011,424 bytes |
-| `--features otel` | 19,090,384 bytes |
-| delta | 78,960 bytes |
+| default | 19,069,728 bytes |
+| `--features otel` | 19,166,944 bytes |
+| delta | 97,216 bytes |
 
 ## The bark dog
 
