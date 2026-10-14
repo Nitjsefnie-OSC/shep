@@ -228,9 +228,10 @@ bound to `127.0.0.1:9615` by default:
 bind = "127.0.0.1:9615"
 ```
 
-Nothing here accumulates between scrapes — every request rebuilds the
-reading from a fresh `ListFlock` and a fresh host sample, so there is no
-stale-cache window and no state a slow scraper could hold open.
+The flock and host series are rebuilt per scrape, from a fresh `ListFlock`
+and a fresh host sample. The channel samples are not. The dog keeps the last
+sample per sender, name and label set until that sender stops or restarts, so
+a process that died never keeps reporting a value it stopped updating.
 
 | Metric | Meaning |
 |---|---|
@@ -246,6 +247,7 @@ stale-cache window and no state a slow scraper could hold open.
 | `shep_host_memory_used_bytes` | Memory in use on the host, as the platform reports it. |
 | `shep_host_processes` | Number of processes running on the host, the flock included. |
 | `shep_host_uptime_seconds` | Seconds since the host booted. |
+| `shep_channel_samples_refused_total` | Channel samples this dog refused, by reason. Absent until the first refusal. |
 
 A reference Grafana dashboard built against this exact metric set ships
 in `assets/grafana/`.
@@ -256,6 +258,40 @@ plenty of hosts a sheep's name is the name of an internal service.
 Widening `bind` to `0.0.0.0` (or any non-loopback address) is one config
 line away when you want it, but the metrics dog will not make that
 decision for you by shipping wide and asking you to lock it down.
+
+### Channel samples
+
+A sheep or a dog can send its own numbers on its shepherd channel, and the
+metrics dog keeps them and appends them to every scrape, after the groups
+above, and to every OTLP export. See `docs/shepherd-channel.md` for what to
+write on fd 3.
+
+Your samples carry the same sender labels the built-in series carry: a sheep
+gets `sheep`, `id` and `fold`, a dog gets `dog` and `source`. Your own labels
+follow them.
+
+What the dog accepts, and what it refuses:
+
+| Rule | Refusal reason |
+|---|---|
+| A name matches `[a-zA-Z_:][a-zA-Z0-9_:]*` and is at most 128 bytes. | `invalid_name` |
+| A name does not start with `shep_`, which is the shepherd's own namespace. | `reserved_name` |
+| A label name matches `[a-zA-Z_][a-zA-Z0-9_]*`, is at most 64 bytes, and does not start with `__`. | `invalid_label` |
+| A label is not named `sheep`, `id`, `fold`, `dog` or `source`, which the dog writes for you. | `reserved_label` |
+| At most 16 labels, a label value at most 256 bytes, help text at most 512 bytes. | `too_long` |
+| At most 256 series per sender. A new one is refused rather than an old one evicted. | `series_cap` |
+| A name keeps the kind its first sample set. `type` absent means gauge. | `type_conflict` |
+
+A refusal is counted in `shep_channel_samples_refused_total{reason="..."}` and
+printed once per sender and reason in the dog's own log, read with
+`shep bleats metrics`. A metric that never shows up is otherwise silent.
+
+A sender's samples go when it stops, exits, restarts, is deleted or errors. A
+reload frees what the drained instance sent, through that instance's own
+deregistration, and never the samples of the instance the reload put in its
+place. A scrape also drops a sender the flock no longer
+reports as online, or reports as an instance younger than the samples it is
+holding, which is what covers the events the dog never received.
 
 ### OTLP export
 
@@ -279,7 +315,8 @@ Authorization = "Bearer token-from-a-secret-manager"
 | `otlp_timeout` | `10s` | One export's budget, connect through response. |
 | `otlp_headers` | empty | Extra headers, the shape an authenticated collector needs. Never printed. |
 
-Export is a cargo feature, off in the shipped binary:
+Export is a cargo feature: on in every prebuilt release binary and the
+`.deb`, off in `cargo install shep` and the Homebrew formula:
 
 ```bash
 cargo install shep --features otel
@@ -289,14 +326,23 @@ A build without it refuses `otlp_endpoint` at startup, exiting
 `invalid_config` and naming the feature, rather than running a dog that
 exports nothing while `shep list` reports it online.
 
-The body is OTLP/JSON. Every series above is a `gauge` except
-`shep_sheep_restart_total`, which is a monotonic cumulative `sum` whose
-`startTimeUnixNano` is the dog's own start, so a collector can difference
-two exports and get the restarts inside the interval. Integers are decimal
-strings, rates are numbers, and every Prometheus label is a string
-attribute, so the two paths report the same series with the same labels.
-Resource attributes are `service.name = "shep"`, `service.version` and
-`host.name`. Channel samples are not exported yet.
+The body is OTLP/JSON, and it carries your samples too: they land after the
+built-in groups, named exactly as `/metrics` names them. Every series above
+is a `gauge` except `shep_sheep_restart_total` and the samples you sent as
+counters, which are monotonic cumulative `sum`s. A sum's
+`startTimeUnixNano` is when the process that sent it started, read off the
+listing's uptime and floored to a whole second, so a sheep that restarts
+moves it and a collector reads your counter dropping from 1000 to 3 as the
+reset it is. `shep_sheep_restart_total` and
+`shep_channel_samples_refused_total` carry the dog's own start: both are the
+dog's counters, and the dog restarting restarts the exporter with them. A
+sample's help text is its `description`, and a sample with none has no
+description either. `shep_channel_samples_refused_total` goes out as an
+integer sum. Integers are decimal strings, rates and sample values are
+numbers, and every Prometheus label is a string attribute, so the two paths
+report the same series with the same labels. A value OTLP has no number for
+(`NaN`, `+Inf`) is served by `/metrics` and dropped from the export. Resource attributes are
+`service.name = "shep"`, `service.version` and `host.name`.
 
 One failed export is one line in the dog's log, on the first failure after
 a success and again on recovery, never once per tick. A 2xx whose body names
@@ -309,13 +355,13 @@ values anyway.
 
 The feature adds no dependency, and its cost is code only. Measured on this
 machine (macOS, Apple Silicon, raw file size, not #292's corrected
-install-size method):
+install-size method, 2026-10-14):
 
 | Build | `target/release/shep` |
 |---|---|
-| default | 18,994,592 bytes |
-| `--features otel` | 19,090,064 bytes |
-| delta | 95,472 bytes |
+| default | 19,069,728 bytes |
+| `--features otel` | 19,166,944 bytes |
+| delta | 97,216 bytes |
 
 ## The bark dog
 
@@ -1066,8 +1112,8 @@ is yours to impose. Two calls do it:
   budget without coming back. Its clock runs only while the link is down,
   and it never resolves while the link is up, so it belongs in a
   `select!` arm beside whatever your dog does normally. For a dog that
-  touches its client only when something asks it to, like the metrics
-  dog, this is the only thing that will ever tell it.
+  touches its client only when something asks it to, a scrape server with
+  no subscription, this is the only thing that will ever tell it.
 - `connected_within(budget)` waits for the link to come back. Use it when
   you have something to re-arm.
 

@@ -17,6 +17,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Copy a setting or a dog table from one sheep onto another
 
+## [0.14.0] - 2026-10-14
+
+### Added
+
+- Pass every known dog's source to the shepherd at boot
+- Add an entry to an array or map of tables
+- Read a tagged union off a dog's schema
+- Edit a dog setting that is a tagged union
+- Push the metrics dog's series to an OTLP endpoint
+- The metrics dog serves the samples a sheep sends on its channel
+- The otlp exporter carries the samples a sheep sends on its channel
+- Edit a list of choices as a checklist under its row
+- Enable and disable take a fold, a regex or all, and CLI sweeps pass a disabled sheep by
+- Remove an entry from an array or map of tables
+- List every known dog at rest **(BREAKING)**
+- Wildcards pass a disabled sheep by, and enable and disable take any selector
+- A disabled dog exports no shep_dog_up series
+- Enable and disable of an unknown name list the dogs
+- Disabling a dog stops it and keeps it listed
+- Delete removes a dog for good, and rehome goes hidden
+- Delete removes a dog for good
+- Push the metrics dog's series to an OTLP endpoint behind `otel`
+- A handover leaves a parked dog behind
+
+### Fixed
+
+- Hold the close while a picked union tag lacks a required field
+- Hold a close read's write while a union lacks a required field
+- A collector's partialSuccess is a failed export, not a clean one
+- Read a collector's partialSuccess as OTLP spells it
+- An event kind the metrics dog has not been taught frees samples
+- A reload keeps the samples of the instance it put in place
+- Start an exported channel counter at the time its sender started
+- Keep a flat pane's choice list openable and the cursor off a toggled name
+- Toggling a name on and off in an absent list files nothing
+- A repeated disable sweep succeeds and the log verbs still reach a disabled sheep
+- Undo a entry removal gives back its folded edits and open entries
+- Rehome deletes the dog by name
+- Disabling a dog no longer says it was deregistered
+- Delete refuses a name it cannot judge rather than guessing
+
+### Performance
+
+- Write the bark ring off the tokio worker
+
 ## [0.13.0] - 2026-10-13
 
 ### Added

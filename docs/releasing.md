@@ -462,12 +462,15 @@ and deliberate: no graceful `stop` outside the shepherd channel, no
 permanent, among them most `shep signal` names and the unix file modes, are
 in [specs/deferred.md](specs/deferred.md) rather than repeated here.
 
-**One v1.0 spec item is still unbuilt.** `shep serve`, `shep dev` and `shep
-runtime` shipped in Phase 15, and lookout's search/filter, its action keys,
-and lambs in its detail pane shipped in Phase 16; none of them are among the
-remainder anymore. What is named in [specs/deferred.md](specs/deferred.md)
-is down to one thing: OTLP export on the metrics dog, and it does not change
-the behaviour of what does exist. It is why the version is an alpha. `.js`
+**The v1.0 build queue is empty.** `shep serve`, `shep dev` and `shep
+runtime` shipped in Phase 15, lookout's search/filter, its action keys, and
+lambs in its detail pane shipped in Phase 16, and OTLP export on the metrics
+dog shipped 2026-10-14 with the channel samples that were its missing half.
+Nothing [specs/deferred.md](specs/deferred.md) names as v1.0 scope is unbuilt
+now. The version is an alpha for what the rest of this file names — three
+init scripts no host has ever booted, the permanent Windows refusals, the
+v1.1+ cuts the spec argues for — and not for a verb or a surface that does
+not exist. `.js`
 Flockfiles, the schemars schema, the CLI-flag config layer, and openrc/BSD
 `rc.d` units shipped in Phase 14, see the two paragraphs below for what that
 means for this release, specifically.

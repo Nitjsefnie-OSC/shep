@@ -121,7 +121,7 @@ channel = true`}</CodeBlock>
     <div class="wire-table">
       <div class="row header"><span>Message</span> <span>Meaning</span></div>
       <div class="row"><span><code>{`{"kind":"ready"}`}</code></span> <span data-label="Meaning">You are up and ready to serve. Only meaningful if <code>wait_ready = true</code>.</span></div>
-      <div class="row"><span><code>{`{"kind":"metric","name":"<n>","value":<num>}`}</code>, optionally <code>{`"type":"gauge"|"counter"`}</code>, <code>{`"labels":{…}`}</code>, <code>{`"help":"<t>"`}</code></span> <span data-label="Meaning">A custom metric sample. An absent <code>type</code> means gauge; an unknown one makes the line malformed. Currently logged by the daemon at debug level and nothing more. No dog reads it yet.</span></div>
+      <div class="row"><span><code>{`{"kind":"metric","name":"<n>","value":<num>}`}</code>, optionally <code>{`"type":"gauge"|"counter"`}</code>, <code>{`"labels":{…}`}</code>, <code>{`"help":"<t>"`}</code></span> <span data-label="Meaning">A custom metric sample. An absent <code>type</code> means gauge; an unknown one makes the line malformed. The metrics dog keeps it and serves it at <code>/metrics</code>: see <a href="#metrics">Metrics</a>.</span></div>
       <div class="row"><span><code>{`{"kind":"action-reply","action":"<n>","body":"<t>","id":<num>}`}</code></span> <span data-label="Meaning">Your answer to a triggered action. <code>id</code> is optional: echo the one from the <code>action</code> message and shep matches your reply to that exact request.</span></div>
       <div class="row"><span><code>{`{"kind":"lamb-label","pid":<num>,"label":"<t>"}`}</code></span> <span data-label="Meaning">Names one of your child processes in <code>shep describe</code>. See <a href="#naming-your-lambs">naming your lambs</a>.</span></div>
     </div>
@@ -138,6 +138,32 @@ channel = true`}</CodeBlock>
       <div class="row"><span><code>{`{"kind":"shutdown"}`}</code></span> <span data-label="Meaning">Sent instead of a stop signal when <code>shutdown_with_message = true</code>. The daemon still escalates to <code>SIGKILL</code> after <code>kill_timeout</code> if you take too long.</span></div>
       <div class="row"><span><code>{`{"kind":"action","name":"<n>","id":<num>}`}</code></span> <span data-label="Meaning">An operator ran <code>shep trigger</code> against you, optionally with <code>{`"params":"<text>"`}</code>. <code>id</code> is always present: echo it on your reply.</span></div>
     </div>
+
+    <h2 id="metrics">Metrics: what the dog does with your samples</h2>
+    <p>
+      A <code>metric</code> line is kept by the metrics dog and served at its
+      <code>/metrics</code> endpoint, <code>127.0.0.1:9615</code> by default,
+      after shep's own series: one <code># HELP</code> and <code># TYPE</code>
+      block per name, one series per label set. Your sample carries the labels
+      shep already uses for your process, <code>sheep</code>, <code>id</code>
+      and <code>fold</code> for a sheep, <code>dog</code> and
+      <code>source</code> for a dog, with your own labels after those.
+    </p>
+    <p>
+      The dog enforces the exposition's grammar: a name matches
+      <code>[a-zA-Z_:][a-zA-Z0-9_:]*</code> at 128 bytes or less and never
+      starts with <code>shep_</code>, a label name at 64, a label value at
+      256, help text at 512, 16 labels and 256 series per sender at most, and
+      a name keeps the kind its first sample set.
+    </p>
+    <p>
+      A refusal is counted in <code>shep_channel_samples_refused_total</code>{" "}
+      with a <code>reason</code> label, and printed once per sender and reason
+      in the dog's own log, read with <code>shep bleats metrics</code>. Your
+      latest value per name and label set is kept until your process stops,
+      exits, restarts, is deleted or errors. A reload frees the drained
+      instance's samples, never the ones the instance now serving sent.
+    </p>
 
     <h2 id="a-worked-example">A worked example</h2>
     <p>

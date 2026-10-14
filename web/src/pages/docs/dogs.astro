@@ -343,9 +343,10 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
     <CodeBlock label="dogs.toml">{`[metrics]
 bind = "127.0.0.1:9615"`}</CodeBlock>
     <p>
-      Nothing accumulates between scrapes. Every request rebuilds the
-      reading from a fresh flock listing and a fresh host sample, verified
-      by scraping it directly:
+      The flock and host series are rebuilt per scrape, from a fresh flock
+      listing and a fresh host sample. The channel samples are not: the dog
+      keeps the last sample per sender, name and label set until that sender
+      stops or restarts. Verified by scraping it directly:
     </p>
     <CodeBlock>{`$ curl 127.0.0.1:9615/metrics
 shep_sheep_memory_bytes{sheep="web",id="0",fold=""} 3178496
@@ -374,6 +375,7 @@ shep_host_memory_total_bytes 51539607552`}</CodeBlock>
       <div class="row"><span><code>shep_host_memory_used_bytes</code></span> <span data-label="Meaning">Memory in use on the host, as the platform reports it.</span></div>
       <div class="row"><span><code>shep_host_processes</code></span> <span data-label="Meaning">Number of processes running on the host, the flock included.</span></div>
       <div class="row"><span><code>shep_host_uptime_seconds</code></span> <span data-label="Meaning">Seconds since the host booted.</span></div>
+      <div class="row"><span><code>shep_channel_samples_refused_total</code></span> <span data-label="Meaning">Channel samples this dog refused, by reason. Absent until the first refusal.</span></div>
     </div>
     </details>
     <p class="fine">
@@ -384,6 +386,38 @@ shep_host_memory_total_bytes 51539607552`}</CodeBlock>
       <code>bind</code> to <code>0.0.0.0</code> is one config line away, but
       metrics won't make that call for you by shipping wide and asking you
       to lock it down.
+    </p>
+
+    <h3 id="channel-samples">Channel samples</h3>
+    <p>
+      A sheep or a dog can send its own numbers on its shepherd channel. The
+      dog keeps them and appends them to every scrape, after the groups above
+      and beside every export, under the labels shep already uses for that
+      process: <code>sheep</code>, <code>id</code> and <code>fold</code> for a
+      sheep, <code>dog</code> and <code>source</code> for a dog. <a
+      href="/docs/shepherd-channel">The shepherd channel</a> says what to write
+      on fd 3.
+    </p>
+    <div class="metrics-table">
+      <div class="row header"><span>Rule</span><span>Refused as</span></div>
+      <div class="row"><span>A name matches <code>[a-zA-Z_:][a-zA-Z0-9_:]*</code>, at most 128 bytes</span> <span data-label="Refused as"><code>invalid_name</code></span></div>
+      <div class="row"><span>No name starts with <code>shep_</code></span> <span data-label="Refused as"><code>reserved_name</code></span></div>
+      <div class="row"><span>A label name matches <code>[a-zA-Z_][a-zA-Z0-9_]*</code>, at most 64 bytes, no <code>__</code> prefix</span> <span data-label="Refused as"><code>invalid_label</code></span></div>
+      <div class="row"><span>No label named <code>sheep</code>, <code>id</code>, <code>fold</code>, <code>dog</code> or <code>source</code></span> <span data-label="Refused as"><code>reserved_label</code></span></div>
+      <div class="row"><span>At most 16 labels, 256-byte label values, 512-byte help text</span> <span data-label="Refused as"><code>too_long</code></span></div>
+      <div class="row"><span>At most 256 series per sender, oldest kept</span> <span data-label="Refused as"><code>series_cap</code></span></div>
+      <div class="row"><span>A name keeps the kind its first sample set</span> <span data-label="Refused as"><code>type_conflict</code></span></div>
+    </div>
+    <p>
+      A refusal is counted in <code>shep_channel_samples_refused_total</code>
+      with a <code>reason</code> label, and the dog prints one line per sender
+      and reason in its own log, read with <code>shep bleats metrics</code>.
+      A metric that never shows up is otherwise silent.
+    </p>
+    <p>
+      A sender's samples go when it stops, exits, restarts, is deleted or
+      errors. A reload frees the drained instance's through its own
+      deregistration, never the numbers of the instance now serving.
     </p>
 
     <h3 id="otlp-export">OTLP export</h3>
@@ -410,7 +444,9 @@ Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
       <div class="row"><span><code>otlp_headers</code></span> <span data-label="Meaning">Extra headers, for a collector that needs auth. Empty by default, and never printed.</span></div>
     </div>
     <p>
-      Export is a cargo feature, off in the shipped binary:
+      Export is a cargo feature: on in every prebuilt release binary and
+      the <code>.deb</code>, off in <code>cargo install shep</code> and the
+      Homebrew formula:
     </p>
     <CodeBlock>{`$ cargo install shep --features otel`}</CodeBlock>
     <p>
@@ -420,14 +456,20 @@ Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
       reports it online.
     </p>
     <p>
-      The body is OTLP/JSON. Every series above is a <code>gauge</code>
-      except <code>shep_sheep_restart_total</code>, a monotonic cumulative
-      <code>sum</code> whose <code>startTimeUnixNano</code> is the dog's own
-      start, so a collector can difference two exports for the restarts
-      inside the interval. Integers are decimal strings, rates are numbers,
-      and every Prometheus label is a string attribute, so both paths report
-      the same series with the same labels. Channel samples are not exported
-      yet.
+      The body is OTLP/JSON, your samples included: they land after the
+      built-in groups, named as <code>/metrics</code> names them. Every
+      series above is a <code>gauge</code> except
+      <code>shep_sheep_restart_total</code> and the samples you sent as
+      counters, monotonic cumulative <code>sum</code>s whose
+      <code>startTimeUnixNano</code> is when their sender started, so a
+      restart moves it and a collector reads the reset; the dog's own
+      counters keep its start. A sample's help text is its
+      <code>description</code>, and one with none
+      has none. <code>shep_channel_samples_refused_total</code> goes out as
+      an integer sum. Integers are decimal strings, rates and sample values
+      are numbers, and every Prometheus label is a string attribute, so both
+      paths report the same series with the same labels. <code>NaN</code> and
+      <code>+Inf</code> reach <code>/metrics</code> but not the export.
     </p>
     <p>
       One failed export is one line in the dog's log, on the first failure
@@ -449,9 +491,9 @@ Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
         <span>Build</span>
         <span>target/release/shep</span>
       </div>
-      <div class="row"><span>default</span> <span data-label="target/release/shep">18,994,592 bytes</span></div>
-      <div class="row"><span><code>--features otel</code></span> <span data-label="target/release/shep">19,090,064 bytes</span></div>
-      <div class="row"><span>delta</span> <span data-label="target/release/shep">95,472 bytes</span></div>
+      <div class="row"><span>default</span> <span data-label="target/release/shep">19,069,728 bytes</span></div>
+      <div class="row"><span><code>--features otel</code></span> <span data-label="target/release/shep">19,166,944 bytes</span></div>
+      <div class="row"><span>delta</span> <span data-label="target/release/shep">97,216 bytes</span></div>
     </div>
 
     <h2 id="the-bark-dog">The bark dog</h2>

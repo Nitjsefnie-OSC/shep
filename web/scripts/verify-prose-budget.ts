@@ -126,10 +126,12 @@ export const BUDGETS: Record<string, number> = {
   // the measured binary size #292 asked for. All of it is operator-facing
   // surface for a shipped feature, not prose to trim back out.
   //
-  // Raised from 3650 on 2026-10-13 for the `shep copy` sentence: a per-sheep
+  // no headroom to pay for it.
+  //
+  // Raised from 3960 on 2026-10-14 for the `shep copy` sentence: a per-sheep
   // dog table is operator-facing config, and #830 is the verb that moves one
   // onto another sheep.
-  dogs: 3700, // 3641
+  dogs: 3990, // 3947
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
@@ -158,7 +160,10 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim
   // back out.
-  "shepherd-channel": 1890, // 1804
+  // Raised from 1890 for the "Metrics" section, which says where a `metric`
+  // line turns up and what the dog refuses. New content rather than a
+  // correction.
+  "shepherd-channel": 2060, // 2051
   "from-pm2": 1720, // 1659
   "boot-order": 1670, // 1586
   "talking-to-a-sheep": 1620, // 1534

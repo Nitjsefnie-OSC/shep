@@ -500,7 +500,25 @@ the dog's own start. A 2xx naming a `partialSuccess` is a
 failed export, not a clean one. A build without the feature refuses
 `otlp_endpoint` at startup rather than running a dog that exports nothing. `otlp_headers` is a
 secret: redacted in `Debug`, marked in the schema, and never printed. No
-wire change.
+wire change. **Off stopped meaning "absent from what most operators get"**
+on 2026-10-14 (#737): every prebuilt release archive and the `.deb` is now
+built with `features: otel`, so `otlp_endpoint` works out of the box in a
+downloaded binary; `cargo install shep` and the Homebrew formula stay
+featureless and take `--features otel`.
+
+**The samples a sheep sends on its channel ride the same export** (2026-10-14,
+the half of spec §8's OTLP item that was still open). They land after the
+built-in groups, named as `/metrics` names them: a gauge sample is a gauge, a
+counter sample a monotonic cumulative sum started when its sender started, so
+`shep_sheep_restart_total` is no longer the only sum in the payload and a
+sender that restarts moves its counter's start, which is how OTLP means a
+reset. A sample's help text is its `description`, omitted when the sender
+wrote none, and `shep_channel_samples_refused_total` goes out as `asInt`. A
+value the text exposition can spell (`NaN`, `+Inf`) has no OTLP/JSON number
+and is dropped from the export. The drift guard
+`the_payload_names_every_series_the_exposition_names` runs over a reading that
+carries samples as well as a flock, and compares every series' own labels and
+not only its name, type and point count. No wire change.
 
 **A setting, or a whole dog table, copies from one sheep onto another.**
 `shep copy <from>.<path> <to>.<path>` takes three address forms: a field
