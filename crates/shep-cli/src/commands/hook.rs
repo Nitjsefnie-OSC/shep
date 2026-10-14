@@ -296,9 +296,22 @@ mod tests {
     /// which names nothing.
     const BOUND: Duration = Duration::from_secs(30);
 
-    /// Short enough that the timing test costs a second, long enough that a
-    /// `/bin/sh` fixture on a loaded runner is never killed mid-print.
-    const TEST_BUDGET: Duration = Duration::from_secs(2);
+    /// The budget for the tests whose dog is expected to finish. Those
+    /// tests assert what the dog did, not how fast, so the budget is only
+    /// the forcing mechanism for a deadlock and must never be what ends a
+    /// green run. A contended runner spends seconds just reaching a
+    /// `/bin/sh` fixture's first command — a shared 2s budget killed
+    /// these fixtures mid-print (#651) — so this is generous against the
+    /// 30s [`BOUND`], which stays the arm that fires on a true hang.
+    const RUN_BUDGET: Duration = Duration::from_secs(20);
+
+    /// The budget for the tests that wait for the budget itself: the
+    /// wedged dog and the fork sweep assert [`HookOutcome::TimedOut`],
+    /// which fires on the budget rather than on the machine's speed, so
+    /// a short budget is the event being waited for, not a race with the
+    /// runner. Short also keeps the fork fixture's 4s grandchild
+    /// reliably past the sweep that must kill it.
+    const SHORT_BUDGET: Duration = Duration::from_secs(1);
 
     /// Writes an executable `/bin/sh` script at `dir/name`.
     fn dog(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
@@ -313,8 +326,8 @@ mod tests {
     }
 
     /// Runs the hook under [`BOUND`], so a deadlock is a named failure.
-    async fn run(binary: &Path, home: &Path) -> HookOutcome {
-        tokio::time::timeout(BOUND, run_on_remove(binary, home, "watchdog", TEST_BUDGET))
+    async fn run(binary: &Path, home: &Path, budget: Duration) -> HookOutcome {
+        tokio::time::timeout(BOUND, run_on_remove(binary, home, "watchdog", budget))
             .await
             .expect("the hook runner must not outlive its own budget")
     }
@@ -341,7 +354,7 @@ mod tests {
              done",
         );
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Ran { output } = &outcome else {
             panic!("a dog that exits 0 after writing both pipes ran its hook, got {outcome:?}");
@@ -369,7 +382,7 @@ mod tests {
             "printf 'unrecognized subcommand: %s\\n' \"$1\" >&2\nexit 2",
         );
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Refused { code, output } = &outcome else {
             panic!("a non-zero exit is a refusal, got {outcome:?}");
@@ -389,7 +402,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let binary = dog(dir.path(), "echoing", "printf '%s|%s' \"$#\" \"$*\"");
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         assert_eq!(
             outcome,
@@ -417,7 +430,7 @@ mod tests {
             "printf '%s|%s|%s' \"$SHEP_HOME\" \"$SHEP_DOG_NAME\" \"${CARGO:-cleared}\"",
         );
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Ran { output } = &outcome else {
             panic!("expected a clean run, got {outcome:?}");
@@ -438,9 +451,14 @@ mod tests {
         let binary = dog(dir.path(), "wedged", "sleep 600");
 
         let started = std::time::Instant::now();
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), SHORT_BUDGET).await;
 
-        assert_eq!(outcome, HookOutcome::TimedOut { after: TEST_BUDGET });
+        assert_eq!(
+            outcome,
+            HookOutcome::TimedOut {
+                after: SHORT_BUDGET
+            }
+        );
         assert!(
             started.elapsed() < BOUND,
             "the budget, not the test's own bound, is what ended it"
@@ -452,7 +470,8 @@ mod tests {
     /// backgrounded any work leaves it running with nobody left to reap it.
     ///
     /// The grandchild writes its file after the budget has already expired,
-    /// so its absence is the sweep and not a race with it.
+    /// so its absence is the sweep and not a race with it: its 4s must stay
+    /// past [`SHORT_BUDGET`].
     #[tokio::test]
     async fn a_fork_the_dog_left_behind_is_swept_with_it() {
         let dir = tempfile::tempdir().unwrap();
@@ -464,8 +483,13 @@ mod tests {
         );
         let survivor = dir.path().join("grandchild");
 
-        let outcome = run(&binary, dir.path()).await;
-        assert_eq!(outcome, HookOutcome::TimedOut { after: TEST_BUDGET });
+        let outcome = run(&binary, dir.path(), SHORT_BUDGET).await;
+        assert_eq!(
+            outcome,
+            HookOutcome::TimedOut {
+                after: SHORT_BUDGET
+            }
+        );
 
         // Past the grandchild's own 4s, so a survivor has had its chance.
         tokio::time::sleep(Duration::from_secs(4)).await;
@@ -483,7 +507,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let binary = dog(dir.path(), "escaping", "printf 'clean\\033[2Jgone'");
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Ran { output } = &outcome else {
             panic!("expected a clean run, got {outcome:?}");
@@ -510,7 +534,7 @@ mod tests {
         // sometimes reproduces what it claims.
         let binary = dog(dir.path(), "crashing", "printf 'dying' >&2\nkill -ABRT $$");
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Refused { code, output } = &outcome else {
             panic!("a signalled dog is a refusal, got {outcome:?}");
@@ -529,7 +553,7 @@ mod tests {
     async fn a_binary_that_is_not_there_is_not_a_refusal() {
         let dir = tempfile::tempdir().unwrap();
 
-        let outcome = run(&dir.path().join("never-installed"), dir.path()).await;
+        let outcome = run(&dir.path().join("never-installed"), dir.path(), RUN_BUDGET).await;
 
         assert!(
             matches!(outcome, HookOutcome::NotSpawned { .. }),
@@ -550,7 +574,7 @@ mod tests {
              printf 'err-marker' >&2",
         );
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Ran { output } = &outcome else {
             panic!("expected a clean run, got {outcome:?}");
