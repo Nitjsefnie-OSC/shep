@@ -244,25 +244,33 @@ jobs:
             sleep 1
           done
           "$bin" ping > /dev/null
-          # Poll for the dog to reach a verdict rather than sleeping a fixed
-          # time: a slow spawn must not fail the gate. A dog that refuses its
-          # config exits 4 before binding anything, and `last_exit` is sticky
-          # across a respawn, so a flap is visible too. Stop at the first
-          # snapshot showing a pid or an exit; fail if neither appears in 60s.
-          verdict=
+          # Proof of serving, not of spawning. A spawned dog has a pid
+          # before it fetches its config, and a build that refuses
+          # `otlp_endpoint` exits 4 only after that fetch, so a pid alone
+          # can snapshot green inside the spawn-to-refusal window. The dog
+          # binds its exposition port (default 127.0.0.1:9615, `/metrics`)
+          # only after it accepts its config, so poll once a second, up to
+          # 60s, for the port to answer; fail fast if a `last_exit` shows a
+          # refusal first.
+          serving=
           for _ in $(seq 1 60); do
             "$bin" dogs --format json > dogs.json 2>/dev/null || true
             if jq -e '
               [.data[] | select(.name == "metrics")][0]
-                | . != null and (.pid != null or .last_exit != null)
+                | . != null and .last_exit != null
             ' dogs.json > /dev/null 2>&1; then
-              verdict=1
+              echo 'the metrics dog refused its config' >&2
+              cat dogs.json >&2
+              exit 1
+            fi
+            if curl -fsS --max-time 2 http://127.0.0.1:9615/metrics > /dev/null 2>&1; then
+              serving=1
               break
             fi
             sleep 1
           done
-          if [ -z "$verdict" ]; then
-            echo 'the metrics dog never reported a pid or an exit' >&2
+          if [ -z "$serving" ]; then
+            echo 'the metrics dog never served its exposition port' >&2
             cat dogs.json >&2
             exit 1
           fi
