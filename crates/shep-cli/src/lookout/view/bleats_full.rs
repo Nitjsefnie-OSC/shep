@@ -161,28 +161,6 @@ fn row_height(text: &str, text_width: u16, wrap: bool) -> usize {
 /// include at least one line once `len > 0`, even one whose own cost alone
 /// exceeds `body_rows`: a body of one very long wrapped line is still one
 /// line to show, not zero.
-/// Where the tail window starts: walks back from `len` spending each line's
-/// row cost until `body_rows` is gone, and always keeps one line once `len`
-/// is non-zero.
-///
-/// Shared by [`window_range`] and [`max_scroll_offset`] because the ceiling
-/// is defined as the window's own start index. Two copies of this walk would
-/// have to be kept in step by hand, and the day they drifted the pane would
-/// let an operator scroll somewhere it never draws.
-fn tail_window_start(len: usize, body_rows: usize, cost: impl Fn(usize) -> usize) -> usize {
-    let mut base = len;
-    let mut used = 0usize;
-    while base > 0 {
-        let row = cost(base - 1);
-        if used > 0 && used + row > body_rows {
-            break;
-        }
-        base -= 1;
-        used += row;
-    }
-    base
-}
-
 fn window_range(
     len: usize,
     scroll_offset: usize,
@@ -207,10 +185,29 @@ fn window_range(
     skip..end
 }
 
-/// How many lines one `ctrl-u`/`ctrl-d` should move [`BleatsPane::scroll_offset`]
-/// by, so a page under wrap moves by roughly the room `pane`'s own area
-/// draws rather than a raw row count that assumes one row per line.
+/// Where the tail window starts: walks back from `len` spending each line's
+/// row cost until `body_rows` is gone, and always keeps one line once `len`
+/// is non-zero.
 ///
+/// Shared by [`window_range`], [`max_scroll_offset`] and [`page_lines_back`]
+/// because the ceiling is defined as the window's own start index, and a
+/// backward page is the distance back to it. Two copies of this walk would
+/// have to be kept in step by hand, and the day they drifted the pane would
+/// let an operator scroll somewhere it never draws.
+fn tail_window_start(len: usize, body_rows: usize, cost: impl Fn(usize) -> usize) -> usize {
+    let mut base = len;
+    let mut used = 0usize;
+    while base > 0 {
+        let row = cost(base - 1);
+        if used > 0 && used + row > body_rows {
+            break;
+        }
+        base -= 1;
+        used += row;
+    }
+    base
+}
+
 /// The largest scroll offset that still changes what the pane draws.
 ///
 /// [`window_range`] floors its skip at zero, so an offset past the oldest
@@ -230,12 +227,11 @@ pub(crate) fn max_scroll_offset(app: &App, pane: &BleatsPane) -> usize {
     let wrap = pane.wrapped() && pane.width() > 0;
     let cost = |index: usize| row_height(&survivors[index].text, text_width, wrap);
 
-    // Where the tail window starts. Scrolling past it only re-renders the
-    // oldest frame, so that index is the ceiling.
     tail_window_start(survivors.len(), body_rows, cost)
 }
 
-/// Lines one backward page covers: what fits ending at `start`.
+/// Lines one backward page covers: the distance from `start` back to where
+/// [`tail_window_start`] stops spending `body_rows`, never below one.
 ///
 /// Pure, and separated from [`page_amount_up`] so the invariant that matters
 /// can be tested directly over cost profiles rather than hunted for through a
@@ -243,19 +239,7 @@ pub(crate) fn max_scroll_offset(app: &App, pane: &BleatsPane) -> usize {
 /// page size at all, because a backward count and a window's own length agree
 /// there, which is how the `ctrl-d` gap survived its first fix.
 fn page_lines_back(start: usize, body_rows: usize, cost: impl Fn(usize) -> usize) -> usize {
-    let mut used = 0usize;
-    let mut count = 0usize;
-    let mut at = start;
-    while at > 0 {
-        let row = cost(at - 1);
-        if count > 0 && used + row > body_rows {
-            break;
-        }
-        at -= 1;
-        used += row;
-        count += 1;
-    }
-    count.max(1)
+    (start - tail_window_start(start, body_rows, &cost)).max(1)
 }
 
 /// Lines one forward page covers: the lines the window is showing.
@@ -1045,6 +1029,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A backward page is never zero lines wide, so `ctrl-u` always moves
+    /// [`BleatsPane::scroll_offset`]: at the oldest survivor, and over a
+    /// first line taller than the body.
+    #[test]
+    fn page_lines_back_steps_at_least_one_line() {
+        assert_eq!(page_lines_back(0, 4, |_| 1), 1);
+        assert_eq!(page_lines_back(3, 2, |_| 5), 1);
+        assert_eq!(page_lines_back(6, 4, |_| 2), 2);
+        assert_eq!(page_lines_back(5, 4, |i| if i == 4 { 3 } else { 1 }), 2);
     }
 
     /// A redraw compiles the match axis's pattern no times at all.
