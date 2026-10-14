@@ -356,8 +356,54 @@ pub(super) fn inline_child() -> toml_edit::Item {
 mod tests {
     use serde_json::json;
 
-    use super::super::fixtures::{bark_pane, field, web};
+    use super::super::fixtures::{bark_pane, field, money_pane, web};
     use super::*;
+
+    /// A decimal filed for a dog's section lands as a float, in the key's own
+    /// place, with the comment the operator wrote above it. `toml_cell` already
+    /// had the float arm; this pins that the float the pane now files reaches it
+    /// rather than arriving as a string or being truncated to an integer.
+    #[test]
+    fn a_float_replaced_in_a_dogs_section_keeps_the_comment_above_it() {
+        let mut pane = money_pane("# money cap\nper_item_usd = 10\nname = \"kelpie\"\n");
+        pane.move_to_key("per_item_usd");
+        pane.begin_typing();
+        for _ in 0..10 {
+            pane.type_backspace();
+        }
+        for c in "12.5".chars() {
+            pane.type_char(c);
+        }
+        assert_eq!(pane.apply_typing(), None, "12.5 is above the floor");
+        let SectionWrite::Written(section) = pane.edited_section_with(pane.edits()) else {
+            panic!("the fixture section parses, and the replacement lands in it");
+        };
+        assert_eq!(
+            section.as_str(),
+            "# money cap\nper_item_usd = 12.5\nname = \"kelpie\"\n"
+        );
+    }
+
+    /// A whole number typed into a decimal field is written back with its
+    /// decimal point, which is what lets the dog read an `f64` where its own
+    /// schema says `f64`.
+    #[test]
+    fn a_whole_number_filed_for_a_number_field_writes_a_float() {
+        let mut pane = money_pane("per_item_usd = 12.5\n");
+        pane.move_to_key("per_item_usd");
+        pane.begin_typing();
+        for _ in 0..4 {
+            pane.type_backspace();
+        }
+        for c in "10".chars() {
+            pane.type_char(c);
+        }
+        assert_eq!(pane.apply_typing(), None, "10 is a number");
+        let SectionWrite::Written(section) = pane.edited_section_with(pane.edits()) else {
+            panic!("the fixture section parses, and the replacement lands in it");
+        };
+        assert_eq!(section.as_str(), "per_item_usd = 10.0\n");
+    }
 
     /// A dog whose schema nests one table inside another through a `$ref`
     /// chain, holds a secret beside a plain field in the inner one, and has

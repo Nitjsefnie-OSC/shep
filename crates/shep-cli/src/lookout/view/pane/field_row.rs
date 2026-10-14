@@ -322,6 +322,7 @@ pub(super) fn type_label(field: &Field) -> &'static str {
     match &field.kind {
         FieldKind::Bool => "bool",
         FieldKind::Integer => "integer",
+        FieldKind::Number => "number",
         FieldKind::Text | FieldKind::Suggested(_) => "text",
         FieldKind::Choice(_) => "choice",
         FieldKind::Map => "map",
