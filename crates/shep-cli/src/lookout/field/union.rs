@@ -150,6 +150,7 @@ fn arm_fields(arm: &Value, tag: &str, defs: &Map<String, Value>) -> Vec<Field> {
                 field.kind,
                 FieldKind::Bool
                     | FieldKind::Integer
+                    | FieldKind::Number
                     | FieldKind::Text
                     | FieldKind::Choice(_)
                     | FieldKind::Suggested(_)

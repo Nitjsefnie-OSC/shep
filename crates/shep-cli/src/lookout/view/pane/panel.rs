@@ -297,6 +297,40 @@ mod tests {
         assert!(text.contains("<set>"), "{text}");
     }
 
+    /// A decimal field's VALIDATION rows come from the type table, the way a
+    /// duration's and an integer's do. Built from a schema rather than a shared
+    /// pane fixture, because no fixture the frames are captured from has a
+    /// decimal field, and adding one to those would move a snapshot for a
+    /// sentence this test only needs once.
+    #[test]
+    fn a_number_field_takes_its_bullets_from_the_type_table() {
+        let schema = serde_json::json!({
+            "properties": {
+                "per_item_usd": { "type": "number", "format": "double", "exclusiveMinimum": 0 },
+            },
+        });
+        let pane = ConfigPane::dog(
+            "kelpie".into(),
+            None,
+            schema,
+            "per_item_usd = 12.5\n".into(),
+        );
+        let field = pane
+            .fields()
+            .by_key("per_item_usd")
+            .expect("the schema declares per_item_usd");
+        let panel = text_of(&panel_for_field(field, &pane, fixtures::plain(), 120));
+        assert!(panel[0].contains("number"), "{panel:?}");
+        assert!(
+            panel.iter().any(|row| row.contains("VALIDATION")),
+            "{panel:?}"
+        );
+        assert!(
+            panel.iter().any(|row| row.contains("a number")),
+            "{panel:?}"
+        );
+    }
+
     /// A table's chip keeps its `table` label and stays inside the panel
     /// when the path is longer than the width leaves for it.
     #[test]

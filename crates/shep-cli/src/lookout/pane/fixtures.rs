@@ -77,6 +77,23 @@ pub(super) fn secret_dog_pane() -> ConfigPane {
     )
 }
 
+/// A dog whose schema publishes a decimal money cap: `shep-kelpie`'s
+/// `budget.per_item_usd`, `type: number`, `format: double`,
+/// `exclusiveMinimum: 0`. The one scalar shape the pane had no editor for
+/// until `kind_of` gained a `Number` arm.
+pub(super) fn money_schema() -> Value {
+    serde_json::json!({
+        "properties": {
+            "per_item_usd": { "type": "number", "format": "double", "exclusiveMinimum": 0 },
+        },
+    })
+}
+
+/// [`money_schema`] over `section`.
+pub(super) fn money_pane(section: &str) -> ConfigPane {
+    ConfigPane::dog("kelpie".into(), None, money_schema(), section.to_owned())
+}
+
 /// A field edit, filed the way [`Edits::set`] wants it, for the tests
 /// below that build a batch by hand rather than by keystroke.
 pub(super) fn field(key: &str, value: serde_json::Value) -> PaneEdit {

@@ -4,9 +4,9 @@
 //! Rendering copy rather than logic. The duration and memory halves are
 //! safe away from the parsers because this module's own tests feed every
 //! form they list back through `shep_core`'s real parser, so those two
-//! cannot go on claiming a form the parser has stopped taking. `BOOL_FORMS`
-//! and `INTEGER_FORMS` have no `shep_core` grammar to check against, and
-//! each says so beside its own name.
+//! cannot go on claiming a form the parser has stopped taking. `BOOL_FORMS`,
+//! `INTEGER_FORMS` and `NUMBER_FORMS` have no `shep_core` grammar to check
+//! against, and each says so beside its own name.
 //!
 //! The per-field lists are backed one crate down, where shep-core hands
 //! `normalize` a value for every refusal it makes, and names the enforcer
@@ -107,6 +107,17 @@ pub const INTEGER_FORMS: &[Form] = &[Form {
     examples: &["3"],
 }];
 
+/// The forms a [`FieldKind::Number`] field accepts.
+///
+/// This table is not parser-backed: there is no `shep_core` grammar for a
+/// decimal, so no test parses these examples. `refusal` parses them with
+/// `f64::from_str`, the parser the gate actually uses, and its own test
+/// feeds them back through it.
+pub const NUMBER_FORMS: &[Form] = &[Form {
+    text: "a number",
+    examples: &["10", "2.5"],
+}];
+
 /// What a field's explanation panel prints under VALIDATION.
 ///
 /// `Debug` is derived (IR-41): rendering copy, not a live value.
@@ -138,6 +149,7 @@ fn table_for(field: &Field) -> (&'static [Form], &'static [Form]) {
     match field.kind {
         FieldKind::Bool => (BOOL_FORMS, &[]),
         FieldKind::Integer => (INTEGER_FORMS, &[]),
+        FieldKind::Number => (NUMBER_FORMS, &[]),
         _ => (&[], &[]),
     }
 }
@@ -242,6 +254,7 @@ mod tests {
             ("MEMORY_REFUSALS", MEMORY_REFUSALS),
             ("BOOL_FORMS", BOOL_FORMS),
             ("INTEGER_FORMS", INTEGER_FORMS),
+            ("NUMBER_FORMS", NUMBER_FORMS),
         ] {
             for form in forms {
                 assert!(
@@ -250,6 +263,23 @@ mod tests {
                     form.text,
                     forms_named(form.text),
                     form.examples.len()
+                );
+            }
+        }
+    }
+
+    /// A decimal has no `shep_core` grammar to check against, so the check is
+    /// against the parser [`super::refusal`] actually uses: every example the
+    /// table offers must be a finite `f64`, since a non-finite one is refused
+    /// by name and a panel offering one would be a form the gate turns down.
+    #[test]
+    fn every_accepted_number_form_parses_as_a_finite_float() {
+        for form in NUMBER_FORMS {
+            for example in form.examples {
+                let parsed = example.parse::<f64>();
+                assert!(
+                    parsed.is_ok_and(|value| value.is_finite()),
+                    "{example} is listed as accepted and the gate must file it"
                 );
             }
         }
@@ -280,8 +310,8 @@ mod tests {
         assert!(bullets.is_empty());
     }
 
-    /// The three arms of `table_for` that no other test reached: a bool
-    /// and an integer are keyed on [`Field::kind`] rather than on a
+    /// The arms of `table_for` that no other test reached: a bool, an integer
+    /// and a decimal are keyed on [`Field::kind`] rather than on a
     /// `value_kind`, and the size table's refusals are new. Every one of
     /// them could have been swapped for the empty pair without failing
     /// anything.
@@ -290,6 +320,7 @@ mod tests {
         let cases = [
             (FieldKind::Bool, None, BOOL_FORMS, &[] as &[Form]),
             (FieldKind::Integer, None, INTEGER_FORMS, &[]),
+            (FieldKind::Number, None, NUMBER_FORMS, &[]),
             (
                 FieldKind::Text,
                 Some(ValueKind::MemSize),
