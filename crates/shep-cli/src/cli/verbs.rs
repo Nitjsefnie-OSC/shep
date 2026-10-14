@@ -416,9 +416,10 @@ pub enum Commands {
     ///
     /// Nothing is written until you confirm. The change list prints first,
     /// naming every key added, changed or removed with its old and new value.
-    /// `--yes` skips the question, `--dry-run` prints the list and writes
-    /// nothing, and with no terminal to ask on the run refuses instead of
-    /// writing.
+    /// With `--format json` that list prints on stderr, so stdout stays the one
+    /// envelope the run writes after the answer. `--yes` skips the question,
+    /// `--dry-run` prints the list and writes nothing, and with no terminal to
+    /// ask on the run refuses instead of writing.
     Copy(CopyArgs),
     /// Check whether the shepherd answers.
     Ping,

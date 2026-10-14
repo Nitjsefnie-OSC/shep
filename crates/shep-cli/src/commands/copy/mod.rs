@@ -35,7 +35,7 @@ use crate::output::Streams;
 use address::{Address, ConfigPath, FlockNames};
 use confirm::{Answer, Go, confirm, decide};
 use plan::{Plan, Write};
-use report::{finish, print_changes, report_for};
+use report::{finish, print_changes, report_for, shows_changes_first};
 
 /// Why a copy stopped before it wrote anything.
 ///
@@ -168,19 +168,23 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
         return finish(streams, &report);
     }
 
-    // The table form shows the change list before it asks anything about it.
-    if streams.fmt == Format::Table
-        && let Err(code) = print_changes(streams, &report)
-    {
-        return code;
-    }
-
     let go = decide(
         args.dry_run,
         args.yes,
         std::io::stdin().is_terminal(),
         !plan.changes.is_empty(),
     );
+
+    // The change list prints before anything is asked about it, in every
+    // form. Where it prints depends on what that form's stdout carries: the
+    // table form's stdout is the change list, and the JSON form's is one
+    // envelope that can only be written after the write the question gates.
+    if shows_changes_first(streams.fmt, go)
+        && let Err(code) = print_changes(streams, &report)
+    {
+        return code;
+    }
+
     if go == Go::Refuse {
         return streams.fail(
             ExitCode::Usage,

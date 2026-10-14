@@ -540,7 +540,10 @@ whole `dogs` map are refused, the first because a client is never sent a
 sheep's env values and the rest because the shepherd refuses them too. The
 change list prints before anything is written, and the run asks before it
 writes: `--yes` skips the question, `--dry-run` writes nothing, and with no
-terminal to ask on the run refuses rather than guessing. No wire change: the
+terminal to ask on the run refuses rather than guessing. The list prints where
+the operator is reading it, on stdout for the table form and on stderr for
+`--format json`, whose stdout is the one envelope written after the answer. No
+wire change: the
 write is `Request::SetSheepField` for a field and
 `Request::SetSheepDogSettings` for a table.
 

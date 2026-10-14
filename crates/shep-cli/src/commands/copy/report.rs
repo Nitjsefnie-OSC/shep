@@ -1,14 +1,17 @@
 //! What a copy prints: the change list, and the run's verdict.
 //!
-//! The table form prints the change list on stdout, and asks about it after.
-//! A form whose stdout is a JSON envelope prints one object per invocation,
-//! which is what `--format json` keeps.
+//! The change list prints before anything is asked about it, on the stream the
+//! operator is reading. The table form's stdout is that list. A form whose
+//! stdout is a JSON envelope prints the list on stderr instead, because its
+//! envelope can only be written after the write the question gates, and one
+//! object per invocation is the rule `--format json` keeps.
 
 use crate::cli::Format;
 use crate::exit::ExitCode;
 use crate::output::{CopyChange, CopyReport, Streams, emit, write_outcome};
 
 use super::address::Address;
+use super::confirm::Go;
 use super::plan::Plan;
 
 /// The report a plan renders, before or after the write.
@@ -39,7 +42,21 @@ pub(crate) fn report_for(
     }
 }
 
-/// Prints the change list in the table form.
+/// Whether this run prints the change list before it asks anything about it.
+///
+/// The table form always prints it. Any other form prints it only when it is
+/// about to ask, because a run that is not asking has nothing to show an
+/// operator before it either writes or stops.
+#[must_use]
+pub(crate) fn shows_changes_first(fmt: Format, go: Go) -> bool {
+    fmt == Format::Table || go == Go::Ask
+}
+
+/// Prints the change list as a table, on the stream the operator is reading.
+///
+/// The table form prints it on stdout. A form whose stdout is a JSON envelope
+/// prints it on stderr, so the operator sees what they are being asked to
+/// approve while stdout stays the one envelope the `--format json` rule keeps.
 ///
 /// # Errors
 /// [`ExitCode::Failure`] if the write itself failed.
@@ -47,14 +64,13 @@ pub(crate) fn print_changes(
     streams: &mut Streams<'_>,
     report: &CopyReport,
 ) -> Result<(), ExitCode> {
-    emit(
-        &mut *streams.out,
-        Format::Table,
-        "copy",
-        report.clone(),
-        streams.style,
-    )
-    .map_err(|_| ExitCode::Failure)
+    let writer: &mut dyn std::io::Write = if streams.fmt == Format::Table {
+        &mut *streams.out
+    } else {
+        &mut *streams.err
+    };
+    emit(writer, Format::Table, "copy", report.clone(), streams.style)
+        .map_err(|_| ExitCode::Failure)
 }
 
 /// Prints the run's verdict.
@@ -81,6 +97,7 @@ mod tests {
 
     use super::*;
     use crate::commands::copy::address::ConfigPath;
+    use crate::commands::copy::confirm::{Answer, confirm};
     use crate::commands::copy::plan::{Change, ChangeKind};
     use crate::output::Render;
 
@@ -100,6 +117,16 @@ mod tests {
                 path,
             },
         )
+    }
+
+    /// A stream pair in one output form, bare so a test reads what was painted.
+    fn streams<'a>(fmt: Format, out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
+        Streams {
+            out,
+            err,
+            style: crate::style::Presentation::BARE,
+            fmt,
+        }
     }
 
     /// A report prints its changes and its verdict.
@@ -134,6 +161,114 @@ mod tests {
                 "issue".to_string(),
                 "panel".to_string(),
             ]]
+        );
+    }
+
+    /// The JSON form shows the change list before it asks, on stderr: its
+    /// stdout is the one envelope, and that envelope can only be written after
+    /// the write the question gates.
+    #[test]
+    fn the_json_form_shows_the_change_list_before_it_asks() {
+        assert!(shows_changes_first(Format::Json, Go::Ask));
+        assert!(shows_changes_first(Format::Table, Go::Write));
+        assert!(shows_changes_first(Format::Table, Go::Refuse));
+        assert!(
+            !shows_changes_first(Format::Json, Go::Write),
+            "--yes writes without asking, so a script gets no table on stderr"
+        );
+        assert!(
+            !shows_changes_first(Format::Json, Go::DryRun),
+            "the envelope is a dry run's output already"
+        );
+        assert!(!shows_changes_first(Format::Json, Go::Nothing));
+
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let mut streams = streams(Format::Json, &mut out, &mut err);
+        let plan = Plan {
+            changes: vec![
+                Change {
+                    key: "rulings.decide".to_string(),
+                    kind: ChangeKind::Changed,
+                    old: Some(json!("issue")),
+                    new: Some(json!("panel")),
+                },
+                Change {
+                    key: "restart_delay".to_string(),
+                    kind: ChangeKind::Added,
+                    old: None,
+                    new: Some(json!(2)),
+                },
+            ],
+            write: None,
+        };
+        let (from, to) = sides("kelpie");
+        let report = report_for(&from, &to, &plan, false, false);
+
+        print_changes(&mut streams, &report).expect("the preview writes");
+        let mut reader = std::io::Cursor::new(b"n\n".as_slice());
+        let answer = confirm(&mut streams, "web", "api", "dogs.kelpie", 2, &mut reader);
+        assert!(matches!(answer, Answer::No));
+
+        let shown = String::from_utf8(err).unwrap();
+        let list = shown
+            .find("KEY")
+            .expect("the change list printed on stderr");
+        let question = shown.find("[y/N]").expect("the question, after the list");
+        assert!(
+            list < question,
+            "the operator sees both changes before being asked to approve them: {shown}"
+        );
+        assert!(
+            shown.contains("rulings.decide") && shown.contains("restart_delay"),
+            "{shown}"
+        );
+        assert!(
+            out.is_empty(),
+            "stdout stays the one envelope this run never reached"
+        );
+    }
+
+    /// The table form keeps its change list on stdout, where that form prints
+    /// everything.
+    #[test]
+    fn the_table_form_keeps_the_change_list_on_stdout() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let mut streams = streams(Format::Table, &mut out, &mut err);
+        let plan = Plan {
+            changes: vec![Change {
+                key: "restart_delay".to_string(),
+                kind: ChangeKind::Added,
+                old: None,
+                new: Some(json!(2)),
+            }],
+            write: None,
+        };
+        let (from, to) = (
+            Address {
+                sheep: "web".to_string(),
+                path: ConfigPath::Field {
+                    name: "restart_delay".to_string(),
+                },
+            },
+            Address {
+                sheep: "api".to_string(),
+                path: ConfigPath::Field {
+                    name: "restart_delay".to_string(),
+                },
+            },
+        );
+        let report = report_for(&from, &to, &plan, false, false);
+        print_changes(&mut streams, &report).expect("the table writes");
+        let shown = String::from_utf8(out).unwrap();
+        assert!(
+            shown.contains("KEY") && shown.contains("restart_delay"),
+            "{shown}"
+        );
+        assert!(
+            err.is_empty(),
+            "the table form's stderr stays for diagnostics"
         );
     }
 }
