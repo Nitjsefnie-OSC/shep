@@ -3,8 +3,16 @@
 //! A gated app stays `starting` until its channel signals, its probe passes, or
 //! its deadline elapses. The awkward cases are the ones where it is stopped,
 //! restarted or exits while that wait is still outstanding.
+//!
+//! The two probe cases wait on the probe's own traffic (a request reaching
+//! the test's fake, a marker file the probe command writes) rather than on a
+//! wall-clock window, and let the probe pass only where the test itself says
+//! so: a queued 2xx reply, a marker file the test writes. Their readiness
+//! deadlines sit far past the test's patience, so an `Online` can only have
+//! come from a passing probe.
 
 use super::*;
+use crate::testing_http::{HttpReply, loopback_http};
 
 #[tokio::test(start_paused = true)]
 async fn wait_ready_app_stays_starting_until_the_channel_signals() {
@@ -38,15 +46,19 @@ async fn wait_ready_app_stays_starting_until_the_channel_signals() {
     assert_eq!(handle.list().await[0].status, ProcStatus::Online);
 }
 
-// Real time, no `start_paused`: a paused test waiting on real socket I/O
-// can deadlock, since the virtual clock does not move the OS.
+// Real time, no `start_paused`: this dials a real listener, and a paused
+// test waiting on real socket I/O can deadlock, since the virtual clock
+// does not move the OS.
 #[tokio::test]
 async fn readiness_probe_app_stays_starting_until_the_probe_passes() {
-    // Reserve a free port and release it: probes fail with connection
-    // refused until the listener below binds it for real.
-    let reserved = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = reserved.local_addr().unwrap();
-    drop(reserved);
+    // The fake holds its port for the whole test. A port released between
+    // "the probe must fail" and "the probe must pass" is a race: a sibling
+    // test could bind that ephemeral port, and the probe would pass against
+    // it. The fail-then-pass flip is test-held the same way: the fake
+    // answers only what this test queues, so no probe can pass before the
+    // `queue_reply` that says so, and the `Starting` assertions cannot race
+    // the probe loop's pacing.
+    let mut gate = loopback_http(Vec::new()).await;
 
     let (events, mut rx) = crate::bus::test_bus(64);
     let runner = ScriptedRunner::new(vec![ProcScript::never_exits()]);
@@ -54,32 +66,42 @@ async fn readiness_probe_app_stays_starting_until_the_probe_passes() {
     let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let mut app = AppConfig::minimal("web", "./srv");
     app.readiness_probe = Some(ProbeConfig {
+        // Quick re-probing costs nothing here: the gate cannot hand a probe
+        // a passing verdict on its own, whatever the interval.
         interval: UpDuration::from_millis(50),
-        timeout: UpDuration::from_millis(200),
-        ..probe_config(ProbeKind::Tcp, &addr.to_string())
+        // Three orders of magnitude above a loopback round trip, so a
+        // loaded runner cannot turn a queued reply into a timed-out probe.
+        timeout: UpDuration::from_millis(2_000),
+        ..probe_config(
+            ProbeKind::Http,
+            &format!("http://127.0.0.1:{}/healthz", gate.addr.port()),
+        )
     });
+    // Far longer than this test's own patience, so an Online can only have
+    // come from a passing probe, never from the deadline path.
+    app.listen_timeout = UpDuration::from_millis(60_000);
     handle.start(vec![normalize(app).unwrap()]).await.unwrap();
 
     assert_eq!(handle.list().await[0].status, ProcStatus::Starting);
-    // Nothing is listening on `addr` yet: the probe fails every interval.
-    assert_no_event_within(
-        &mut rx,
-        0,
-        ProcessEventKind::Online,
-        Duration::from_millis(220),
-    )
-    .await;
+
+    // Wait on the probe's own traffic: this request is proof the probe loop
+    // is running. Nothing is queued yet, so the fake owes that connection a
+    // reply and no probe could have succeeded.
+    gate.next_request().await;
+    gate.queue_reply(HttpReply::Status(500));
     assert_eq!(handle.list().await[0].status, ProcStatus::Starting);
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    let _accept = tokio::spawn(async move { while listener.accept().await.is_ok() {} });
-
+    // The passing reply is queued here and nowhere earlier: the next probe
+    // is the first connection the fake will answer 2xx, so Online can only
+    // follow this point.
+    gate.next_request().await;
+    gate.queue_reply(HttpReply::Status(200));
     tokio::time::timeout(
-        Duration::from_secs(2),
+        Duration::from_secs(5),
         await_event(&mut rx, 0, ProcessEventKind::Online),
     )
     .await
-    .expect("Online once the probe starts passing");
+    .expect("Online once the queued reply passes the probe");
     assert_eq!(handle.list().await[0].status, ProcStatus::Online);
 }
 
@@ -94,14 +116,21 @@ async fn an_exec_readiness_probe_sees_the_assembled_env_not_the_apps_own() {
     let dir = tempfile::tempdir().unwrap();
     // Instance 0 is the only slot a single-instance app gets.
     let ready_file = dir.path().join("ready-0");
+    let attempt_file = dir.path().join("probe-attempt-0");
     let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let mut app = AppConfig::minimal("web", "./srv");
     app.readiness_probe = Some(ProbeConfig {
         interval: UpDuration::from_millis(50),
-        timeout: UpDuration::from_millis(500),
+        // A `sh` fork and two file operations, bounded three orders of
+        // magnitude above what they cost on a quiet runner, so a loaded one
+        // cannot time out a probe that would really pass.
+        timeout: UpDuration::from_millis(2_000),
         ..probe_config(
             ProbeKind::Exec,
-            &format!(r#"test -f "{}/ready-$SHEP_INSTANCE""#, dir.path().display()),
+            &format!(
+                r#": > "{dir}/probe-attempt-$SHEP_INSTANCE"; test -f "{dir}/ready-$SHEP_INSTANCE""#,
+                dir = dir.path().display(),
+            ),
         )
     });
     // Far longer than this test's own patience, so an Online can only have
@@ -110,14 +139,14 @@ async fn an_exec_readiness_probe_sees_the_assembled_env_not_the_apps_own() {
     handle.start(vec![normalize(app).unwrap()]).await.unwrap();
 
     assert_eq!(handle.list().await[0].status, ProcStatus::Starting);
-    // Several probe intervals of real time with the file absent.
-    assert_no_event_within(
-        &mut rx,
-        0,
-        ProcessEventKind::Online,
-        Duration::from_millis(220),
-    )
-    .await;
+
+    // Wait on the probe's own traffic: the marker is named through
+    // `$SHEP_INSTANCE`, so `probe-attempt-0` proves one probe ran with the
+    // assembled env. `ready-0` is absent until this test writes it, so that
+    // probe's verdict was a failure and `Starting` is settled, not a guess
+    // about elapsed time. A probe whose env lacked `SHEP_INSTANCE` writes
+    // `probe-attempt-` and this wait never lands.
+    await_file(&attempt_file, Duration::from_secs(5)).await;
     assert_eq!(handle.list().await[0].status, ProcStatus::Starting);
 
     std::fs::write(&ready_file, b"").unwrap();
@@ -129,6 +158,30 @@ async fn an_exec_readiness_probe_sees_the_assembled_env_not_the_apps_own() {
     .await
     .expect("Online once the exec probe can resolve $SHEP_INSTANCE");
     assert_eq!(handle.list().await[0].status, ProcStatus::Online);
+}
+
+/// Polls `path` until it exists, giving up after `bound`.
+///
+/// Polling is how a test waits on a probe child's write: the file lands
+/// through the OS, not through the runtime's clock.
+async fn await_file(path: &std::path::Path, bound: Duration) {
+    let found = tokio::time::timeout(bound, async {
+        loop {
+            match path.try_exists() {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(err) => panic!("cannot poll {}: {err}", path.display()),
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(
+        found.is_ok(),
+        "{} never appeared: the exec probe never ran to completion with \
+         $SHEP_INSTANCE expanded to 0",
+        path.display()
+    );
 }
 
 #[tokio::test(start_paused = true)]

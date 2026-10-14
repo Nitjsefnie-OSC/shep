@@ -126,22 +126,12 @@ export const BUDGETS: Record<string, number> = {
   // the measured binary size #292 asked for. All of it is operator-facing
   // surface for a shipped feature, not prose to trim back out.
   //
-  // Raised again from 3650 for the "Channel samples" section: the grammar and
-  // caps a sheep's own samples are held to, and the refusal counter. New
-  // content rather than a correction.
-  //
-  // Raised from 3900 on 2026-10-14 for #737: the page said the `otel`
-  // feature was "off in the shipped binary", and release artifacts now ship
-  // it on. Naming which channels carry it and which take `--features otel`
-  // is a correction, not prose. The merged page measures 3900, so the 10
-  // words of headroom are for drift, not for this correction.
-  // Raised from 3910 on 2026-10-14 for the channel samples joining the OTLP
-  // export: the kind mapping, `help` becoming `description`, the refusal
-  // counter going out as an integer sum, and the two values `/metrics` can
-  // render that OTLP/JSON has no number for. Operator-facing surface for a
-  // shipped feature, in the same shape as the raises above, and the page had
   // no headroom to pay for it.
-  dogs: 3960, // 3947
+  //
+  // Raised from 3960 on 2026-10-14 for the `shep copy` sentence: a per-sheep
+  // dog table is operator-facing config, and #830 is the verb that moves one
+  // onto another sheep.
+  dogs: 3990, // 3947
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
