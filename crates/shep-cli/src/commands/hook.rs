@@ -296,21 +296,28 @@ mod tests {
     /// which names nothing.
     const BOUND: Duration = Duration::from_secs(30);
 
-    /// The budget for the tests whose dog is expected to finish. Those
-    /// tests assert what the dog did, not how fast, so the budget is only
-    /// the forcing mechanism for a deadlock and must never be what ends a
-    /// green run. A contended runner spends seconds just reaching a
-    /// `/bin/sh` fixture's first command — a shared 2s budget killed
-    /// these fixtures mid-print (#651) — so this is generous against the
-    /// 30s [`BOUND`], which stays the arm that fires on a true hang.
+    /// The budget for the tests that wait for the dog to reach some point
+    /// in its script. Those tests assert what the dog did, not how fast,
+    /// so the budget is only the forcing mechanism for a deadlock and must
+    /// never be what ends a green run. A contended runner spends seconds
+    /// just reaching a `/bin/sh` fixture's first command — a shared 2s
+    /// budget killed these fixtures mid-print (#651) — so this is generous
+    /// against the 30s [`BOUND`], which stays the arm that fires on a true
+    /// hang.
     const RUN_BUDGET: Duration = Duration::from_secs(20);
 
-    /// The budget for the tests that wait for the budget itself: the
-    /// wedged dog and the fork sweep assert [`HookOutcome::TimedOut`],
-    /// which fires on the budget rather than on the machine's speed, so
-    /// a short budget is the event being waited for, not a race with the
-    /// runner. Short also keeps the fork fixture's 4s grandchild
-    /// reliably past the sweep that must kill it.
+    /// The budget for the fork sweep test. It waits for two things: the
+    /// dog to fork its grandchild, which a contended runner still does
+    /// in tens of milliseconds (measured 20-47ms announcing at load
+    /// average 50), and the budget itself to fire the sweep. The fork
+    /// wait gets the repo's generous 5s style so the announcement
+    /// assertion never races the runner.
+    const SWEEP_BUDGET: Duration = Duration::from_secs(5);
+
+    /// The budget for the test that waits for the budget itself: the
+    /// wedged dog asserts [`HookOutcome::TimedOut`], which fires on the
+    /// budget rather than on the machine's speed, so a short budget is the
+    /// event being waited for, not a race with the runner.
     const SHORT_BUDGET: Duration = Duration::from_secs(1);
 
     /// Writes an executable `/bin/sh` script at `dir/name`.
@@ -469,30 +476,44 @@ mod tests {
     /// forked. `kill_on_drop` signals the leader alone, so a dog that
     /// backgrounded any work leaves it running with nobody left to reap it.
     ///
-    /// The grandchild writes its file after the budget has already expired,
-    /// so its absence is the sweep and not a race with it: its 4s must stay
-    /// past [`SHORT_BUDGET`].
+    /// The grandchild announces itself before it waits, so the test fails
+    /// outright when the runner was too slow to fork it inside the budget:
+    /// the sweep must have had a fork to reach, not pass on one that never
+    /// existed. It then writes its file only once the dog is dead, which
+    /// only a missing sweep allows.
     #[tokio::test]
     async fn a_fork_the_dog_left_behind_is_swept_with_it() {
         let dir = tempfile::tempdir().unwrap();
         let binary = dog(
             dir.path(),
             "forking",
-            "( sleep 4; : > \"$SHEP_HOME/grandchild\" ) &\n\
+            "( : > \"$SHEP_HOME/grandchild-started\"\n\
+             while kill -0 $$ 2>/dev/null; do sleep 0.1; done\n\
+             : > \"$SHEP_HOME/grandchild\" ) &\n\
              sleep 600",
         );
+        let announced = dir.path().join("grandchild-started");
         let survivor = dir.path().join("grandchild");
 
-        let outcome = run(&binary, dir.path(), SHORT_BUDGET).await;
+        let outcome = run(&binary, dir.path(), SWEEP_BUDGET).await;
         assert_eq!(
             outcome,
             HookOutcome::TimedOut {
-                after: SHORT_BUDGET
+                after: SWEEP_BUDGET
             }
         );
 
-        // Past the grandchild's own 4s, so a survivor has had its chance.
-        tokio::time::sleep(Duration::from_secs(4)).await;
+        // The fork happened inside the budget, so the sweep had a grandchild
+        // to catch or to miss: a runner too slow to start `/bin/sh` fails
+        // here rather than passing on a fork that never existed.
+        assert!(
+            announced.exists(),
+            "the dog never forked the grandchild inside the budget, so the sweep was never tested"
+        );
+
+        // The grandchild writes only once the dog is dead and its 0.1s poll
+        // has noticed, so past a 2s grace a survivor has had its chance.
+        tokio::time::sleep(Duration::from_secs(2)).await;
         assert!(
             !survivor.exists(),
             "a fork outliving the dog kept running after the budget killed it"
