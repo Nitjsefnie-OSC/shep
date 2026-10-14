@@ -9,12 +9,13 @@
 //!
 //! A dog name may contain a dot, and so may a key inside a dog's table, and
 //! neither is a segment. Each step past the sheep name therefore takes the
-//! longest name the copy's tables actually hold: the flock's dogs plus the
-//! tables each side already carries for the dog name, and the keys of the
-//! table it is standing in. `web.dogs.foo.bar` is the dog `foo.bar` when a
-//! side holds a table under that name, and the dog `foo` with the key `bar`
-//! when it does not. Nothing holds either reading, the first segment stands,
-//! and the plan reports the source that is not there.
+//! longest name the copy's tables actually hold: a dog name is a table one
+//! side carries before it is a dog the flock runs, and a key is a key of the
+//! table the step is standing in. `web.dogs.foo.bar` is the dog `foo.bar`
+//! when a side holds a table under that name, and the dog `foo` with the key
+//! `bar` when it does not, even in a flock that runs a dog named `foo.bar`
+//! neither sheep has a table for. Nothing holds either reading, the first
+//! segment stands, and the plan reports the source that is not there.
 
 use std::collections::BTreeSet;
 
@@ -129,19 +130,63 @@ pub(crate) struct Written {
     pub(crate) segments: Vec<String>,
 }
 
-/// Every dog name a copy can mean: the flock's dogs, and the tables each side
-/// already holds.
+/// The dog names a copy can mean, in the order a copy tries them.
 ///
-/// A sheep can carry a table for a dog the flock has never started, so the
-/// flock's list alone would read `foo.bar` as two names.
-pub(crate) fn dog_names(flock: &FlockNames, source: &Value, target: &Value) -> BTreeSet<String> {
-    let mut names = flock.dogs.clone();
-    for config in [source, target] {
-        if let Some(dogs) = dogs_of(config) {
-            names.extend(dogs.keys().cloned());
+/// A table one side actually holds beats a name the flock merely runs. A
+/// flock that runs a dog named `foo.bar`, with no table for it on either
+/// sheep, and a sheep holding `dogs.foo = { bar = ... }`, still gets the key
+/// `bar` under `foo` when the address says `web.dogs.foo.bar`: the reading
+/// with something to copy is the reading the address takes.
+#[derive(Debug)]
+pub(crate) struct DogNames {
+    /// Dog names that are tables on at least one side of the copy.
+    tables: BTreeSet<String>,
+    /// The dogs the flock runs, which a copy falls back to when no table
+    /// matches, so a missing source is named as the dog and not as its first
+    /// token.
+    flock: BTreeSet<String>,
+}
+
+impl DogNames {
+    /// The names read from the flock and from the two configs a copy reads.
+    ///
+    /// A sheep can carry a table for a dog the flock has never started, so
+    /// the flock's list alone would read `foo.bar` as two names.
+    #[must_use]
+    pub(crate) fn new(flock: &FlockNames, source: &Value, target: &Value) -> Self {
+        let mut tables = BTreeSet::new();
+        for config in [source, target] {
+            if let Some(dogs) = dogs_of(config) {
+                tables.extend(dogs.keys().cloned());
+            }
+        }
+        Self {
+            tables,
+            flock: flock.dogs.clone(),
         }
     }
+
+    /// The dog name `rest` starts with, longest first: a table one side holds
+    /// beats a dog the flock runs, and a name nothing holds at all leaves the
+    /// first segment standing.
+    #[must_use]
+    pub(crate) fn longest(&self, rest: &[String]) -> String {
+        longest_in(rest, &self.tables)
+            .or_else(|| longest_in(rest, &self.flock))
+            .unwrap_or_else(|| rest[0].clone())
+    }
+}
+
+/// The longest name in `names` that `rest` starts with, `None` when none does.
+fn longest_in(rest: &[String], names: &BTreeSet<String>) -> Option<String> {
     names
+        .iter()
+        .filter(|name| {
+            let parts: Vec<&str> = name.split('.').collect();
+            parts.len() <= rest.len() && parts == rest[..parts.len()]
+        })
+        .max_by_key(|name| name.split('.').count())
+        .cloned()
 }
 
 /// One sheep's `dogs` map, as JSON.
@@ -162,7 +207,7 @@ pub(crate) fn dog_table<'a>(config: &'a Value, dog: &str) -> Option<&'a Value> {
 /// for a key this verb never copies.
 pub(crate) fn path_of(
     written: &Written,
-    known_dogs: &BTreeSet<String>,
+    known_dogs: &DogNames,
     source: &Value,
     target: &Value,
 ) -> Result<ConfigPath, CopyRefusal> {
@@ -182,7 +227,7 @@ pub(crate) fn path_of(
             )));
         }
         let rest = &segments[1..];
-        let dog = longest_name(rest, known_dogs);
+        let dog = known_dogs.longest(rest);
         let depth = dog.split('.').count();
         let keys = resolve_keys(
             &rest[depth..],
@@ -224,23 +269,6 @@ pub(crate) fn path_of(
     Ok(ConfigPath::Field {
         name: field.to_string(),
     })
-}
-
-/// The longest name in `names` that `rest` starts with, as one dog name.
-///
-/// With no name to match, the first segment stands: an address naming a dog
-/// nobody has a table for is a missing source the plan reports, not a parse
-/// failure.
-fn longest_name(rest: &[String], names: &BTreeSet<String>) -> String {
-    names
-        .iter()
-        .filter(|name| {
-            let parts: Vec<&str> = name.split('.').collect();
-            parts.len() <= rest.len() && parts == rest[..parts.len()]
-        })
-        .max_by_key(|name| name.split('.').count())
-        .cloned()
-        .unwrap_or_else(|| rest[0].clone())
 }
 
 /// The key path inside a dog's table, resolved against what both sides hold.
@@ -378,7 +406,7 @@ mod tests {
         target: &Value,
     ) -> Result<Address, CopyRefusal> {
         let written = written(raw, flock)?;
-        let dogs = dog_names(flock, source, target);
+        let dogs = DogNames::new(flock, source, target);
         Ok(Address {
             sheep: written.sheep.clone(),
             path: path_of(&written, &dogs, source, target)?,
@@ -632,6 +660,53 @@ mod tests {
     fn a_table_on_either_side_makes_the_name() {
         let target = json!({ "dogs": { "foo.bar": { "enabled": false } } });
         let address = parse_against("api.dogs.foo.bar", &flock(), &Value::Null, &target).unwrap();
+        assert_eq!(
+            address.path,
+            ConfigPath::Dog {
+                dog: "foo.bar".into(),
+                keys: vec![]
+            }
+        );
+    }
+
+    /// A flock running a dog named `foo.bar` is not a table under that name.
+    /// Where one side holds `foo` with a key `bar`, that is what the address
+    /// names, or the copy refuses a source the operator did mean.
+    #[test]
+    fn a_flock_dog_name_yields_to_a_table_the_sheep_holds() {
+        let flock = FlockNames {
+            sheep: ["web", "api"]
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+            dogs: ["foo.bar"].iter().map(|name| (*name).to_string()).collect(),
+        };
+        let source = json!({ "dogs": { "foo": { "bar": { "enabled": true } } } });
+        let target = json!({ "dogs": { "foo": {} } });
+        let address = parse_against("web.dogs.foo.bar", &flock, &source, &target).unwrap();
+        assert_eq!(
+            address.path,
+            ConfigPath::Dog {
+                dog: "foo".into(),
+                keys: vec!["bar".into()]
+            },
+            "the reading with something to copy is the reading the address takes"
+        );
+    }
+
+    /// With no table under either reading, the flock's own dog name is what
+    /// the copy reports as missing, rather than its first token.
+    #[test]
+    fn a_flock_dog_name_stands_when_no_table_holds_it() {
+        let flock = FlockNames {
+            sheep: ["web", "api"]
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+            dogs: ["foo.bar"].iter().map(|name| (*name).to_string()).collect(),
+        };
+        let address =
+            parse_against("web.dogs.foo.bar", &flock, &Value::Null, &Value::Null).unwrap();
         assert_eq!(
             address.path,
             ConfigPath::Dog {

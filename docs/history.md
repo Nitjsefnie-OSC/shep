@@ -527,7 +527,8 @@ sub-table inside one (`web.dogs.kelpie.rulings`). A dog name and a key inside
 a table may each contain a dot, so each step past the sheep name is the
 longest name the copy's tables actually hold: `web.dogs.foo.bar` is the dog
 `foo.bar` when a side has a table under that name, and the dog `foo` with the
-key `bar` when neither does. The path is the same on
+key `bar` when neither does, even in a flock that runs a dog named `foo.bar`
+with no table for it. The path is the same on
 both sides. A dog table merges by default, so a key only the target has
 survives, `--replace` makes the target exactly the source at that path, and
 `--except <key>` leaves one key out because shep cannot tell that a dog's

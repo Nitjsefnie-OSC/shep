@@ -130,7 +130,7 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
     // The path half is read after the two configs, because a dog name and a
     // key inside a table may each contain a dot, and only the tables say where
     // one ends.
-    let dogs = address::dog_names(&flock, &source, &target);
+    let dogs = address::DogNames::new(&flock, &source, &target);
     let from = match address::path_of(&from, &dogs, &source, &target) {
         Ok(path) => Address {
             sheep: from.sheep.clone(),
@@ -483,7 +483,8 @@ mod tests {
     /// An address, resolved with no config in hand.
     fn address(raw: &str) -> Address {
         let written = address::written(raw, &flock()).unwrap();
-        let dogs = address::dog_names(&flock(), &serde_json::Value::Null, &serde_json::Value::Null);
+        let dogs =
+            address::DogNames::new(&flock(), &serde_json::Value::Null, &serde_json::Value::Null);
         Address {
             sheep: written.sheep.clone(),
             path: address::path_of(
@@ -503,7 +504,10 @@ mod tests {
                 .iter()
                 .map(|name| (*name).to_string())
                 .collect(),
-            dogs: ["metrics"].iter().map(|name| (*name).to_string()).collect(),
+            dogs: ["metrics", "foo.bar"]
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
         }
     }
 
@@ -524,7 +528,7 @@ mod tests {
         let flock = flock();
         let from = address::written(from, &flock)?;
         let to = address::written(to, &flock)?;
-        let dogs = address::dog_names(&flock, &source, &target);
+        let dogs = address::DogNames::new(&flock, &source, &target);
         let from = Address {
             sheep: from.sheep.clone(),
             path: address::path_of(&from, &dogs, &source, &target)?,
@@ -901,6 +905,36 @@ mod tests {
                 "issue".to_string(),
                 "panel".to_string(),
             ]]
+        );
+    }
+
+    /// A flock running a dog named `foo.bar` does not stop a copy of the key
+    /// `bar` under the dog `foo`, which is what the address was naming when no
+    /// sheep has a table for the flock's dotted name.
+    #[test]
+    fn a_flock_dog_name_does_not_hide_a_key_under_a_dog_it_prefixes() {
+        let source = config_with_dog("foo", json!({ "bar": { "enabled": true } }));
+        let target = config_with_dog("foo", json!({ "keep": 1 }));
+        let plan = resolve(
+            "web.dogs.foo.bar",
+            "api.dogs.foo.bar",
+            source,
+            target,
+            &[],
+            false,
+        )
+        .expect("the table reading wins over the flock's dog name");
+        assert_eq!(plan.changes.len(), 1);
+        assert_eq!(
+            plan.changes[0].key, "enabled",
+            "a sub-table copy names its keys under the path it copied"
+        );
+        let table = written_table(&plan);
+        assert_eq!(table["bar"], json!({ "enabled": true }));
+        assert_eq!(
+            table["keep"],
+            json!(1),
+            "the target's other key under `foo` survives"
         );
     }
 }
