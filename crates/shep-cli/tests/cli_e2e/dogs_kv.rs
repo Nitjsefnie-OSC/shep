@@ -67,27 +67,6 @@ fn a_real_shepherd_runs_a_real_metrics_dog_that_answers_a_scrape() {
 }
 
 #[cfg(unix)]
-/// [`poll_metrics`], retried until the exposition contains `needle` rather
-/// than merely until it answers: a dog answering from a cached reading still
-/// answers 200, so only content the predecessor never saw tells them apart.
-fn poll_metrics_containing(addr: std::net::SocketAddr, needle: &str) -> String {
-    let start = Instant::now();
-    let mut last = String::new();
-    loop {
-        if let Ok(body) = scrape_metrics(addr) {
-            if body.contains(needle) {
-                return body;
-            }
-            last = body;
-        }
-        if start.elapsed() >= METRICS_SCRAPE_DEADLINE {
-            return last;
-        }
-        std::thread::sleep(METRICS_SCRAPE_POLL_INTERVAL);
-    }
-}
-
-#[cfg(unix)]
 /// A real dog process, carried across a real `execve`, still able to talk to
 /// the shepherd that replaced the one it handshook with.
 ///
