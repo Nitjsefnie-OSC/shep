@@ -150,12 +150,12 @@ Chocolatey and WinGet all install the Windows archive, so they ship it too.
 `cargo install shep` and the Homebrew formula are the two paths that still
 build without it: both compile from the crates.io tarball with plain cargo
 defaults, and `--features otel` is the way to have it there. The measured
-cost is 96,416 bytes per binary (macOS, Apple silicon, release profile,
+cost is 97,216 bytes per binary (macOS, Apple silicon, release profile,
 re-measured 2026-10-14 after the channel samples joined the export; it was
-78,960 before), under the 0.25 MiB ceiling the issue set; the `upload` job prints every
-binary's byte size on every leg, and a `workflow_dispatch` dry run (which
-builds the dispatching ref, not the tag) is how a branch measures a
-feature change on the real profile on every target before it ships.
+78,960 before), under the 0.25 MiB ceiling the issue set; the `upload` job
+prints every binary's byte size on every leg, and a `workflow_dispatch` dry
+run (which builds the dispatching ref, not the tag) is how a branch measures
+a feature change on the real profile on every target before it ships.
 
 **Use msvc for Windows, never gnu.** `x86_64-pc-windows-gnu` in this
 repository is `cargo check` only, cross-compiled from ubuntu, and has never

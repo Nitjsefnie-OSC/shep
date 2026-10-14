@@ -360,8 +360,8 @@ install-size method, 2026-10-14):
 | Build | `target/release/shep` |
 |---|---|
 | default | 19,069,728 bytes |
-| `--features otel` | 19,166,144 bytes |
-| delta | 96,416 bytes |
+| `--features otel` | 19,166,944 bytes |
+| delta | 97,216 bytes |
 
 ## The bark dog
 
