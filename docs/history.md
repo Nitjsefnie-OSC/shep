@@ -527,7 +527,10 @@ sub-table inside one (`web.dogs.kelpie.rulings`). The path is the same on
 both sides. A dog table merges by default, so a key only the target has
 survives, `--replace` makes the target exactly the source at that path, and
 `--except <key>` leaves one key out because shep cannot tell that a dog's
-`git.checkout` names one project's repo. `env`, `name`, `instances` and the
+`git.checkout` names one project's repo. A copy refuses when one side holds
+something that is not a table where the copy has to write through one, rather
+than turning that value into a table on the way to the key it was asked to
+write. `env`, `name`, `instances` and the
 whole `dogs` map are refused, the first because a client is never sent a
 sheep's env values and the rest because the shepherd refuses them too. The
 change list prints before anything is written, and the run asks before it

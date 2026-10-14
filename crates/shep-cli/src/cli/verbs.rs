@@ -399,7 +399,8 @@ pub enum Commands {
     /// target exactly the source at that path. `--except <key>` leaves one key
     /// out, named under the path you are copying: a dog's `git.checkout` names
     /// one project's repo, and shep cannot tell which of a dog's keys belong
-    /// to a sheep.
+    /// to a sheep. A copy refuses when one side holds something that is not a
+    /// table where the copy has to write through one.
     ///
     /// `env` and secrets are not copied: a client is never sent a sheep's env
     /// values, so there is nothing to read. `shep import env` writes a `.env`

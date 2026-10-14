@@ -155,7 +155,7 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
         Ok(config) => config,
         Err(code) => return code,
     };
-    let plan = match build_plan(&from, &except, args.replace, &source, &target) {
+    let plan = match build_plan(&from, &to, &except, args.replace, &source, &target) {
         Ok(plan) => plan,
         Err(refusal) => return refusal.report(streams),
     };
@@ -193,9 +193,28 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
              changes and write nothing",
         );
     }
-    if go == Go::Ask && !confirm(streams, &from.sheep, &to.sheep, &path, plan.changes.len()) {
-        streams.note("copy", "nothing was written");
-        return finish(streams, &report);
+    if go == Go::Ask {
+        let mut reader = std::io::stdin().lock();
+        match confirm(
+            streams,
+            &from.sheep,
+            &to.sheep,
+            &path,
+            plan.changes.len(),
+            &mut reader,
+        ) {
+            Answer::Yes => {}
+            Answer::No => {
+                streams.note("copy", "nothing was written");
+                return finish(streams, &report);
+            }
+            Answer::Failed(reason) => {
+                return streams.fail(
+                    ExitCode::Failure,
+                    &format!("nothing was written: the question could not be read ({reason})"),
+                );
+            }
+        }
     }
     if go == Go::DryRun {
         streams.note("dry_run", "nothing was written");
@@ -316,6 +335,7 @@ fn same_pair(from: &Address, to: &Address) -> Result<(), CopyRefusal> {
 /// [`plan::plan_dog`] refuses about the source.
 fn build_plan(
     from: &Address,
+    to: &Address,
     except: &[Vec<String>],
     replace: bool,
     source: &serde_json::Value,
@@ -331,9 +351,18 @@ fn build_plan(
             }
             Ok(plan::plan_field(name, source, target))
         }
-        ConfigPath::Dog { dog, keys } => {
-            plan::plan_dog(&from.sheep, dog, keys, except, replace, source, target)
-        }
+        ConfigPath::Dog { dog, keys } => plan::plan_dog(
+            plan::Sides {
+                source: &from.sheep,
+                target: &to.sheep,
+            },
+            dog,
+            keys,
+            except,
+            replace,
+            source,
+            target,
+        ),
     }
 }
 
@@ -380,21 +409,47 @@ fn print_changes(streams: &mut Streams<'_>, report: &CopyReport) -> Result<(), E
     .map_err(|_| ExitCode::Failure)
 }
 
-/// Asks the operator, and reports whether they said yes.
+/// What the operator answered, or why the answer could not be read.
+#[derive(Debug)]
+enum Answer {
+    /// `y` or `yes`.
+    Yes,
+    /// Anything else, including no answer at all.
+    No,
+    /// The read itself failed, which is not a refusal to answer.
+    Failed(String),
+}
+
+/// Asks the operator.
 ///
-/// The question goes on stderr so a piped stdout stays what it was, and an
-/// answer that is not `y` or `yes`, including no answer at all, is a no.
-fn confirm(streams: &mut Streams<'_>, from: &str, to: &str, path: &str, changes: usize) -> bool {
+/// The question goes on stderr so a piped stdout stays what it was. A read
+/// error is reported as one rather than folded into "no": an operator who
+/// never saw the question is not the same as one who said no to it.
+fn confirm(
+    streams: &mut Streams<'_>,
+    from: &str,
+    to: &str,
+    path: &str,
+    changes: usize,
+    reader: &mut dyn BufRead,
+) -> Answer {
     let question = format!(
         "copy {changes} change{} from `{from}` onto `{to}` at `{path}`? [y/N] ",
         if changes == 1 { "" } else { "s" }
     );
     streams.aside("confirm", &question);
     let mut answer = String::new();
-    if std::io::stdin().lock().read_line(&mut answer).unwrap_or(0) == 0 {
-        return false;
+    match reader.read_line(&mut answer) {
+        Ok(0) => Answer::No,
+        Ok(_) => {
+            if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+                Answer::Yes
+            } else {
+                Answer::No
+            }
+        }
+        Err(err) => Answer::Failed(err.to_string()),
     }
-    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
 /// Sends the plan's write, and reports which keys wait for a respawn.
@@ -497,7 +552,7 @@ mod tests {
         let to = address::parse(to, &flock())?;
         same_pair(&from, &to)?;
         let except = plan::except_paths(except)?;
-        build_plan(&from, &except, replace, &source, &target)
+        build_plan(&from, &to, &except, replace, &source, &target)
     }
 
     /// The table the plan would leave on the target, for a dog copy.
@@ -800,6 +855,59 @@ mod tests {
         .expect("`we.b` is a sheep name, dots and all");
         assert_eq!(plan.changes.len(), 1);
         assert_eq!(plan.changes[0].key, "decide");
+    }
+
+    /// A read failure is not an answer: an operator who never saw the question
+    /// is not one who said no to it.
+    #[test]
+    fn a_confirmation_read_failure_is_not_an_answer() {
+        use std::io::{Cursor, Error as IoError, ErrorKind};
+
+        struct Unreadable;
+        impl std::io::Read for Unreadable {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(IoError::new(ErrorKind::BrokenPipe, "stdin is gone"))
+            }
+        }
+        impl BufRead for Unreadable {
+            fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+                Err(IoError::new(ErrorKind::BrokenPipe, "stdin is gone"))
+            }
+            fn consume(&mut self, _len: usize) {}
+        }
+
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let mut streams = crate::output::Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        let mut ask = |reader: &mut dyn BufRead| {
+            confirm(&mut streams, "web", "api", "dogs.kelpie", 2, reader)
+        };
+
+        let mut broken = Unreadable;
+        let Answer::Failed(reason) = ask(&mut broken) else {
+            panic!("a failed read is not an answer");
+        };
+        assert!(reason.contains("stdin is gone"), "{reason}");
+
+        let mut yes = Cursor::new(b"y\n".as_slice());
+        assert!(matches!(ask(&mut yes), Answer::Yes));
+        let mut maybe = Cursor::new(b"maybe\n".as_slice());
+        assert!(matches!(ask(&mut maybe), Answer::No));
+        let mut silent = Cursor::new(b"".as_slice());
+        assert!(matches!(ask(&mut silent), Answer::No));
+
+        let asked = String::from_utf8(err).unwrap();
+        assert_eq!(
+            asked.matches("[y/N]").count(),
+            4,
+            "every one of them was asked the same question, on stderr"
+        );
+        assert!(asked.contains("copy 2 changes from `web` onto `api` at `dogs.kelpie`?"));
     }
 
     /// A copy onto itself cannot differ, and saying so beats an empty table.

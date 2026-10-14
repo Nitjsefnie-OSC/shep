@@ -105,6 +105,15 @@ pub(crate) fn plan_field(field: &str, source: &Value, target: &Value) -> Plan {
     }
 }
 
+/// The two sheep one copy runs between, for the messages that name a path.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Sides<'a> {
+    /// The sheep the values come from.
+    pub(crate) source: &'a str,
+    /// The sheep the values land on.
+    pub(crate) target: &'a str,
+}
+
 /// The plan for one dog's table, or one key inside it.
 ///
 /// `keys` is the path under the dog's table, empty for the whole table.
@@ -112,9 +121,12 @@ pub(crate) fn plan_field(field: &str, source: &Value, target: &Value) -> Plan {
 ///
 /// # Errors
 /// [`CopyRefusal::MissingSource`] when the source sheep has no table for the
-/// dog, or no key at `keys`.
+/// dog, or no key at `keys`. [`CopyRefusal::Refused`] when a side holds
+/// something that is not a table where the copy has to write through one.
+/// [`CopyRefusal::Usage`] for an `--except` that descends into a value the
+/// source does not hold as a table.
 pub(crate) fn plan_dog(
-    source_sheep: &str,
+    sides: Sides<'_>,
     dog: &str,
     keys: &[String],
     except: &[Vec<String>],
@@ -122,6 +134,10 @@ pub(crate) fn plan_dog(
     source: &Value,
     target: &Value,
 ) -> Result<Plan, CopyRefusal> {
+    let Sides {
+        source: from,
+        target: to,
+    } = sides;
     let source_table = dogs_of(source).and_then(|dogs| dogs.get(dog));
     let source_here = if keys.is_empty() {
         source_table
@@ -132,16 +148,17 @@ pub(crate) fn plan_dog(
         return Err(if source_table.is_none() {
             CopyRefusal::MissingSource(format!(
                 "no `{}.dogs.{dog}`: that sheep has no table for the dog `{dog}`",
-                source_sheep
+                from
             ))
         } else {
             CopyRefusal::MissingSource(format!(
                 "no `{}` under `{}.dogs.{dog}`",
                 keys.join("."),
-                source_sheep
+                from
             ))
         });
     };
+    check_except(source_here, &format!("{from}.dogs.{dog}"), except)?;
 
     let before = Value::Object(
         dogs_of(target)
@@ -152,12 +169,32 @@ pub(crate) fn plan_dog(
     );
     let mut after = before.clone();
     if keys.is_empty() {
-        let merged = merge(Some(&after), source_here, replace, except);
-        after = merged;
+        after = merge(Some(&after), source_here, replace, except)?;
     } else {
-        let merged = merge(walk(&after, keys), source_here, replace, except);
-        set_path(&mut after, keys, merged);
+        let merged = merge(walk(&after, keys), source_here, replace, except)?;
+        set_path(&mut after, keys, merged).map_err(|held| {
+            let at = if held.is_empty() {
+                format!("{to}.dogs.{dog}")
+            } else {
+                format!("{to}.dogs.{dog}.{held}")
+            };
+            CopyRefusal::Refused(format!(
+                "`{at}` holds a value that is not a table, and a copy onto `{}` would replace it",
+                keys.join(".")
+            ))
+        })?;
     }
+
+    // A dog table is a table by construction, so this is the shape check that
+    // keeps a plan from naming changes it cannot write. `Write::DogTable` is
+    // the whole table, and a whole table that is not one is refused here
+    // rather than turned into a write of nothing later.
+    let Some(table) = after.as_object().cloned() else {
+        return Err(CopyRefusal::Refused(format!(
+            "`{from}.dogs.{dog}` holds a value that is not a table, so there is no table to copy \
+             onto `{to}`"
+        )));
+    };
 
     let before_here: Option<&Value> = if keys.is_empty() {
         Some(&before)
@@ -171,27 +208,24 @@ pub(crate) fn plan_dog(
     };
 
     let mut changes = Vec::new();
-    let root = if after_here.is_some_and(Value::is_object) {
-        String::new()
-    } else {
-        keys.last()
-            .map(String::as_str)
-            .unwrap_or_default()
-            .to_string()
-    };
-    collect_changes(before_here, after_here, &root, &mut changes);
+    collect_changes(before_here, after_here, "", &mut changes);
+    if let Some(last) = keys.last() {
+        // The copied path itself is not a table on both sides, so the diff
+        // reports it as one change. It is named by the path the operator
+        // typed, not by the blank its children are named under.
+        for change in &mut changes {
+            if change.key.is_empty() {
+                change.key = last.clone();
+            }
+        }
+    }
 
-    let write = (!changes.is_empty()).then(|| {
-        after.as_object().cloned().map(|table| Write::DogTable {
-            dog: dog.to_string(),
-            table: DogTable::from(table),
-        })
+    let write = (!changes.is_empty()).then(|| Write::DogTable {
+        dog: dog.to_string(),
+        table: DogTable::from(table),
     });
 
-    Ok(Plan {
-        changes,
-        write: write.flatten(),
-    })
+    Ok(Plan { changes, write })
 }
 
 /// The `--except` arguments, as key paths under the copied path.
@@ -230,22 +264,84 @@ fn walk<'a>(root: &'a Value, keys: &[String]) -> Option<&'a Value> {
 }
 
 /// Writes `value` at `keys` under `root`, creating the tables on the way.
-fn set_path(root: &mut Value, keys: &[String], value: Value) {
+///
+/// `Err(held)` names the dotted path, under `root`, of the value this write
+/// would have to turn into a table. Writing through a scalar or an array is a
+/// change to that value, and the caller reports it or refuses it rather than
+/// making it on the way to the key it was asked to write.
+fn set_path(root: &mut Value, keys: &[String], value: Value) -> Result<(), String> {
+    write_at(root, keys, "", value)
+}
+
+/// [`set_path`] with the path it has walked so far, for the error's name.
+fn write_at(root: &mut Value, keys: &[String], held: &str, value: Value) -> Result<(), String> {
     let Some((head, rest)) = keys.split_first() else {
         *root = value;
-        return;
+        return Ok(());
     };
-    if !root.is_object() {
-        *root = Value::Object(Map::new());
-    }
-    // The line above is what makes this the only reachable arm.
     let Some(map) = root.as_object_mut() else {
-        return;
+        return Err(held.to_string());
     };
-    let entry = map
-        .entry(head.clone())
-        .or_insert_with(|| Value::Object(Map::new()));
-    set_path(entry, rest, value);
+    if !map.contains_key(head) {
+        map.insert(head.clone(), Value::Object(Map::new()));
+    }
+    let Some(child) = map.get_mut(head) else {
+        return Err(held.to_string());
+    };
+    let walked = if held.is_empty() {
+        head.clone()
+    } else {
+        format!("{held}.{head}")
+    };
+    write_at(child, rest, &walked, value)
+}
+
+/// Whether every step an `--except` descends through is a table on the source
+/// side.
+///
+/// An `--except` prunes the value it names out of what the copy brings over.
+/// A scalar or an array at one of its steps holds no key to prune, so the
+/// copy would overwrite that value whole while reporting only the excepted
+/// key, which is the opposite of what the flag says.
+///
+/// `path` is the copied path, for the message.
+///
+/// # Errors
+/// [`CopyRefusal::Usage`] naming the spec and the value it stops at.
+fn check_except(
+    source_here: &Value,
+    path: &str,
+    except: &[Vec<String>],
+) -> Result<(), CopyRefusal> {
+    for spec in except {
+        let mut node = source_here;
+        let mut walked: Vec<&str> = Vec::new();
+        for key in &spec[..spec.len() - 1] {
+            let next = node.as_object().and_then(|map| map.get(key));
+            match next {
+                Some(child) => {
+                    node = child;
+                    walked.push(key);
+                }
+                // The source says nothing at this step, so it has nothing to
+                // prune here either, and the target's own value is what
+                // reaches the copy.
+                None => break,
+            }
+        }
+        if !node.is_object() {
+            let at = if walked.is_empty() {
+                path.to_string()
+            } else {
+                format!("{path}.{}", walked.join("."))
+            };
+            return Err(CopyRefusal::Usage(format!(
+                "`--except {}` cannot be honored: `{at}` holds a value that is not a table",
+                spec.join(".")
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Removes `keys` from `root`, if it is there.
@@ -274,20 +370,42 @@ fn remove_path(root: &mut Value, keys: &[String]) {
 ///
 /// `except` are paths under this node. One that names this node's own key is
 /// handled by the caller that recursed here.
-fn merge(target: Option<&Value>, source: &Value, replace: bool, except: &[Vec<String>]) -> Value {
+///
+/// # Errors
+/// Whatever [`set_path`] refuses for a `--except` restoration under `replace`.
+fn merge(
+    target: Option<&Value>,
+    source: &Value,
+    replace: bool,
+    except: &[Vec<String>],
+) -> Result<Value, CopyRefusal> {
     if replace {
         let mut out = source.clone();
         for path in except {
             remove_path(&mut out, path);
             if let Some(value) = target.and_then(|held| walk(held, path)) {
-                set_path(&mut out, path, value.clone());
+                set_path(&mut out, path, value.clone()).map_err(|held| {
+                    CopyRefusal::Refused(format!(
+                        "`{held}` under the copied path holds a value that is not a table, so \
+                         `--except {}` has nowhere to put the target's own value back",
+                        path.join(".")
+                    ))
+                })?;
             }
         }
-        return out;
+        return Ok(out);
     }
-    let (Some(Value::Object(target_map)), Value::Object(source_map)) = (target, source) else {
-        return source.clone();
+    let Some(source_map) = source.as_object() else {
+        // The source's value here is one value rather than a table, and it
+        // replaces whatever the target holds. An `--except` descending into it
+        // was refused by `check_except`, so nothing is being dropped here.
+        return Ok(source.clone());
     };
+    // A target holding a scalar here contributes no keys to keep, and a
+    // target holding nothing at all still has its keys pruned out of the
+    // source's table rather than copied in beside them.
+    let empty = Map::new();
+    let target_map = target.and_then(Value::as_object).unwrap_or(&empty);
     let mut out = target_map.clone();
     for (key, value) in source_map {
         let nested = nested_excepts(except, key);
@@ -296,10 +414,10 @@ fn merge(target: Option<&Value>, source: &Value, replace: bool, except: &[Vec<St
         }
         out.insert(
             key.clone(),
-            merge(target_map.get(key), value, false, &nested),
+            merge(target_map.get(key), value, false, &nested)?,
         );
     }
-    Value::Object(out)
+    Ok(Value::Object(out))
 }
 
 /// The `--except` paths that live under `key`, with `key` off the front.
@@ -388,13 +506,21 @@ mod tests {
         json!({ "dogs": { "kelpie": map } })
     }
 
+    /// The two sheep every plan test names.
+    fn sides() -> Sides<'static> {
+        Sides {
+            source: "shep",
+            target: "api",
+        }
+    }
+
     /// The keys a plan reports are the keys under the path the operator named.
     #[test]
     fn a_deep_path_reports_its_keys_under_itself() {
         let source = json!({ "dogs": { "kelpie": { "rulings": { "panel": "panel" } } } });
         let target = json!({ "dogs": { "kelpie": { "rulings": { "panel": "issue" } } } });
         let plan = plan_dog(
-            "shep",
+            sides(),
             "kelpie",
             &["rulings".to_string()],
             &[],
@@ -407,13 +533,117 @@ mod tests {
         assert_eq!(plan.changes[0].key, "panel");
     }
 
+    /// A copied path that is a table on one side and not on the other is one
+    /// change, and it carries the name the operator typed.
+    #[test]
+    fn a_path_that_stops_being_a_table_is_named_by_that_path() {
+        let source = json!({ "dogs": { "kelpie": { "rulings": { "decide": "panel" } } } });
+        let target = json!({ "dogs": { "kelpie": { "rulings": "yes" } } });
+        let plan = plan_dog(
+            sides(),
+            "kelpie",
+            &["rulings".to_string()],
+            &[],
+            false,
+            &source,
+            &target,
+        )
+        .unwrap();
+        assert_eq!(plan.changes.len(), 1);
+        assert_eq!(
+            plan.changes[0].key, "rulings",
+            "the change list names the path it replaces rather than a blank"
+        );
+        assert_eq!(plan.changes[0].old, Some(json!("yes")));
+        assert_eq!(plan.changes[0].new, Some(json!({ "decide": "panel" })));
+
+        let other = plan_dog(
+            sides(),
+            "kelpie",
+            &["rulings".to_string()],
+            &[],
+            false,
+            &target,
+            &source,
+        )
+        .unwrap();
+        assert_eq!(other.changes[0].key, "rulings");
+        assert_eq!(other.changes[0].kind, ChangeKind::Changed);
+    }
+
+    /// A copy that would have to write through a value that is not a table is
+    /// refused, not made.
+    #[test]
+    fn a_copy_into_a_value_that_is_not_a_table_is_refused() {
+        let source = json!({ "dogs": { "kelpie": { "rulings": { "panel": "panel" } } } });
+        let target = json!({ "dogs": { "kelpie": { "rulings": "yes" } } });
+        let err = plan_dog(
+            sides(),
+            "kelpie",
+            &["rulings".to_string(), "panel".to_string()],
+            &[],
+            false,
+            &source,
+            &target,
+        )
+        .expect_err("`rulings` is a scalar on the target");
+        assert_eq!(
+            err,
+            CopyRefusal::Refused(
+                "`api.dogs.kelpie.rulings` holds a value that is not a table, and a copy onto \
+                 `rulings.panel` would replace it"
+                    .to_string()
+            ),
+            "{err}"
+        );
+    }
+
+    /// An `--except` that descends into a value the source does not hold as a
+    /// table cannot be honored, and saying so beats overwriting it quietly.
+    #[test]
+    fn an_except_that_descends_into_a_non_table_is_refused() {
+        let source = json!({ "dogs": { "kelpie": { "git": "origin" } } });
+        let target = json!({ "dogs": { "kelpie": { "git": { "checkout": "./mine" } } } });
+        let except = [vec!["git".to_string(), "checkout".to_string()]];
+        let err = plan_dog(sides(), "kelpie", &[], &except, false, &source, &target)
+            .expect_err("the source's `git` is a string");
+        assert_eq!(
+            err,
+            CopyRefusal::Usage(
+                "`--except git.checkout` cannot be honored: `shep.dogs.kelpie.git` holds a value \
+                 that is not a table"
+                    .to_string()
+            ),
+            "{err}"
+        );
+    }
+
+    /// An `--except` whose parent the target lacks still prunes the key out of
+    /// what the source brings over.
+    #[test]
+    fn an_except_prunes_a_key_from_a_table_the_target_does_not_have() {
+        let source = table(&[("git", json!({ "checkout": "./src", "remote": "origin" }))]);
+        let target = table(&[("watch", json!(true))]);
+        let except = [vec!["git".to_string(), "checkout".to_string()]];
+        let plan = plan_dog(sides(), "kelpie", &[], &except, false, &source, &target).unwrap();
+        let Write::DogTable { table, .. } = plan.write.unwrap() else {
+            panic!("a dog copy writes a dog table");
+        };
+        assert_eq!(
+            table.as_map()["git"],
+            json!({ "remote": "origin" }),
+            "`git.checkout` is not copied in just because the target has no `git`"
+        );
+        assert_eq!(table.as_map()["watch"], json!(true));
+    }
+
     #[test]
     fn a_nested_table_merges_and_an_array_overwrites_whole() {
         let source =
             json!({ "dogs": { "kelpie": { "limits": { "a": 1, "b": 2 }, "tags": ["x", "y"] } } });
         let target =
             json!({ "dogs": { "kelpie": { "limits": { "b": 9, "c": 3 }, "tags": ["z"] } } });
-        let plan = plan_dog("shep", "kelpie", &[], &[], false, &source, &target).unwrap();
+        let plan = plan_dog(sides(), "kelpie", &[], &[], false, &source, &target).unwrap();
         let keys: Vec<&str> = plan.changes.iter().map(|c| c.key.as_str()).collect();
         assert_eq!(keys, ["limits.a", "limits.b", "tags"]);
         let Write::DogTable { table, .. } = plan.write.unwrap() else {
@@ -435,7 +665,7 @@ mod tests {
     fn a_table_merges_key_by_key_and_keeps_what_only_the_target_has() {
         let source = table(&[("git", json!({ "checkout": "./src", "remote": "origin" }))]);
         let target = table(&[("git", json!({ "checkout": "./other", "own": "keep" }))]);
-        let plan = plan_dog("shep", "kelpie", &[], &[], false, &source, &target).unwrap();
+        let plan = plan_dog(sides(), "kelpie", &[], &[], false, &source, &target).unwrap();
         let keys: Vec<&str> = plan.changes.iter().map(|c| c.key.as_str()).collect();
         assert_eq!(keys, ["git.checkout", "git.remote"]);
         let Write::DogTable { table, .. } = plan.write.unwrap() else {
@@ -453,7 +683,7 @@ mod tests {
         let target = table(&[("git", json!({ "checkout": "./other" }))]);
         let except = [vec!["git".to_string(), "checkout".to_string()]];
 
-        let merged = plan_dog("shep", "kelpie", &[], &except, false, &source, &target).unwrap();
+        let merged = plan_dog(sides(), "kelpie", &[], &except, false, &source, &target).unwrap();
         let Write::DogTable { table, .. } = merged.write.unwrap() else {
             panic!("a dog copy writes a dog table");
         };
@@ -462,7 +692,7 @@ mod tests {
             json!({ "checkout": "./other", "remote": "origin" })
         );
 
-        let replaced = plan_dog("shep", "kelpie", &[], &except, true, &source, &target).unwrap();
+        let replaced = plan_dog(sides(), "kelpie", &[], &except, true, &source, &target).unwrap();
         let Write::DogTable { table, .. } = replaced.write.unwrap() else {
             panic!("a dog copy writes a dog table");
         };
