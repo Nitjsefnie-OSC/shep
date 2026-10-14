@@ -13,8 +13,10 @@ use shep_core::protocol::{BusEvent, ProcessEventKind, Response};
 
 /// Every `stream.next()` in this file is wrapped in this bound so a broken
 /// implementation fails with a named assertion instead of hanging the test
-/// run.
-const EVENT_TIMEOUT: Duration = Duration::from_secs(1);
+/// run. 5 s matches `reconnect/testing.rs` `BOUND`: generous against a
+/// loaded CI runner, small enough that a genuinely stuck test fails rather
+/// than hanging the suite.
+const EVENT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The next event, or a named panic for each of the three ways there is
 /// not one: the stream hangs, it ends, or it reports a lag.
