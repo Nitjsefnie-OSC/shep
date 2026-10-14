@@ -10,12 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.13.1] - 2026-10-14
+## [0.14.0] - 2026-10-14
 
 ### Added
 
 - Disabling a dog stops it and keeps it listed
 - Refuse to delete a built-in dog, in the shepherd
+- A wildcard passes a disabled sheep by and enable sweeps only disabled ones
+- Enable and disable take a fold, a regex or all, and CLI sweeps pass a disabled sheep by
+- List every known dog at rest **(BREAKING)**
+- Re-fire config.dog.<name> when secrets.json changes a value a dog names
+- Wildcards pass a disabled sheep by, and enable and disable take any selector
+- A handover leaves a disabled dog behind
+- Delete removes a dog for good
+- A handover leaves a parked dog behind
 
 ### Fixed
 
@@ -23,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refuse a new sheep named after a dog
 - A saved sheep keeps its name against a dog at boot
 - A handover carries every dog that holds a process
+- A repeated disable sweep succeeds and the log verbs still reach a disabled sheep
+- Leave a dog that ran and stopped stopped on a second start
+- Read the secret store again after a failed read, and stamp its inode and change time
+- Dog names hold across an upgrade
 
 
 ## [0.13.0] - 2026-10-13
