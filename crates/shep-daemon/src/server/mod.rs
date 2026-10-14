@@ -13,6 +13,7 @@
 //! [`check_peer`](peer_auth::check_peer) is the only genuine platform difference left.
 //! [`RpcServer`]'s doc is the daemon's security writeup.
 
+mod accept_backoff;
 mod conn_protocol;
 mod peer_auth;
 mod server_lifecycle;
