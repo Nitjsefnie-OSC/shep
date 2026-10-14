@@ -33,6 +33,10 @@ pub enum FieldKind {
     Bool,
     /// `type: integer`. Typed.
     Integer,
+    /// `type: number`, `format: double` or not. Typed, and filed as a float:
+    /// the dog reads the type its own schema names. A whole number typed into
+    /// one is filed as a float for the same reason.
+    Number,
     /// `type: string`, or a `$ref` that resolves to one. Typed.
     Text,
     /// A closed set: `enum`, or `oneOf` of `const`s. Cycles.

@@ -1,9 +1,9 @@
-//! Test fixtures shared by this module's two halves.
+//! Test fixtures shared by this module's halves.
 //!
-//! One place rather than one copy each: [`super::refusal`]'s tests and
-//! [`super::forms`]'s both need a `Field` with exactly one member set, and
-//! a helper that drifts between two copies is a test that passes for the
-//! wrong reason.
+//! One place rather than one copy each: [`super::refusal`]'s tests, [`super::numbers`]'s,
+//! [`super::patterns`]'s and [`super::forms`]'s all need a `Field` with exactly one
+//! member set, and a helper that drifts between two copies is a test that
+//! passes for the wrong reason.
 
 use super::super::field::{Bounds, Field, FieldKind};
 

@@ -158,6 +158,7 @@ pub(super) fn kind_of(schema: &Value, defs: &Map<String, Value>) -> FieldKind {
     match type_of(schema) {
         Some("boolean") => FieldKind::Bool,
         Some("integer") => FieldKind::Integer,
+        Some("number") => FieldKind::Number,
         Some("string") => FieldKind::Text,
         // An array of anything else stays `Opaque`, which is what keeps an
         // array of nested objects read-only rather than half-editable. So
@@ -351,6 +352,46 @@ mod tests {
         assert_eq!(set.by_key("watch").unwrap().kind, FieldKind::Bool);
         assert_eq!(set.by_key("max_restarts").unwrap().kind, FieldKind::Integer);
         assert_eq!(set.by_key("cwd").unwrap().kind, FieldKind::Text);
+    }
+
+    /// A decimal field is a widget the pane can type into, not a row drawn as
+    /// JSON. `shep-kelpie`'s `budget.per_item_usd` is one: `type: number`,
+    /// `format: double`, `exclusiveMinimum: 0`, a money cap an operator could
+    /// otherwise only change by hand in `dogs.toml`.
+    #[test]
+    fn a_number_is_a_number_whatever_way_the_schema_spells_it() {
+        let defs = props(json!({
+            "Money": { "type": "number", "format": "double" },
+            "MaybeMoney": { "anyOf": [{ "$ref": "#/$defs/Money" }, { "type": "null" }] },
+        }));
+        let p = props(json!({
+            "per_item_usd": { "type": "number", "format": "double", "exclusiveMinimum": 0 },
+            "ratio": { "type": ["number", "null"] },
+            "cap": { "$ref": "#/$defs/Money" },
+            "optional_cap": { "$ref": "#/$defs/MaybeMoney" },
+        }));
+        let set = FieldSet::from_properties(&p, &defs, &[]);
+        for key in ["per_item_usd", "ratio", "cap", "optional_cap"] {
+            let field = set.by_key(key).expect(key);
+            assert_eq!(field.kind, FieldKind::Number, "{key}");
+            assert!(field.editable, "{key} is read-only");
+        }
+    }
+
+    /// A list of decimals keeps the read-only row it has always had: the list
+    /// sub-screen parses an element as a string, an integer or a name, and has
+    /// no float element to file.
+    #[test]
+    fn a_list_of_numbers_stays_opaque() {
+        let defs = Map::new();
+        for items in [
+            json!({ "type": "number" }),
+            json!({ "type": ["number", "null"] }),
+            json!({ "anyOf": [{ "type": "number" }, { "type": "null" }] }),
+        ] {
+            let schema = json!({ "type": "array", "items": items });
+            assert_eq!(kind_of(&schema, &defs), FieldKind::Opaque, "{schema}");
+        }
     }
 
     #[test]

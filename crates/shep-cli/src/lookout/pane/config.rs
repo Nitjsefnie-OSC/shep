@@ -462,6 +462,7 @@ impl ConfigPane {
                     leaf.field.kind,
                     FieldKind::Bool
                         | FieldKind::Integer
+                        | FieldKind::Number
                         | FieldKind::Text
                         | FieldKind::Choice(_)
                         | FieldKind::Suggested(_)
