@@ -263,7 +263,8 @@ decision for you by shipping wide and asking you to lock it down.
 
 A sheep or a dog can send its own numbers on its shepherd channel, and the
 metrics dog keeps them and appends them to every scrape, after the groups
-above. See `docs/shepherd-channel.md` for what to write on fd 3.
+above, and to every OTLP export. See `docs/shepherd-channel.md` for what to
+write on fd 3.
 
 Your samples carry the same sender labels the built-in series carry: a sheep
 gets `sheep`, `id` and `fold`, a dog gets `dog` and `source`. Your own labels
