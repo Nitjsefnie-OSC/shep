@@ -122,10 +122,8 @@ mod tests {
     /// reports collected in the returned [`Lines`].
     fn clock_with(source: impl FnMut() -> SystemTime + Send + 'static) -> (Clock, Lines) {
         let lines = Lines::default();
-        let sink = {
-            let lines = Arc::clone(&lines);
-            move |line: &str| lines.lock().unwrap().push(line.to_owned())
-        };
+        let reported = Arc::clone(&lines);
+        let sink = move |line: &str| reported.lock().unwrap().push(line.to_owned());
         (Clock::new(source, sink), lines)
     }
 
