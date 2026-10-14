@@ -768,6 +768,14 @@ arm of the boot uses; and guards that the fixture directory and the list of
 tags in that file are the same set. Nothing blesses or regenerates a fixture:
 that is the bug these exist to catch.
 
+The mutation check this entry asks for, run against `pending_delete` renamed
+to `pending_removed`: it failed each of the ten fixtures that carry the key,
+`compat`'s own `a_blob_written_before_pending_delete_was_carried_still_loads`
+(it removes the key by name and asserts the removal found one), and the `Debug`
+redaction case. The nine other `a_blob_written_before_*` cases passed unchanged,
+which is the nine this entry predicted, and the one that failed is the one that
+names the field by hand.
+
 Tracked as https://github.com/shep-pm/shep/issues/358.
 
 ### ~~The bark dog still restarts once per reload~~ -- done, 2026-09-13

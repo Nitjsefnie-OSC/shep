@@ -63,6 +63,9 @@ first release that used the crate.
 Two shapes are worth naming because they are the ones a reader would not guess:
 
 - `increment_var` is in every blob from v0.1.18 through v0.7.4 and has no
-  field in today's `AppConfig`. The v0.1.18 fixture is the one that holds it.
+  field in today's `AppConfig`. Eight of these twelve fixtures hold it, as
+  `null`: v0.1.18, v0.1.20, v0.1.21, v0.1.22, v0.1.23, v0.1.30, v0.5.0 and
+  v0.6.2. `old_blobs.rs` checks that list against the bytes rather than
+  trusting it.
 - `shep-daemon-v0.8.0` is the first blob without it, so it is a distinct shape
   rather than v0.7.4's with one key missing.
