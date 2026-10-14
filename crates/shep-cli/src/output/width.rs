@@ -202,8 +202,11 @@ mod tests {
     fn text_columns_counts_a_wide_character_as_two_and_an_escape_as_its_characters() {
         assert_eq!(text_columns("羊"), 2, "columns, not chars");
         assert_eq!(text_columns("cafe\u{301}"), 4, "the mark rides for free");
-        // 6, not 7: the escape's own characters count, and the `\x1b` among
-        // them is `Cc` and measures zero like any other control character.
+        // 6, not 7: `char_columns` charges the `Cc` introducer nothing, and
+        // `ratatui`'s `Buffer::set_stringn` drops every grapheme that
+        // `contains(char::is_control)` before it measures, so the six
+        // columns `[31mab` draws are the whole string's cost.
+        assert_eq!(char_columns('\u{1b}'), 0, "the introducer is Cc");
         assert_eq!(text_columns("\u{1b}[31mab"), 6);
         assert_eq!(visible_width("\u{1b}[31mab"), 2, "the other measure");
     }
