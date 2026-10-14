@@ -48,11 +48,26 @@ const V0_12_0: &str = "shep-daemon-v0.12.0";
 /// Added `disabled`.
 const V0_13_0: &str = "shep-daemon-v0.13.0";
 
-/// Every fixture, oldest first. Each entry is the first `shep-daemon-v*` tag
-/// that wrote the shape its file holds.
-const WRITERS: [&str; 12] = [
-    V0_1_18, V0_1_20, V0_1_21, V0_1_22, V0_1_23, V0_1_30, V0_5_0, V0_6_2, V0_8_0, V0_11_0, V0_12_0,
-    V0_13_0,
+/// Every fixture, oldest first, with the test that loads it. Each tag is the
+/// first `shep-daemon-v*` tag that wrote the shape its file holds.
+///
+/// The pairing is the guard, not a table of convenience: a per-fixture test
+/// deleted from this file breaks it at compile time, so the guard below cannot
+/// pass with a committed blob nothing loads. Each entry names its own test, and
+/// each test reads only the fixture its tag names.
+const LOADERS: [(&str, fn()); 12] = [
+    (V0_1_18, a_blob_from_shep_daemon_v0_1_18_still_loads),
+    (V0_1_20, a_blob_from_shep_daemon_v0_1_20_still_loads),
+    (V0_1_21, a_blob_from_shep_daemon_v0_1_21_still_loads),
+    (V0_1_22, a_blob_from_shep_daemon_v0_1_22_still_loads),
+    (V0_1_23, a_blob_from_shep_daemon_v0_1_23_still_loads),
+    (V0_1_30, a_blob_from_shep_daemon_v0_1_30_still_loads),
+    (V0_5_0, a_blob_from_shep_daemon_v0_5_0_still_loads),
+    (V0_6_2, a_blob_from_shep_daemon_v0_6_2_still_loads),
+    (V0_8_0, a_blob_from_shep_daemon_v0_8_0_still_loads),
+    (V0_11_0, a_blob_from_shep_daemon_v0_11_0_still_loads),
+    (V0_12_0, a_blob_from_shep_daemon_v0_12_0_still_loads),
+    (V0_13_0, a_blob_from_shep_daemon_v0_13_0_still_loads),
 ];
 
 /// The keys every blob in this set has at the top level, from the first
@@ -159,6 +174,14 @@ fn assert_the_plain_flock(blob: &Handover) {
     assert_eq!(sheep.credentials(), SpawnIdentity::Resolved(None));
     assert_eq!(sheep.app().name, "web");
     assert_eq!(sheep.app().script, "./srv");
+    assert_eq!(
+        blob.listener_fd, 3,
+        "the control listener descriptor every one of these samples carried"
+    );
+    assert_eq!(
+        blob.pidfile_fd, 4,
+        "the pidfile lock descriptor every one of these samples carried"
+    );
     assert_eq!(
         blob.counters(),
         Counters {
@@ -425,8 +448,8 @@ fn a_blob_from_shep_daemon_v0_8_0_still_loads() {
     );
 
     // The key this release added, and the one it dropped. A blob from the
-    // release before still carries `increment_var`, which is what the v0.1.18
-    // fixture holds.
+    // release before still carries `increment_var`, which eight fixtures from
+    // v0.1.18 through v0.6.2 hold.
     let app = &raw["sheep"][0]["app"];
     assert_eq!(app["level_rules"], serde_json::json!([]));
     assert!(app.get("increment_var").is_none());
@@ -522,9 +545,29 @@ fn the_oldest_blob_loads_through_the_legacy_read_path() {
     assert_nothing_marked(&blob);
 }
 
-/// The set of fixtures and the set of tags this file tests are one set. A file
-/// with no test is an old blob nothing checks; a test naming a file that is
-/// not there is a claim about bytes that do not exist.
+/// Which fixtures carry `increment_var`, the `AppConfig` key v0.8.0 dropped
+/// and this image has no field for at all. Every blob from v0.1.18 through
+/// v0.7.4 wrote it, so eight of these twelve hold it, as `null`. The list is
+/// here rather than only in `fixtures/handover/README.md` because swapping one
+/// fixture for another release's bytes is otherwise silent.
+#[test]
+fn the_dropped_app_config_key_is_in_the_fixtures_that_wrote_it() {
+    const WROTE_IT: [&str; 8] = [
+        V0_1_18, V0_1_20, V0_1_21, V0_1_22, V0_1_23, V0_1_30, V0_5_0, V0_6_2,
+    ];
+    for (tag, _) in LOADERS {
+        let app = &fixture_value(tag)["sheep"][0]["app"];
+        assert_eq!(
+            app.get("increment_var").is_some(),
+            WROTE_IT.contains(&tag),
+            "{tag} and this file disagree about who wrote `increment_var`"
+        );
+    }
+}
+
+/// The fixtures on disk and the tags [`LOADERS`] pairs with tests are one set.
+/// A tag with no test is a compile error in that table; a tag with no file is
+/// a claim about bytes that do not exist, which is what this case catches.
 #[test]
 fn every_fixture_has_a_test_and_every_test_has_a_fixture() {
     let mut on_disk: Vec<String> = std::fs::read_dir(fixtures_dir())
@@ -540,7 +583,7 @@ fn every_fixture_has_a_test_and_every_test_has_a_fixture() {
         .collect();
     on_disk.sort();
 
-    let mut named: Vec<String> = WRITERS.iter().map(|tag| (*tag).to_owned()).collect();
+    let mut named: Vec<String> = LOADERS.iter().map(|(tag, _)| (*tag).to_owned()).collect();
     named.sort();
 
     assert_eq!(
@@ -554,7 +597,7 @@ fn every_fixture_has_a_test_and_every_test_has_a_fixture() {
 /// record of that machine, not of the release.
 #[test]
 fn no_fixture_carries_the_machine_that_dumped_it() {
-    for tag in WRITERS {
+    for (tag, _) in LOADERS {
         let text = std::fs::read_to_string(fixture_path(tag)).expect("the fixture is readable");
         assert!(
             !text.contains("/Users") && !text.contains("/home"),
