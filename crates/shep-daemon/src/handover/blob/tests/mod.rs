@@ -4,6 +4,10 @@
 //! key by key. The cases in this file are the round trip, the redaction that
 //! keeps a sheep's environment out of a `Debug` line, the `0600` the file
 //! reaches disk at, and the version gate.
+//!
+//! [`old_blobs`] is the half these cannot do: bytes a named release wrote,
+//! committed under `fixtures/handover/`, which a rename in this image cannot
+//! follow.
 
 use std::os::unix::fs::PermissionsExt;
 
@@ -14,6 +18,7 @@ use crate::testing::test_paths;
 
 mod compat;
 mod disabled;
+mod old_blobs;
 
 fn handover_over(entry: &ProcessEntry) -> Handover {
     Handover {
