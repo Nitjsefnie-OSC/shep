@@ -479,11 +479,23 @@ mod tests {
 
     /// The wire clears env before the struct is built, so no pane can show a
     /// value. This test exists so a later change that starts carrying them
-    /// fails here rather than shipping.
+    /// fails here rather than shipping, so it reads the two values
+    /// `web_view`'s fixture really holds: `db.internal` for `DB_HOST`,
+    /// `{{secret:API}}` for `API_KEY`.
+    ///
+    /// The two key rows after them are the positive control: without them, a
+    /// column that drew no env rows at all would pass the value assertions as
+    /// easily as a correct one.
     #[test]
     fn no_env_value_reaches_the_column() {
-        let rendered = env_rows_of(&web_view()).join("");
-        assert!(!rendered.contains("hunter2"), "{rendered:?}");
+        let rows = env_rows_of(&web_view());
+
+        let rendered = rows.join("");
+        assert!(!rendered.contains("db.internal"), "{rendered:?}");
+        assert!(!rendered.contains("{{secret:API}}"), "{rendered:?}");
+
+        assert!(row_for("DB_HOST", &rows).starts_with("DB_HOST"), "{rows:?}");
+        assert!(row_for("API_KEY", &rows).starts_with("API_KEY"), "{rows:?}");
     }
 
     /// A key the store fills renders sealed; a Flockfile key does not.
