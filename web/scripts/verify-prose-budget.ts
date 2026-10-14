@@ -60,7 +60,12 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 4450 on 2026-10-13 for `DogConfigResolved`: a dog author
   // has to be told which request resolves a `{{secret:...}}` and which
   // one still gives the text as written.
-  "writing-a-dog": 4470, // 4467
+  //
+  // Raised from 4470 for the config pane's bounds sentence: the pane now
+  // holds an integer to `exclusiveMinimum`/`exclusiveMaximum` too, and a
+  // range that admits nothing is said once, which is what a dog author
+  // publishing those keywords gets told about the editor.
+  "writing-a-dog": 4490, // 4484
   overrides: 3380, // 3250
   // Raised from 3240 on 2026-09-27 for "A sheep's dogs row": the sub-screen
   // and the per-sheep table pane are new operator-facing surface, not

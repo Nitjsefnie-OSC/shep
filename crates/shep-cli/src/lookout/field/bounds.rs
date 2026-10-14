@@ -41,13 +41,16 @@ pub struct Bounds {
     /// checked against it today: [`super::super::validation::refusal`] reads
     /// a scalar's `minLength` and enforces nothing with it.
     pub min_length: Option<usize>,
-    /// `minimum`, for a [`super::FieldKind::Integer`] field, normalised
-    /// to the smallest `i64` the schema accepts. shep-log-rotate's `keep`
-    /// publishes one for exactly this reason: without it the pane offers a
-    /// `keep = 0` the dog refuses on its next tick, in a file the operator
-    /// has already saved and moved on from.
+    /// `minimum` or `exclusiveMinimum`, whichever of the two is tighter,
+    /// normalised to the smallest `i64` the schema accepts. shep-log-rotate's
+    /// `keep` publishes one for exactly this reason: without it the pane offers
+    /// a `keep = 0` the dog refuses on its next tick, in a file the operator has
+    /// already saved and moved on from. An integer's strict floor is folded in
+    /// here rather than carried beside it, because the two spell one range, and
+    /// a gate that read only `minimum` filed a `0` under `exclusiveMinimum: 0`.
     pub minimum: Option<i64>,
-    /// `maximum`, normalised to the largest `i64` the schema accepts.
+    /// `maximum` or `exclusiveMaximum`, whichever is tighter, normalised to the
+    /// largest `i64` the schema accepts.
     pub maximum: Option<i64>,
     /// `minimum`, as the schema wrote it, for a [`super::FieldKind::Number`]
     /// field. Kept beside [`Self::minimum`] rather than in place of it: a
@@ -62,9 +65,10 @@ pub struct Bounds {
     /// field.
     pub number_maximum: Option<Number>,
     /// `exclusiveMinimum`, as written. JSON Schema's strict form of a floor,
-    /// and the one `shep-kelpie` publishes on `budget.per_item_usd`. Read for
-    /// a decimal field only: an integer's [`Self::minimum`] already carries
-    /// the rounding an exclusive bound would need.
+    /// and the one `shep-kelpie` publishes on `budget.per_item_usd`. Read for a
+    /// decimal field: an integer's [`Self::minimum`] already holds the same
+    /// keyword folded to the next integer up, and a decimal is held to the value
+    /// the schema named rather than to a rounding of it.
     pub number_exclusive_minimum: Option<Number>,
     /// `exclusiveMaximum`, as written. The strict ceiling, read for a decimal
     /// field only, for [`Self::number_exclusive_minimum`]'s reason.
@@ -84,6 +88,15 @@ pub struct Bounds {
     /// the floor and `3` for being over the ceiling, one sentence at a
     /// time, and never says that no answer exists.
     pub unsatisfiable: bool,
+    /// Whether the schema's own range admits no value at all, read from the four
+    /// decimal keywords as written.
+    ///
+    /// [`Self::unsatisfiable`] answers whether the range admits an *integer*,
+    /// which is the wrong question for a decimal field: `minimum: 1.2, maximum:
+    /// 1.8` admits no integer and admits `1.5`. This one is the field's own
+    /// emptiness, so `minimum: 2.5, maximum: 1.5` and `minimum: 5,
+    /// exclusiveMaximum: 5` are each said once as a field that takes no value.
+    pub number_unsatisfiable: bool,
     /// For an array field, what its `items` schema publishes, followed
     /// through a `$ref` and an `anyOf: [T, null]` exactly as a scalar's
     /// bounds are. [`None`] for a field that is not an array.
@@ -98,6 +111,11 @@ pub struct Bounds {
 /// forbids `0` and `maximum: 2.5` forbids `3`. The same four keywords are
 /// kept unnormalised beside them for a [`super::FieldKind::Number`] field,
 /// which is held to what the schema wrote rather than to a rounding of it.
+///
+/// `exclusiveMinimum` and `exclusiveMaximum` are read on the same two terms:
+/// folded into the integer pair at the next integer in, and kept as written for
+/// a decimal. A reader that took only `minimum` and `maximum` enforced nothing
+/// for `{"type": "integer", "exclusiveMinimum": 0}` and filed a `0`.
 ///
 /// Reading them with `as_i64` instead dropped both, and a dropped bound is
 /// an accepted keystroke: the pane filed a `0` its own schema forbade.
@@ -138,12 +156,45 @@ fn bounds_opening<'a>(
         .get("maximum")
         .and_then(Value::as_f64)
         .map(f64::floor);
-    let (floor, ceiling) = (minimum.and_then(as_bound), maximum.and_then(as_bound));
+    // The same two keywords spelled strict. For an integer they name a
+    // different end from the value they carry: the smallest integer above 0 is
+    // 1, the largest integer below 10 is 9. Folding them into the pair is what
+    // makes `{"type": "integer", "exclusiveMinimum": 0}` refuse a `0`, which
+    // reading only `minimum` did not.
+    let exclusive_minimum = schema
+        .get("exclusiveMinimum")
+        .and_then(Value::as_f64)
+        .map(|value| value.floor() + 1.0);
+    let exclusive_maximum = schema
+        .get("exclusiveMaximum")
+        .and_then(Value::as_f64)
+        .map(|value| value.ceil() - 1.0);
+    let (floor, ceiling) = (
+        tighter_floor(
+            minimum.and_then(as_bound),
+            exclusive_minimum.and_then(as_bound),
+        ),
+        tighter_ceiling(
+            maximum.and_then(as_bound),
+            exclusive_maximum.and_then(as_bound),
+        ),
+    );
     // The same keywords, unnormalised, for a field whose values are decimals.
     // A bound the schema wrote as a number is read as one here, so `minimum: 0`
     // and `minimum: 0.5` reach the gate as what they say, and a bound that is
     // not a number at all bounds nothing.
     let number_bound = |keyword: &str| schema.get(keyword).and_then(Value::as_number).cloned();
+    let (number_minimum, number_maximum) = (number_bound("minimum"), number_bound("maximum"));
+    let (number_exclusive_minimum, number_exclusive_maximum) = (
+        number_bound("exclusiveMinimum"),
+        number_bound("exclusiveMaximum"),
+    );
+    let number_holds_nothing = number_range_is_empty(
+        number_minimum.as_ref(),
+        number_maximum.as_ref(),
+        number_exclusive_minimum.as_ref(),
+        number_exclusive_maximum.as_ref(),
+    );
     Bounds {
         pattern: schema
             .get("pattern")
@@ -157,10 +208,10 @@ fn bounds_opening<'a>(
             .and_then(|count| usize::try_from(count).ok()),
         minimum: floor,
         maximum: ceiling,
-        number_minimum: number_bound("minimum"),
-        number_maximum: number_bound("maximum"),
-        number_exclusive_minimum: number_bound("exclusiveMinimum"),
-        number_exclusive_maximum: number_bound("exclusiveMaximum"),
+        number_minimum,
+        number_maximum,
+        number_exclusive_minimum,
+        number_exclusive_maximum,
         choices: schema
             .get("enum")
             .and_then(Value::as_array)
@@ -169,12 +220,63 @@ fn bounds_opening<'a>(
         // A bound past an `i64`'s reach is impossible in one direction and
         // says nothing in the other: a `minimum` above `i64::MAX` admits
         // nothing, while one below `i64::MIN` admits every integer there
-        // is, which is what `as_bound` already answered `None` for.
+        // is, which is what `as_bound` already answered `None` for. The two
+        // strict spellings are held to the same test, since a strict floor
+        // above `i64::MAX` admits nothing either.
         unsatisfiable: minimum.is_some_and(|value| value > i64::MAX as f64)
             || maximum.is_some_and(|value| value < i64::MIN as f64)
+            || exclusive_minimum.is_some_and(|value| value > i64::MAX as f64)
+            || exclusive_maximum.is_some_and(|value| value < i64::MIN as f64)
             || matches!((floor, ceiling), (Some(low), Some(high)) if low > high),
+        number_unsatisfiable: number_holds_nothing,
         items,
     }
+}
+
+/// The tighter of two integer floors: the higher of the two, since both bound
+/// the same field and a schema that publishes `minimum: 3` beside
+/// `exclusiveMinimum: 5` means 6 up.
+fn tighter_floor(minimum: Option<i64>, exclusive_minimum: Option<i64>) -> Option<i64> {
+    match (minimum, exclusive_minimum) {
+        (Some(low), Some(strict)) => Some(low.max(strict)),
+        (Some(low), None) => Some(low),
+        (None, Some(strict)) => Some(strict),
+        (None, None) => None,
+    }
+}
+
+/// The tighter of two integer ceilings: the lower of the two, for
+/// [`tighter_floor`]'s reason.
+fn tighter_ceiling(maximum: Option<i64>, exclusive_maximum: Option<i64>) -> Option<i64> {
+    match (maximum, exclusive_maximum) {
+        (Some(high), Some(strict)) => Some(high.min(strict)),
+        (Some(high), None) => Some(high),
+        (None, Some(strict)) => Some(strict),
+        (None, None) => None,
+    }
+}
+
+/// Whether the four decimal bounds admit no value.
+///
+/// The range is `[minimum, maximum]` crossed with `(exclusiveMinimum,
+/// exclusiveMaximum)`, and it is empty when any lower end fails to sit below
+/// any upper end as far as strictness allows: `minimum: 2.5, maximum: 1.5`
+/// crosses outright, and `minimum: 5, exclusiveMaximum: 5` meets at the one
+/// value the ceiling forbids.
+fn number_range_is_empty(
+    minimum: Option<&Number>,
+    maximum: Option<&Number>,
+    exclusive_minimum: Option<&Number>,
+    exclusive_maximum: Option<&Number>,
+) -> bool {
+    let low = minimum.and_then(Number::as_f64);
+    let high = maximum.and_then(Number::as_f64);
+    let above = exclusive_minimum.and_then(Number::as_f64);
+    let below = exclusive_maximum.and_then(Number::as_f64);
+    matches!((low, high), (Some(l), Some(h)) if l > h)
+        || matches!((low, below), (Some(l), Some(h)) if l >= h)
+        || matches!((above, high), (Some(l), Some(h)) if l >= h)
+        || matches!((above, below), (Some(l), Some(h)) if l >= h)
 }
 
 /// `value` as the `i64` bound it names, or [`None`] when it sits outside
@@ -310,6 +412,106 @@ mod tests {
             bounds("plain"),
             Bounds::default(),
             "no bound, nothing to check"
+        );
+    }
+
+    /// `exclusiveMinimum` and `exclusiveMaximum` are the same two keywords
+    /// spelled strict, and an integer gate that read only `minimum` and `maximum`
+    /// enforced neither: the pane filed a `0` under `exclusiveMinimum: 0`, which
+    /// is how `shep-kelpie` says "a cap, and not a cap of nothing". For an
+    /// integer the strict spelling names the next integer in, and where the
+    /// schema publishes both it is the tighter of the two that binds.
+    #[test]
+    fn an_integers_exclusive_bounds_fold_into_the_pair_the_gate_reads() {
+        let p = props(json!({
+            "above_zero": { "type": "integer", "exclusiveMinimum": 0 },
+            "below_ten": { "type": "integer", "exclusiveMaximum": 10 },
+            "above_a_fraction": { "type": "integer", "exclusiveMinimum": 1.2 },
+            "below_a_fraction": { "type": "integer", "exclusiveMaximum": 9.5 },
+            "tighter_of_two": { "type": "integer", "minimum": 3, "exclusiveMinimum": 5 },
+            "looser_of_two": { "type": "integer", "minimum": 5, "exclusiveMinimum": 2 },
+            "plain": { "type": "integer" },
+        }));
+        let set = FieldSet::from_properties(&p, &Default::default(), &[]);
+        let bounds = |key: &str| set.by_key(key).expect(key).bounds.clone();
+        assert_eq!(
+            (bounds("above_zero").minimum, bounds("above_zero").maximum),
+            (Some(1), None),
+            "the integers above 0 start at 1"
+        );
+        assert_eq!(
+            (bounds("below_ten").minimum, bounds("below_ten").maximum),
+            (None, Some(9)),
+            "the integers below 10 end at 9"
+        );
+        assert_eq!(
+            bounds("above_a_fraction").minimum,
+            Some(2),
+            "the integers above 1.2 start at 2"
+        );
+        assert_eq!(
+            bounds("below_a_fraction").maximum,
+            Some(9),
+            "the integers below 9.5 end at 9"
+        );
+        assert_eq!(
+            bounds("tighter_of_two").minimum,
+            Some(6),
+            "exclusiveMinimum: 5 binds past minimum: 3"
+        );
+        assert_eq!(
+            bounds("looser_of_two").minimum,
+            Some(5),
+            "and the tighter of the two is what the field is held to"
+        );
+        assert_eq!(
+            bounds("plain"),
+            Bounds::default(),
+            "no bound, nothing to fold"
+        );
+    }
+
+    /// The decimal half of the answer [`unsatisfiable`] gives an integer, which
+    /// cannot be the same flag: `minimum: 1.2, maximum: 1.8` is empty of integers
+    /// and full of decimals. A decimal range empty on its own terms has to be
+    /// recorded as one, or the pane bounces an operator between a floor and a
+    /// ceiling that cannot both be met.
+    #[test]
+    fn a_decimal_range_with_nothing_in_it_is_recorded_as_such() {
+        let p = props(json!({
+            "inverted": { "type": "number", "minimum": 2.5, "maximum": 1.5 },
+            "met_at_a_strict_ceiling": { "type": "number", "minimum": 5, "exclusiveMaximum": 5 },
+            "met_at_a_strict_floor": { "type": "number", "exclusiveMinimum": 5, "maximum": 5 },
+            "strict_and_inverted": { "type": "number", "exclusiveMinimum": 5, "exclusiveMaximum": 5 },
+            "meets_inclusively": { "type": "number", "minimum": 5, "maximum": 5 },
+            "fractional_but_full": { "type": "number", "minimum": 1.2, "maximum": 1.8 },
+        }));
+        let set = FieldSet::from_properties(&p, &Default::default(), &[]);
+        for key in [
+            "inverted",
+            "met_at_a_strict_ceiling",
+            "met_at_a_strict_floor",
+            "strict_and_inverted",
+        ] {
+            assert!(
+                set.by_key(key).expect(key).bounds.number_unsatisfiable,
+                "{key} admits nothing"
+            );
+        }
+        // The controls: a range holding exactly one value holds a value, and a
+        // range with no integer in it is not empty for a decimal field.
+        for key in ["meets_inclusively", "fractional_but_full"] {
+            assert!(
+                !set.by_key(key).expect(key).bounds.number_unsatisfiable,
+                "{key}"
+            );
+        }
+        assert!(
+            set.by_key("fractional_but_full")
+                .expect("fractional_but_full")
+                .bounds
+                .unsatisfiable,
+            "the integer pair beside it is empty, and that is not this field's problem"
         );
     }
 

@@ -402,9 +402,10 @@ impl ConfigPane {
     /// The check is [`super::super::validation::refusal`], which reads the
     /// grammar off the field rather than off the key: shep's own two string
     /// types go through their `FromStr`, a dog's own `pattern` through the
-    /// regex it published, an integer through its schema's `minimum` and
-    /// `maximum`, and a decimal through those four plus `exclusiveMinimum` and
-    /// `exclusiveMaximum`.
+    /// regex it published, an integer through its schema's `minimum`,
+    /// `maximum`, `exclusiveMinimum` and `exclusiveMaximum` (the two strict
+    /// spellings folded into the pair at the next integer in), and a decimal
+    /// through the same four as the schema wrote them.
     ///
     /// This is the only gate a dog's section has. `Request::SetDogConfig`
     /// checks that the table is TOML and writes it, because the dog is the

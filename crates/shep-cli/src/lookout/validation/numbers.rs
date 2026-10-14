@@ -10,7 +10,7 @@
 use serde_json::Number;
 
 use super::super::field::Bounds;
-use super::{Refusal, not_a_number, not_a_whole_number};
+use super::{Refusal, not_a_number, not_a_whole_number, takes_no_value};
 
 /// [`super::refusal`] for a [`crate::lookout::field::FieldKind::Integer`] field: the empty
 /// range, the parse, then the schema's own floor and ceiling.
@@ -47,9 +47,7 @@ pub(super) fn integer_of(
     shown: &str,
 ) -> Result<i64, Refusal> {
     if bounds.unsatisfiable {
-        return Err(Refusal {
-            text: format!("{key} takes no value: its schema asks for a range with nothing in it"),
-        });
+        return Err(takes_no_value(key));
     }
     typed
         .parse::<i64>()
@@ -57,6 +55,10 @@ pub(super) fn integer_of(
 }
 
 /// The floor and ceiling `bounds` sets on an integer already parsed.
+///
+/// The pair carries `exclusiveMinimum` and `exclusiveMaximum` folded in at the
+/// next integer in, so the sentence names the value the field really starts and
+/// stops at: `starts at 1` for `exclusiveMinimum: 0`.
 ///
 /// `pub(super)`: [`super::items`] runs it for one element of an integer list.
 pub(super) fn range_refusal(
@@ -76,14 +78,17 @@ pub(super) fn range_refusal(
     }
 }
 
-/// [`super::refusal`] for a [`crate::lookout::field::FieldKind::Number`] field: the parse,
-/// then the four numeric keywords the schema published, each read as the schema
-/// wrote it.
+/// [`super::refusal`] for a [`crate::lookout::field::FieldKind::Number`] field: the empty
+/// range, the parse, then the four numeric keywords the schema published, each
+/// read as the schema wrote it.
 ///
 /// [`Bounds::unsatisfiable`] is not consulted, because it answers whether a
 /// range admits an *integer*. `minimum: 1.2, maximum: 1.8` admits no integer
 /// and admits `1.5`, and telling an operator that a decimal field takes no
-/// value is a refusal the schema never made.
+/// value is a refusal the schema never made. [`Bounds::number_unsatisfiable`]
+/// is the emptiness this field's own bounds do assert, and it is said once,
+/// ahead of the parse, for [`integer_of`]'s reason: it is true of every
+/// value an operator could type.
 ///
 /// A non-finite parse is refused rather than filed. `f64::from_str` takes
 /// `NaN`, `inf` and `-inf`, and `Value::from(f64)` answers a non-finite float
@@ -97,6 +102,9 @@ pub(super) fn number_refusal(
     typed: &str,
     shown: &str,
 ) -> Option<Refusal> {
+    if bounds.number_unsatisfiable {
+        return Some(takes_no_value(key));
+    }
     let Ok(number) = typed.parse::<f64>() else {
         return Some(not_a_number(key, shown));
     };
@@ -210,6 +218,41 @@ mod tests {
             refused.text,
             "max_restarts is \"lots\", which is not a whole number shep accepts"
         );
+    }
+
+    /// `exclusiveMinimum` is the same keyword spelled strict, and the gate read
+    /// only `minimum`: a `{"type": "integer", "exclusiveMinimum": 0}` pane filed a
+    /// `0`, which is a cap of nothing. The strict spelling now reaches the pair
+    /// the integer gate enforces, at the next integer in.
+    #[test]
+    fn an_integers_exclusive_floor_refuses_zero_and_takes_the_value_above_it() {
+        let floor = dog_field(
+            "retries",
+            serde_json::json!({ "type": "integer", "exclusiveMinimum": 0 }),
+        );
+        assert_eq!(
+            floor.kind,
+            FieldKind::Integer,
+            "the fixture is an integer field"
+        );
+        let refused = refusal(&floor, "0").expect("0 is not above a floor of 0");
+        assert_eq!(refused.text, "retries is \"0\"; retries starts at 1");
+        assert_eq!(
+            refusal(&floor, "1"),
+            None,
+            "the next integer up is what the schema means"
+        );
+        let ceiling = dog_field(
+            "depth",
+            serde_json::json!({ "type": "integer", "exclusiveMaximum": 10 }),
+        );
+        assert_eq!(
+            refusal(&ceiling, "9"),
+            None,
+            "9 is below a ceiling of 10, which the ceiling itself excludes"
+        );
+        let refused = refusal(&ceiling, "10").expect("10 is not below a ceiling of 10");
+        assert_eq!(refused.text, "depth is \"10\"; depth stops at 9");
     }
 
     /// One field of a dog's schema, built through the same door a real dog's
@@ -329,5 +372,47 @@ mod tests {
         assert_eq!(refusal(&field, "9.99"), None);
         let refused = refusal(&field, "10").expect("10 is not below a ceiling of 10");
         assert_eq!(refused.text, "cap is \"10\"; cap must be below 10");
+    }
+
+    /// The emptiness a decimal field's own bounds assert, which the integer flag
+    /// beside them cannot answer: `minimum: 1.2, maximum: 1.8` admits no integer
+    /// and admits `1.5`. A range empty on the schema's own terms is said once,
+    /// ahead of the parse, rather than as a floor and a ceiling the operator is
+    /// bounced between.
+    #[test]
+    fn a_decimal_range_with_nothing_in_it_says_so() {
+        let inverted = dog_field(
+            "ratio",
+            serde_json::json!({ "type": "number", "minimum": 2.5, "maximum": 1.5 }),
+        );
+        for typed in ["2", "1.6", "abc"] {
+            assert_eq!(
+                refusal(&inverted, typed)
+                    .expect("nothing is acceptable")
+                    .text,
+                "ratio takes no value: its schema asks for a range with nothing in it",
+                "{typed}"
+            );
+        }
+        let met_at_a_strict_ceiling = dog_field(
+            "cap",
+            serde_json::json!({ "type": "number", "minimum": 5, "exclusiveMaximum": 5 }),
+        );
+        assert_eq!(
+            refusal(&met_at_a_strict_ceiling, "5")
+                .expect("5 is not below a ceiling of 5")
+                .text,
+            "cap takes no value: its schema asks for a range with nothing in it"
+        );
+        // The control: a range holding exactly one value holds a value.
+        let one_value = dog_field(
+            "level",
+            serde_json::json!({ "type": "number", "minimum": 5, "maximum": 5 }),
+        );
+        assert_eq!(
+            refusal(&one_value, "5"),
+            None,
+            "5 is the one value the schema names"
+        );
     }
 }

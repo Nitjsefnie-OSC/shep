@@ -82,7 +82,9 @@ pub struct Refusal {
 /// Four checks, and a field reaches at most one of them:
 ///
 /// - A [`FieldKind::Integer`] buffer must parse as an `i64` and sit inside
-///   whatever `minimum` and `maximum` the schema published.
+///   whatever `minimum`, `maximum`, `exclusiveMinimum` and `exclusiveMaximum`
+///   the schema published, the two strict spellings folded into the pair at the
+///   next integer in.
 /// - A [`FieldKind::Number`] buffer must parse as a finite `f64` and sit inside
 ///   whatever `minimum`, `maximum`, `exclusiveMinimum` and `exclusiveMaximum`
 ///   the schema published, each read as the schema wrote it.
@@ -178,6 +180,24 @@ pub(super) fn not_a_whole_number(key: &str, shown: &str) -> Refusal {
 pub(super) fn not_a_number(key: &str, shown: &str) -> Refusal {
     Refusal {
         text: format!("{key} is \"{shown}\", which is not a number shep accepts"),
+    }
+}
+
+/// The refusal for a field whose own numeric range admits nothing.
+///
+/// Said once, ahead of the parse, because it is true of every value: a field
+/// whose schema asks for a range with nothing in it cannot be answered, and
+/// refusing `1` for being under the floor and `3` for being over the ceiling
+/// bounces an operator between two sentences that cannot both be met. Both
+/// number arms answer with this one sentence, so an integer's empty range and a
+/// decimal's read the same to the operator.
+///
+/// `pub(super)`: [`numbers`] builds it twice, for the pair
+/// [`crate::lookout::field::Bounds`] normalises for an integer and the pair it
+/// keeps as written for a decimal.
+pub(super) fn takes_no_value(key: &str) -> Refusal {
+    Refusal {
+        text: format!("{key} takes no value: its schema asks for a range with nothing in it"),
     }
 }
 
