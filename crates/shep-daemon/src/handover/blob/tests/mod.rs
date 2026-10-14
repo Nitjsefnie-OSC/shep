@@ -8,7 +8,9 @@
 //! [`old_blobs`] is the half these cannot do: bytes a named release wrote,
 //! committed under `fixtures/handover/`, which a rename in this image cannot
 //! follow. Those fixtures carry nothing in flight, so [`old_blob_state`] is
-//! the same releases' bytes with every optional field filled in.
+//! the same releases' bytes with every optional field filled in. Both check
+//! the bytes against the key set their release wrote, which
+//! [`old_blob_shape`] holds as data.
 
 use std::os::unix::fs::PermissionsExt;
 
@@ -19,6 +21,7 @@ use crate::testing::test_paths;
 
 mod compat;
 mod disabled;
+mod old_blob_shape;
 mod old_blob_state;
 mod old_blobs;
 

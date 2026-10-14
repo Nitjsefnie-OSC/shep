@@ -21,12 +21,16 @@
 //! `waiting-restart` sheep owed a respawn with its deadline. A rename of any
 //! of these fields leaves the fixture's key unknown to this image, the value
 //! lands as the field's own default, and the assertion for it fails.
+//!
+//! Each one also goes through [`assert_the_shape`], which pins the key set at
+//! every level of the blob. Filling values in added no key and dropped none, so
+//! a populated fixture holds exactly what its plain sibling holds.
 
 use shep_core::protocol::DogSource;
 use shep_core::status::ProcStatus;
 use shep_core::values::UpDuration;
 
-use super::old_blobs::fixture_value;
+use super::old_blob_shape::{assert_the_shape, fixture_value};
 use crate::entry::ReloadState;
 use crate::handover::Handover;
 use crate::supervisor::{
@@ -362,6 +366,12 @@ fn assert_the_populated_blob(stem: &str) {
     let blob = Handover::load_value(raw.clone())
         .expect("a populated blob an older release wrote must still load whole");
     assert_eq!(blob.version, 1, "{stem} is a format version 1 blob");
+
+    // Filling the values in added no key and dropped none: a populated blob
+    // holds exactly the key set its release's plain fixture holds, at the
+    // blob, at each sheep, at its descriptors and at its config.
+    assert_the_shape(stem, 3);
+
     assert_the_populated_flock(stem, &raw, &blob);
     assert_the_populated_config(stem, &raw, &blob);
     assert_the_populated_markers(stem, &raw, &blob);

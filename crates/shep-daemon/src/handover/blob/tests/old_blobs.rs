@@ -9,12 +9,11 @@
 //! tag wrote which file, and how it was dumped.
 //!
 //! Each test loads one file through [`Handover::load_value`], asserts the
-//! shape that release wrote at the levels of the blob it changed, the values
-//! that shape wrote, and that every key the release predates reads as `None`
-//! through the accessor that reads it.
+//! whole key set that release wrote at every level the shape policy counts
+//! ([`assert_the_shape`]), the values that shape wrote, and that every key the
+//! release predates reads as `None` through the accessor that reads it.
 
 use std::os::fd::RawFd;
-use std::path::PathBuf;
 
 use shep_core::status::ProcStatus;
 
@@ -22,31 +21,10 @@ use crate::entry::ReloadState;
 use crate::handover::{Counters, Handover};
 use crate::privilege::SpawnIdentity;
 
-/// The oldest blob in the set: the first release that handed a flock over at
-/// all. Four descriptors per sheep, and no marker of any kind.
-const V0_1_18: &str = "shep-daemon-v0.1.18";
-/// Added `stdin` and `channel` to a sheep's descriptors.
-const V0_1_20: &str = "shep-daemon-v0.1.20";
-/// Added `pending_delete`, `manual`, `reload`, `ready_failed` and `reloads`.
-const V0_1_21: &str = "shep-daemon-v0.1.21";
-/// Added `restart_due`.
-const V0_1_22: &str = "shep-daemon-v0.1.22";
-/// Added `dog`.
-const V0_1_23: &str = "shep-daemon-v0.1.23";
-/// Added `pending` and `pending_reidentifies`.
-const V0_1_30: &str = "shep-daemon-v0.1.30";
-/// Added `depends_on` to the carried `AppConfig`.
-const V0_5_0: &str = "shep-daemon-v0.5.0";
-/// Added `environment` to the carried `AppConfig`.
-const V0_6_2: &str = "shep-daemon-v0.6.2";
-/// Added `level_rules` to the carried `AppConfig`, and dropped `increment_var`.
-const V0_8_0: &str = "shep-daemon-v0.8.0";
-/// Added `dogs` to the carried `AppConfig`.
-const V0_11_0: &str = "shep-daemon-v0.11.0";
-/// Added `log_timestamps` to the carried `AppConfig`.
-const V0_12_0: &str = "shep-daemon-v0.12.0";
-/// Added `disabled`.
-const V0_13_0: &str = "shep-daemon-v0.13.0";
+use super::old_blob_shape::{
+    V0_1_18, V0_1_20, V0_1_21, V0_1_22, V0_1_23, V0_1_30, V0_5_0, V0_6_2, V0_8_0, V0_11_0, V0_12_0,
+    V0_13_0, assert_the_shape, fixture_path, fixture_value, fixtures_dir,
+};
 
 /// Every fixture, oldest first, with the test that loads it. Each tag is the
 /// first `shep-daemon-v*` tag that wrote the shape its file holds.
@@ -69,89 +47,6 @@ const LOADERS: [(&str, fn()); 12] = [
     (V0_12_0, a_blob_from_shep_daemon_v0_12_0_still_loads),
     (V0_13_0, a_blob_from_shep_daemon_v0_13_0_still_loads),
 ];
-
-/// The keys every blob in this set has at the top level, from the first
-/// release to the one before `reloads`.
-const BLOB_BEFORE_RELOADS: [&str; 7] = [
-    "listener_fd",
-    "next_action_stamp",
-    "next_deadline",
-    "next_id",
-    "pidfile_fd",
-    "sheep",
-    "version",
-];
-
-/// The keys a carried sheep has from the release that wrote no marker at all.
-const SHEEP_BEFORE_MARKERS: [&str; 11] = [
-    "app",
-    "credentials",
-    "epoch",
-    "fds",
-    "id",
-    "instance",
-    "last_exit",
-    "name",
-    "pid",
-    "restarts",
-    "status",
-];
-
-/// The four descriptors a sheep's output travelled on before `stdin`.
-const FOUR_DESCRIPTORS: [&str; 4] = ["err_log", "err_pipe", "out_log", "out_pipe"];
-
-/// The six, from the release that carried a stdin pipe and a channel.
-const SIX_DESCRIPTORS: [&str; 6] = [
-    "channel", "err_log", "err_pipe", "out_log", "out_pipe", "stdin",
-];
-
-fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/handover")
-}
-
-/// Where a release's committed bytes live.
-fn fixture_path(tag: &str) -> PathBuf {
-    fixtures_dir().join(format!("{tag}.json"))
-}
-
-/// A fixture as raw JSON, so a test can name the keys it holds rather than
-/// only the fields this image has a place for.
-pub(super) fn fixture_value(tag: &str) -> serde_json::Value {
-    let path = fixture_path(tag);
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("the fixture {} is not readable: {error}", path.display()));
-    serde_json::from_str(&text)
-        .unwrap_or_else(|error| panic!("the fixture {} is not JSON: {error}", path.display()))
-}
-
-/// The keys one JSON object holds, sorted: the shape its writer painted at
-/// that level of the blob.
-fn keys(object: &serde_json::Value) -> Vec<String> {
-    let mut found: Vec<String> = object
-        .as_object()
-        .expect("a blob, a carried sheep and a carried sheep's descriptors are all objects")
-        .keys()
-        .cloned()
-        .collect();
-    found.sort_unstable();
-    found
-}
-
-/// A literal list of key names, sorted the way [`keys`] sorts a real one.
-fn sorted<T: AsRef<str>>(names: &[T]) -> Vec<String> {
-    let mut found: Vec<String> = names.iter().map(|key| key.as_ref().to_owned()).collect();
-    found.sort_unstable();
-    found
-}
-
-/// `base`'s keys plus the ones `added` names, sorted: the shape a later
-/// release wrote, read off the earlier shape this file already pins.
-fn sorted_plus<T: AsRef<str>>(base: &[T], added: &[&str]) -> Vec<String> {
-    let mut found = sorted(base);
-    found.extend(added.iter().map(|key| (*key).to_owned()));
-    found.sort_unstable();
-    found
-}
 
 /// What every one of these blobs says, unchanged from the first to the last:
 /// the plain `web` sheep `entry_fixture` builds, the daemon's two descriptor
@@ -223,6 +118,8 @@ fn assert_nothing_marked(blob: &Handover) {
 /// The five keys v0.1.21 added, each carrying its own "nothing is happening
 /// to this sheep". A successor that read them as absent instead of as these
 /// would respawn a drainee into its own slot and forget a delete was asked for.
+/// [`assert_the_shape`] pins that the keys are there at all; this reads what
+/// they say.
 fn assert_the_plain_markers(blob: &Handover) {
     let sheep = &blob.sheep[0];
     assert_eq!(sheep.pending_delete(), Some(false));
@@ -246,9 +143,7 @@ fn a_blob_from_shep_daemon_v0_1_18_still_loads() {
         .expect("the oldest blob on disk must still load, or a successor refuses a flock");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(keys(&raw), sorted(&BLOB_BEFORE_RELOADS));
-    assert_eq!(keys(&raw["sheep"][0]), sorted(&SHEEP_BEFORE_MARKERS));
-    assert_eq!(keys(&raw["sheep"][0]["fds"]), sorted(&FOUR_DESCRIPTORS));
+    assert_the_shape(V0_1_18, 1);
 
     assert_the_descriptors(&blob, None, None);
     assert_nothing_marked(&blob);
@@ -275,13 +170,10 @@ fn a_blob_from_shep_daemon_v0_1_18_still_loads() {
 
 #[test]
 fn a_blob_from_shep_daemon_v0_1_20_still_loads() {
-    let raw = fixture_value(V0_1_20);
-    let blob = Handover::load_value(raw.clone()).expect("an older blob must still load");
+    let blob = Handover::load_value(fixture_value(V0_1_20)).expect("an older blob must still load");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(keys(&raw), sorted(&BLOB_BEFORE_RELOADS));
-    assert_eq!(keys(&raw["sheep"][0]), sorted(&SHEEP_BEFORE_MARKERS));
-    assert_eq!(keys(&raw["sheep"][0]["fds"]), sorted(&SIX_DESCRIPTORS));
+    assert_the_shape(V0_1_20, 1);
 
     // The two descriptors this release added, carried whole.
     assert_the_descriptors(&blob, Some(15), Some(16));
@@ -290,19 +182,10 @@ fn a_blob_from_shep_daemon_v0_1_20_still_loads() {
 
 #[test]
 fn a_blob_from_shep_daemon_v0_1_21_still_loads() {
-    let raw = fixture_value(V0_1_21);
-    let blob = Handover::load_value(raw.clone()).expect("an older blob must still load");
+    let blob = Handover::load_value(fixture_value(V0_1_21)).expect("an older blob must still load");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(keys(&raw), sorted_plus(&BLOB_BEFORE_RELOADS, &["reloads"]));
-    assert_eq!(
-        keys(&raw["sheep"][0]),
-        sorted_plus(
-            &SHEEP_BEFORE_MARKERS,
-            &["pending_delete", "manual", "reload", "ready_failed"]
-        )
-    );
-    assert_eq!(keys(&raw["sheep"][0]["fds"]), sorted(&SIX_DESCRIPTORS));
+    assert_the_shape(V0_1_21, 1);
 
     assert_the_plain_markers(&blob);
     assert_the_descriptors(&blob, Some(15), Some(16));
@@ -318,14 +201,10 @@ fn a_blob_from_shep_daemon_v0_1_21_still_loads() {
 
 #[test]
 fn a_blob_from_shep_daemon_v0_1_22_still_loads() {
-    let raw = fixture_value(V0_1_22);
-    let blob = Handover::load_value(raw.clone()).expect("an older blob must still load");
+    let blob = Handover::load_value(fixture_value(V0_1_22)).expect("an older blob must still load");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(
-        keys(&raw["sheep"][0]),
-        sorted_plus(&keys(&fixture_value(V0_1_21)["sheep"][0]), &["restart_due"])
-    );
+    assert_the_shape(V0_1_22, 1);
 
     assert_the_plain_markers(&blob);
     assert_the_descriptors(&blob, Some(15), Some(16));
@@ -342,14 +221,10 @@ fn a_blob_from_shep_daemon_v0_1_22_still_loads() {
 
 #[test]
 fn a_blob_from_shep_daemon_v0_1_23_still_loads() {
-    let raw = fixture_value(V0_1_23);
-    let blob = Handover::load_value(raw.clone()).expect("an older blob must still load");
+    let blob = Handover::load_value(fixture_value(V0_1_23)).expect("an older blob must still load");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(
-        keys(&raw["sheep"][0]),
-        sorted_plus(&keys(&fixture_value(V0_1_22)["sheep"][0]), &["dog"])
-    );
+    assert_the_shape(V0_1_23, 1);
 
     assert_the_plain_markers(&blob);
     assert_the_descriptors(&blob, Some(15), Some(16));
@@ -365,17 +240,10 @@ fn a_blob_from_shep_daemon_v0_1_23_still_loads() {
 
 #[test]
 fn a_blob_from_shep_daemon_v0_1_30_still_loads() {
-    let raw = fixture_value(V0_1_30);
-    let blob = Handover::load_value(raw.clone()).expect("an older blob must still load");
+    let blob = Handover::load_value(fixture_value(V0_1_30)).expect("an older blob must still load");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(
-        keys(&raw["sheep"][0]),
-        sorted_plus(
-            &keys(&fixture_value(V0_1_23)["sheep"][0]),
-            &["pending", "pending_reidentifies"]
-        )
-    );
+    assert_the_shape(V0_1_30, 1);
 
     assert_the_plain_markers(&blob);
     assert_the_descriptors(&blob, Some(15), Some(16));
@@ -396,10 +264,7 @@ fn a_blob_from_shep_daemon_v0_5_0_still_loads() {
     let blob = Handover::load_value(raw.clone()).expect("an older blob must still load");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(
-        keys(&raw["sheep"][0]),
-        keys(&fixture_value(V0_1_30)["sheep"][0])
-    );
+    assert_the_shape(V0_5_0, 1);
 
     // The key this release added to the config a sheep carries.
     assert_eq!(raw["sheep"][0]["app"]["depends_on"], serde_json::json!([]));
@@ -418,10 +283,7 @@ fn a_blob_from_shep_daemon_v0_6_2_still_loads() {
     let blob = Handover::load_value(raw.clone()).expect("an older blob must still load");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(
-        keys(&raw["sheep"][0]),
-        keys(&fixture_value(V0_1_30)["sheep"][0])
-    );
+    assert_the_shape(V0_6_2, 1);
 
     // The key this release added, carrying no environment name.
     assert_eq!(
@@ -442,10 +304,7 @@ fn a_blob_from_shep_daemon_v0_8_0_still_loads() {
     let blob = Handover::load_value(raw.clone()).expect("an older blob must still load");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(
-        keys(&raw["sheep"][0]),
-        keys(&fixture_value(V0_1_30)["sheep"][0])
-    );
+    assert_the_shape(V0_8_0, 1);
 
     // The key this release added, and the one it dropped. A blob from the
     // release before still carries `increment_var`, which eight fixtures from
@@ -467,10 +326,7 @@ fn a_blob_from_shep_daemon_v0_11_0_still_loads() {
     let blob = Handover::load_value(raw.clone()).expect("an older blob must still load");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(
-        keys(&raw["sheep"][0]),
-        keys(&fixture_value(V0_1_30)["sheep"][0])
-    );
+    assert_the_shape(V0_11_0, 1);
 
     // The key this release added: an app with no dog table.
     assert_eq!(raw["sheep"][0]["app"]["dogs"], serde_json::json!({}));
@@ -488,10 +344,7 @@ fn a_blob_from_shep_daemon_v0_12_0_still_loads() {
     let blob = Handover::load_value(raw.clone()).expect("an older blob must still load");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(
-        keys(&raw["sheep"][0]),
-        keys(&fixture_value(V0_1_30)["sheep"][0])
-    );
+    assert_the_shape(V0_12_0, 1);
 
     // The key this release added, carrying the stamp-on default it wrote.
     assert_eq!(
@@ -508,14 +361,10 @@ fn a_blob_from_shep_daemon_v0_12_0_still_loads() {
 
 #[test]
 fn a_blob_from_shep_daemon_v0_13_0_still_loads() {
-    let raw = fixture_value(V0_13_0);
-    let blob = Handover::load_value(raw.clone()).expect("an older blob must still load");
+    let blob = Handover::load_value(fixture_value(V0_13_0)).expect("an older blob must still load");
     assert_the_plain_flock(&blob);
 
-    assert_eq!(
-        keys(&raw["sheep"][0]),
-        sorted_plus(&keys(&fixture_value(V0_1_30)["sheep"][0]), &["disabled"])
-    );
+    assert_the_shape(V0_13_0, 1);
 
     // The key this release added, carrying that nothing is disabled.
     assert_eq!(blob.sheep[0].disabled(), None);
