@@ -6,6 +6,7 @@
 pub mod admin;
 pub mod bleats;
 pub(crate) mod bounded;
+pub(crate) mod copy;
 pub mod daemon;
 pub mod dev;
 pub(crate) mod dog_migration;

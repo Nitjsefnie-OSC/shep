@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Copy a setting or a dog table from one sheep onto another
+
 ## [0.14.0] - 2026-10-14
 
 ### Added
@@ -57,7 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Performance
 
 - Write the bark ring off the tokio worker
-
 
 ## [0.13.0] - 2026-10-13
 

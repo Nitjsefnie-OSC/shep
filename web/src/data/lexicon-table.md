@@ -42,6 +42,7 @@ The whole vocabulary, and whether it exists yet.
 | signal | send a signal to one sheep's own process | `shep signal <selector> <signal>` | yes |
 | whisper | write a line to a sheep's stdin | `shep whisper <selector> <line>` (alias `sendline`) | yes |
 | set / get / unset | the flat key-value junk drawer | `shep set`, `shep get`, `shep unset` | yes |
+| copy | move one setting, or one dog's table for a sheep, from one sheep onto another | `shep copy <from>.<path> <to>.<path>` | yes |
 
 Sheepdogs and sheep were separate ideas from the start, so "dog" never means
 the daemon. The shepherd is the shepherd. Dogs are plugins that work for it.
