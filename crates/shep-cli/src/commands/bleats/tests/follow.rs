@@ -349,6 +349,98 @@ async fn a_multi_instance_apps_followed_stderr_line_carries_its_slot_too() {
     );
 }
 
+/// The map a follow builds once must answer every name exactly as
+/// [`instance_count`] does, the scan the backlog path still calls per
+/// file: three rows for `web`, one for `worker`, one for a dog.
+#[test]
+fn instance_counts_agree_with_instance_count_for_every_name() {
+    let rows = [
+        info_with_instance(1, "web", 0),
+        info_with_instance(2, "web", 1),
+        info_with_instance(3, "web", 2),
+        info(4, "worker"),
+        ProcessInfo::builder(5, "metrics", ProcStatus::Online)
+            .dog(Some(shep_core::protocol::DogSource::BuiltIn))
+            .build(),
+    ];
+    let cache: HashMap<u32, ProcessInfo> = rows.iter().map(|row| (row.id, row.clone())).collect();
+    let counts = instance_counts(&cache);
+
+    assert_eq!(counts.len(), 3, "one entry per distinct name");
+    for (name, want) in [("web", 3usize), ("worker", 1), ("metrics", 1)] {
+        assert_eq!(
+            counts.get(name).copied(),
+            Some(want),
+            "{name} carries {want} rows of this cache: {counts:?}"
+        );
+        assert_eq!(
+            counts.get(name).copied(),
+            Some(instance_count(&cache, name)),
+            "the map must answer {name} the way a scan of the cache does: {counts:?}"
+        );
+    }
+    assert_eq!(
+        (counts.get("api"), instance_count(&cache, "api")),
+        (None, 0),
+        "a name the cache holds no row for is absent from the map, not zero"
+    );
+    assert_eq!(
+        (counts.get("api"), instance_count(&cache, "api")),
+        (None, 0),
+        "a name the cache holds no row for is absent from the map, not zero"
+    );
+}
+
+/// An id the one listing never saw has no row to count, so it gets no slot
+/// either: [`resolved_instance`] gives up on the same lookup
+/// [`resolved_name`] does, even though the cache it consults is full of
+/// multi-instance rows.
+#[tokio::test]
+async fn a_name_missing_from_the_cache_has_no_instance_label() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, daemon) = fake_client_with_push(&path).await;
+    daemon.reply_to_list(vec![
+        info_with_instance(1, "web", 0),
+        info_with_instance(2, "web", 1),
+    ]);
+    daemon
+        .push(BusEvent::LogOut {
+            id: 99,
+            line: "orphan".into(),
+        })
+        .await;
+    daemon.close_after_subscribe().await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        tokio::time::timeout(
+            RUN_TIMEOUT,
+            bleats(&client, &mut streams, false, &follow_args("all")),
+        )
+        .await
+        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
+    }
+    let out = String::from_utf8(out).unwrap();
+
+    assert!(
+        out.contains("99 | orphan"),
+        "an unlisted id renders bare, with no slot to borrow from the \
+             multi-instance cache beside it: {out}"
+    );
+    assert!(
+        !out.contains("99:"),
+        "a label is a slot this row was never registered with: {out}"
+    );
+}
+
 /// The stream stays open for the whole test, so only the injected
 /// interrupt can end this follow; ignoring it hangs and the timeout
 /// fails the test.
