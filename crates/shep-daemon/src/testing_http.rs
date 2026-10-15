@@ -1,5 +1,7 @@
-// The loopback HTTP fake split out of `testing`: the gate a probe test
-// dials, with its replies held by the test instead of scripted at bind.
+// The loopback HTTP fake split out of `testing`: the gate a probe test dials.
+// It answers one accepted connection from the script it was bound with, then
+// from whatever the test queues later through `LoopbackHttp::queue_reply`, so
+// a test holds the verdict instead of pacing it on the prober's own interval.
 use std::net::SocketAddr;
 use std::time::Duration;
 
