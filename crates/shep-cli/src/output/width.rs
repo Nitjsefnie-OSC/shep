@@ -13,6 +13,21 @@ pub(crate) fn char_columns(c: char) -> usize {
     UnicodeWidthChar::width(c).unwrap_or(0)
 }
 
+/// Columns `s` occupies as drawn text, with no ANSI discount.
+///
+/// Sums [`char_columns`] over every `char`, escapes included: a `\x1b[31m`
+/// measures the four characters `[31m`, its `\x1b` zero-width as `Cc`.
+/// The lookout view hands `ratatui` spans rather than terminal bytes, so
+/// an escape that arrives there is data, not styling.
+///
+/// Not [`visible_width`], which discounts a well-formed escape to zero and
+/// is right only for text this crate writes to a real terminal. A
+/// combining mark measures zero here exactly as it does there.
+#[must_use]
+pub(crate) fn text_columns(s: &str) -> usize {
+    s.chars().map(char_columns).sum()
+}
+
 /// Columns `s` occupies once ANSI escapes are discounted.
 ///
 /// Sums [`char_columns`], not bytes or `char` count: `羊` is one `char` and
@@ -177,6 +192,24 @@ mod tests {
     #[test]
     fn an_embedded_newline_contributes_no_width() {
         assert_eq!(visible_width("web\nworker"), 9);
+    }
+
+    // --- text_columns --------------------------------------------------
+
+    /// The lookout view's measure: an escape there is data a `Span` draws,
+    /// not styling a terminal interprets, so its printable characters cost
+    /// columns and only the `Cc` introducer does not.
+    #[test]
+    fn text_columns_counts_a_wide_character_as_two_and_an_escape_as_its_characters() {
+        assert_eq!(text_columns("羊"), 2, "columns, not chars");
+        assert_eq!(text_columns("cafe\u{301}"), 4, "the mark rides for free");
+        // 6, not 7: `char_columns` charges the `Cc` introducer nothing, and
+        // `ratatui`'s `Buffer::set_stringn` drops every grapheme that
+        // `contains(char::is_control)` before it measures, so the six
+        // columns `[31mab` draws are the whole string's cost.
+        assert_eq!(char_columns('\u{1b}'), 0, "the introducer is Cc");
+        assert_eq!(text_columns("\u{1b}[31mab"), 6);
+        assert_eq!(visible_width("\u{1b}[31mab"), 2, "the other measure");
     }
 
     // --- sanitize_cell -------------------------------------------------
