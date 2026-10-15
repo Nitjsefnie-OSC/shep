@@ -148,7 +148,7 @@ async fn handle_connection(mut stream: TcpStream, cfg: Arc<ServeConfig>) {
         Err(_err) => return,
     };
 
-    let mut logged_path = escape_for_log(path_of(&request.target));
+    let mut logged_path = path_of(&request.target).to_string();
     let (status, bytes) = answer(&mut stream, &cfg, &request, &mut logged_path).await;
     log_access(peer, &request.method, &logged_path, status, bytes);
 }
@@ -176,10 +176,9 @@ const ALLOW: Header<'static> = Header {
 /// Writes one reply to `stream`, returning the status answered and the
 /// body byte count for [`handle_connection`]'s access-log line.
 ///
-/// `logged_path` arrives holding the escaped raw target and is
-/// overwritten with the resolved path as soon as resolution succeeds, so
-/// a refusal reached before then is still logged under the target the
-/// client sent.
+/// `logged_path` arrives holding the raw target and is overwritten with
+/// the resolved path as soon as resolution succeeds, so a refusal reached
+/// before then is logged under the target the client sent.
 async fn answer(
     stream: &mut TcpStream,
     cfg: &ServeConfig,
@@ -188,8 +187,8 @@ async fn answer(
 ) -> (u16, u64) {
     let raw_path = path_of(&request.target);
 
-    // Auth before path resolution: an unauthenticated client must not use
-    // 400-vs-404 to map the filesystem before it proves who it is.
+    // Auth before resolution, so an unauthenticated client cannot map the
+    // filesystem through 400-vs-404.
     if let Some(creds) = &cfg.auth {
         let header = request.headers.get("authorization").map(String::as_str);
         if !creds.satisfies(header) {
@@ -429,17 +428,18 @@ async fn reply(
 }
 
 /// One access-log line per request, written to stdout: `serve` runs as a
-/// registered sheep, so `shep bleats <name>` is this log. `path` has
-/// already been through [`escape_for_log`].
+/// registered sheep, so `shep bleats <name>` is this log. `path` is the
+/// raw target or the resolved path, escaped here so no byte a client chose
+/// reaches the operator's terminal.
 fn log_access(peer: Option<SocketAddr>, method: &str, path: &str, status: u16, bytes: u64) {
     let peer = peer.map_or_else(|| "-".to_string(), |addr| addr.to_string());
+    let path = escape_for_log(path);
     println!("{peer} \"{method} {path}\" {status} {bytes}");
 }
 
-/// Escapes every byte outside printable ASCII (`0x20..=0x7e`) as `\xNN`:
-/// a raw request target can carry any byte a client sends, and an
-/// operator reading `shep bleats` must not receive a stranger's ANSI
-/// escapes.
+/// Escapes every byte outside printable ASCII (`0x20..=0x7e`) as `\xNN`,
+/// so a byte a client chose never reaches an operator's terminal through
+/// `shep bleats`.
 fn escape_for_log(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for byte in s.bytes() {
@@ -465,8 +465,7 @@ mod tests {
     use crate::serve::auth;
 
     /// A running worker bound to an OS-assigned loopback port. Aborts its
-    /// accept loop on drop, so a worker left listening past its own test
-    /// cannot hold a port for the rest of the binary's run.
+    /// accept loop on drop, so it cannot hold a port past its own test.
     struct RunningServer {
         addr: SocketAddr,
         handle: JoinHandle<()>,
@@ -484,8 +483,7 @@ mod tests {
         }
     }
 
-    /// Creates a docroot at `root` holding `files`, each `(relative path,
-    /// contents)`.
+    /// A docroot at `root` holding `files`, each `(relative path, contents)`.
     fn write_tree(root: &Path, files: &[(&str, &str)]) {
         std::fs::create_dir_all(root).unwrap();
         for (path, contents) in files {
@@ -497,8 +495,7 @@ mod tests {
         }
     }
 
-    /// A default [`ServeConfig`] over `root`, bound to an OS-assigned
-    /// loopback port.
+    /// A default [`ServeConfig`] over `root`, bound to a free loopback port.
     fn config(root: &Path) -> ServeConfig {
         ServeConfig {
             root: std::fs::canonicalize(root).unwrap(),
@@ -512,8 +509,7 @@ mod tests {
         }
     }
 
-    /// The one credential pair every auth-enabled test below authenticates
-    /// with.
+    /// The credential pair the auth-enabled tests authenticate with.
     const TEST_USER: &str = "alice:s3cret";
 
     fn config_with_auth(root: &Path) -> ServeConfig {
@@ -555,8 +551,7 @@ mod tests {
         built
     }
 
-    /// Binds `config.bind`, reads back the OS-assigned address, and
-    /// serves it in the background with a real admission semaphore.
+    /// Binds `config.bind`, reads back the OS-assigned address, and serves it in the background.
     async fn serve_on_free_port(config: ServeConfig) -> RunningServer {
         let listener = TcpListener::bind(config.bind).await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -599,9 +594,8 @@ mod tests {
     }
 
     /// Sends one raw request (a full, correctly terminated HTTP/1.1 head)
-    /// and returns the parsed response. Every step is wrapped in a
-    /// generous timeout, so a hang here is a bug in the worker, not the
-    /// suite.
+    /// and returns the parsed response. Every step carries a generous
+    /// timeout, so a hang here is a bug in the worker, not the suite.
     async fn send_request(addr: SocketAddr, request: &str) -> Response {
         let mut stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
             .await
@@ -654,17 +648,15 @@ mod tests {
         .await
     }
 
-    /// [`auth::base64_encode`], through a `&str` for the header this test
-    /// module builds by hand.
+    /// [`auth::base64_encode`] over a `&str`, for the header built by hand.
     fn base64(input: &str) -> String {
         auth::base64_encode(input.as_bytes())
     }
 
     /// The traversal table again, end to end over a real socket, so it
-    /// covers the handler's ordering and not only the resolver.
-    ///
-    /// Each case asserts the exact status: `assert_ne!(status, 200)`
-    /// would pass against a server that 500s on everything.
+    /// covers the handler's ordering and not only the resolver. Each case
+    /// asserts the exact status, since `assert_ne!(status, 200)` passes
+    /// against a server that 500s on everything.
     #[tokio::test]
     async fn every_traversal_shape_is_refused_over_a_real_socket() {
         // The docroot is a child of the tempdir, and the negative control
@@ -706,6 +698,14 @@ mod tests {
                 "{target}: every response carries it, refusals included"
             );
         }
+    }
+
+    /// fails if a decoded C1 control byte reaches the log raw: `path::resolve`
+    /// refuses control bytes below `0x20` and `0x7f`, so `%C2%9B` (CSI)
+    /// resolves, and the access log is where it must be escaped.
+    #[test]
+    fn a_decoded_c1_control_byte_is_escaped_for_the_log() {
+        assert_eq!(escape_for_log("/\u{9b}"), "/\\xC2\\x9B");
     }
 
     /// fails if a symlink out of the docroot is served over the socket.
