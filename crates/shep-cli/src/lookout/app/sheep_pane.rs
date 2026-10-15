@@ -375,17 +375,11 @@ impl App {
         Effect::None
     }
 
-    /// The open sheep pane, or `None` on any other screen.
+    /// The open sheep pane, or `None` on any other screen:
+    /// [`Body::sheep_pane`] over this app's body.
     #[must_use]
     pub fn sheep_pane(&self) -> Option<&SheepPane> {
-        match &self.body {
-            Body::Sheep(pane) => Some(pane.as_ref()),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::ConfigPane(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_) => None,
-        }
+        self.body.sheep_pane()
     }
 
     /// The open sheep pane's own pinned sheep, or `None` once it has left
@@ -410,14 +404,7 @@ impl App {
     /// [`Self::sheep_pane`]'s mutable twin, for `J`/`K` and for adopting a
     /// `Request::SheepConfig` reply in place.
     pub(super) fn sheep_pane_mut(&mut self) -> Option<&mut SheepPane> {
-        match &mut self.body {
-            Body::Sheep(pane) => Some(pane.as_mut()),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::ConfigPane(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_) => None,
-        }
+        self.body.sheep_pane_mut()
     }
 
     /// The embedded feed inside the open sheep pane, or `None` while the

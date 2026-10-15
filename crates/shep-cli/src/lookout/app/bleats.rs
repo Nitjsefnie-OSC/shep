@@ -302,31 +302,18 @@ impl App {
         &self.feed
     }
 
-    /// The open bleats pane, or `None` on any other screen.
+    /// The open bleats pane, or `None` on any other screen:
+    /// [`Body::bleats_pane`] over this app's body.
     #[must_use]
     pub fn bleats_pane(&self) -> Option<&BleatsPane> {
-        match &self.body {
-            Body::Bleats(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::ConfigPane(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }
+        self.body.bleats_pane()
     }
 
     /// [`Self::bleats_pane`]'s mutable twin, for `Escape`'s chip-by-chip
     /// backout. No key sets a filter axis yet; whichever task wires one
     /// needs this too.
     pub(super) fn bleats_pane_mut(&mut self) -> Option<&mut BleatsPane> {
-        match &mut self.body {
-            Body::Bleats(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::ConfigPane(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }
+        self.body.bleats_pane_mut()
     }
 
     /// [`Self::bleats_pane_mut`], exposed past this module so a fixture can
