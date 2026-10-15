@@ -28,13 +28,18 @@ use crate::protocol::{BusEvent, Reply};
 // enum only, never for the wire. `Kind::of` decides a frame's kind by key, so
 // a kind keyed by none of `id`, `result`, `event`, `data` fails to decode
 // here, and what a peer then does is `route_frame`'s rule in
-// `shep-client/src/actor.rs`: it drops an undecodable frame that names no
-// waiting request, so the connection survives, and fails by id one that
-// `reply_id` can name (which needs `result` alongside `id`). A new kind that
-// reuses a reply key is therefore not additive: it fails that request with
+// `shep-client/src/actor.rs`: it drops an undecodable frame unless `reply_id`
+// can name the request it answers, and `reply_id` matches a frame only when it
+// carries `id` and `result` together. A new kind is therefore additive to an
+// older client when it carries neither half of that pair, one reply key alone
+// included: `id` without `result` (pinned by
+// `reply_id_is_none_for_a_future_progress_frame`) and `result` without `id`
+// are both dropped with the connection intact. A kind that carries both is
+// read as an undecodable reply and fails the waiting request with
 // `RequestError::Undecodable`. Pinned by `a_frame_with_no_known_key_is_refused`
-// below and by the client's
-// `a_frame_of_a_kind_this_build_does_not_know_is_dropped_without_disturbing_the_connection`.
+// below, and in the client by
+// `a_frame_of_a_kind_this_build_does_not_know_is_dropped_without_disturbing_the_connection`
+// and `a_frame_with_one_half_of_the_reply_pair_is_dropped_too`.
 #[non_exhaustive]
 pub enum ServerFrame {
     /// An answer to one request (from [`Envelope`](crate::protocol::Envelope))

@@ -241,6 +241,30 @@ mod tests {
         assert!(rx.now_or_never().is_none(), "its caller is not answered");
     }
 
+    /// Half of the reply pair names no request. `reply_id` requires `id` and
+    /// `result` together precisely so a future frame that carries one of them
+    /// is not mistaken for an undecodable reply, so both halves on their own
+    /// are dropped and the request in flight keeps waiting for its real
+    /// answer.
+    #[test]
+    fn a_frame_with_one_half_of_the_reply_pair_is_dropped_too() {
+        let (events, mut sub) = broadcast::channel(4);
+
+        for frame in [
+            r#"{"id":7,"kind":"progress","percent":40}"#,
+            r#"{"result":{"done":1}}"#,
+        ] {
+            let (tx, rx) = oneshot::channel();
+            let mut pending = HashMap::from([(7_u64, tx)]);
+
+            route_frame(frame.as_bytes(), &mut pending, &events);
+
+            assert!(sub.try_recv().is_err(), "{frame} delivered nothing");
+            assert_eq!(pending.len(), 1, "{frame} left the request held");
+            assert!(rx.now_or_never().is_none(), "{frame} answered no caller");
+        }
+    }
+
     /// An event this build cannot decode is still just dropped. Nothing is
     /// waiting on it, and a subscriber that cannot name it cannot act on it.
     #[test]
