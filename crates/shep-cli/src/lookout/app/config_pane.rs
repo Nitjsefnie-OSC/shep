@@ -66,12 +66,9 @@ impl App {
                 None | Some(ConfigFor::Editor) => self.open_or_refresh_config_pane(*view),
             },
             Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{name}: the shepherd answered something this lookout does not understand"
-                    ),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!(
+                    "{name}: the shepherd answered something this lookout does not understand"
+                )));
             }
             // Prefixed, like every other reply handler in this file: the
             // shepherd's refusals mostly name their own subject, but
@@ -79,16 +76,10 @@ impl App {
             // stopped`, naming neither the sheep nor the screen it came
             // from.
             Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {}", err.message),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{name}: {}", err.message)));
             }
             Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {other}"),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{name}: {other}")));
             }
         }
         Effect::None
@@ -239,7 +230,7 @@ impl App {
             // now, so nothing waits behind a second `esc` for it.
             KeyPress::Escape => {
                 if let Some(text) = self.config_pane().and_then(ConfigPane::incomplete_union) {
-                    self.notice = Some(Notice { text, grave: true });
+                    self.notice = Some(Notice::grave(text));
                     return Effect::None;
                 }
                 if let Some(dialog) = self.close_offer() {
@@ -505,10 +496,7 @@ impl App {
                 // section is written unread, so an operator who is not told
                 // now finds out from the dog's own log, or never.
                 if let Some(refused) = refused {
-                    self.notice = Some(Notice {
-                        text: refused.text,
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(refused.text));
                 }
             }
             KeyPress::TextAbandon => {
@@ -528,10 +516,7 @@ impl App {
     pub(super) fn authorize_write(&mut self) -> Option<WriteAuthority> {
         let authority = WriteAuthority::granted(self);
         if authority.is_none() {
-            self.notice = Some(Notice {
-                text: READ_ONLY_REFUSAL.to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(READ_ONLY_REFUSAL.to_string()));
         }
         authority
     }

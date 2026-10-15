@@ -125,10 +125,7 @@ impl App {
             // `Effect::PollNow` would be silence with no reason for it.
             KeyPress::Refresh => {
                 if matches!(self.link, Link::Lost { .. }) {
-                    self.notice = Some(Notice {
-                        text: LINK_GONE.to_string(),
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(LINK_GONE.to_string()));
                     return Effect::None;
                 }
                 Effect::PollNow
