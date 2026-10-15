@@ -138,6 +138,122 @@ async fn a_reopen_after_a_restart_reaches_the_pump_the_restart_spawned() {
     );
 }
 
+/// Fails if a reopen aimed at a sheep whose respawn could not start waits
+/// for an acknowledgement nobody is left to send, or answers with a flock
+/// other than that sheep.
+///
+/// The runner has one script, so the restart's spawn is the one that runs
+/// out: the sheep is `Errored`, and its entry still holds the `log_ctl` of
+/// the pump that served the process which exited.
+#[tokio::test(start_paused = true)]
+async fn a_reopen_after_a_failed_respawn_is_a_prompt_no_op_success() {
+    let (events, _rx) = crate::bus::test_bus(64);
+    let runner = Arc::new(ScriptedRunner::new(vec![ProcScript::never_exits()]));
+    let dir = tempfile::tempdir().unwrap();
+    let handle = spawn_supervisor(SharedRunner(Arc::clone(&runner)), test_paths(&dir), events);
+    handle
+        .start(vec![normalize(AppConfig::minimal("web", "./srv")).unwrap()])
+        .await
+        .unwrap();
+
+    let restarted = handle
+        .restart(ProcessSelector::Name("web".to_string()))
+        .await
+        .unwrap();
+    // The premise, stated rather than assumed: the first process is gone and
+    // the respawn put nothing in its place.
+    assert_eq!(
+        restarted[0].status,
+        ProcStatus::Errored,
+        "a restart whose spawn runs out of scripts must land `Errored`: {restarted:?}"
+    );
+
+    let reopened =
+        tokio::time::timeout(Duration::from_secs(5), handle.reopen(ProcessSelector::All))
+            .await
+            .expect("a reopen aimed at a pump that is gone must not wait for an acknowledgement")
+            .expect("a sheep with no process has nothing to reopen, which is a success");
+
+    assert_eq!(reopened.len(), 1);
+    assert_eq!(
+        reopened[0].status,
+        ProcStatus::Errored,
+        "the reply's table row is the sheep the operator asked about: {reopened:?}"
+    );
+    assert_eq!(
+        runner.reopens(0),
+        0,
+        "the sender this sheep still holds belongs to the pump that served \
+         the process that exited, and it answered nothing"
+    );
+}
+
+/// Fails if a reopen aimed at a sheep waiting out a backoff after a refused
+/// spawn waits for an acknowledgement nobody is left to send, or answers
+/// with a flock other than that sheep.
+///
+/// The route to a refused respawn is an operator's own: `set_sheep_env`
+/// parks a config the next spawn cannot assemble, and `restart` promotes
+/// it. The refusal is the retriable half, so the sheep waits rather than
+/// errors, and its entry still holds the `log_ctl` of the pump that served
+/// the process which exited.
+#[tokio::test(start_paused = true)]
+async fn a_reopen_after_a_refused_spawn_is_a_prompt_no_op_success() {
+    let (events, _rx) = crate::bus::test_bus(64);
+    let runner = Arc::new(ScriptedRunner::new(vec![ProcScript::never_exits()]));
+    let dir = tempfile::tempdir().unwrap();
+    let handle = spawn_supervisor(SharedRunner(Arc::clone(&runner)), test_paths(&dir), events);
+    handle
+        .start(vec![normalize(AppConfig::minimal("web", "./srv")).unwrap()])
+        .await
+        .unwrap();
+
+    handle
+        .set_sheep_env(
+            "web".to_string(),
+            "PW".to_string(),
+            Some(EnvValue::from("{{secret:vault/K}}".to_string())),
+        )
+        .await
+        .unwrap()
+        .expect("web is registered");
+
+    let restarted = handle
+        .restart(ProcessSelector::Name("web".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(
+        restarted[0].status,
+        ProcStatus::WaitingRestart,
+        "a namespace no provider dog has pushed to is a retriable refusal: {restarted:?}"
+    );
+    assert_eq!(
+        runner.spawn_count(),
+        1,
+        "the refusal is decided while the parked config is assembled, so no \
+         second process ever reached the runner"
+    );
+
+    let reopened =
+        tokio::time::timeout(Duration::from_secs(5), handle.reopen(ProcessSelector::All))
+            .await
+            .expect("a reopen aimed at a pump that is gone must not wait for an acknowledgement")
+            .expect("a sheep with no process has nothing to reopen, which is a success");
+
+    assert_eq!(reopened.len(), 1);
+    assert_eq!(
+        reopened[0].status,
+        ProcStatus::WaitingRestart,
+        "the reply's table row is the sheep the operator asked about: {reopened:?}"
+    );
+    assert_eq!(
+        runner.reopens(0),
+        0,
+        "the sender this sheep still holds belongs to the pump that served \
+         the process that exited, and it answered nothing"
+    );
+}
+
 /// Fails if a selector that matches nothing is answered as a success.
 /// `reopen` is the one selector verb with a default, so silence would look
 /// like a rotation that worked.
