@@ -54,6 +54,149 @@ async fn no_follow_reads_the_files_and_never_the_bus() {
     );
 }
 
+/// The shepherd's stamp, spelled out. [`shep_core::logstamp`] writes exactly
+/// [`shep_core::logstamp::LOG_STAMP_BYTES`] bytes of it, and an app that
+/// stamps its own lines in RFC 3339 can write the same bytes.
+const SHEPHERD_STAMP: &str = "2026-09-02T14:22:31.412+02:00 ";
+
+/// A sheep whose app turns the shepherd's stamp off has its own timestamp in
+/// the file, and `strip` cuts anything in that shape. `--follow` already
+/// printed the line whole, so the two paths disagreed by 30 bytes.
+#[tokio::test]
+async fn a_stamps_off_sheeps_own_timestamp_survives_the_file_tail() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let line = format!("{SHEPHERD_STAMP}the app stamped this itself");
+    assert_eq!(
+        SHEPHERD_STAMP.len(),
+        shep_core::logstamp::LOG_STAMP_BYTES,
+        "the fixture must be exactly the shape `strip` cuts, or this test \
+         proves nothing"
+    );
+    let out_path = write_log(dir.path(), "web-out.log", &format!("{line}\n"));
+
+    let (client, daemon) = fake_client_with_push(&sock).await;
+    let mut sheep = info(1, "web");
+    sheep.out_file = Some(out_path);
+    sheep.log_timestamps = Some(false);
+    daemon.reply_to_list(vec![sheep]);
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        tokio::time::timeout(
+            RUN_TIMEOUT,
+            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
+        )
+        .await
+        .expect("--no-follow never subscribes, so it must terminate on its own");
+    }
+
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        format!("web | {line}\n"),
+        "a stamps-off sheep's file holds its lines as it wrote them"
+    );
+}
+
+/// The claim the docs make for `log_timestamps = false`: the same lines
+/// either way. Asserted as two rendered lines that are byte-identical, one
+/// read off disk and one pushed on the bus.
+#[tokio::test]
+async fn a_stamps_off_sheep_prints_the_same_line_from_the_file_and_from_the_bus() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let line = format!("{SHEPHERD_STAMP}one line, two paths");
+    let out_path = write_log(dir.path(), "web-out.log", &format!("{line}\n"));
+
+    let (client, daemon) = fake_client_with_push(&sock).await;
+    let mut sheep = info(1, "web");
+    sheep.out_file = Some(out_path);
+    sheep.log_timestamps = Some(false);
+    daemon.reply_to_list(vec![sheep]);
+    daemon
+        .push(BusEvent::LogOut {
+            id: 1,
+            line: line.clone(),
+        })
+        .await;
+    daemon.close_after_subscribe().await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        tokio::time::timeout(
+            RUN_TIMEOUT,
+            bleats(&client, &mut streams, false, &follow_args_out("all")),
+        )
+        .await
+        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
+    }
+
+    let rendered = String::from_utf8(out).unwrap();
+    let want = format!("web | {line}");
+    assert_eq!(
+        rendered.lines().collect::<Vec<_>>(),
+        vec![want.as_str(), want.as_str()],
+        "the backlog line and the followed line must be the same line: {rendered}"
+    );
+}
+
+/// The other direction, so the strip is switched per row rather than off:
+/// a sheep whose app never asked for bare lines still has the shepherd's
+/// stamp taken off its file lines, which is what a `--follow` of the same
+/// sheep prints.
+#[tokio::test]
+async fn a_stamped_sheeps_shepherd_stamp_still_comes_off_the_file_tail() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let out_path = write_log(
+        dir.path(),
+        "web-out.log",
+        &format!("{SHEPHERD_STAMP}the shepherd stamped this\n"),
+    );
+
+    let (client, daemon) = fake_client_with_push(&sock).await;
+    let mut sheep = info(1, "web");
+    sheep.out_file = Some(out_path);
+    daemon.reply_to_list(vec![sheep]);
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        tokio::time::timeout(
+            RUN_TIMEOUT,
+            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
+        )
+        .await
+        .expect("--no-follow never subscribes, so it must terminate on its own");
+    }
+
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "web | the shepherd stamped this\n",
+        "a stamped row must keep losing the stamp the shepherd added"
+    );
+}
+
 /// A sheep that already crashed before `shep bleats <name>` runs: the
 /// backlog is what makes its last output reachable without starting it
 /// again in a second window.
@@ -356,7 +499,7 @@ fn read_tail_reports_truncated_on_a_byte_window_cut_alone() {
     let path = dir.path().join("web-out.log");
     std::fs::write(&path, &content).unwrap();
 
-    let (lines, truncated) = read_tail(&path, 50).unwrap();
+    let (lines, truncated) = read_tail(&path, 50, true).unwrap();
 
     assert_eq!(lines, vec!["short".to_string()]);
     assert!(
