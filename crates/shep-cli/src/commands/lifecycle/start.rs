@@ -347,6 +347,22 @@ async fn load_one(
                         }
                     }
                 }
+                // The flag reaches a sheep the token named the way it reaches
+                // one a file resolved: written before the resume below, which
+                // is the spawn that promotes a parked field. Names rather
+                // than rows: instances of one name are one sheep.
+                if args.no_log_timestamps {
+                    let names: Vec<&str> = matched
+                        .iter()
+                        .map(|info| info.name.as_str())
+                        .collect::<BTreeSet<&str>>()
+                        .into_iter()
+                        .collect();
+                    let stamp = set_log_timestamps_off(client, streams, mode, &names).await;
+                    if stamp != ExitCode::Success {
+                        return stamp;
+                    }
+                }
                 return match mode {
                     Load::Start => {
                         resume_all(client, streams, Some(token), &matched, started).await

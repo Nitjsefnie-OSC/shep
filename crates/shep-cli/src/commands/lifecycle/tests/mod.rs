@@ -44,6 +44,7 @@ mod resolve;
 mod selectors;
 mod start;
 mod start_disabled;
+mod start_named;
 mod toggle;
 mod toggle_unknown;
 
