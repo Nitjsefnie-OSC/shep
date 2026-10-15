@@ -346,7 +346,8 @@ fn an_unstamped_log_takes_its_next_line_at_offset_zero_after_a_copytruncate() {
 /// `NeedsRespawn` field, promoted by the resume that follows.
 ///
 /// The assertion is on the raw file, not through `bleats`, which strips the
-/// stamp off whatever it reads.
+/// stamp off whatever it reads. The gate opens only after the resume, so the
+/// line it releases cannot predate the spawn under test.
 #[test]
 fn no_log_timestamps_reaches_a_stopped_sheep_started_again() {
     let dir = tempfile::tempdir().unwrap();
@@ -385,6 +386,12 @@ fn no_log_timestamps_reaches_a_stopped_sheep_started_again() {
 
     let stopped = shep(home).arg("stop").arg("rotating").output().unwrap();
     assert_success(&stopped);
+    let parked = poll_flock(home, |info| info["status"] == "stopped");
+    assert_eq!(
+        parked["name"], "rotating",
+        "precondition: the flock must still hold this sheep for the load below \
+         to merge into: {parked}"
+    );
 
     // The same target, the flag this time. The sheep is already registered,
     // so this load merges into it and brings it back rather than registering
@@ -406,8 +413,16 @@ fn no_log_timestamps_reaches_a_stopped_sheep_started_again() {
          another: {envelope}"
     );
 
-    // The gate exists already, so the second run writes both of its lines.
+    // Opened only now, so the line below cannot predate the resume. The
+    // restarted sheep writes its first line and blocks here until this exists.
+    std::fs::write(&gate, "").unwrap();
+
     let after = bleats_no_follow_until_contains(home, &["all"], &[ROTATE_AFTER]);
+    let stdout = String::from_utf8_lossy(&after.stdout);
+    assert!(
+        stdout.contains(ROTATE_AFTER),
+        "the restarted sheep must reach the line past its gate: stdout={stdout}"
+    );
     assert_eq!(
         after.status.code(),
         Some(0),
@@ -425,6 +440,13 @@ fn no_log_timestamps_reaches_a_stopped_sheep_started_again() {
         ROTATE_AFTER,
         "the line the restarted sheep wrote must reach the file with no stamp \
          in front of it: {raw}"
+    );
+    assert_eq!(
+        raw.lines()
+            .filter(|line| shep_core::logstamp::strip(line) != *line)
+            .count(),
+        1,
+        "only the sheep that was started stamped may carry a stamp: {raw}"
     );
 
     graceful_kill(home);
