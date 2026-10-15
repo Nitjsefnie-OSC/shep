@@ -204,12 +204,20 @@ mod tests {
 
     /// A dead endpoint's timeout must run beside the healthy sinks, not
     /// ahead of them. Asserted as an order rather than a duration, the
-    /// way `slow_sink`'s own doc suggests: the live sink's request has to
-    /// arrive while the dead one is still hanging, and in turn it is not
-    /// contacted until that timeout has already passed.
+    /// way `slow_sink`'s own doc suggests, and read off events rather
+    /// than off a clock: the live sink's request has to arrive while the
+    /// dead delivery is still hanging, and the trail has to be empty at
+    /// the moment it lands. Driven in turn, the live sink is not
+    /// contacted until that delivery has already ended, so the order is
+    /// what fails.
+    ///
+    /// Every wait below is a failure guard, none of them a budget a
+    /// loaded machine has to beat, and the test does not pay its own
+    /// `sink_timeout`: the dead sink is released once the order is
+    /// proven, so the delivery ends on the closed connection.
     #[tokio::test]
     async fn a_dead_sink_does_not_delay_the_live_ones_delivery() {
-        let (dead_addr, dead_connected) = slow_sink().await;
+        let (dead_addr, dead_connected, dead_release) = slow_sink_with_release().await;
         let (live_addr, live_request) = one_shot_sink(200, "ok").await;
         let dir = tempfile::tempdir().unwrap();
         let barks_path = dir.path().join("barks.jsonl");
@@ -229,33 +237,59 @@ mod tests {
             sinks: Arc::new(sinks),
             append_lock: Arc::new(Mutex::new(())),
             barks_path: Arc::new(barks_path.clone()),
-            // Wider than the wait below by a margin no localhost round
-            // trip closes: in turn, the live sink is not contacted until
-            // this has already elapsed.
-            sink_timeout: Duration::from_millis(500),
+            // Ten minutes, as `a_slow_sink_never_stalls_the_loop` holds
+            // it, and well above the guards below: the claim is that the
+            // live request landed while the dead delivery still had this
+            // budget unspent. Nothing waits it out, it is released.
+            sink_timeout: Duration::from_secs(600),
             max_bytes: barks::DEFAULT_MAX_BYTES,
         };
         let recorded = tokio::spawn(async move { deliver_and_record(firing, &delivery).await });
 
-        tokio::time::timeout(Duration::from_secs(5), dead_connected)
+        // Each wait is a guard against a delivery that never ends, not a
+        // budget a loaded machine has to beat.
+        let guard = Duration::from_secs(30);
+
+        tokio::time::timeout(guard, dead_connected)
             .await
             .expect("the dead sink must be contacted at all")
             .expect("the dead sink's accept signal must arrive");
-        tokio::time::timeout(Duration::from_millis(150), live_request)
+
+        // The live sink is reached while the dead one is still hanging:
+        // nothing has released it, so its delivery cannot have ended.
+        let request = tokio::time::timeout(guard, live_request)
             .await
             .expect(
                 "the live sink must hear about the alert while the dead one still hangs; \
                  driven in turn it would have waited out the dead sink's timeout first",
             )
             .expect("the live sink must have captured its request");
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.target, "/hook");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&request.body).unwrap()["subject"],
+            "web",
+            "the live sink must have been delivered the alert, not merely contacted"
+        );
 
-        // The delivery then finishes on the dead sink's own timeout, with
-        // both outcomes in the firing's order.
-        tokio::time::timeout(Duration::from_secs(5), recorded)
+        // The same order from the other side, with no wait at all: the
+        // trail is written only once every sink has been tried, so an
+        // entry here would mean the dead sink had produced its outcome
+        // before the live one was contacted.
+        assert!(
+            barks::read(&barks_path).unwrap().is_empty(),
+            "no bark may be recorded while the dead sink is still hanging"
+        );
+
+        // End the hang rather than wait it out: the release closes the
+        // dead connection, and the delivery finishes on that.
+        let _ = dead_release.send(());
+
+        tokio::time::timeout(guard, recorded)
             .await
-            .expect("the delivery must end on the dead sink's own timeout, not outlive it")
+            .expect("the delivery must end once the dead sink lets go, not outlive its timeout")
             .expect("the delivery task must not panic");
-        let barks = shep_core::barks::read(&barks_path).unwrap();
+        let barks = barks::read(&barks_path).unwrap();
         assert_eq!(barks.len(), 1);
         let outcomes = &barks[0].sinks;
         assert_eq!(outcomes.len(), 2, "both sinks must be recorded");
@@ -265,7 +299,7 @@ mod tests {
         );
         assert!(
             outcomes[0].error.is_some(),
-            "the dead sink's timeout is its outcome, not a dropped one"
+            "the dead sink's failed delivery is recorded as a failure, not dropped"
         );
         assert_eq!(outcomes[1].sink, "live");
         assert!(

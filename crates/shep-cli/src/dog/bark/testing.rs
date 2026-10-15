@@ -237,17 +237,47 @@ pub(super) async fn one_shot_sink(
 ///
 /// The signal lets a caller assert an order rather than a duration,
 /// which would be a claim about how a runner schedules two tasks.
+///
+/// The hang is permanent. A caller that needs the delivery hanging on it
+/// to end takes [`slow_sink_with_release`] and sends on its handle.
 pub(super) async fn slow_sink() -> (SocketAddr, tokio::sync::oneshot::Receiver<()>) {
+    let (addr, connected, release) = slow_sink_with_release().await;
+    // Dropped without sending, which is how a caller asks for no release.
+    drop(release);
+    (addr, connected)
+}
+
+/// [`slow_sink`], plus the handle that ends the hang.
+///
+/// Sending on `release` makes the sink task let go of the accepted
+/// connection, so a delivery waiting on it finishes on that rather than
+/// sitting out its own `sink_timeout`. A test that asserts an order and
+/// then wants the delivery to finish can hold `sink_timeout` far above
+/// every guard in it, which is what turns the order into a claim about
+/// the delivery rather than about how fast the machine is.
+pub(super) async fn slow_sink_with_release() -> (
+    SocketAddr,
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (connected, rx) = tokio::sync::oneshot::channel();
+    let (release, wait) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let (_stream, _peer) = listener.accept().await.unwrap();
         // Ignored: a caller that does not care drops the receiver.
         let _ = connected.send(());
-        core::future::pending::<()>().await;
+        match wait.await {
+            // A send is the release: ending here drops the accepted
+            // connection, which is what the delivery hanging on it sees.
+            Ok(()) => {}
+            // A handle dropped without a send asked for none, so the
+            // sink keeps the connection for the whole test.
+            Err(_dropped_without_sending) => core::future::pending::<()>().await,
+        }
     });
-    (addr, rx)
+    (addr, rx, release)
 }
 
 pub(super) fn base_info(name: &str, status: ProcStatus, restarts: u32) -> ProcessInfo {
