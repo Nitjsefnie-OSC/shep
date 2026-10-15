@@ -14,6 +14,7 @@ Nothing here touches the real repository.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -23,6 +24,13 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS.parent
+
+# The audit script has a hyphen in its name, so it loads the way
+# scripts/test_fix_release_bump.py loads the guard: by file location.
+_spec = importlib.util.spec_from_file_location("audit_changelog_gaps", SCRIPTS / "audit-changelog-gaps.py")
+audit = importlib.util.module_from_spec(_spec)
+sys.modules["audit_changelog_gaps"] = audit
+_spec.loader.exec_module(audit)
 
 HEADER = (
     "# Changelog\n"
@@ -185,6 +193,65 @@ class Fixture(unittest.TestCase):
     def gap_lines(self, stdout: str, crate: str, version: str) -> list[str]:
         marker = f"gap: {crate} {version} "
         return [line for line in self.gaps(stdout) if line.startswith(marker)]
+
+
+class TestTagOrder(unittest.TestCase):
+    """tag_sort_key orders versions the way semver does, which is what cuts
+    the release ranges the audit walks."""
+
+    def ordered(self, versions: list[str]) -> list[str]:
+        return sorted(versions, key=audit.tag_sort_key)
+
+    def test_numeric_pre_release_identifiers_sort_as_numbers(self) -> None:
+        self.assertEqual(
+            self.ordered(["0.1.0-alpha.10", "0.1.0-alpha.2", "0.1.0-alpha.1"]),
+            ["0.1.0-alpha.1", "0.1.0-alpha.2", "0.1.0-alpha.10"],
+        )
+
+    def test_the_semver_precedence_chain_holds(self) -> None:
+        # The example order from semver.org, section 11.
+        self.assertEqual(
+            self.ordered(
+                [
+                    "1.0.0",
+                    "1.0.0-rc.1",
+                    "1.0.0-beta.11",
+                    "1.0.0-beta.2",
+                    "1.0.0-beta",
+                    "1.0.0-alpha.beta",
+                    "1.0.0-alpha.1",
+                    "1.0.0-alpha",
+                ]
+            ),
+            [
+                "1.0.0-alpha",
+                "1.0.0-alpha.1",
+                "1.0.0-alpha.beta",
+                "1.0.0-beta",
+                "1.0.0-beta.2",
+                "1.0.0-beta.11",
+                "1.0.0-rc.1",
+                "1.0.0",
+            ],
+        )
+
+    def test_a_pre_release_sorts_below_its_plain_version(self) -> None:
+        self.assertEqual(
+            self.ordered(["0.1.0", "0.1.0-alpha.1"]),
+            ["0.1.0-alpha.1", "0.1.0"],
+        )
+
+    def test_a_longer_numeric_identifier_of_the_same_value_sorts_above(self) -> None:
+        self.assertEqual(
+            self.ordered(["0.1.0-alpha.001", "0.1.0-alpha.1"]),
+            ["0.1.0-alpha.1", "0.1.0-alpha.001"],
+        )
+
+    def test_build_metadata_does_not_change_the_order(self) -> None:
+        self.assertEqual(
+            self.ordered(["0.1.0+build.10", "0.1.0+build.2", "0.1.0-alpha.1+build.1"]),
+            ["0.1.0-alpha.1+build.1", "0.1.0+build.10", "0.1.0+build.2"],
+        )
 
 
 class TestAudit(Fixture):

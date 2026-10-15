@@ -107,7 +107,21 @@ def crates_with_changelogs(repo: fix.Repo) -> list[Crate]:
     return crates
 
 
-def tag_sort_key(version: str) -> tuple[int, int, int, int, str]:
+def pre_release_key(pre: str) -> tuple[tuple[int, int, str | int], ...]:
+    """Semver order for a pre-release: identifiers compare one by one, a
+    numeric one as a number and below an alphanumeric one, and a longer set
+    above an equal shorter one. `alpha.10` sits over `alpha.2`, which string
+    order gets wrong. Build metadata is already cut off by the caller and
+    does not rank."""
+    if not pre:
+        return ()
+    return tuple(
+        (0, int(part), len(part)) if part.isdigit() else (1, 0, part)
+        for part in pre.split(".")
+    )
+
+
+def tag_sort_key(version: str) -> tuple[int, int, int, int, tuple[tuple[int, int, str | int], ...]]:
     """Semver order, with a pre-release sorting below its plain version.
 
     `0.1.0-alpha.1` sits under `0.1.0`, which is what makes it a range
@@ -116,7 +130,8 @@ def tag_sort_key(version: str) -> tuple[int, int, int, int, str]:
     number, _, pre = version.partition("-")
     parts = number.split("+")[0].split(".")
     major, minor, patch = (int(part) if part.isdigit() else 0 for part in parts[:3])
-    return (major, minor, patch, 0 if pre else 1, pre)
+    pre = pre.split("+")[0]
+    return (major, minor, patch, 0 if pre else 1, pre_release_key(pre))
 
 
 def release_timeline(repo: fix.Repo) -> list[tuple[str, tuple[int, int, int] | None, str]]:
