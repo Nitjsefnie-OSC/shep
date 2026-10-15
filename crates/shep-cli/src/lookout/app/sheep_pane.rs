@@ -103,32 +103,29 @@ impl App {
     /// same request; `J`/`K` step to the next or previous sheep without
     /// leaving the pane; `x`/`R`/`L` arm a confirm against the pane's own
     /// pinned sheep ([`Self::arm_sheep_pane`]), `↵` confirms it and any
-    /// other key cancels it, the same as the dashboard's own armed check
-    /// just below in [`Self::on_key`], needed here too, in its own copy,
-    /// because `on_key` routes to this method ahead of that check, so an
-    /// action armed from inside this pane never reaches it. `j`/`k` and
-    /// `g`/`G` scroll the config/env column through its own `Viewport`.
-    /// `/`, `o`, `m`, `f`, `w`, `n` and `N` belong to the embedded feed
-    /// ([`Self::sheep_feed_mut`]), the same axes [`Self::on_bleats_key`]
-    /// wires for the full-screen pane, and `b` hands that same feed to
+    /// other key cancels it, through the same [`Self::on_armed_key`] prelude
+    /// [`Self::on_key`] runs. It is needed here too: `on_key` routes to this
+    /// method ahead of its own call, so an action armed from inside this pane
+    /// never reaches that one. `j`/`k` and `g`/`G` scroll the config/env
+    /// column through its own `Viewport`. `/`, `o` and `m` are claimed ahead
+    /// of this keymap by [`Self::on_feed_key`], the dispatcher
+    /// [`Self::on_bleats_key`] runs for the full-screen pane; `f`, `w`, `n`
+    /// and `N` belong to the embedded feed ([`Self::sheep_feed_mut`]), the
+    /// same axes and match box that dispatcher and [`Self::on_feed_text_key`]
+    /// wire for the full-screen pane, and `b` hands that same feed to
     /// [`Self::promote_feed_to_full_screen`] rather than opening a fresh one.
     /// Every other key is inert.
     pub(super) fn on_sheep_pane_key(&mut self, key: KeyPress) -> Effect {
-        if self
-            .action
-            .as_ref()
-            .is_some_and(|action| action.stage == Stage::Armed)
-        {
-            if key == KeyPress::Confirm {
-                return self.confirm();
-            }
-            if key == KeyPress::Quit {
-                return Effect::Quit;
-            }
-            self.action = None;
-            return Effect::None;
+        if let Some(effect) = self.on_armed_key(key) {
+            return effect;
         }
         self.notice = None;
+        // `o`, `m` and `/`: claimed ahead of this keymap by the same
+        // dispatcher the full-screen pane runs, so the two screens cannot
+        // answer one of them differently.
+        if let Some(effect) = self.on_feed_key(key, Self::sheep_feed_mut) {
+            return effect;
+        }
         match key {
             KeyPress::Quit => Effect::Quit,
             KeyPress::Escape => {
@@ -167,46 +164,10 @@ impl App {
             // rather than rebuilding one, so a filter narrowed here survives
             // going full screen.
             KeyPress::Bleats => self.promote_feed_to_full_screen(),
-            // Opens the feed's own match box: `on_text_key` routes the
-            // keystrokes that follow to `on_sheep_feed_text_key` once this
-            // pane owns `InputMode::Text`, the same shape
-            // `on_bleats_key`'s own `FilterStart` arm follows.
-            KeyPress::FilterStart => {
-                if let Some(feed) = self.sheep_feed_mut() {
-                    feed.begin_match_edit();
-                }
-                self.mode = InputMode::Text;
-                Effect::None
-            }
-            // `o`: cycles the embedded feed's stream axis, the same cycle
-            // `on_bleats_key`'s own arm follows.
-            KeyPress::StreamCycle => {
-                if let Some(feed) = self.sheep_feed_mut() {
-                    let next = match feed.filters().stream {
-                        None => Some(Stream::Out),
-                        Some(Stream::Out) => Some(Stream::Err),
-                        Some(Stream::Err) => None,
-                    };
-                    feed.set_stream(next);
-                }
-                Effect::None
-            }
-            // `m`: cycles the embedded feed's minimum-level axis, the same
-            // cycle `on_bleats_key`'s own arm follows.
-            KeyPress::LevelCycle => {
-                if let Some(feed) = self.sheep_feed_mut() {
-                    let next = match feed.filters().min_level {
-                        None => Some(Level::Trace),
-                        Some(Level::Trace) => Some(Level::Debug),
-                        Some(Level::Debug) => Some(Level::Info),
-                        Some(Level::Info) => Some(Level::Warn),
-                        Some(Level::Warn) => Some(Level::Error),
-                        Some(Level::Error) => None,
-                    };
-                    feed.set_min_level(next);
-                }
-                Effect::None
-            }
+            // Named here only to keep this keymap exhaustive: the guard above
+            // already answered all three. See the same arm in
+            // [`Self::on_bleats_key`].
+            KeyPress::FilterStart | KeyPress::StreamCycle | KeyPress::LevelCycle => Effect::None,
             // `f`: toggles following explicitly.
             KeyPress::FollowToggle => {
                 if let Some(feed) = self.sheep_feed_mut() {
@@ -277,38 +238,6 @@ impl App {
             | KeyPress::Group(_)
             | KeyPress::Undo
             | KeyPress::Continue => Effect::None,
-        }
-    }
-
-    /// The embedded feed's own match box, in force while it owns
-    /// [`InputMode::Text`]. [`Self::on_bleats_text_key`]'s own body, against
-    /// [`Self::sheep_feed_mut`] instead of [`Self::bleats_pane_mut`]: the two
-    /// panes never coexist, but each opens its match box against its own
-    /// filter state.
-    pub(super) fn on_sheep_feed_text_key(&mut self, key: KeyPress) -> Effect {
-        match key {
-            KeyPress::Quit => Effect::Quit,
-            KeyPress::TextChar(_) | KeyPress::TextBackspace | KeyPress::TextEdit(_) => {
-                if let Some(feed) = self.sheep_feed_mut() {
-                    feed.edit_match_box(|text| text.handle(key));
-                }
-                Effect::None
-            }
-            KeyPress::TextApply => {
-                self.mode = InputMode::Normal;
-                if let Some(feed) = self.sheep_feed_mut() {
-                    feed.commit_match_edit();
-                }
-                Effect::None
-            }
-            KeyPress::TextAbandon => {
-                self.mode = InputMode::Normal;
-                if let Some(feed) = self.sheep_feed_mut() {
-                    feed.abandon_match_edit();
-                }
-                Effect::None
-            }
-            _ => Effect::None,
         }
     }
 
@@ -855,9 +784,8 @@ mod tests {
     }
 
     /// Every key but `↵` and `q` cancels an action armed from inside the
-    /// pane, the same rule the dashboard's own armed check applies, needed
-    /// in the pane's own copy, since `on_key` routes here ahead of that
-    /// check.
+    /// pane, the rule [`App::on_armed_key`] applies on both screens. The pane
+    /// needs its own call, since `on_key` routes here before making it.
     #[test]
     fn any_other_key_cancels_an_action_armed_inside_the_pane() {
         for key in [
@@ -973,11 +901,10 @@ mod tests {
         assert!(action.sent);
     }
 
-    /// `on_key`'s own armed-keypress prelude clears `self.notice` before its
-    /// `match`; `on_sheep_pane_key` copied the prelude but not that line, so
-    /// a refusal raised inside the pane never cleared, kept overriding the
-    /// pane's own key hints in `status_line`, and survived `close_pane`
-    /// back to the flock table.
+    /// Both screens clear `self.notice` after [`App::on_armed_key`] and
+    /// before their own keymap: without it a refusal raised inside the pane
+    /// never cleared, kept overriding the pane's own key hints in
+    /// `status_line`, and survived `close_pane` back to the flock table.
     #[test]
     fn a_refusal_inside_the_sheep_pane_clears_on_the_next_keypress() {
         let mut app = allowed_in_the_sheep_pane();

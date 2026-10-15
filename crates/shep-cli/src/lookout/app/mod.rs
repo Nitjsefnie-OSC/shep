@@ -21,6 +21,9 @@
 //!   [`samples`] the sparkline series; [`lambs`] the walk under one sheep.
 //! - [`action`] is the one armed verb, and [`close_dialog`] the one a pane
 //!   raises on its way out.
+//! - [`feed_keys`] is what the bleats pane and the sheep pane's embedded feed
+//!   answer the same way, and the armed-confirm prelude both their screens
+//!   run.
 //! - A screen apiece: [`settings`], [`secrets_pane`], [`config_pane`],
 //!   [`sheep_pane`], [`bleats`], [`dog_pane`], and the sub-screens in
 //!   [`pane_list`] and [`pane_dogs`].
@@ -70,6 +73,7 @@ mod dog_pane_entries;
 mod dog_pane_entry_add;
 #[cfg(test)]
 mod dog_pane_entry_removal;
+mod feed_keys;
 mod keys;
 mod lambs;
 mod msg;
