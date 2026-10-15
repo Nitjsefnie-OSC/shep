@@ -86,8 +86,11 @@ fn is_sgr_parameter(c: char) -> bool {
     matches!(c, '0'..='9' | ';' | ':')
 }
 
-/// Whether `line` holds an SGR that is not a bare reset (`ESC[m`,
-/// `ESC[0m`): the answer to "this line already chose its own colour".
+/// Whether `line` holds an SGR that asks for styling: a parameter value
+/// other than zero. A sequence whose every parameter is empty or zero is
+/// a bare reset, whatever its spelling (`ESC[m`, `ESC[0m`, `ESC[00m`,
+/// `ESC[0;0m`), and a line whose only SGR is one of those is still a
+/// plain line.
 #[must_use]
 pub(crate) fn sets_colour(line: &str) -> bool {
     let mut chars = line.chars().peekable();
@@ -104,13 +107,23 @@ pub(crate) fn sets_colour(line: &str) -> bool {
             params.push(c);
             chars.next();
         }
-        // `ESC[m` and `ESC[0m` turn colour off and add none: a line whose
-        // only SGR is one of those is still a plain line.
-        if chars.next() == Some('m') && !params.is_empty() && params != "0" {
+        // An empty parameter reads as zero, the default the grammar
+        // gives it, and zero means reset: only a nonzero value colours.
+        if chars.next() == Some('m') && params_set_colour(&params) {
             return true;
         }
     }
     false
+}
+
+/// Whether an SGR parameter list asks for anything a bare reset does
+/// not: any value other than zero. `;` splits parameters and `:` splits
+/// the sub-parameters of the `SGR 38;2;r;g;b` extended forms, so a
+/// nonzero sub-parameter such as `38:2:1:2:3` counts too.
+fn params_set_colour(params: &str) -> bool {
+    params
+        .split([';', ':'])
+        .any(|part| part.chars().any(|d| d != '0'))
 }
 
 /// `line` wrapped in the default colour of `stream` (`"out"` meadow, the
@@ -197,6 +210,14 @@ mod tests {
         assert!(
             !sets_colour("\u{1b}[0mback to normal\u{1b}[m"),
             "a reset with nothing to reset is not a colour; both bare spellings count"
+        );
+        assert!(
+            !sets_colour("\u{1b}[00m\u{1b}[0;0mredundant resets only"),
+            "00 and 0;0 parse as the same reset as 0, so the line is still plain"
+        );
+        assert!(
+            sets_colour("\u{1b}[0;31mred after a reset"),
+            "a reset sharing the sequence with a real colour still colours"
         );
         assert!(!sets_colour("nothing styled at all"));
     }
