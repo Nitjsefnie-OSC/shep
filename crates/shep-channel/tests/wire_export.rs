@@ -58,6 +58,11 @@ fn child_kind(message: &ChildMessage) -> Kind {
             doc: "KindLambLabel names one of the app's own child processes.",
             wire: "lamb-label",
         },
+        ChildMessage::Note { .. } => Kind {
+            ident: "KindNote",
+            doc: "KindNote is a name and a number for a dog, not a metric sample.",
+            wire: "note",
+        },
     }
 }
 
@@ -101,6 +106,10 @@ fn child_samples() -> Vec<ChildMessage> {
             pid: 4312,
             label: LambLabel::new("worker 1").expect("a valid label"),
         },
+        ChildMessage::Note {
+            name: "lease.web.want.1760500000".into(),
+            value: 1.0,
+        },
     ]
 }
 
@@ -120,9 +129,9 @@ fn shepherd_samples() -> Vec<ShepherdMessage> {
 /// metric of zero and an id of zero.
 #[rustfmt::skip]
 const CHILD_FIELDS: &[Field] = &[
-    Field { ident: "Kind",   ty: "string",   tag: "kind",             kinds: &["ready", "metric", "action-reply", "lamb-label"] },
-    Field { ident: "Name",   ty: "*string",  tag: "name,omitempty",   kinds: &["metric"] },
-    Field { ident: "Value",  ty: "*float64", tag: "value,omitempty",  kinds: &["metric"] },
+    Field { ident: "Kind",   ty: "string",   tag: "kind",             kinds: &["ready", "metric", "action-reply", "lamb-label", "note"] },
+    Field { ident: "Name",   ty: "*string",  tag: "name,omitempty",   kinds: &["metric", "note"] },
+    Field { ident: "Value",  ty: "*float64", tag: "value,omitempty",  kinds: &["metric", "note"] },
     Field { ident: "Type",   ty: "*string",  tag: "type,omitempty",   kinds: &["metric"] },
     Field { ident: "Labels", ty: "map[string]string", tag: "labels,omitempty", kinds: &["metric"] },
     Field { ident: "Help",   ty: "*string",  tag: "help,omitempty",   kinds: &["metric"] },

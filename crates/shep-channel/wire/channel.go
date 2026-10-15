@@ -19,6 +19,8 @@ const (
 	KindActionReply = "action-reply"
 	// KindLambLabel names one of the app's own child processes.
 	KindLambLabel = "lamb-label"
+	// KindNote is a name and a number for a dog, not a metric sample.
+	KindNote = "note"
 	// KindShutdown is the shepherd asking the app to stop.
 	KindShutdown = "shutdown"
 	// KindAction is the shepherd dispatching one custom action.

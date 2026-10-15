@@ -91,6 +91,16 @@ pub enum ChildMessage {
         /// What `describe` shows beside the lamb's executable name
         label: LambLabel,
     },
+    /// A name and a number for a dog, published as `channel.note`
+    ///
+    /// Not a metric sample: the metrics dog never reads one. No grammar
+    /// check on `name`, no labels and no help.
+    Note {
+        /// Whatever the app and the dog agree on
+        name: String,
+        /// The number that goes with `name`
+        value: f64,
+    },
 }
 
 /// A sheep's own name for one of its lambs
@@ -393,6 +403,23 @@ mod tests {
         assert!(
             serde_json::from_str::<ChildMessage>(r#"{"kind":"lamb-label","pid":4312}"#).is_err()
         );
+    }
+
+    /// A name the metrics grammar would refuse goes through untouched.
+    #[test]
+    fn a_note_round_trips_with_any_name() {
+        let fixture = r#"{"kind":"note","name":"lease.web.want.1760500000","value":1.0}"#;
+        let msg = ChildMessage::Note {
+            name: "lease.web.want.1760500000".to_string(),
+            value: 1.0,
+        };
+        assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
+        assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+    }
+
+    #[test]
+    fn a_note_without_a_value_fails_to_decode() {
+        assert!(serde_json::from_str::<ChildMessage>(r#"{"kind":"note","name":"x"}"#).is_err());
     }
 
     #[test]

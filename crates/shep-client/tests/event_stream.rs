@@ -162,3 +162,39 @@ async fn a_lagging_consumer_reports_the_lag_rather_than_silently_skipping() {
     .expect("an overrun must be reported, never silently skipped");
     assert!(count > 0, "the lag notice must say how many were lost");
 }
+
+/// What a dog that wants notes writes: the topic, and the paths through
+/// this crate's own `shep_core` re-export.
+#[tokio::test]
+async fn a_note_subscriber_reads_the_note_by_name_and_value() {
+    use shep_client::shep_core::protocol::ChildMessage;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, daemon) = fake_client_with_push(&path).await;
+    let mut stream = client.subscribe(vec!["channel.note".into()]).await.unwrap();
+
+    daemon
+        .push(BusEvent::Channel {
+            id: 4,
+            message: ChildMessage::Note {
+                name: "lease.web.want.1760500000".into(),
+                value: 1.0,
+            },
+        })
+        .await;
+
+    let event = next_event(&mut stream, "a pushed note must arrive").await;
+    assert_eq!(event.topic(), "channel.note");
+    let BusEvent::Channel {
+        id,
+        message: ChildMessage::Note { name, value },
+    } = event
+    else {
+        panic!("expected a note, got {event:?}");
+    };
+    assert_eq!(
+        (id, name.as_str(), value),
+        (4, "lease.web.want.1760500000", 1.0)
+    );
+}

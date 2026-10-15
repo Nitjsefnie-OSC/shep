@@ -1048,10 +1048,10 @@ mod tests {
     fn a_frozen_dashboard_ignores_a_bleats_tail_in_flight_at_the_freeze() {
         let (mut app, _) = started();
         let live_tail = crate::lookout::tail::Tail {
-            lines: vec![crate::lookout::tail::TailLine {
-                stream: crate::lookout::tail::Stream::Out,
-                text: "read before the freeze".to_string(),
-            }],
+            lines: vec![crate::lookout::tail::TailLine::new(
+                crate::lookout::tail::Stream::Out,
+                "read before the freeze",
+            )],
             ..Default::default()
         };
         app.update(Msg::Bleats {
@@ -1065,10 +1065,10 @@ mod tests {
         });
 
         let in_flight_tail = crate::lookout::tail::Tail {
-            lines: vec![crate::lookout::tail::TailLine {
-                stream: crate::lookout::tail::Stream::Out,
-                text: "read after the freeze".to_string(),
-            }],
+            lines: vec![crate::lookout::tail::TailLine::new(
+                crate::lookout::tail::Stream::Out,
+                "read after the freeze",
+            )],
             ..Default::default()
         };
         assert_eq!(

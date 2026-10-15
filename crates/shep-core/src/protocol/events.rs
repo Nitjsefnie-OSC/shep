@@ -200,6 +200,7 @@ impl BusEvent {
                 ChildMessage::Metric { .. } => "channel.metric",
                 ChildMessage::ActionReply { .. } => "channel.action_reply",
                 ChildMessage::LambLabel { .. } => "channel.lamb_label",
+                ChildMessage::Note { .. } => "channel.note",
             },
             Self::Dropped { .. } => "daemon.dropped",
             Self::DaemonShutdown => "daemon.shutdown",
@@ -492,6 +493,13 @@ mod tests {
                 },
                 "channel.lamb_label",
             ),
+            (
+                ChildMessage::Note {
+                    name: "lease.web.want.1".to_string(),
+                    value: 1.0,
+                },
+                "channel.note",
+            ),
         ] {
             let event = BusEvent::Channel {
                 id: 3,
@@ -522,6 +530,10 @@ mod tests {
             ChildMessage::LambLabel {
                 pid: 1,
                 label: LambLabel::new("").unwrap(),
+            },
+            ChildMessage::Note {
+                name: String::new(),
+                value: 0.0,
             },
         ] {
             let topic = BusEvent::Channel { id: 1, message }.topic();

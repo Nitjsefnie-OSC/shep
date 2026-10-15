@@ -244,8 +244,5 @@ pub fn app_fixture() -> App {
 
 /// One tail line, tagged with the stream it came from.
 pub fn line(stream: Stream, text: &str) -> TailLine {
-    TailLine {
-        stream,
-        text: text.to_string(),
-    }
+    TailLine::new(stream, text)
 }

@@ -13,9 +13,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-15
+
 ### Added
 
 - Copy a setting or a dog table from one sheep onto another
+- Let a sheep send a dog a note that is not a metric sample **(BREAKING)**
+- Edit a decimal number field instead of drawing it read-only
+- Add output::width::text_columns for drawn-text column counts
+- Bleats keeps a sheep's own colour and paints plain lines by stream
+
+### Changed
+
+- Fold page_lines_back onto tail_window_start
+- Re-export the dogs table's types beside the functions that return them
+- Name the dogs module at the reach its re-exported functions need
+- Restart and reload share one refusal tail
+- The two feed screens answer their keys from one place
+- The two feed screens claim their keys in one dispatcher
+- Measure view text width through output::width::text_columns
+- One GUTTER and one row pad for the lookout view
+- Notice is built by Notice::grave or Notice::info
+- One column walk behind the view's three truncations
+- One failed_reply sentence for every lookout reply site
+- Write the lock refusal and the provider-row refusal once
+- Body answers its own pane accessors
+- Answer serve's seven replies through one helper
+
+### Fixed
+
+- Refuse a copy that would write through a value that is not a table
+- Read a dotted dog name and a dotted key against the tables
+- Read a copy's dog name as a table before a flock dog
+- Print the copy change list before asking, in every output form
+- Report a failed clock read in bark and keep its stamps moving
+- --no-log-timestamps reaches a sheep the flock already has
+- Report a parked stamp write and the shepherd's warning beside it
+- --no-log-timestamps reaches a sheep the token named
+- Enforce a schema's strict bounds and name an empty range
+- Enforce exact strict bounds and numeric enums
+- Say bare references read as missing in describe's unreadable-store notice
+- Bleats keeps a stamps-off sheep's own timestamp in the file tail
+- Bleats keeps an app's own timestamp in the file tail of a stamps-off sheep
+- Escape the serve access log at the one print site
+- Read every all-zero SGR as a bare reset
+- Drop bare resets a stream colour would cancel
+
+### Added
+
+- Copy a setting or a dog table from one sheep onto another
+
+### Performance
+
+- Count bleats instances once per follow, not per log line
+
 
 ## [0.14.0] - 2026-10-14
 
