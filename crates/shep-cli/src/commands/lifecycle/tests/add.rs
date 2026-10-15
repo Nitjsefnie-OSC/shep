@@ -117,9 +117,19 @@ async fn add_reports_the_stamp_it_left_waiting_on_a_spawn() {
     .unwrap();
     let path = shep_client::testing::control_address(dir.path());
     let flock = vec![ProcessInfo::builder(0, "zam", ProcStatus::Stopped).build()];
+    // A Flockfile target declares `script`, so this load sends `ApplyConfig`
+    // before the flag write, and `apply_declared` treats any other answer as
+    // a daemon-side fault.
     let (client, mut envelopes) =
         fake_client_answering(&path, move |request: &Request| match request {
             Request::ListFlock => Response::Flock(flock.clone()),
+            Request::ApplyConfig { apps, .. } => Response::Applied(
+                apps.iter()
+                    .map(|app| {
+                        SheepApplied::new(app.config.name.clone(), Vec::new(), Vec::new(), None)
+                    })
+                    .collect(),
+            ),
             Request::SetSheepField { name, key, .. } => Response::SheepFieldSet {
                 name: name.clone(),
                 key: key.clone(),
@@ -135,7 +145,15 @@ async fn add_reports_the_stamp_it_left_waiting_on_a_spawn() {
     let (code, _out, said) = add_against_with_args(&client, &args).await;
 
     assert_eq!(code, ExitCode::Success, "{said}");
-    let written: Vec<String> = sent(&mut envelopes)
+    let bodies = sent(&mut envelopes);
+    assert!(
+        bodies
+            .iter()
+            .any(|r| matches!(r, Request::ApplyConfig { .. })),
+        "the Flockfile's own keys merged first, which is what the flag write \
+         cannot ride on: {bodies:?}"
+    );
+    let written: Vec<String> = bodies
         .into_iter()
         .filter_map(|request| match request {
             Request::SetSheepField { name, key, value } => {
