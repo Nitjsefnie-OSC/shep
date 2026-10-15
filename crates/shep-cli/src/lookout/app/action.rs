@@ -139,20 +139,8 @@ impl App {
                 refusal = refusal_sentence(&refused);
                 accepted
             }
-            Ok(_unrecognised) => {
-                self.notice = Some(Notice::grave(format!(
-                    "{prefix}: the shepherd answered something this lookout does not understand"
-                )));
-                return Effect::None;
-            }
-            // The daemon's own message: `RequestError`'s `Display` would put a
-            // Rust identifier on an operator's screen.
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice::grave(format!("{prefix}: {}", err.message)));
-                return Effect::None;
-            }
-            Err(other) => {
-                self.notice = Some(Notice::grave(format!("{prefix}: {other}")));
+            other => {
+                self.notice = Some(Notice::grave(format!("{prefix}: {}", failed_reply(other))));
                 return Effect::None;
             }
         };

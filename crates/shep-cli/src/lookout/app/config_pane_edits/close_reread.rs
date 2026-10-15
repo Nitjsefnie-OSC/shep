@@ -69,11 +69,7 @@ impl App {
                 };
                 return self.hold(format!("{name}: its section in dogs.toml"), dropped);
             }
-            (Ok(_unrecognised), _) => {
-                "the shepherd answered something this lookout does not understand".to_owned()
-            }
-            (Err(RequestError::Rpc(err)), _) => err.message,
-            (Err(other), _) => other.to_string(),
+            (other, _) => failed_reply(other),
         };
         self.notice = Some(Notice::grave(format!(
             "{name}: {why}, so nothing was written"
