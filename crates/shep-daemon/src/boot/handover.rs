@@ -254,7 +254,7 @@ mod tests {
     use super::*;
     use crate::boot::{BootOptions, SIGNAL_TEST_LOCK, boot_with_idle_sweep, init_dirs};
     use crate::fake::{ProcScript, ScriptedRunner};
-    use crate::testing::{SharedRunner, capture_logs, test_paths};
+    use crate::testing::{SharedRunner, app_with, capture_logs, plain_entry, test_paths};
     use shep_core::config::{AppConfig, normalize};
     use shep_core::protocol::DogSource;
     use std::sync::Arc;
@@ -567,26 +567,11 @@ mod tests {
         name: &str,
         dog: Option<DogSource>,
     ) -> crate::handover::adopt::AdoptedSheep {
-        let mut entry = crate::entry::ProcessEntry {
-            id: 1,
-            spec: normalize(AppConfig::minimal(name, "./srv")).unwrap(),
-            pending: None,
-            pending_reidentifies: false,
-            overridden: Vec::new(),
-            instance: 0,
-            status: shep_core::status::ProcStatus::Online,
+        let entry = crate::entry::ProcessEntry {
             pid: Some(4242),
-            restarts: 0,
-            started_at: None,
-            budget: crate::entry::RestartBudget::default(),
-            reload: crate::entry::ReloadState::None,
-            credentials: crate::privilege::SpawnIdentity::Resolved(None),
-            out_file: PathBuf::new(),
-            err_file: PathBuf::new(),
-            dog: None,
-            last_exit: None,
+            dog,
+            ..plain_entry(1, app_with(name, |_| {}))
         };
-        entry.dog = dog;
         crate::handover::adopt::AdoptedSheep {
             carried: crate::handover::CarriedSheep::from_entry(
                 &entry,

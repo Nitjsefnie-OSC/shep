@@ -447,57 +447,30 @@ impl App {
         }
     }
 
-    /// The config pane's own text keymap, in force for as long as one of
-    /// its two editors owns [`InputMode::Text`].
+    /// Refuse the row under the cursor when it is locked: raise the grave
+    /// notice in that row's own words, and report whether it did.
     ///
-    /// Does not trim the buffer, for the reason
-    /// [`Self::on_settings_text_key`]'s own doc gives: this repository does
-    /// not widen an accepted input grammar without a basis in the spec.
-    ///
-    /// Both editors file on `TextApply`, and neither sends: the pane's own
-    /// `Escape` writes the whole set.
-    pub(super) fn on_pane_text_key(&mut self, key: KeyPress) -> Effect {
-        if key == KeyPress::Quit {
-            return Effect::Quit;
-        }
-        if self.config_pane().is_some_and(|pane| pane.list().is_some()) {
-            return self.on_list_text_key(key);
-        }
-        if self
+    /// [`Self::cycle_field`] and [`Self::restore_default`] gate on it as
+    /// `if self.refuse_if_locked() { return Effect::None; }`.
+    pub(super) fn refuse_if_locked(&mut self) -> bool {
+        let Some((key, lock)) = self
             .config_pane()
-            .is_some_and(|pane| pane.env_typing().is_some())
-        {
-            return self.on_env_text_key(key);
-        }
-        let Some(pane) = self.config_pane_mut() else {
-            return Effect::None;
+            .and_then(ConfigPane::cursor_lock)
+            .map(|(key, lock)| (key.to_owned(), lock))
+        else {
+            return false;
         };
-        match key {
-            KeyPress::TextChar(typed) => pane.type_char(typed),
-            KeyPress::TextBackspace => pane.type_backspace(),
-            KeyPress::TextEdit(edit) => pane.edit_text(edit),
-            KeyPress::TextApply => {
-                let refused = pane.apply_typing();
-                // `apply_typing` keeps the editor open on a buffer the
-                // field's own schema refuses, so the mode follows what the
-                // pane actually did rather than what the key asked for.
-                if pane.typing().is_none() {
-                    self.mode = InputMode::Normal;
-                }
-                // The sentence is the whole point of refusing here: a dog's
-                // section is written unread, so an operator who is not told
-                // now finds out from the dog's own log, or never.
-                if let Some(refused) = refused {
-                    self.notice = Some(Notice::grave(refused.text));
-                }
-            }
-            KeyPress::TextAbandon => {
-                pane.abandon_typing();
-                self.mode = InputMode::Normal;
-            }
-            _ => {}
-        }
-        Effect::None
+        self.refuse_locked(&key, lock);
+        true
+    }
+
+    /// Raise the grave notice for a locked row, in that row's own words.
+    ///
+    /// For a caller that already holds the cursor's lock for another gate:
+    /// [`Self::confirm_field`] needs it before its opens gate, so it keeps
+    /// that computation and hands the pair here.
+    pub(super) fn refuse_locked(&mut self, key: &str, lock: Lock) {
+        self.notice = Some(Notice::grave(Self::lock_refusal(key, lock)));
     }
 
     /// The [`WriteAuthority`] every settings write path has to hold, or
@@ -936,6 +909,29 @@ mod tests {
         let said = app.notice().map(ToString::to_string).unwrap_or_default();
         assert!(said.contains("web"), "got {said:?}");
         assert!(app.notice().unwrap().is_grave());
+    }
+
+    /// `space`, `Enter` and `d` each refuse a locked row, and all three
+    /// refusals are one sentence: one fact, one wording, three doors.
+    #[test]
+    fn a_locked_row_refuses_cycle_confirm_and_restore_with_the_same_sentence() {
+        for key in ["instances", "liveness_probe"] {
+            let mut app = fixtures::app_in_sheep_pane_with_control();
+            pane_to(&mut app, key);
+            let _ = app.update(Msg::Key(KeyPress::Cycle));
+            let cycled = app.notice().map(ToString::to_string);
+            let _ = app.update(Msg::Key(KeyPress::Confirm));
+            let confirmed = app.notice().map(ToString::to_string);
+            let _ = app.update(Msg::Key(KeyPress::Remove));
+            let restored = app.notice().map(ToString::to_string);
+            assert_eq!(cycled, confirmed, "{key}");
+            assert_eq!(confirmed, restored, "{key}");
+            assert!(
+                cycled.as_deref().is_some_and(|text| text.contains(key)),
+                "{key}: {cycled:?}"
+            );
+            assert!(app.config_pane().unwrap().edits().is_empty(), "{key}");
+        }
     }
 
     /// It spends its first line on a title naming the sheep, so a viewport

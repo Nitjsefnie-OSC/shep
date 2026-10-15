@@ -88,7 +88,7 @@ impl App {
         // specific of the two answers, and `--allow-control` would not
         // help. Each lock says its own thing; see [`Self::lock_refusal`].
         if let Some((key, lock)) = locked {
-            self.notice = Some(Notice::grave(Self::lock_refusal(&key, lock)));
+            self.refuse_locked(&key, lock);
             return Effect::None;
         }
         if self.authorize_write().is_none() {

@@ -697,23 +697,11 @@ async fn a_parked_config_and_its_reset_decision_survive_a_handover() {
         gid: None,
     };
     let entry = ProcessEntry {
-        id: 7,
-        spec: app_with("web", |_| {}),
         pending: Some(app_with("web", |app| app.user = Some(own_user_name()))),
         pending_reidentifies: true,
-        overridden: Vec::new(),
-        instance: 0,
         status: ProcStatus::Stopped,
-        pid: None,
-        restarts: 0,
-        started_at: None,
-        budget: RestartBudget::default(),
-        reload: ReloadState::None,
         credentials: SpawnIdentity::Resolved(Some(settled)),
-        out_file: PathBuf::new(),
-        err_file: PathBuf::new(),
-        dog: None,
-        last_exit: None,
+        ..plain_entry(7, app_with("web", |_| {}))
     };
     let carried = CarriedSheep::from_entry(&entry, 0, CarriedFds::none(), false, None, false, None);
 
