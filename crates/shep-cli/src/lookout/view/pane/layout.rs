@@ -9,7 +9,7 @@
 use ratatui::text::Line;
 use shep_core::config::ApplyGroup;
 
-use crate::output::width::char_columns;
+use crate::output::width::{char_columns, text_columns};
 
 /// The columns every line spends on the selection mark and the space after
 /// it, before any cell is drawn. `settings::GUTTER`'s twin, private there,
@@ -176,12 +176,6 @@ pub(super) fn mask_secret(secret: bool, raw: String) -> String {
     }
 }
 
-/// How many columns `text` occupies, the same count [`super::super::flock::fit`] and
-/// [`clipped`] measure against.
-pub(super) fn columns(text: &str) -> usize {
-    text.chars().map(char_columns).sum()
-}
-
 /// The columns `line`'s spans occupy, added rather than measured against a
 /// fixed cell: a blank separator or an unselected section header is
 /// shorter than the left column's own width on its own, and only the
@@ -205,8 +199,8 @@ pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
     for word in text.split_whitespace() {
-        let word_w: usize = word.chars().map(char_columns).sum();
-        let current_w: usize = current.chars().map(char_columns).sum();
+        let word_w: usize = text_columns(word);
+        let current_w: usize = text_columns(&current);
         if current.is_empty() {
             current.push_str(word);
         } else if current_w + 1 + word_w <= width {
@@ -234,7 +228,7 @@ pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
 /// is long enough to exercise the truncation itself.
 pub(super) fn clipped(text: &str, width: u16) -> String {
     let width = usize::from(width);
-    let columns: usize = text.chars().map(char_columns).sum();
+    let columns: usize = text_columns(text);
     if columns <= width {
         return text.to_owned();
     }
