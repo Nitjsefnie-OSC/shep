@@ -1,7 +1,6 @@
 //! The sheep pane: one sheep's own screen, with its config, its feed and its
 //! actions.
 
-use super::feed_keys::{FeedAxis, cycle_feed_axis};
 use super::*;
 
 impl App {
@@ -108,17 +107,25 @@ impl App {
     /// [`Self::on_key`] runs. It is needed here too: `on_key` routes to this
     /// method ahead of its own call, so an action armed from inside this pane
     /// never reaches that one. `j`/`k` and `g`/`G` scroll the config/env
-    /// column through its own `Viewport`. `/`, `o`, `m`, `f`, `w`, `n` and
-    /// `N` belong to the embedded feed ([`Self::sheep_feed_mut`]), the same
-    /// axes and match box [`Self::on_bleats_key`] and
-    /// [`Self::on_feed_text_key`] wire for the full-screen pane, and `b`
-    /// hands that same feed to [`Self::promote_feed_to_full_screen`] rather
-    /// than opening a fresh one. Every other key is inert.
+    /// column through its own `Viewport`. `/`, `o` and `m` are claimed ahead
+    /// of this keymap by [`Self::on_feed_key`], the dispatcher
+    /// [`Self::on_bleats_key`] runs for the full-screen pane; `f`, `w`, `n`
+    /// and `N` belong to the embedded feed ([`Self::sheep_feed_mut`]), the
+    /// same axes and match box that dispatcher and [`Self::on_feed_text_key`]
+    /// wire for the full-screen pane, and `b` hands that same feed to
+    /// [`Self::promote_feed_to_full_screen`] rather than opening a fresh one.
+    /// Every other key is inert.
     pub(super) fn on_sheep_pane_key(&mut self, key: KeyPress) -> Effect {
         if let Some(effect) = self.on_armed_key(key) {
             return effect;
         }
         self.notice = None;
+        // `o`, `m` and `/`: claimed ahead of this keymap by the same
+        // dispatcher the full-screen pane runs, so the two screens cannot
+        // answer one of them differently.
+        if let Some(effect) = self.on_feed_key(key, Self::sheep_feed_mut) {
+            return effect;
+        }
         match key {
             KeyPress::Quit => Effect::Quit,
             KeyPress::Escape => {
@@ -157,31 +164,10 @@ impl App {
             // rather than rebuilding one, so a filter narrowed here survives
             // going full screen.
             KeyPress::Bleats => self.promote_feed_to_full_screen(),
-            // Opens the feed's own match box: `on_text_key` routes the
-            // keystrokes that follow to `on_feed_text_key` once this pane
-            // owns `InputMode::Text`, the same shape `on_bleats_key`'s own
-            // `FilterStart` arm follows.
-            KeyPress::FilterStart => {
-                if let Some(feed) = self.sheep_feed_mut() {
-                    feed.begin_match_edit();
-                }
-                self.mode = InputMode::Text;
-                Effect::None
-            }
-            // `o` and `m`: the embedded feed's two cycle axes, cycled by the
-            // same function the full-screen pane calls.
-            KeyPress::StreamCycle => {
-                if let Some(feed) = self.sheep_feed_mut() {
-                    cycle_feed_axis(feed, FeedAxis::Stream);
-                }
-                Effect::None
-            }
-            KeyPress::LevelCycle => {
-                if let Some(feed) = self.sheep_feed_mut() {
-                    cycle_feed_axis(feed, FeedAxis::Level);
-                }
-                Effect::None
-            }
+            // Named here only to keep this keymap exhaustive: the guard above
+            // already answered all three. See the same arm in
+            // [`Self::on_bleats_key`].
+            KeyPress::FilterStart | KeyPress::StreamCycle | KeyPress::LevelCycle => Effect::None,
             // `f`: toggles following explicitly.
             KeyPress::FollowToggle => {
                 if let Some(feed) = self.sheep_feed_mut() {

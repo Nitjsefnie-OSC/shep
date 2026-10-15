@@ -2,7 +2,6 @@
 //! match box. The keys this pane and the sheep pane's embedded feed answer
 //! the same way live in [`super::feed_keys`].
 
-use super::feed_keys::{FeedAxis, cycle_feed_axis};
 use super::*;
 
 impl App {
@@ -24,6 +23,12 @@ impl App {
     /// following, `f` toggles following explicitly, `w` toggles wrapping,
     /// and `n`/`N` step toward the newest or oldest matching line.
     pub(super) fn on_bleats_key(&mut self, key: KeyPress) -> Effect {
+        // `o`, `m` and `/`: claimed ahead of this keymap by [`Self::on_feed_key`],
+        // the dispatcher the sheep pane's embedded feed calls as well, so the
+        // two screens cannot answer one of them differently.
+        if let Some(effect) = self.on_feed_key(key, Self::bleats_pane_mut) {
+            return effect;
+        }
         match key {
             KeyPress::Quit => Effect::Quit,
             KeyPress::Escape => {
@@ -35,31 +40,12 @@ impl App {
                 }
                 Effect::None
             }
-            // Opens the match box: `on_text_key` routes the keystrokes that
-            // follow to `on_feed_text_key` once this pane owns
-            // `InputMode::Text`. `begin_match_edit` remembers what the axis
-            // held, so an abandoned edit restores it rather than losing it.
-            KeyPress::FilterStart => {
-                if let Some(pane) = self.bleats_pane_mut() {
-                    pane.begin_match_edit();
-                }
-                self.mode = InputMode::Text;
-                Effect::None
-            }
-            // `o` and `m`: the two cycle axes, cycled by the same function
-            // the sheep pane's embedded feed calls.
-            KeyPress::StreamCycle => {
-                if let Some(pane) = self.bleats_pane_mut() {
-                    cycle_feed_axis(pane, FeedAxis::Stream);
-                }
-                Effect::None
-            }
-            KeyPress::LevelCycle => {
-                if let Some(pane) = self.bleats_pane_mut() {
-                    cycle_feed_axis(pane, FeedAxis::Level);
-                }
-                Effect::None
-            }
+            // Named here only to keep this keymap exhaustive: the guard above
+            // already answered all three. A wildcard would let a new
+            // `KeyPress` variant fall through unnoticed, which is what the
+            // long inert arms below exist to prevent; `config_pane.rs` names
+            // the `Quit` its own guard took for the same reason.
+            KeyPress::FilterStart | KeyPress::StreamCycle | KeyPress::LevelCycle => Effect::None,
             // `k`/`Up`: one line toward older lines.
             KeyPress::SelectUp => {
                 self.scroll_bleats_back(1);

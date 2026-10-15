@@ -1,12 +1,12 @@
 //! The keys the two feed screens share: the bleats pane and the sheep pane's
-//! embedded feed cycle the same two axes, type into the same match box, and
-//! run the same armed-confirm prelude ahead of their own keymaps.
+//! embedded feed claim the same keys ahead of their own keymaps, cycle the
+//! same two axes, and type into the same match box.
 
 use super::*;
 
 /// Which feed axis a cycle key moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum FeedAxis {
+enum FeedAxis {
     /// `o`: whose stream's lines survive.
     Stream,
     /// `m`: the minimum level a line must meet.
@@ -19,7 +19,7 @@ pub(super) enum FeedAxis {
 /// The level axis runs every `Level` in ascending order and back to `None`:
 /// a cycle that skipped `None` would leave an operator who set a floor
 /// unable to see an unclassifiable line again without closing the pane.
-pub(super) fn cycle_feed_axis(pane: &mut BleatsPane, axis: FeedAxis) {
+fn cycle_feed_axis(pane: &mut BleatsPane, axis: FeedAxis) {
     match axis {
         FeedAxis::Stream => {
             let next = match pane.filters().stream {
@@ -44,6 +44,52 @@ pub(super) fn cycle_feed_axis(pane: &mut BleatsPane, axis: FeedAxis) {
 }
 
 impl App {
+    /// The feed keys both screens claim, run ahead of each pane's own keymap.
+    ///
+    /// `feed` names the feed they act on: [`Self::bleats_pane_mut`] for the
+    /// full-screen pane, [`Self::sheep_feed_mut`] for the embedded one.
+    ///
+    /// `Some` for a key this function owns, `None` for the caller's keymap to
+    /// answer. Owning them here rather than in each keymap is the point: a key
+    /// added to this match is answered on both screens at once, which is the
+    /// drift this module exists to stop. The scroll, follow, wrap and
+    /// match-step keys stay in each pane's own keymap, and
+    /// [`Self::on_feed_text_key`] takes what an operator types once `/` has
+    /// opened the box.
+    pub(super) fn on_feed_key(
+        &mut self,
+        key: KeyPress,
+        feed: impl FnOnce(&mut Self) -> Option<&mut BleatsPane>,
+    ) -> Option<Effect> {
+        match key {
+            // `o` and `m`: the two cycle axes, one step forward each.
+            KeyPress::StreamCycle => {
+                if let Some(pane) = feed(self) {
+                    cycle_feed_axis(pane, FeedAxis::Stream);
+                }
+                Some(Effect::None)
+            }
+            KeyPress::LevelCycle => {
+                if let Some(pane) = feed(self) {
+                    cycle_feed_axis(pane, FeedAxis::Level);
+                }
+                Some(Effect::None)
+            }
+            // `/`: opens the match box. `begin_match_edit` remembers what the
+            // axis held, so an abandoned edit restores it rather than losing
+            // it, and the keystrokes that follow reach
+            // [`Self::on_feed_text_key`] through [`Self::on_text_key`].
+            KeyPress::FilterStart => {
+                if let Some(pane) = feed(self) {
+                    pane.begin_match_edit();
+                }
+                self.mode = InputMode::Text;
+                Some(Effect::None)
+            }
+            _ => None,
+        }
+    }
+
     /// The armed-confirm prelude, run ahead of the dashboard's keymap and
     /// ahead of the sheep pane's.
     ///
@@ -137,8 +183,8 @@ mod tests {
     }
 
     /// The keys both feed screens answer, in the order an operator presses
-    /// them: two `o`s, three `m`s, then a match box typed into and applied,
-    /// then a second box abandoned.
+    /// them: two `o`s, three `m`s, a match box typed into and applied, a
+    /// second box abandoned, then `f` and `w`.
     fn feed_script() -> Vec<KeyPress> {
         vec![
             KeyPress::StreamCycle,
@@ -155,6 +201,8 @@ mod tests {
             KeyPress::FilterStart,
             KeyPress::TextChar('z'),
             KeyPress::TextAbandon,
+            KeyPress::FollowToggle,
+            KeyPress::WrapToggle,
         ]
     }
 
@@ -194,15 +242,50 @@ mod tests {
         let sheep_state = feed_state(sheep.sheep_pane().expect("the pane is open").feed());
 
         assert_eq!(bleats_state, sheep_state);
+        assert_eq!(bleats.mode(), sheep.mode(), "both closed the box");
 
         let (filters, following, wrapped, box_text) = &bleats_state;
         assert_eq!(filters.stream, Some(Stream::Err), "two o's");
         assert_eq!(filters.min_level, Some(Level::Info), "three m's");
         assert_eq!(filters.match_text(), Some("po"), "the typed match survived");
         assert_eq!(filters.match_kind(), Some(MatchKind::Literal));
-        assert!(following, "no key in the script moved the tail");
-        assert!(!wrapped, "and none touched wrap");
+        assert!(!following, "f turned following off");
+        assert!(wrapped, "w turned wrapping on");
         assert!(box_text.is_none(), "the box closed on the abandon");
+    }
+
+    /// What the dispatcher claims, read on both screens: the three feed keys
+    /// are answered there, and a key it leaves go falls to the pane's own
+    /// keymap. A pane wiring one of the three on its own would have to answer
+    /// for it here too.
+    #[test]
+    fn the_feed_dispatcher_claims_the_same_keys_on_both_screens() {
+        let mut bleats = fixtures::with_feed(tail());
+        let _ = bleats.update(Msg::Key(KeyPress::Bleats));
+        let mut sheep = fixtures::with_feed(tail());
+        let _ = sheep.update(Msg::Key(KeyPress::Confirm));
+
+        for key in [
+            KeyPress::StreamCycle,
+            KeyPress::LevelCycle,
+            KeyPress::FilterStart,
+        ] {
+            assert!(
+                bleats.on_feed_key(key, App::bleats_pane_mut).is_some(),
+                "the bleats pane answers {key:?} through the dispatcher"
+            );
+            assert!(
+                sheep.on_feed_key(key, App::sheep_feed_mut).is_some(),
+                "and so does the embedded feed"
+            );
+        }
+        assert_eq!(bleats.mode(), InputMode::Text);
+        assert_eq!(sheep.mode(), InputMode::Text, "both opened their own box");
+
+        for key in [KeyPress::Escape, KeyPress::SelectDown, KeyPress::MatchPrev] {
+            assert!(bleats.on_feed_key(key, App::bleats_pane_mut).is_none());
+            assert!(sheep.on_feed_key(key, App::sheep_feed_mut).is_none());
+        }
     }
 
     /// The prelude both screens run: `Enter` confirms, everything else
