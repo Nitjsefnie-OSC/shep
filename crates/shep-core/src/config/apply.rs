@@ -26,84 +26,104 @@ pub enum ApplyGroup {
     Structural,
 }
 
-/// Every `AppConfig` field name this table has been taught about, paired with
-/// its group.
+/// One row of the `FIELDS` table: the field's name, the group it belongs
+/// to, and whether a write to it reaches a child that is already running.
 ///
-/// `apply_group` and `is_classified` both read this single list rather than
-/// keeping two hand-maintained lists in step: a field named here only once
-/// cannot drift between "classified" and "has a group".
-const FIELDS: &[(&str, ApplyGroup)] = &[
+/// The third entry is carried by the row rather than derived from the group.
+/// [`ApplyGroup::NextSpawn`] splits: a field read off the stored spec at a
+/// muster, a boot or an ordered walk reaches the flock it is already part
+/// of, while one moved into the per-sheep task at spawn does not. Naming
+/// the answer per row is what stops a new `NextSpawn` field from skipping
+/// the question.
+struct FieldRow {
+    field: &'static str,
+    group: ApplyGroup,
+    reaches_running: bool,
+}
+
+/// Every `AppConfig` field name this table has been taught about, paired with
+/// its group and with whether a write to it reaches a running child.
+///
+/// `apply_group`, `reaches_running` and `is_classified` all read this single
+/// list rather than keeping hand-maintained lists in step: a field named
+/// here only once cannot drift between "classified" and "has a group", and a
+/// `NextSpawn` field cannot skip the running-child answer either.
+///
+/// `#[rustfmt::skip]` keeps one row per line: rustfmt puts every member of a
+/// struct literal on its own line, and this table is read across.
+#[rustfmt::skip]
+const FIELDS: &[FieldRow] = &[
     // Read by `brain::decide` when a sheep exits.
-    ("autorestart", ApplyGroup::Live),
-    ("max_restarts", ApplyGroup::Live),
-    ("min_uptime", ApplyGroup::Live),
-    ("restart_delay", ApplyGroup::Live),
-    ("exp_backoff_restart_delay", ApplyGroup::Live),
-    ("stop_exit_codes", ApplyGroup::Live),
+    FieldRow { field: "autorestart",                group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "max_restarts",               group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "min_uptime",                 group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "restart_delay",              group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "exp_backoff_restart_delay",  group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "stop_exit_codes",            group: ApplyGroup::Live,          reaches_running: true  },
     // Read by `claim_manual` when a kill ladder runs.
-    ("kill_timeout", ApplyGroup::Live),
-    ("graceful_timeout", ApplyGroup::Live),
+    FieldRow { field: "kill_timeout",               group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "graceful_timeout",           group: ApplyGroup::Live,          reaches_running: true  },
     // Read fresh when extras arms a worker. These need a re-arm to take
     // effect; see `ExtrasRegistry::rearm_name`.
-    ("max_memory", ApplyGroup::Live),
-    ("watch", ApplyGroup::Live),
-    ("ignore_watch", ApplyGroup::Live),
-    ("watch_delay", ApplyGroup::Live),
-    ("watch_options", ApplyGroup::Live),
-    ("cron_restart", ApplyGroup::Live),
-    ("cron_timezone", ApplyGroup::Live),
-    ("liveness_probe", ApplyGroup::Live),
+    FieldRow { field: "max_memory",                 group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "watch",                      group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "ignore_watch",               group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "watch_delay",                group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "watch_options",              group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "cron_restart",               group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "cron_timezone",              group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "liveness_probe",             group: ApplyGroup::Live,          reaches_running: true  },
     // Read fresh per command.
-    ("fold", ApplyGroup::Live),
-    ("reuse_port", ApplyGroup::Live),
+    FieldRow { field: "fold",                       group: ApplyGroup::Live,          reaches_running: true  },
+    FieldRow { field: "reuse_port",                 group: ApplyGroup::Live,          reaches_running: true  },
     // Never read by a spawn at all: it rides `ProcessInfo` to whichever
     // client is classifying this sheep's log lines, so the next listing
     // carries it.
-    ("level_rules", ApplyGroup::Live),
+    FieldRow { field: "level_rules",                group: ApplyGroup::Live,          reaches_running: true  },
     // Never read by the daemon at all: it rides to the dog it names,
     // through `Request::DogSheepSettings`, and nothing else asks for it.
-    ("dogs", ApplyGroup::Live),
+    FieldRow { field: "dogs",                       group: ApplyGroup::Live,          reaches_running: true  },
     // Read fresh from the stored spec each time an action is dispatched, at
     // `supervisor.rs`'s `begin_action` (`config.action_timeout.as_duration()`),
     // not baked into the long-lived per-sheep task.
-    ("action_timeout", ApplyGroup::Live),
+    FieldRow { field: "action_timeout",             group: ApplyGroup::Live,          reaches_running: true  },
     // Unlike its two ladder-mates above, `kill_signal` is read from the
     // per-sheep task's `ResolvedApp`, moved in once at `spawn_sheep_task`
     // and never refreshed.
-    ("kill_signal", ApplyGroup::NextSpawn),
-    ("listen_timeout", ApplyGroup::NextSpawn),
-    ("readiness_probe", ApplyGroup::NextSpawn),
+    FieldRow { field: "kill_signal",                group: ApplyGroup::NextSpawn,     reaches_running: false },
+    FieldRow { field: "listen_timeout",             group: ApplyGroup::NextSpawn,     reaches_running: false },
+    FieldRow { field: "readiness_probe",            group: ApplyGroup::NextSpawn,     reaches_running: false },
     // Read once at muster or boot, by `restorable()`.
-    ("autostart", ApplyGroup::NextSpawn),
+    FieldRow { field: "autostart",                  group: ApplyGroup::NextSpawn,     reaches_running: true  },
     // Read once when a batch is ordered, at a boot, a muster, or a staged
     // start; see the field's own doc comment on `AppConfig`.
-    ("depends_on", ApplyGroup::NextSpawn),
+    FieldRow { field: "depends_on",                 group: ApplyGroup::NextSpawn,     reaches_running: true  },
     // Baked into the child at exec: argv, cwd, environment, credentials, the
     // fd table, the log paths it is already writing to.
-    ("script", ApplyGroup::NeedsRespawn),
-    ("args", ApplyGroup::NeedsRespawn),
-    ("cwd", ApplyGroup::NeedsRespawn),
-    ("interpreter", ApplyGroup::NeedsRespawn),
-    ("env", ApplyGroup::NeedsRespawn),
+    FieldRow { field: "script",                     group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "args",                       group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "cwd",                        group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "interpreter",                group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "env",                        group: ApplyGroup::NeedsRespawn,  reaches_running: false },
     // Decides what every `{{secret:...}}` in this child's env resolved to,
     // and those are baked in at exec like the rest of the environment.
-    ("environment", ApplyGroup::NeedsRespawn),
-    ("user", ApplyGroup::NeedsRespawn),
-    ("group", ApplyGroup::NeedsRespawn),
-    ("out_file", ApplyGroup::NeedsRespawn),
-    ("err_file", ApplyGroup::NeedsRespawn),
-    ("merge_logs", ApplyGroup::NeedsRespawn),
+    FieldRow { field: "environment",                group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "user",                       group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "group",                      group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "out_file",                   group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "err_file",                   group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "merge_logs",                 group: ApplyGroup::NeedsRespawn,  reaches_running: false },
     // Read once, when the log pump starts beside the child.
-    ("log_timestamps", ApplyGroup::NeedsRespawn),
-    ("channel", ApplyGroup::NeedsRespawn),
-    ("stdin", ApplyGroup::NeedsRespawn),
-    ("wait_ready", ApplyGroup::NeedsRespawn),
+    FieldRow { field: "log_timestamps",             group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "channel",                    group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "stdin",                      group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "wait_ready",                 group: ApplyGroup::NeedsRespawn,  reaches_running: false },
     // `shutdown_with_message` belongs here rather than with the kill ladder:
     // `assemble()` ORs it into whether fd 3 is opened, and that is the
     // child's own fd table.
-    ("shutdown_with_message", ApplyGroup::NeedsRespawn),
-    ("name", ApplyGroup::Structural),
-    ("instances", ApplyGroup::Structural),
+    FieldRow { field: "shutdown_with_message",      group: ApplyGroup::NeedsRespawn,  reaches_running: false },
+    FieldRow { field: "name",                       group: ApplyGroup::Structural,    reaches_running: false },
+    FieldRow { field: "instances",                  group: ApplyGroup::Structural,    reaches_running: false },
 ];
 
 /// The group `field` belongs to.
@@ -117,8 +137,8 @@ const FIELDS: &[(&str, ApplyGroup)] = &[
 pub fn apply_group(field: &str) -> ApplyGroup {
     FIELDS
         .iter()
-        .find(|(name, _)| *name == field)
-        .map_or(ApplyGroup::NeedsRespawn, |(_, group)| *group)
+        .find(|row| row.field == field)
+        .map_or(ApplyGroup::NeedsRespawn, |row| row.group)
 }
 
 /// Whether a write to `field` reaches a child that is already running.
@@ -127,33 +147,34 @@ pub fn apply_group(field: &str) -> ApplyGroup {
 /// exactly these, and `shep lookout`'s close dialog asks about exactly
 /// these, so the two read one answer rather than each deriving its own.
 ///
-/// [`ApplyGroup::NextSpawn`] splits. `kill_signal`, `listen_timeout` and
-/// `readiness_probe` come off the per-sheep task's `ResolvedApp`, moved in
-/// once at spawn. `autostart` and `depends_on` are read at a muster, a boot
-/// or an ordered walk instead, off the stored spec the moment it lands, so
-/// telling an operator to restart for either would be telling them to do
-/// nothing.
+/// The answer is the row's own `reaches_running` entry, not something this
+/// function works out from the group. [`ApplyGroup::NextSpawn`] splits:
+/// `kill_signal`, `listen_timeout` and `readiness_probe` come off the
+/// per-sheep task's `ResolvedApp`, moved in once at spawn, while `autostart`
+/// and `depends_on` are read at a muster, a boot or an ordered walk instead,
+/// off the stored spec the moment it lands, so telling an operator to restart
+/// for either would be telling them to do nothing. A field this table has
+/// been taught about answers with its row, and the row is where the choice
+/// gets made; the test `reaches_running_agrees_with_the_group_table_for_every_field`
+/// holds every row to what its group implies.
 ///
-/// The match above is exhaustive and in-crate, with no wildcard arm, so a
-/// group a later shep-core adds stops this build rather than silently
-/// inheriting an answer: the compiler forces a deliberate choice for the
-/// new variant instead. [`ApplyGroup`] is still `#[non_exhaustive]` for an
-/// out-of-crate match, which is why `shep-cli`'s `rank` and `cost_label`
+/// An unknown name has no row, and answers `false`, the same conservative
+/// answer [`apply_group`] gives it. [`ApplyGroup`] is `#[non_exhaustive]` for
+/// an out-of-crate match, which is why `shep-cli`'s `rank` and `cost_label`
 /// carry a wildcard arm that this function does not need.
 #[must_use]
 pub fn reaches_running(field: &str) -> bool {
-    match apply_group(field) {
-        ApplyGroup::Live => true,
-        ApplyGroup::NextSpawn => matches!(field, "autostart" | "depends_on"),
-        ApplyGroup::NeedsRespawn | ApplyGroup::Structural => false,
-    }
+    FIELDS
+        .iter()
+        .find(|row| row.field == field)
+        .is_some_and(|row| row.reaches_running)
 }
 
 /// Whether `field` is named explicitly in the table above, as opposed to
 /// reaching the conservative fallback. Test-facing.
 #[must_use]
 pub fn is_classified(field: &str) -> bool {
-    FIELDS.iter().any(|(name, _)| *name == field)
+    FIELDS.iter().any(|row| row.field == field)
 }
 
 /// How much of a Flockfile load overwrites what the operator has set since.
@@ -247,7 +268,7 @@ mod tests {
         let fields = appconfig_fields();
         let strays: Vec<&str> = FIELDS
             .iter()
-            .map(|(name, _)| *name)
+            .map(|row| row.field)
             .filter(|name| !fields.contains_key(*name))
             .collect();
         assert!(strays.is_empty(), "FIELDS rows naming no field: {strays:?}");
@@ -328,22 +349,45 @@ mod tests {
         assert!(!reaches_running("a_field_from_a_later_shep"));
     }
 
-    /// The claim the hoist rests on: every field the table knows, answered
-    /// by both routes, agreeing. A field added to `FIELDS` without a thought
-    /// about which side of the line it falls on fails here.
+    /// The claim the hoist rests on: every row's own `reaches_running` entry
+    /// is what its group implies, and `reaches_running` answers with that
+    /// entry. A field added to `FIELDS` without a thought about which side of
+    /// the line it falls on fails here. The match below carries no wildcard
+    /// arm, so a group a later shep-core adds stops this test at compile time
+    /// instead of inheriting an answer.
     #[test]
     fn reaches_running_agrees_with_the_group_table_for_every_field() {
-        for (field, group) in FIELDS {
-            let expected = match group {
-                ApplyGroup::Live => true,
-                ApplyGroup::NextSpawn => matches!(*field, "autostart" | "depends_on"),
-                _ => false,
-            };
+        let mut next_spawn_reaching = 0;
+        for row in FIELDS {
             assert_eq!(
-                reaches_running(field),
-                expected,
-                "{field} is classified {group:?}"
+                reaches_running(row.field),
+                row.reaches_running,
+                "{field} is classified {group:?}",
+                field = row.field,
+                group = row.group,
             );
+            match row.group {
+                ApplyGroup::Live => assert!(
+                    row.reaches_running,
+                    "{field} is Live but its row says a respawn applies it",
+                    field = row.field
+                ),
+                ApplyGroup::NeedsRespawn | ApplyGroup::Structural => assert!(
+                    !row.reaches_running,
+                    "{field} is {group:?} but its row says a running child sees it",
+                    field = row.field,
+                    group = row.group
+                ),
+                ApplyGroup::NextSpawn => next_spawn_reaching += usize::from(row.reaches_running),
+            }
         }
+        // Which two `NextSpawn` rows those are is pinned by
+        // `autostart_and_depends_on_reach_one_without_a_respawn`. This pins
+        // that only two fields read the stored spec off the flock they are
+        // already part of.
+        assert_eq!(
+            next_spawn_reaching, 2,
+            "NextSpawn rows claiming a running child sees them"
+        );
     }
 }
