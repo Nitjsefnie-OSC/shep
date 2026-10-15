@@ -63,11 +63,18 @@ fn stdout_is_green_and_stderr_is_red_when_colour_is_on() {
                 id: 1,
                 line: "to-stderr".into(),
             },
+            BusEvent::LogOut {
+                id: 1,
+                line: "\u{1b}[0mreset-first".into(),
+            },
         ],
     );
     assert_eq!(
-        rendered, "web | \u{1b}[32mto-stdout\u{1b}[0m\nweb | \u{1b}[31mto-stderr\u{1b}[0m\n",
-        "the `name |` label stays plain and only the line text is wrapped: {rendered:?}"
+        rendered,
+        "web | \u{1b}[32mto-stdout\u{1b}[0m\nweb | \u{1b}[31mto-stderr\u{1b}[0m\nweb | \
+         \u{1b}[32mreset-first\u{1b}[0m\n",
+        "the `name |` label stays plain, only the line text is wrapped, and a logger's \
+         own leading reset is dropped rather than cancelling the colour: {rendered:?}"
     );
 }
 

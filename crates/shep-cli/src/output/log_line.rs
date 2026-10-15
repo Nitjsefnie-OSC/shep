@@ -131,7 +131,10 @@ fn params_set_colour(params: &str) -> bool {
 /// off or the line already carries an SGR of its own.
 ///
 /// Call it on a [`sanitize_log_line`] output: `sets_colour` then reads
-/// only the escapes that survived as styling.
+/// only the escapes that survived as styling. A line that is painted has
+/// no SGR but bare resets, and those are dropped first: left in, a
+/// logger's own reset would cancel the wrapper's colour from that point
+/// on, printing the rest of the line uncoloured.
 #[must_use]
 pub(crate) fn paint_default(line: &str, stream: &str, style: Presentation) -> String {
     if !style.colour || sets_colour(line) {
@@ -143,11 +146,50 @@ pub(crate) fn paint_default(line: &str, stream: &str, style: Presentation) -> St
         Role::Meadow
     };
     let painted = super::paint::style_for(role, style.deep_colour);
-    format!("{painted}{line}{painted:#}")
+    let plain = strip_bare_resets(line);
+    format!("{painted}{plain}{painted:#}")
+}
+
+/// `line` with every all-zero SGR sequence dropped and every other byte
+/// kept. Only a line whose SGRs are all bare resets ever reaches this
+/// from [`paint_default`], so what survives the walk there is text.
+fn strip_bare_resets(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' || chars.peek().copied() != Some('[') {
+            out.push(c);
+            continue;
+        }
+        chars.next();
+        let mut seq = String::from("\u{1b}[");
+        let mut params = String::new();
+        while let Some(p) = chars.peek().copied() {
+            if !is_sgr_parameter(p) {
+                break;
+            }
+            params.push(p);
+            seq.push(p);
+            chars.next();
+        }
+        match chars.next() {
+            // A bare reset drops; anything that colours, or is not a
+            // well-formed SGR at all, stays byte for byte.
+            Some('m') if !params_set_colour(&params) => {}
+            Some(c) => {
+                seq.push(c);
+                out.push_str(&seq);
+            }
+            None => out.push_str(&seq),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::style::StyleLevel;
+
     use super::*;
 
     #[test]
@@ -220,5 +262,25 @@ mod tests {
             "a reset sharing the sequence with a real colour still colours"
         );
         assert!(!sets_colour("nothing styled at all"));
+    }
+
+    #[test]
+    fn a_bare_reset_inside_a_plain_line_does_not_cancel_the_stream_colour() {
+        let style = Presentation::new(StyleLevel::Full, None, None, None, 80);
+        assert_eq!(
+            paint_default("\u{1b}[0mhello", "out", style),
+            "\u{1b}[32mhello\u{1b}[0m",
+            "a leading reset would cancel the wrapper's green before the text"
+        );
+        assert_eq!(
+            paint_default("foo\u{1b}[0m bar", "err", style),
+            "\u{1b}[31mfoo bar\u{1b}[0m",
+            "an embedded reset would drop the colour off the tail of the line"
+        );
+        assert_eq!(
+            paint_default("\u{1b}[31mred stays\u{1b}[0m", "out", style),
+            "\u{1b}[31mred stays\u{1b}[0m",
+            "a line with its own colour is untouched, resets and all"
+        );
     }
 }
