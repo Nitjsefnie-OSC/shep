@@ -1,9 +1,9 @@
 //! `shep serve`'s worker: binds a listener, accepts connections, and
 //! answers each one against [`ServeConfig`].
 //!
-//! `#[cfg(unix)]`: this binds a real listener and reads real files, same
-//! as `serve::fs`. `path`, `mime`, `listing` and `auth` stay pure; this is
-//! the module that calls them.
+//! This binds a real listener and reads real files, as `serve::fs` does,
+//! on every target. `path`, `mime`, `listing` and `auth` stay pure; this
+//! is the module that calls them.
 //!
 //! The accept loop admits through a [`tokio::sync::Semaphore`] and wraps
 //! each connection in a [`tokio::time::timeout`]: `serve` streams files
