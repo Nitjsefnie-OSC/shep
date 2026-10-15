@@ -11,6 +11,5 @@
 1014 crates/shep-cli/src/lookout/pane_bleats.rs
 1112 crates/shep-cli/src/serve/worker.rs
 1103 crates/shep-cli/src/lookout/app/bleats.rs
-1103 crates/shep-cli/src/lookout/view/settings.rs
 1103 crates/shep-cli/src/lookout/view/bleats_full.rs
 1066 crates/shep-cli/src/lookout/app/sheep_pane.rs
