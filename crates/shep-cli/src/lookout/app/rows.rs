@@ -403,8 +403,8 @@ pub enum LambWalk {
     /// The reply carried no walk at all, which for a `Describe` means this
     /// sheep has no pid to walk from.
     NotWalked,
-    /// The request did not come back, or came back as something this binary
-    /// does not understand.
+    /// The request did not come back, or came back as something this lookout
+    /// has no shape for.
     Failed,
 }
 
@@ -429,6 +429,25 @@ pub struct LambReading {
     pub(super) id: u32,
     pub(super) at: Instant,
     pub(super) walk: LambWalk,
+}
+
+/// The sentence for a reply this lookout has never heard of, shared so one
+/// failed request reads the same wherever it lands.
+pub(super) const UNRECOGNISED_REPLY: &str =
+    "the shepherd answered something this lookout does not understand";
+
+/// Why a reply is not the one the asking screen expected, in words an operator
+/// can read.
+///
+/// A daemon-side refusal contributes its own message rather than
+/// [`RequestError`]'s `Display` for it, which renders the code as a Rust
+/// identifier.
+pub(super) fn failed_reply(result: Result<Response, RequestError>) -> String {
+    match result {
+        Ok(_) => UNRECOGNISED_REPLY.to_owned(),
+        Err(RequestError::Rpc(err)) => err.message,
+        Err(other) => other.to_string(),
+    }
 }
 
 /// A short line the status bar shows instead of the key hints, cleared by the
@@ -479,6 +498,7 @@ impl fmt::Display for Notice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shep_core::protocol::{RpcError, RpcErrorCode};
 
     #[test]
     fn notice_grave_and_info_set_the_flag_and_keep_the_text() {
@@ -491,5 +511,22 @@ mod tests {
         assert!(!info.is_grave());
         assert_eq!(info.text, "restart scheduled for api");
         assert_eq!(info.to_string(), "restart scheduled for api");
+    }
+
+    #[test]
+    fn failed_reply_names_each_of_its_three_cases_apart() {
+        let unrecognised = failed_reply(Ok(Response::Pong));
+        let daemon = failed_reply(Err(RequestError::Rpc(RpcError {
+            code: RpcErrorCode::NotFound,
+            message: "no sheep named web".into(),
+            daemon_version: None,
+        })));
+        let transport = failed_reply(Err(RequestError::Timeout {
+            after: Duration::from_secs(3),
+        }));
+
+        assert_eq!(unrecognised, UNRECOGNISED_REPLY);
+        assert_eq!(daemon, "no sheep named web");
+        assert_eq!(transport, "no reply within 3s");
     }
 }

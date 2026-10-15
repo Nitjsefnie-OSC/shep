@@ -53,19 +53,11 @@ impl App {
                     name: name.to_owned(),
                 })
             }
-            Ok(_unrecognised) => {
+            other => {
                 self.notice = Some(Notice::grave(format!(
-                    "{name}: {key}: the shepherd answered something this lookout does not \
-                     understand"
+                    "{name}: {key}: {}",
+                    failed_reply(other)
                 )));
-                Effect::None
-            }
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice::grave(format!("{name}: {key}: {}", err.message)));
-                Effect::None
-            }
-            Err(other) => {
-                self.notice = Some(Notice::grave(format!("{name}: {key}: {other}")));
                 Effect::None
             }
         }
