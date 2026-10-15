@@ -236,18 +236,29 @@ impl RunningProcess for TokioProc {
     fn signal_process(&mut self, sig: OperatorSignal) -> Result<(), RunnerError> {
         // Positive pid, unlike `signal_group`'s negative one: this reaches the
         // sheep alone, that one reaches its whole group.
-        let pid = i32::try_from(self.pid)
-            .ok()
-            .filter(|pid| *pid > 0)
-            .ok_or_else(|| {
-                RunnerError::SignalFailed(format!(
-                    "pid {} is not a signallable process id",
-                    self.pid
-                ))
-            })?;
+        let pid = signallable_pid(self.pid)?;
         signal::kill(Pid::from_raw(pid), to_nix_operator_signal(sig))
             .map_err(|error| RunnerError::SignalFailed(error.to_string()))
     }
+}
+
+/// Narrows a spawn's pid to the `i32` form `kill(2)` takes, refusing one it
+/// cannot take.
+///
+/// A zero pid must never reach the syscall: `-0` is `0`, and `kill(0, ..)`
+/// signals the daemon's own group. A pid above `i32::MAX` has no `i32` form.
+///
+/// # Errors
+///
+/// [`RunnerError::SignalFailed`] if `pid` is 0 or above `i32::MAX`.
+#[cfg(unix)]
+pub(super) fn signallable_pid(pid: u32) -> Result<i32, RunnerError> {
+    i32::try_from(pid)
+        .ok()
+        .filter(|pid| *pid > 0)
+        .ok_or_else(|| {
+            RunnerError::SignalFailed(format!("pid {pid} is not a signallable process id"))
+        })
 }
 
 // Group-wide for both stop rungs and for the exec prober's timeout path
@@ -267,14 +278,7 @@ impl RunningProcess for TokioProc {
 /// the `kill(2)` itself failed (typically `ESRCH`: no group led by `pid`).
 #[cfg(unix)]
 pub(crate) fn signal_group(pid: u32, sig: Signal) -> Result<(), RunnerError> {
-    // `-0` is `0`, and `kill(0, ..)` means the daemon's own group: a zero pid
-    // must never reach the syscall.
-    let pid = i32::try_from(pid)
-        .ok()
-        .filter(|pid| *pid > 0)
-        .ok_or_else(|| {
-            RunnerError::SignalFailed(format!("pid {pid} is not a signallable process id"))
-        })?;
+    let pid = signallable_pid(pid)?;
     signal::kill(Pid::from_raw(-pid), sig)
         .map_err(|error| RunnerError::SignalFailed(error.to_string()))
 }

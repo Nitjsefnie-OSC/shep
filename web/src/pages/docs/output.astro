@@ -605,6 +605,14 @@ web:2 | listening`}</CodeBlock>
       that come from the daemon's own per-sheep events and carry their slot
       as normal.
     </p>
+    <p>
+      A line with no colour of its own arrives in the colour of its stream:
+      green for stdout, red for stderr, and the <code>name |</code> label
+      stays plain. A line that already colours itself keeps its own.
+      <code>NO_COLOR</code> and a pipe add none. Table output drops the
+      escapes that could move the cursor or redraw the row;{" "}
+      <code>--format json</code> carries the raw bytes.
+    </p>
   </article>
 </DocsLayout>
 

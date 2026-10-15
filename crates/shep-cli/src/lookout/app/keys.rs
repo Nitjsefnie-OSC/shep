@@ -89,25 +89,10 @@ impl App {
         if self.sheep_pane().is_some() {
             return self.on_sheep_pane_key(key);
         }
-        // A cancelling keypress is consumed: a stray `j` cancels the confirm
-        // and does not also move the selection, or the next reflexive Enter
-        // acts on a target the operator lost track of. Cancelling is silent.
-        if self
-            .action
-            .as_ref()
-            .is_some_and(|action| action.stage == Stage::Armed)
-        {
-            if key == KeyPress::Confirm {
-                return self.confirm();
-            }
-            // The one key the cancel does not consume: an operator whose
-            // Ctrl-C does nothing reaches for `kill -9`, past every restore
-            // path `crate::lookout::term` has. Quitting discards the confirm.
-            if key == KeyPress::Quit {
-                return Effect::Quit;
-            }
-            self.action = None;
-            return Effect::None;
+        // The armed-confirm prelude, the same one `on_sheep_pane_key` runs
+        // ahead of its own keymap.
+        if let Some(effect) = self.on_armed_key(key) {
+            return effect;
         }
         self.notice = None;
         match key {
@@ -136,11 +121,11 @@ impl App {
             KeyPress::SelectLast => self.select_at(self.visible_len().saturating_sub(1), -1),
             KeyPress::Action(verb) => self.arm(verb),
             // An armed confirm (including one already in flight) owns
-            // `Enter` before it ever reaches here: the routing rule above
-            // fires only on `Stage::Armed`. With nothing armed, `Enter`
-            // opens the sheep pane on the selected row, or does nothing on
-            // a dog, a group or a fold header, none of which is a sheep to
-            // open one on.
+            // `Enter` before it ever reaches here: the prelude above fires
+            // only on `Stage::Armed`. With nothing armed, `Enter` opens the
+            // sheep pane on the selected row, or does nothing on a dog, a
+            // group or a fold header, none of which is a sheep to open one
+            // on.
             KeyPress::Confirm => self.open_sheep_pane(),
             KeyPress::FilterStart => {
                 self.mode = InputMode::Text;
@@ -304,13 +289,13 @@ impl App {
             return self.on_settings_text_key(key);
         }
         if self.bleats_pane().is_some() {
-            return self.on_bleats_text_key(key);
+            return self.on_feed_text_key(key, Self::bleats_pane_mut);
         }
         if matches!(self.body, Body::Secrets(_)) {
             return self.on_secrets_text_key(key);
         }
         if self.sheep_pane().is_some() {
-            return self.on_sheep_feed_text_key(key);
+            return self.on_feed_text_key(key, Self::sheep_feed_mut);
         }
         self.on_filter_text_key(key)
     }
