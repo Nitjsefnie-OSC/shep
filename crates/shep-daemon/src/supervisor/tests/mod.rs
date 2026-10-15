@@ -17,7 +17,7 @@ use crate::limits::LimitEnforcer;
 use crate::testing::capture_logs;
 use crate::testing::{
     Harness, RecordingEnforcer, ScriptedProber, SharedRunner, app_with, armed_entry, harness,
-    idle_stats, probe_config, test_paths,
+    idle_stats, plain_entry, probe_config, test_paths,
 };
 #[cfg(unix)]
 use crate::tokio_runner::TokioRunner;
@@ -765,19 +765,21 @@ impl RunningProcess for StandInProc {
 fn stand_in_io() -> ProcIo {
     let (_logs_tx, logs) = mpsc::channel(1);
     let (_from_child_tx, from_child) = mpsc::channel(1);
-    let (to_child, to_child_rx) = mpsc::channel(1);
-    drop(to_child_rx);
-    let (log_ctl, log_ctl_rx) = mpsc::channel(1);
-    drop(log_ctl_rx);
-    let (to_stdin, to_stdin_rx) = mpsc::channel(1);
-    drop(to_stdin_rx);
     ProcIo {
         logs,
         from_child,
-        to_child,
-        log_ctl,
-        to_stdin,
+        to_child: closed_tx(),
+        log_ctl: closed_tx(),
+        to_stdin: closed_tx(),
     }
+}
+
+/// A sender with nothing on the far end of it, so every send fails at once.
+#[cfg(unix)]
+fn closed_tx<T>() -> mpsc::Sender<T> {
+    let (tx, rx) = mpsc::channel(1);
+    drop(rx);
+    tx
 }
 
 #[cfg(unix)]
@@ -835,28 +837,12 @@ fn carried_marked(
     ready_failed: bool,
     mutate: impl FnOnce(&mut ProcessEntry),
 ) -> CarriedSheep {
-    let mut app = AppConfig::minimal(name, "./srv");
     // Nothing here wants a respawn: an automatic restart would spawn a
     // second process behind the assertions.
-    app.autorestart = false;
+    let spec = app_with(name, |app| app.autorestart = false);
     let mut entry = ProcessEntry {
-        id,
-        spec: normalize(app).unwrap(),
-        pending: None,
-        pending_reidentifies: false,
-        overridden: Vec::new(),
-        instance: 0,
-        status: ProcStatus::Online,
         pid,
-        restarts: 0,
-        started_at: None,
-        budget: RestartBudget::default(),
-        reload: ReloadState::None,
-        credentials: SpawnIdentity::Resolved(None),
-        out_file: PathBuf::new(),
-        err_file: PathBuf::new(),
-        dog: None,
-        last_exit: None,
+        ..plain_entry(id, spec)
     };
     mutate(&mut entry);
     CarriedSheep::from_entry(
@@ -882,26 +868,11 @@ fn carried_owed_a_restart(
     delay: shep_core::values::UpDuration,
     due: Option<SystemTime>,
 ) -> CarriedSheep {
-    let mut app = AppConfig::minimal(name, "./srv");
-    app.restart_delay = Some(delay);
+    let spec = app_with(name, |app| app.restart_delay = Some(delay));
     let entry = ProcessEntry {
-        id,
-        spec: normalize(app).unwrap(),
-        pending: None,
-        pending_reidentifies: false,
-        overridden: Vec::new(),
-        instance: 0,
         status: ProcStatus::WaitingRestart,
-        pid: None,
         restarts: 1,
-        started_at: None,
-        budget: RestartBudget::default(),
-        reload: ReloadState::None,
-        credentials: SpawnIdentity::Resolved(None),
-        out_file: PathBuf::new(),
-        err_file: PathBuf::new(),
-        dog: None,
-        last_exit: None,
+        ..plain_entry(id, spec)
     };
     CarriedSheep::from_entry(&entry, 0, CarriedFds::none(), false, None, false, due)
 }
@@ -963,12 +934,13 @@ fn adoptable_child(script: &str) -> u32 {
 #[cfg(unix)]
 fn respawnable(mutate: impl FnOnce(&mut AppConfig)) -> impl FnOnce(&mut ProcessEntry) {
     move |entry: &mut ProcessEntry| {
-        let mut app = AppConfig::minimal("web", "/bin/sh");
-        // Real: one case lets the successor respawn the sheep and asserts
-        // on the pid it comes back with. `./srv` would land in `Errored`.
-        app.args = vec!["-c".to_owned(), "sleep 30".to_owned()];
-        mutate(&mut app);
-        entry.spec = normalize(app).unwrap();
+        entry.spec = app_with("web", |app| {
+            // Real: one case lets the successor respawn the sheep and asserts
+            // on the pid it comes back with. `./srv` would land in `Errored`.
+            app.script = "/bin/sh".to_owned();
+            app.args = vec!["-c".to_owned(), "sleep 30".to_owned()];
+            mutate(app);
+        });
     }
 }
 
