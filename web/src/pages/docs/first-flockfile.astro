@@ -341,11 +341,11 @@ error[invalid_config]: Flockfile names unrecognized key: app.0.max_memory_restar
       is for.
     </p>
     <p class="fine">
-      A key that has to be a table says which one when something else sits
-      in it. <code>env</code>, <code>dogs</code> and the top-level{" "}
-      <code>dog</code> each answer <code>`env` must be a table</code>,
-      naming the key. In YAML a key with nothing after it is null, so a
-      bare <code>env:</code> is refused too: leave the key out to ask for no
+      A key that has to be a table names itself when the value is not one.
+      <code>env</code> answers <code>`env` must be a table</code>, and
+      <code>dogs</code> and the top-level <code>dog</code> name the key they
+      refused. In YAML a key with nothing after it is null, so a bare{" "}
+      <code>env:</code> is refused too: leave the key out to ask for no
       variables. A bare TOML date or datetime in any of the three is refused
       the same way.
     </p>
