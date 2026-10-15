@@ -225,24 +225,46 @@ async fn expect_event(
     );
 }
 
-/// One started app, the runner behind it and a bus subscriber.
-///
-/// The runner is shared rather than moved so a case can read
-/// `kill_counts().len()`, the number of spawns that succeeded.
-async fn started(
-    dir: &tempfile::TempDir,
-    app: AppConfig,
-    scripts: Vec<ProcScript>,
-) -> (
+/// What [`started`] and [`started_apps`] hand back: the handle, the runner
+/// behind it, one bus subscriber.
+type Started = (
     SupervisorHandle,
     Arc<ScriptedRunner>,
     tokio::sync::broadcast::Receiver<SharedEvent>,
-) {
-    let (events, rx) = crate::bus::test_bus(256);
+);
+
+/// The apps in `apps`, all started through one `Start`, their runner and a
+/// bus subscriber.
+///
+/// `bus_capacity` is a parameter, not one size for every case: the cases
+/// that read a whole run off one receiver, `shutdown.rs`'s `drain_kinds`,
+/// stop at the first `Lagged`, so a bus narrower than the run's event count
+/// drops events the case asserts on. A case that only waits for named events
+/// can hold a narrow one, and `started` does.
+///
+/// The runner is shared rather than moved so a case can read
+/// `kill_counts().len()`, the number of spawns that succeeded.
+async fn started_apps(
+    dir: &tempfile::TempDir,
+    apps: Vec<AppConfig>,
+    scripts: Vec<ProcScript>,
+    bus_capacity: usize,
+) -> Started {
+    let (events, rx) = crate::bus::test_bus(bus_capacity);
     let runner = Arc::new(ScriptedRunner::new(scripts));
     let handle = spawn_supervisor(SharedRunner(Arc::clone(&runner)), test_paths(dir), events);
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
+    let apps = apps
+        .into_iter()
+        .map(|app| normalize(app).unwrap())
+        .collect::<Vec<_>>();
+    handle.start(apps).await.unwrap();
     (handle, runner, rx)
+}
+
+/// One started app: [`started_apps`] on one app, at the bus size no
+/// single-app case has outgrown.
+async fn started(dir: &tempfile::TempDir, app: AppConfig, scripts: Vec<ProcScript>) -> Started {
+    started_apps(dir, vec![app], scripts, 256).await
 }
 
 /// A bare actor holding one `Online` sheep, for the cases that drive a
