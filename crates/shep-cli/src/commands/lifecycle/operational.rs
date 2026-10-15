@@ -153,17 +153,7 @@ pub async fn restart_within(
         return streams.fail(ExitCode::SpawnFailed, &message);
     }
 
-    // Under `--format json` the refusals rode out in the envelope above, so
-    // saying them again on stderr is the second top-level object that guard
-    // exists to stop; `reload` carries the same one and for the same reason.
-    let refusal = refused_line("restart", &refused).map(|message| {
-        if streams.fmt == Format::Json && carried {
-            WALK_REFUSED_EXIT
-        } else {
-            streams.fail(WALK_REFUSED_EXIT, &message)
-        }
-    });
-    failure.or(refusal).unwrap_or(ExitCode::Success)
+    finish_walk(streams, "restart", &refused, carried, failure)
 }
 
 /// Reloads the sheep matching `args.selector`, replacing each instance with
@@ -219,19 +209,7 @@ pub async fn reload(client: &Client, streams: &mut Streams<'_>, args: &SelectorA
             return wrote;
         }
     }
-    // Under `--format json` the refusals rode out in the envelope above, so
-    // saying them again on stderr is the second top-level object this guard
-    // exists to stop. `carried` is the condition and not the format alone:
-    // an envelope that never printed took the names with it, and stderr is
-    // the only stream left to name them on.
-    let refusal = refused_line("reload", &refused).map(|message| {
-        if streams.fmt == Format::Json && carried {
-            WALK_REFUSED_EXIT
-        } else {
-            streams.fail(WALK_REFUSED_EXIT, &message)
-        }
-    });
-    failure.or(refusal).unwrap_or(ExitCode::Success)
+    finish_walk(streams, "reload", &refused, carried, failure)
 }
 
 /// [`render_outcome`] for a staged walk, which can have both halves of an
@@ -268,6 +246,35 @@ async fn render_partial(
 /// tells an operator to go looking for a daemon bug where the fold in fact
 /// reloaded around one busy app.
 const WALK_REFUSED_EXIT: ExitCode = ExitCode::Failure;
+
+/// The tail `restart` and `reload` share: what a walk that refused part of
+/// its work prints, and what it exits with
+///
+/// Under `--format json` the refusals rode out in the envelope
+/// [`render_partial`] printed, so saying them again on stderr is the second
+/// top-level object that guard exists to stop. `carried` is the condition
+/// and not the format alone: an envelope that never printed took the names
+/// with it, and stderr is the only stream left to name them on.
+///
+/// `failure` is the first per-selector failure `request_each` reported, if
+/// any. It outranks the refusal, as a verb's own failure class outranks
+/// [`WALK_REFUSED_EXIT`] everywhere else in this file.
+fn finish_walk(
+    streams: &mut Streams<'_>,
+    verb: &str,
+    refused: &[SheepRefusal],
+    carried: bool,
+    failure: Option<ExitCode>,
+) -> ExitCode {
+    let refusal = refused_line(verb, refused).map(|message| {
+        if streams.fmt == Format::Json && carried {
+            WALK_REFUSED_EXIT
+        } else {
+            streams.fail(WALK_REFUSED_EXIT, &message)
+        }
+    });
+    failure.or(refusal).unwrap_or(ExitCode::Success)
+}
 
 /// One line for the apps `verb` could not reach, or `None` when it reached
 /// every one it named
