@@ -24,8 +24,17 @@ use crate::protocol::{BusEvent, Reply};
 // wire format: changing existing variants is a breaking change
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
-// Growth is anticipated: a future frame kind (progress, flow control) is
-// additive here and stays additive on the wire.
+// Growth is anticipated (progress, flow control), and it is additive for this
+// enum only, never for the wire. `Kind::of` decides a frame's kind by key, so
+// a kind keyed by none of `id`, `result`, `event`, `data` fails to decode
+// here, and what a peer then does is `route_frame`'s rule in
+// `shep-client/src/actor.rs`: it drops an undecodable frame that names no
+// waiting request, so the connection survives, and fails by id one that
+// `reply_id` can name (which needs `result` alongside `id`). A new kind that
+// reuses a reply key is therefore not additive: it fails that request with
+// `RequestError::Undecodable`. Pinned by `a_frame_with_no_known_key_is_refused`
+// below and by the client's
+// `a_frame_of_a_kind_this_build_does_not_know_is_dropped_without_disturbing_the_connection`.
 #[non_exhaustive]
 pub enum ServerFrame {
     /// An answer to one request (from [`Envelope`](crate::protocol::Envelope))

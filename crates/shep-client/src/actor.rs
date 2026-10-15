@@ -223,6 +223,24 @@ mod tests {
         assert!(pending.is_empty(), "the pending entry must be cleared");
     }
 
+    /// The whole of what calling a future frame kind "additive" buys an older
+    /// client: a frame keyed by none of `id`, `result`, `event`, `data` fails
+    /// to decode, `reply_id` finds no request to fail (it needs `result` as
+    /// well as `id`), and the actor drops the frame. The connection and every
+    /// request still in flight are untouched.
+    #[test]
+    fn a_frame_of_a_kind_this_build_does_not_know_is_dropped_without_disturbing_the_connection() {
+        let (tx, rx) = oneshot::channel();
+        let mut pending = HashMap::from([(7_u64, tx)]);
+        let (events, mut sub) = broadcast::channel(4);
+
+        route_frame(br#"{"progress":{"done":1}}"#, &mut pending, &events);
+
+        assert!(sub.try_recv().is_err(), "nothing decodable to deliver");
+        assert_eq!(pending.len(), 1, "the pending request is still held");
+        assert!(rx.now_or_never().is_none(), "its caller is not answered");
+    }
+
     /// An event this build cannot decode is still just dropped. Nothing is
     /// waiting on it, and a subscriber that cannot name it cannot act on it.
     #[test]
