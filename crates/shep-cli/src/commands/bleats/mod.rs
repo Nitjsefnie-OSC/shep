@@ -208,13 +208,22 @@ const TAIL_WINDOW_BYTES: u64 = 256 * 1024;
 /// short.
 ///
 /// `std::fs`, not `tokio::fs`: shep-cli's tokio has no `fs` feature. Each
-/// line loses its daemon-added timestamp ([`shep_core::logstamp`]), so it
-/// reads the same as a line from the bus. A non-zero seek discards bytes
-/// up to the first `\n`, rather than rendering a mid-line fragment.
+/// line loses its daemon-added timestamp ([`shep_core::logstamp`]) when
+/// `stamped` says the shepherd added one, so it reads the same as a line
+/// from the bus. A non-zero seek discards bytes up to the first `\n`,
+/// rather than rendering a mid-line fragment.
+///
+/// `stamped` is a row's [`ProcessInfo::log_timestamps`] read the absent way:
+/// an app that turned the stamp off wrote its own prefix, and cutting 30
+/// bytes off an RFC 3339 line of its own cuts into the app's text.
 ///
 /// # Errors
 /// The file could not be opened, `stat`ed, seeked, or read.
-pub(crate) fn read_tail(path: &Path, limit: usize) -> io::Result<(Vec<String>, bool)> {
+pub(crate) fn read_tail(
+    path: &Path,
+    limit: usize,
+    stamped: bool,
+) -> io::Result<(Vec<String>, bool)> {
     let mut file = std::fs::File::open(path)?;
     let len = file.metadata()?.len();
     let start = len.saturating_sub(TAIL_WINDOW_BYTES);
@@ -241,10 +250,18 @@ pub(crate) fn read_tail(path: &Path, limit: usize) -> io::Result<(Vec<String>, b
     // The daemon's per-line stamp comes off here, so a `line` has one
     // meaning across both of this verb's paths: the follow path reads the
     // bus, which carries a sheep's own bytes. The stamp stays in the file
-    // for `tail`, `less` and `grep`.
+    // for `tail`, `less` and `grep`. Only a row the shepherd stamped has a
+    // stamp to take off.
     let mut lines: Vec<String> = text
         .split('\n')
-        .map(|line| shep_core::logstamp::strip(line).to_string())
+        .map(|line| {
+            if stamped {
+                shep_core::logstamp::strip(line)
+            } else {
+                line
+            }
+        })
+        .map(str::to_string)
         .collect();
     if lines.last().is_some_and(String::is_empty) {
         lines.pop();
@@ -366,7 +383,11 @@ fn tail_log_files(
                     } else {
                         None
                     };
-                    match read_tail(Path::new(path), args.lines) {
+                    // The row that reaches the file first decides whether it
+                    // is stamped: instances of one app share both the path
+                    // and its `log_timestamps`.
+                    let stamped = info.log_timestamps.unwrap_or(true);
+                    match read_tail(Path::new(path), args.lines, stamped) {
                         Ok((lines, _truncated)) => {
                             for line in lines {
                                 if let Err(write_err) = write_line(
