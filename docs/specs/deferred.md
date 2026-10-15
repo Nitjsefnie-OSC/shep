@@ -1039,14 +1039,18 @@ Tracked as https://github.com/shep-pm/shep/issues/362 for JavaScript and https:/
 
 ## Closed entries live next door
 
-Everything this file used to carry that is now FIXED, STALE, resolved or
-rejected, plus the record of what shipped instead of being deferred, moved to
-[deferred-history.md](deferred-history.md) on 2026-08-29. That is 1412 lines
-against the 1052 left here, and a reader had to get past all of it to reach
-the entries under "Known debt" that are actually still open. Both numbers were
+Two moves, not one. The bulk of what this file carried that is now FIXED,
+STALE, resolved or rejected, plus the record of what shipped instead of being
+deferred, moved to [deferred-history.md](deferred-history.md) on 2026-08-29,
+the day of the split, when a reader had to get past all of it to reach the
+entries under "Known debt" that are actually still open. The reload-readiness
+entry followed on 2026-10-15, once the serial reload had made it a closed
+record rather than open debt.
+
+The two files now run 1412 lines there against 1056 here. Both counts were
 stated once and then drifted, which is the failure this file warns about
-elsewhere; they are counted, not remembered, and they were recounted on
-2026-10-15 when the reload-readiness entry moved next door.
+elsewhere; they are counted, not remembered, and this pair was counted after
+the 2026-10-15 move.
 
 This file answers "what is not built". That one answers "what was not built,
 and what happened to it".
