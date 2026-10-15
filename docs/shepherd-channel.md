@@ -140,7 +140,8 @@ Two ways out. Pick one before you write the reader:
   to arrive; issue a `ReadFile` only for bytes it has just told you are
   there. This holds the file object for the length of a copy rather than the
   length of a wait, so the writer gets in between polls. It is what
-  `shep-channel` does, polling every 20 ms. Note what it does not buy you:
+  `shep-channel` does, polling on a backoff from 20 ms to 100 ms. Note what
+  it does not buy you:
   the handle is still synchronous, so a peek queues behind any operation
   already running on it, and Microsoft documents `PeekNamedPipe` as able to
   block in a multithreaded application for that reason. A writer parked on a

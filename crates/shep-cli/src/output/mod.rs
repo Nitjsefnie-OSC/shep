@@ -21,10 +21,10 @@ mod flock;
 pub(crate) mod paint;
 mod rows;
 mod table;
-// `pub(crate)` for `width::char_columns`, which `lookout::view::flock::fit`
-// pads by: one rule for how wide a `char` draws, shared by the two surfaces
-// that pad a cell, rather than a second copy that drifts on the first
-// double-width name. The same reasoning `paint` above is public for.
+// `pub(crate)` for `width::char_columns` and `width::text_columns`, which
+// `lookout::view::flock::fit` and the view's measuring sites pad and sum
+// by: one rule for how wide a `char` draws, shared rather than a second
+// copy that drifts. The same reasoning `paint` above is public for.
 pub(crate) mod width;
 
 use std::io;

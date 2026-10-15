@@ -100,9 +100,13 @@ fn resolved_name(cache: &HashMap<u32, ProcessInfo>, id: u32) -> String {
 /// The daemon emits [`BusEvent::LogOut`]/[`LogErr`](BusEvent::LogErr) per
 /// sheep, so a follow labels a line even when several instances share one
 /// log file, unlike the backlog path.
-fn resolved_instance(cache: &HashMap<u32, ProcessInfo>, id: u32) -> Option<u32> {
+fn resolved_instance(
+    cache: &HashMap<u32, ProcessInfo>,
+    counts: &HashMap<String, usize>,
+    id: u32,
+) -> Option<u32> {
     let info = cache.get(&id)?;
-    if instance_count(cache, &info.name) > 1 {
+    if counts.get(info.name.as_str()).copied().unwrap_or(0) > 1 {
         info.instance
     } else {
         None
@@ -160,6 +164,21 @@ fn write_line(
 /// is labelled: `shep bleats web:0` still prints `web:0`, not `web`.
 fn instance_count(cache: &HashMap<u32, ProcessInfo>, name: &str) -> usize {
     cache.values().filter(|info| info.name == name).count()
+}
+
+/// Every name `cache` holds, with how many rows carry it. Same counting
+/// rule as [`instance_count`]: over the whole cache, never a selector's
+/// matched subset.
+///
+/// Built once per follow, from the one listing [`resolve_names`] took.
+/// That cache never changes after it, so a followed line's label costs one
+/// lookup here rather than a scan of every process in the flock.
+fn instance_counts(cache: &HashMap<u32, ProcessInfo>) -> HashMap<String, usize> {
+    let mut counts: HashMap<String, usize> = HashMap::with_capacity(cache.len());
+    for info in cache.values() {
+        *counts.entry(info.name.clone()).or_insert(0) += 1;
+    }
+    counts
 }
 
 /// One of `bleats`' own notices, unless `--quiet` asked for silence.
@@ -410,6 +429,7 @@ fn handle_event(
     streams: &mut Streams<'_>,
     quiet: bool,
     cache: &HashMap<u32, ProcessInfo>,
+    counts: &HashMap<String, usize>,
     selector: &ProcessSelector,
     args: &BleatsArgs,
     event: BusEvent,
@@ -418,7 +438,7 @@ fn handle_event(
         BusEvent::LogOut { id, line } => {
             if !args.err && selector_allows(selector, cache, id) {
                 let name = resolved_name(cache, id);
-                let instance = resolved_instance(cache, id);
+                let instance = resolved_instance(cache, counts, id);
                 write_line(streams.out, streams.fmt, id, &name, instance, "out", &line)?;
             }
             Ok(())
@@ -426,7 +446,7 @@ fn handle_event(
         BusEvent::LogErr { id, line } => {
             if !args.out && selector_allows(selector, cache, id) {
                 let name = resolved_name(cache, id);
-                let instance = resolved_instance(cache, id);
+                let instance = resolved_instance(cache, counts, id);
                 write_line(streams.out, streams.fmt, id, &name, instance, "err", &line)?;
             }
             Ok(())
@@ -517,6 +537,10 @@ pub async fn bleats_with_signal(
         return tail_log_files(streams, quiet, &cache, &selector, args);
     }
 
+    // A follow labels every line it receives, and `cache` cannot change
+    // under it: taken once, before subscribing.
+    let counts = instance_counts(&cache);
+
     // Backlog before subscribing, so a line in the gap is missed rather
     // than printed twice. The tail's exit code is discarded: an unreadable
     // log for one sheep must not stop the follow over the whole flock.
@@ -538,7 +562,7 @@ pub async fn bleats_with_signal(
                 match item {
                     Some(Ok(event)) => {
                         if let Err(write_err) =
-                            handle_event(streams, quiet, &cache, &selector, args, event)
+                            handle_event(streams, quiet, &cache, &counts, &selector, args, event)
                         {
                             let code = write_outcome(Err(write_err));
                             let _ = streams.out.flush();
