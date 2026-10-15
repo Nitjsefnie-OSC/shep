@@ -223,6 +223,48 @@ mod tests {
         assert!(pending.is_empty(), "the pending entry must be cleared");
     }
 
+    /// The whole of what calling a future frame kind "additive" buys an older
+    /// client: a frame keyed by none of `id`, `result`, `event`, `data` fails
+    /// to decode, `reply_id` finds no request to fail (it needs `result` as
+    /// well as `id`), and the actor drops the frame. The connection and every
+    /// request still in flight are untouched.
+    #[test]
+    fn a_frame_of_a_kind_this_build_does_not_know_is_dropped_without_disturbing_the_connection() {
+        let (tx, rx) = oneshot::channel();
+        let mut pending = HashMap::from([(7_u64, tx)]);
+        let (events, mut sub) = broadcast::channel(4);
+
+        route_frame(br#"{"progress":{"done":1}}"#, &mut pending, &events);
+
+        assert!(sub.try_recv().is_err(), "nothing decodable to deliver");
+        assert_eq!(pending.len(), 1, "the pending request is still held");
+        assert!(rx.now_or_never().is_none(), "its caller is not answered");
+    }
+
+    /// Half of the reply pair names no request. `reply_id` requires `id` and
+    /// `result` together precisely so a future frame that carries one of them
+    /// is not mistaken for an undecodable reply, so both halves on their own
+    /// are dropped and the request in flight keeps waiting for its real
+    /// answer.
+    #[test]
+    fn a_frame_with_one_half_of_the_reply_pair_is_dropped_too() {
+        let (events, mut sub) = broadcast::channel(4);
+
+        for frame in [
+            r#"{"id":7,"kind":"progress","percent":40}"#,
+            r#"{"result":{"done":1}}"#,
+        ] {
+            let (tx, rx) = oneshot::channel();
+            let mut pending = HashMap::from([(7_u64, tx)]);
+
+            route_frame(frame.as_bytes(), &mut pending, &events);
+
+            assert!(sub.try_recv().is_err(), "{frame} delivered nothing");
+            assert_eq!(pending.len(), 1, "{frame} left the request held");
+            assert!(rx.now_or_never().is_none(), "{frame} answered no caller");
+        }
+    }
+
     /// An event this build cannot decode is still just dropped. Nothing is
     /// waiting on it, and a subscriber that cannot name it cannot act on it.
     #[test]
