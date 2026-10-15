@@ -22,17 +22,11 @@ impl App {
         };
         let environment = pane.environment().map(str::to_string);
         if matches!(row.source, Source::Namespace(_)) {
-            self.notice = Some(Notice {
-                text: PROVIDER_ROW_REFUSAL.to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(PROVIDER_ROW_REFUSAL.to_string()));
             return Effect::None;
         }
         if environment.is_some_and(|tab| deletes_the_all_slot(&row, &tab)) {
-            self.notice = Some(Notice {
-                text: ALL_SLOT_REFUSAL.to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(ALL_SLOT_REFUSAL.to_string()));
             return Effect::None;
         }
         if self.authorize_write().is_none() {
@@ -72,10 +66,7 @@ impl App {
             .find(|row| row.key == key)
             .is_some_and(|row| deletes_the_all_slot(row, &environment));
         if refuses {
-            self.notice = Some(Notice {
-                text: ALL_SLOT_REFUSAL.to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(ALL_SLOT_REFUSAL.to_string()));
             return Effect::None;
         }
         let Some(authority) = self.authorize_write() else {

@@ -75,10 +75,9 @@ impl App {
             (Err(RequestError::Rpc(err)), _) => err.message,
             (Err(other), _) => other.to_string(),
         };
-        self.notice = Some(Notice {
-            text: format!("{name}: {why}, so nothing was written"),
-            grave: true,
-        });
+        self.notice = Some(Notice::grave(format!(
+            "{name}: {why}, so nothing was written"
+        )));
         Effect::None
     }
 
@@ -97,7 +96,7 @@ impl App {
     /// was out can have picked a tag after `Escape` checked.
     fn write_and_close(&mut self) -> Effect {
         if let Some(text) = self.config_pane().and_then(ConfigPane::incomplete_union) {
-            self.notice = Some(Notice { text, grave: true });
+            self.notice = Some(Notice::grave(text));
             return Effect::None;
         }
         let writes = self.take_pane_writes();
@@ -118,13 +117,10 @@ impl App {
         } else {
             String::new()
         };
-        self.notice = Some(Notice {
-            text: format!(
-                "{subject} changed while this pane was open, so nothing was written; \
-                 esc writes your edits over the new values{lost}"
-            ),
-            grave: true,
-        });
+        self.notice = Some(Notice::grave(format!(
+            "{subject} changed while this pane was open, so nothing was written; \
+             esc writes your edits over the new values{lost}"
+        )));
         Effect::None
     }
 }

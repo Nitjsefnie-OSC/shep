@@ -61,12 +61,9 @@ impl App {
                 // through a re-read that landed it under the operator's hand.
                 SectionWrite::Nothing => Vec::new(),
                 SectionWrite::Refused => {
-                    self.notice = Some(Notice {
-                        text: format!(
-                            "{name}: its section in dogs.toml does not parse, or is not shaped for the edit"
-                        ),
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(format!(
+                        "{name}: its section in dogs.toml does not parse, or is not shaped for the edit"
+                    )));
                     return Vec::new();
                 }
             },

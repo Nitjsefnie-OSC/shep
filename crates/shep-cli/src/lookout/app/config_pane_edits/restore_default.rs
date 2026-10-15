@@ -20,10 +20,7 @@ impl App {
             .and_then(ConfigPane::cursor_lock)
             .map(|(key, lock)| (key.to_owned(), lock))
         {
-            self.notice = Some(Notice {
-                text: Self::lock_refusal(&key, lock),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(Self::lock_refusal(&key, lock)));
             return Effect::None;
         }
         if self.config_pane().is_some_and(ConfigPane::cursor_on_entry) {
@@ -45,7 +42,7 @@ impl App {
             return Effect::None;
         }
         if let Some(text) = self.config_pane().and_then(ConfigPane::cursor_refusal) {
-            self.notice = Some(Notice { text, grave: true });
+            self.notice = Some(Notice::grave(text));
             return Effect::None;
         }
         if let Some(pane) = self.config_pane_mut() {
