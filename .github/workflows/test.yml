@@ -544,7 +544,7 @@ jobs:
   privileged:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success' || github.event_name == 'workflow_dispatch') }}
-    # `real_runner.rs`'s privilege-drop case needs a real uid change and a
+    # `real_runner/identity.rs`'s privilege-drop case needs a real uid change and a
     # real supplementary-group clear, both root-only.
     #
     # `log_path_security`'s two ownership cases are here for a different

@@ -353,7 +353,7 @@ impl ScriptedRunner {
     ///
     /// The fake writes no files, so this proves only that the request
     /// reached this spawn's end of [`ProcIo::log_ctl`](crate::runner::ProcIo::log_ctl). Whether a reopened
-    /// handle lands on a recreated inode is `tests/real_runner.rs`'s question.
+    /// handle lands on a recreated inode is `tests/real_runner/logs.rs`'s question.
     ///
     /// # Panics
     ///
@@ -408,7 +408,7 @@ impl ScriptedRunner {
     ///
     /// Proves only that the line reached [`ProcIo::to_stdin`](crate::runner::ProcIo::to_stdin) intact; a
     /// real `\n`-terminated line landing in a real fd 0 is
-    /// `tests/real_runner.rs`'s question.
+    /// `tests/real_runner/environment.rs`'s question.
     ///
     /// # Panics
     ///
@@ -504,7 +504,7 @@ impl ProcessRunner for ScriptedRunner {
         // The fake writes no files, so there is nothing to reopen; what it
         // must do is answer every request like a live pump, and stop
         // answering once the proc exits (unless a lamb holds the pipe), so
-        // that branch stays reachable to `tests/real_runner.rs`.
+        // that branch stays reachable to `tests/real_runner/logs.rs`.
         let log_ctl_live = Arc::new(AtomicBool::new(true));
         let ctl_live = Arc::clone(&log_ctl_live);
         let reopens = Arc::new(AtomicU32::new(0));
