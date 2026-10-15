@@ -345,12 +345,12 @@ async fn a_json_walk_whose_envelope_never_printed_names_the_refused_apps_on_stde
     let dir = tempfile::tempdir().unwrap();
     let path = shep_client::testing::control_address(dir.path());
     let (client, _envelopes) = fake_client_answering(&path, move |request| match request {
-        Request::Reload { selector: SelectorSpec::Name(name) } if name == "db" => {
-            Response::Reloading {
-                accepted: Vec::new(),
-                refused: vec![SheepRefusal::new("db", "db is already being reloaded")],
-            }
-        }
+        Request::Reload {
+            selector: SelectorSpec::Name(name),
+        } if name == "db" => Response::Reloading {
+            accepted: Vec::new(),
+            refused: vec![SheepRefusal::new("db", "db is already being reloaded")],
+        },
         _ => Response::Pong,
     })
     .await;
