@@ -327,6 +327,70 @@ async fn a_partly_refused_reload_prints_one_json_envelope_carrying_both_halves()
     );
 }
 
+/// fails if a JSON walk whose envelope never printed drops the refused
+/// app's name with it
+///
+/// The nearest existing test is
+/// [`a_partly_refused_reload_prints_one_json_envelope_carrying_both_halves`],
+/// the other side of `carried`: there the envelope printed, so stderr stayed
+/// silent. Here one selector answers a refusal with no accepted row and the
+/// next answers a response this client cannot read (`Response` is
+/// `#[non_exhaustive]`, so this is the shape a newer daemon produces), which
+/// makes `carried` false: no envelope prints, and stderr is the only stream
+/// left to name `db` on.
+#[tokio::test]
+async fn a_json_walk_whose_envelope_never_printed_names_the_refused_apps_on_stderr() {
+    use shep_client::testing::fake_client_answering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, _envelopes) = fake_client_answering(&path, move |request| match request {
+        Request::Reload { selector: SelectorSpec::Name(name) } if name == "db" => {
+            Response::Reloading {
+                accepted: Vec::new(),
+                refused: vec![SheepRefusal::new("db", "db is already being reloaded")],
+            }
+        }
+        _ => Response::Pong,
+    })
+    .await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let code = {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Json,
+        };
+        reload(
+            &client,
+            &mut streams,
+            &SelectorArgs {
+                selectors: vec!["api".to_string(), "db".to_string()],
+            },
+        )
+        .await
+    };
+    let printed = String::from_utf8(out).unwrap();
+    let said = String::from_utf8(err).unwrap();
+
+    assert_eq!(
+        code,
+        ExitCode::Internal,
+        "the unreadable response keeps its own class, as in a load: {said}"
+    );
+    assert!(
+        printed.is_empty(),
+        "no envelope printed, so none can be read: {printed}"
+    );
+    assert!(
+        said.contains("db") && said.contains("already being reloaded"),
+        "stderr is the only stream left, and it names the refused app: {said}"
+    );
+}
+
 /// fails if an ordinary reload's envelope grows a key: `refused` is
 /// carried only by a run that had something to refuse, so every
 /// existing consumer reads the same three fields it always did.
