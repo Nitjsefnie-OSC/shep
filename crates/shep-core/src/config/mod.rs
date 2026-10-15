@@ -14,6 +14,7 @@ pub mod normalize;
 pub mod probe;
 #[cfg(feature = "schema")]
 pub mod scaffold;
+mod table;
 pub mod template;
 
 pub use app::{AppConfig, DogTable, ProbeConfig, ProbeKind};
