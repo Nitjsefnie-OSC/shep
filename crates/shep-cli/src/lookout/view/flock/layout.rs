@@ -29,6 +29,11 @@ pub const MIN_HEIGHT: u16 = 6;
 /// `width - GUTTER` starting at `x + GUTTER`, so every threshold in
 /// `columns::TIERS` and every arithmetic in
 /// [`super::columns::name_width`] is untouched by the marker.
+///
+/// The whole view pays this one, not the flock table alone: the settings
+/// screen, the config pane and the secrets table each draw [`mark`] plus a
+/// space before their first cell too. A width budget anywhere that forgets
+/// it is a budget every line overruns.
 pub const GUTTER: u16 = 2;
 
 /// The marker for the selected row, or a blank for every other row.
@@ -134,7 +139,11 @@ pub fn fit(text: &str, width: u16) -> String {
 /// selected row's ground would end mid-row
 /// on exactly the terminals narrow enough to need the signal most. A no-op
 /// when `used >= width` or `ground` carries no colour.
-pub(super) fn pad_ground(spans: &mut Vec<Span<'static>>, used: u16, width: u16, ground: Style) {
+///
+/// The one padding every table row in the view goes through: the flock
+/// table's two renderers and the secrets table's two both end a selected
+/// row's paint at the same column.
+pub fn pad_ground(spans: &mut Vec<Span<'static>>, used: u16, width: u16, ground: Style) {
     let short = width.saturating_sub(used);
     if short > 0 {
         spans.push(Span::styled(" ".repeat(usize::from(short)), ground));

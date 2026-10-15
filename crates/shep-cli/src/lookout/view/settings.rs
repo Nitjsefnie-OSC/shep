@@ -19,7 +19,7 @@ use ratatui::text::{Line, Span};
 
 use super::super::app::{App, Settings, SettingsRow};
 use super::super::theme::Palette;
-use super::flock::{fit, mark};
+use super::flock::{GUTTER, fit, mark};
 use super::scroll::Attempt;
 use crate::commands::settings::{ScalarView, SettingField, SettingsSnapshot};
 use crate::style::StyleSource;
@@ -33,15 +33,6 @@ const DOGS_CAPTION: &str = "space arms, Enter applies; a dog needs no reload";
 /// [`super::flock::columns::NAME_MIN`]: never shrinks below a name worth
 /// reading.
 const DOG_NAME_MIN: u16 = 8;
-
-/// Columns spent on the selection mark and the space after it, before any
-/// cell is drawn.
-///
-/// Both the dogs table and the scalar rows draw [`mark`] plus a space, so
-/// the width a tier is chosen for, and its cells fitted into, is the
-/// terminal minus this, never the terminal itself. Mirrors
-/// [`super::flock::GUTTER`].
-const GUTTER: u16 = 2;
 
 /// The width the rows themselves are laid out in: the terminal minus
 /// [`GUTTER`].

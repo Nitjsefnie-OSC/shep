@@ -2,7 +2,7 @@ use super::super::super::app::{REVEAL_HOLDS, Reveal, SecretsPane, TypingWhat};
 use super::super::super::secrets::SecretRow;
 use super::super::super::textbox::TextBox;
 use super::super::super::theme::Palette;
-use super::super::flock::{fit, fit_owned};
+use super::super::flock::{fit, fit_owned, pad_ground};
 use super::column_tiers::Column;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -172,18 +172,8 @@ pub(super) fn row_line(
         spans.push(Span::styled(text, ground));
         used += column.width();
     }
-    pad(&mut spans, used, width, ground);
+    pad_ground(&mut spans, used, width, ground);
     Line::from(spans)
-}
-
-/// Pads `spans` out to `width` with blank cells, the way a data row's
-/// trailing slack past its last column still has to be blanked. Mirrors
-/// `flock::pad_ground`, private there.
-pub(super) fn pad(spans: &mut Vec<Span<'static>>, used: u16, width: u16, style: Style) {
-    let short = width.saturating_sub(used);
-    if short > 0 {
-        spans.push(Span::styled(" ".repeat(usize::from(short)), style));
-    }
 }
 
 /// The `+ new key` row's own [`Line`]: `KEY` names the affordance, `VALUE`
@@ -218,7 +208,7 @@ pub(super) fn new_key_row_line(
         spans.push(Span::styled(fit(&text, column.width()), ground));
         used += column.width();
     }
-    pad(&mut spans, used, width, ground);
+    pad_ground(&mut spans, used, width, ground);
     Line::from(spans)
 }
 
