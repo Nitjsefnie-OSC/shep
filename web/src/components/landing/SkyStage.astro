@@ -743,6 +743,16 @@ const grazing = [
     overflow: hidden;
     z-index: 2;
     pointer-events: none;
+    /* The far-depth atmosphere, declared once for its three consumers
+       (.tuft-layer.far, .depth-far, .roamer-far — all inside .pasture) so
+       a retune can't drift them apart. Custom properties inherit through
+       the DOM, so they keep working if a consumer moves into a child
+       component.
+
+       Desaturate and lift only — no opacity() term: translucent animals
+       read as ghosts (the fence showed straight through the black sheep),
+       and atmospheric distance comes through the contrast drop alone. */
+    --atmo: saturate(0.58) brightness(1.07);
   }
 
   .far-hill {
@@ -850,7 +860,7 @@ const grazing = [
   }
 
   .tuft-layer.far {
-    filter: saturate(0.58) brightness(1.07);
+    filter: var(--atmo);
   }
 
   .grazing-sheep {
@@ -868,10 +878,7 @@ const grazing = [
    */
   .depth-far {
     z-index: 1;
-    /* Desaturate and lift only — no opacity() term: translucent animals
-       read as ghosts (the fence showed straight through the black sheep),
-       and atmospheric distance comes through the contrast drop alone. */
-    filter: saturate(0.58) brightness(1.07);
+    filter: var(--atmo);
   }
 
   .depth-far :global(.sheep-mark) {
@@ -933,10 +940,7 @@ const grazing = [
 
   .roamer-far {
     z-index: 1;
-    /* Desaturate and lift only — no opacity() term: translucent animals
-       read as ghosts (the fence showed straight through the black sheep),
-       and atmospheric distance comes through the contrast drop alone. */
-    filter: saturate(0.58) brightness(1.07);
+    filter: var(--atmo);
   }
 
   .roamer-mid :global(.sheep-mark) {
