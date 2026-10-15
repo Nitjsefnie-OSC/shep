@@ -81,10 +81,7 @@ impl App {
             return Effect::SendAll(writes);
         };
         if self.held.is_some() || self.action.is_some() {
-            self.notice = Some(Notice {
-                text: "one action is already in flight".to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave("one action is already in flight".to_string()));
             return Effect::SendAll(writes);
         }
         // Nothing goes to a shepherd that is gone. The menu this dialog
@@ -94,7 +91,7 @@ impl App {
         // go, for the same reason a refused verb's writes do: they are the
         // operator's own work and the batch reports its own failure.
         if let Some(text) = self.link_refusal() {
-            self.notice = Some(Notice { text, grave: true });
+            self.notice = Some(Notice::grave(text));
             return Effect::SendAll(writes);
         }
         if writes.is_empty() {
@@ -150,10 +147,10 @@ impl App {
                 || format!("{}: every write was refused", held.name),
                 |notice| notice.text.clone(),
             );
-            self.notice = Some(Notice {
-                text: format!("{reason}, so {} did not go out", held.verb.label()),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(format!(
+                "{reason}, so {} did not go out",
+                held.verb.label()
+            )));
             return Some(Effect::None);
         }
         Some(self.send_held_action(held.verb, held.name))
@@ -166,10 +163,9 @@ impl App {
     /// writes were in flight.
     fn send_held_action(&mut self, verb: ActionVerb, name: String) -> Effect {
         let Some((target, count)) = self.flock_target(&name) else {
-            self.notice = Some(Notice {
-                text: format!("{name}: it is no longer in the flock"),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(format!(
+                "{name}: it is no longer in the flock"
+            )));
             return Effect::None;
         };
         self.action = Some(Action {

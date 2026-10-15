@@ -323,10 +323,9 @@ impl App {
     /// on a dog, so [`Self::ask_for_config`]'s dog branch has no twin here.
     pub(super) fn ask_for_sheep_pane_config(&mut self) -> Effect {
         let Some(row) = self.sheep_pane_row() else {
-            self.notice = Some(Notice {
-                text: "that sheep is no longer in the flock".to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(
+                "that sheep is no longer in the flock".to_string(),
+            ));
             return Effect::None;
         };
         self.ask_for_sheep_config(row.info.name.clone(), ConfigFor::Editor)
@@ -348,7 +347,7 @@ impl App {
     /// is taken by the pinned sheep having left instead.
     pub(super) fn arm_sheep_pane(&mut self, verb: ActionVerb) -> Effect {
         if let Some(text) = self.confirm_refusal() {
-            self.notice = Some(Notice { text, grave: true });
+            self.notice = Some(Notice::grave(text));
             return Effect::None;
         }
         // [`Self::arm`]'s own pair, for the reason given there: a verb the
@@ -356,17 +355,13 @@ impl App {
         // still empty. These two are the whole set of doors that arm from a
         // keypress.
         if self.action.is_some() || self.held.is_some() {
-            self.notice = Some(Notice {
-                text: "one action is already in flight".to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave("one action is already in flight".to_string()));
             return Effect::None;
         }
         let Some(row) = self.sheep_pane_row() else {
-            self.notice = Some(Notice {
-                text: "that sheep is no longer in the flock".to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(
+                "that sheep is no longer in the flock".to_string(),
+            ));
             return Effect::None;
         };
         self.action = Some(Action {

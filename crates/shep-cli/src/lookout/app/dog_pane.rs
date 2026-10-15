@@ -31,10 +31,7 @@ impl App {
                 Effect::Send(Sent::DogSection { name })
             }
             Err(message) => {
-                self.notice = Some(Notice {
-                    text: message,
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(message));
                 Effect::None
             }
         }
@@ -67,31 +64,20 @@ impl App {
             Ok(Response::DogSection { toml }) => {
                 let dropped = self.rebuild_dog_pane(probe, toml.as_str());
                 if dropped > 0 {
-                    self.notice = Some(Notice {
-                        text: format!("{name}: {}", moved_entries(dropped)),
-                        grave: true,
-                    });
+                    self.notice =
+                        Some(Notice::grave(format!("{name}: {}", moved_entries(dropped))));
                 }
             }
             Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{name}: the shepherd answered something this lookout does not understand"
-                    ),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!(
+                    "{name}: the shepherd answered something this lookout does not understand"
+                )));
             }
             Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {}", err.message),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{name}: {}", err.message)));
             }
             Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {other}"),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{name}: {other}")));
             }
         }
         Effect::None
@@ -161,35 +147,25 @@ impl App {
     ) -> Effect {
         match result {
             Ok(Response::DogConfigSet { .. }) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: its config is written, and {name} is told"),
-                    grave: false,
-                });
+                self.notice = Some(Notice::info(format!(
+                    "{name}: its config is written, and {name} is told"
+                )));
                 Effect::Send(Sent::DogSection {
                     name: name.to_owned(),
                 })
             }
             Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{name}: the shepherd answered something this lookout does not understand"
-                    ),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!(
+                    "{name}: the shepherd answered something this lookout does not understand"
+                )));
                 Effect::None
             }
             Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {}", err.message),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{name}: {}", err.message)));
                 Effect::None
             }
             Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {other}"),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{name}: {other}")));
                 Effect::None
             }
         }

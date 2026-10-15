@@ -24,36 +24,26 @@ impl App {
         match result {
             Ok(Response::SheepEnvSet { .. }) => {
                 let verb = if was_set { "set" } else { "removed" };
-                self.notice = Some(Notice {
-                    text: format!("{name}: env {key} {verb}, and waits for `shep reload {name}`"),
-                    grave: false,
-                });
+                self.notice = Some(Notice::info(format!(
+                    "{name}: env {key} {verb}, and waits for `shep reload {name}`"
+                )));
                 Effect::Send(Sent::SheepConfig {
                     name: name.to_owned(),
                 })
             }
             Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{name}: env {key}: the shepherd answered something this lookout does not \
-                         understand"
-                    ),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!(
+                    "{name}: env {key}: the shepherd answered something this lookout does not \
+                     understand"
+                )));
                 Effect::None
             }
             Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: env {key}: {}", err.message),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{name}: env {key}: {}", err.message)));
                 Effect::None
             }
             Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: env {key}: {other}"),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{name}: env {key}: {other}")));
                 Effect::None
             }
         }
@@ -184,10 +174,7 @@ impl App {
     /// Shows `refused`, when there is one, as a grave notice.
     fn notice_refusal(&mut self, refused: Option<Refusal>) {
         if let Some(refused) = refused {
-            self.notice = Some(Notice {
-                text: refused.text,
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(refused.text));
         }
     }
 
