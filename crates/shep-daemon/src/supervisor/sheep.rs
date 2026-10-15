@@ -212,6 +212,14 @@ pub(super) async fn run_sheep<P: RunningProcess>(
                                     .send(Msg::LambLabel { root_pid, pid, label })
                                     .await;
                             }
+                            ChildMessage::Note { name, value } => {
+                                tracing::debug!(
+                                    id,
+                                    name,
+                                    value,
+                                    "child note forwarded to the bus as channel.note"
+                                );
+                            }
                         }
                     }
                     None => from_child_open = false,

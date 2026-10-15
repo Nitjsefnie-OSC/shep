@@ -496,6 +496,14 @@ A `lamb-label` message on fd 3 names one of the sheep's child processes, and `de
 
 `docs/shepherd-channel.md`, "Naming your lambs"
 
+### A sheep tells a dog something with a `note`, not a metric sample
+
+A `note` message on fd 3, `{"kind":"note","name":"...","value":1.0}`, carries a name and a number for a dog and nothing else: no grammar check, no labels, no help. The shepherd publishes it as `channel.note` and keeps nothing. `Shepherd::note` sends it through the same lossy outbox path as a sample, so it never blocks and a full queue drops it.
+
+**Why:** A sheep could reach a dog only through a channel sample, and the metrics dog reads every `channel.metric`. Samples meant as messages, named with an epoch or a pid, were refused as `invalid_name` and counted, burying real bad names (#913). Valid names would not help, since a pid in the name is an endless stream of new series. A new kind on its own topic keeps the metrics dog untouched: it subscribes to `channel.metric` only. A flag on `Metric` was refused, because a sample should mean one thing. As for `lamb-label`, `ChildMessage` stays exhaustive, so the new kind is a breaking change for Rust callers, while `CHANNEL_VERSION` stays `1`: an older shepherd logs the line as malformed and carries on.
+
+`docs/shepherd-channel.md`, "Notes for a dog"
+
 ## The pm2 cutover
 
 ### A failed sd_notify does not kill the daemon

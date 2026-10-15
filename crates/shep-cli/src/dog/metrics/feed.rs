@@ -178,6 +178,17 @@ mod tests {
         }
     }
 
+    /// A note named the way a sample's grammar refuses: a dot and an epoch.
+    fn note(id: u32) -> BusEvent {
+        BusEvent::Channel {
+            id,
+            message: ChildMessage::Note {
+                name: "lease.web.want.1760500000".to_string(),
+                value: 1.0,
+            },
+        }
+    }
+
     fn process_event(kind: ProcessEventKind, info: ProcessInfo) -> BusEvent {
         BusEvent::Process {
             event: kind,
@@ -377,6 +388,51 @@ mod tests {
             format!("{store:?}"),
             "SampleStore { senders: 0, series: 0, refused: 0 }"
         );
+    }
+
+    /// Every pattern here is a literal or a trailing `*`, so a prefix test
+    /// is the shepherd's glob for them.
+    #[test]
+    fn the_feed_never_subscribes_to_notes() {
+        let topic = note(1).topic();
+        assert_eq!(topic, "channel.note");
+        for pattern in TOPICS {
+            let reaches = match pattern.strip_suffix('*') {
+                Some(prefix) => topic.starts_with(prefix),
+                None => pattern == topic,
+            };
+            assert!(!reaches, "`{pattern}` would deliver `{topic}` to this dog");
+        }
+    }
+
+    /// The fake shepherd delivers whatever is pushed, topic or not. So
+    /// this is the second line: a note that did arrive changes nothing.
+    #[tokio::test]
+    async fn a_note_is_neither_served_nor_counted_as_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = control_address(dir.path());
+        let (client, daemon) = fake_reconnecting_client_on(&socket).await;
+        let store = Arc::new(SampleStore::new());
+        let feed = spawn_feed(client, Arc::clone(&store));
+        let flock = [sheep(1, "web")];
+
+        daemon.push(note(1)).await;
+        // Events reach one subscriber in order, so the sample proves the
+        // note was already applied.
+        daemon.push(metric(1, "rps", 7.0)).await;
+        let names = snapshot_reaching(&store, &flock, 1)
+            .await
+            .expect("the feed never stored the sample after the note");
+        assert_eq!(names, vec!["rps".to_string()]);
+
+        assert_eq!(
+            format!("{store:?}"),
+            "SampleStore { senders: 1, series: 1, refused: 0 }"
+        );
+        let text = scrape(&store, &flock);
+        assert!(!text.contains("lease"), "a note was served: {text}");
+        assert!(!text.contains(REFUSED_TOTAL), "a note was refused: {text}");
+        feed.abort();
     }
 
     /// The pure seam of [`snapshot_reaching`] and [`snapshot_clears`], so the

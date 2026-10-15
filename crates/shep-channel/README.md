@@ -41,6 +41,11 @@ waiting on.
 An app that runs several children of one binary can tell `shep describe`
 which is which: `shepherd.label_lamb(child.id(), LambLabel::new("worker 1")?)`.
 
+A dog of your own can hear from an app without a metric sample:
+`shepherd.note("lease.web.want.1", 1.0)` reaches a dog subscribed to
+`channel.note`, and the metrics dog never sees it. Like a sample, a note
+is dropped rather than waited on when the shepherd falls behind.
+
 The wire itself is documented in `docs/shepherd-channel.md` in the shep
 repository. It is language agnostic, and Go, JavaScript and Python
 libraries over the same contract are planned.

@@ -27,19 +27,21 @@ order:
    then the wire and config asymmetries, then the tooling and doc staleness.
 2. **The rest of the v1.0 surface** — serve, dev/runtime, `.js` Flockfile,
    schemars, the daemon-config flags layer, and openrc + BSD rc.d.
-3. ~~**The Windows functional tier — last**~~ (the maintainer, 2026-08-12). **Superseded
-   2026-08-15: Windows is out of v1 entirely** and moved to the v1.1+ section
+3. ~~**The Windows functional tier — last**~~ (the maintainer, 2026-08-12).
+   **Superseded 2026-08-15: Windows left this queue for the v1.1+ section**
    below. The estimate that was "mostly guesswork" has since been made, and it
    is what changed the decision — see
-   [windows-estimate.md](windows-estimate.md).
+   [windows-estimate.md](windows-estimate.md). The tier shipped on 2026-08-26,
+   eleven days after that move, and its record is under "Not deferred" in
+   [deferred-history.md](deferred-history.md).
 
 **Dogs** (spec §8) was originally queued first and has since shipped, on
 `feat/phase9-dogs`; see "Not deferred" below for what landed. **whistle**
 (spec §8, §13) has since shipped too, on Phase 13; same section.
 
 Ordering is not priority. Windows was last because its estimate was the
-weakest; now that the estimate exists, it is out of v1 rather than at the end
-of it.
+weakest; the estimate was made, the tier moved to v1.1+, and it shipped there
+on 2026-08-26.
 
 ## Committed to v1.1+ by design (spec §2)
 
@@ -492,10 +494,13 @@ Identity and lifecycle (`id`, `name`, `status`, `pid`, `restarts`,
 struct, and a dog's row leaves several of them meaningless.
 
 Deferred on the wire audit's own recommendation: do not split speculatively.
-What would force it is the `lambs` field — the moment a row carries a process
-tree, the question of what a `FlockMember` is stops being cosmetic. Phase 10
-made that field cheap to add (`ProcessInfo` is `#[non_exhaustive]` with a
-builder), which is deliberately the opposite of forcing the split early.
+The trigger it named was the `lambs` field, and that trigger has fired.
+`ProcessInfo::lambs` is on the wire, and the shepherd fills it
+(`rpc/enrichment.rs` walks each sheep's process tree into the row), so a row
+does carry a process tree and the question of what a `FlockMember` is has
+stopped being cosmetic. The split is still open: the field arrived the cheap
+way Phase 10 built for it (`ProcessInfo` is `#[non_exhaustive]` with a
+builder), and nothing since has forced the four concerns apart.
 
 Tracked as https://github.com/shep-pm/shep/issues/352.
 
@@ -1032,86 +1037,20 @@ JavaScript and Python, where the examples are what an author copies today.
 
 Tracked as https://github.com/shep-pm/shep/issues/362 for JavaScript and https://github.com/shep-pm/shep/issues/363 for Python.
 
-## A readiness probe cannot verify a reload's replacement
-
-Found on 2026-08-28 by deploying real repositories with shep-deploy against a
-real shepherd, not by reading code. Two experiments, same broken release, same
-app, differing only in whether the old instance was answering:
-
-| old instance answering the probe | outcome |
-|---|---|
-| yes | the broken release was verified, recorded as deployed, exit 0, app down |
-| no | the broken release was correctly refused and rolled back, exit 12 |
-
-The second row is the machinery working. The first is the defect, and the
-mechanism is exact. `spawn_replacement` derives `ReadinessSource::of(config)`,
-which is `Probe` for an app with a `readiness_probe`. `await_ready`'s `Probe`
-arm probes immediately, and says why in its own comment: "the first probe must
-land at t=0, not after one `interval`". At t=0 the drainee is still listening
-on the address the probe names, because draining is what `reload_ready_result`
-does AFTER readiness resolves. So the old instance answers, the replacement is
-declared `Ready`, the old is drained, and the address goes dead.
-
-Timed, with a `listen_timeout` of ten seconds:
-
-```text
-t+0.0s  probe answers YES  status=online  pid=7349   the old release
-t+1.0s  probe answers no   status=online  pid=7745   the new one, already Online
-t+25.8s probe answers no   status=online  pid=7745
-```
-
-**This is not a bug in one line, it is a property of the arrangement.** An
-address probe cannot say which of two processes answered it, and an overlapping
-reload exists precisely to have two. `SO_REUSEPORT`, which is what makes the
-overlap zero-downtime in the first place, makes it worse rather than better:
-the kernel balances across both sockets, so even a probe that arrives late may
-be answered by the instance on its way out.
-
-What it costs downstream: `shep-deploy`'s `verify = "probed"` watches for a new
-process reaching `Online`. The replacement gets there on the drainee's answer,
-so it is marked `Ready` and then `Online` while never having served anything
-itself, and the deploy that was waiting on exactly that signal records success.
-The release is left in place, serving nothing. That crate's README now says
-what its verification actually checks and points here.
-
-**The workaround that exists today is `wait_ready = true`.** It selects
-`ReadinessSource::Channel`, and the channel is per instance: `spawn_readiness_task`
-creates a fresh `oneshot` per spawned id, so the drainee has no way to answer
-the replacement's. An app that can write `{"kind":"ready"}` on its shepherd
-channel therefore gets a reload gate that means what it says, today, with none
-of the work below. An app that cannot is the case this entry is about.
-
-### The options, none of them free
-
-1. **Probe after the drain, not before.** Keeps the overlap, adds a second
-   readiness check once the drainee is gone, and reports the reload failed if
-   it does not pass. Does not restore the old instance, which is already gone
-   by then, but it tells the truth, and a deploy dog with the previous release
-   still on disk can act on it. The most honest of the three and the most work.
-2. **Prefer the channel for a gated reload.** `wait_ready` is per process and
-   cannot be answered by the drainee. This means telling operators that a probe
-   does not gate a reload and `wait_ready` is what does, which is a real
-   demotion of the feature most apps can actually use.
-3. **Serialise: drain, then start, then probe.** Correct verification, no
-   overlap, no zero-downtime reload. Not worth it.
-
-Recommendation is 1, with the doc change from 2 alongside it, because even
-after 1 the pre-drain probe pass remains meaningless and should stop being
-described as verification.
-
-Not built here because it changes what a reload promises, which is the maintainer's call
-rather than a fix to apply on the way past.
-
 ## Closed entries live next door
 
-Everything this file used to carry that is now FIXED, STALE, resolved or
-rejected, plus the record of what shipped instead of being deferred, moved to
-[deferred-history.md](deferred-history.md) on 2026-08-29. That is 1303 lines
-against the 733 left here, and a reader had to get past all of it to reach
-the 13 entries under "Known debt" that are actually still open. All three
-numbers were stated once and then drifted, which is the failure this file
-warns about elsewhere; they are counted, not remembered, and they were
-recounted on 2026-09-06 when the staged-reload JSON entry moved next door.
+Two moves, not one. The bulk of what this file carried that is now FIXED,
+STALE, resolved or rejected, plus the record of what shipped instead of being
+deferred, moved to [deferred-history.md](deferred-history.md) on 2026-08-29,
+the day of the split, when a reader had to get past all of it to reach the
+entries under "Known debt" that are actually still open. The reload-readiness
+entry followed on 2026-10-15, once the serial reload had made it a closed
+record rather than open debt.
+
+The two files now run 1412 lines there against 1056 here. Both counts were
+stated once and then drifted, which is the failure this file warns about
+elsewhere; they are counted, not remembered, and this pair was counted after
+the 2026-10-15 move.
 
 This file answers "what is not built". That one answers "what was not built,
 and what happened to it".
