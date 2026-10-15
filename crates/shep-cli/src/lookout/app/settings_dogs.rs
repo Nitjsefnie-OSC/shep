@@ -84,17 +84,7 @@ impl App {
             self.notice = Some(Notice::grave(LINK_GONE.to_string()));
             return Effect::None;
         }
-        // See the comment in `Self::take_pane_writes`: a direct field
-        // match, not `Self::settings_mut`, so `self.now` stays reachable
-        // below.
-        let Some(settings) = (match &mut self.body {
-            Body::Settings(settings) => Some(settings),
-            Body::FlockTable
-            | Body::ConfigPane(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }) else {
+        let Some(settings) = self.body.settings_mut() else {
             return Effect::None;
         };
         let Some(dog) = settings.snapshot.dogs.get(index) else {
