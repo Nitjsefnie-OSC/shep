@@ -1,4 +1,4 @@
-use super::dog_table::DogTable;
+use super::dog_table::{DogTable, deserialize_dogs};
 use super::env_value::deserialize_env;
 use super::probe::ProbeConfig;
 use std::collections::BTreeMap;
@@ -101,7 +101,8 @@ pub struct AppConfig {
     /// either way, so this field stays `BTreeMap<String, String>` and the
     /// wire always carries strings. A float is refused: `1.10` would reach
     /// the process as `1.1`. YAML resolves an unquoted `yes` to `"true"`
-    /// and `0x1F` to `"31"`, so quote a value whose text must survive.
+    /// and `0x1F` to `"31"`, so quote a value whose text must survive. An
+    /// `env` key that is not a table is refused, naming the key.
     #[serde(deserialize_with = "deserialize_env")]
     #[cfg_attr(feature = "schema", schemars(
         extend(
@@ -432,6 +433,10 @@ pub struct AppConfig {
     /// configuring a dog before installing it is the order an operator
     /// wants. Never read by the daemon at a spawn or a decision, so a write
     /// takes effect the moment it lands.
+    ///
+    /// A `dogs` key that is not a table is refused, naming the key. Each
+    /// table inside it keeps its own rules.
+    #[serde(deserialize_with = "deserialize_dogs")]
     #[cfg_attr(feature = "schema", schemars(extend("init" = {
         "example": { "jobs": { "concurrency": 2 } },
         "group": "dogs",
