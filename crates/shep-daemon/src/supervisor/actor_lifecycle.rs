@@ -249,6 +249,9 @@ impl<R: ProcessRunner> Actor<R> {
         // code would show a sheep that once crashed with 1 as still crashing
         // with 1 while it is failing to start at all.
         slot.entry.last_exit = None;
+        // `log_ctl` is the one handle here left in place, for the reason on
+        // `SheepSlot::log_ctl`: a send to a pump that ended already fails, so
+        // clearing it would record that fact twice.
         slot.ctl = None;
         // Already `None` on every route into a respawn, written anyway so that
         // "these two go together" is visible at each site.
@@ -311,6 +314,8 @@ impl<R: ProcessRunner> Actor<R> {
         // a crash this sheep is still repeating; `respawn_failed` clears it
         // for the same reason.
         slot.entry.last_exit = None;
+        // `log_ctl` is left in place as in `respawn_failed`, for the reason on
+        // `SheepSlot::log_ctl`.
         slot.ctl = None;
         slot.to_child = None;
         slot.signals = None;
