@@ -7,6 +7,21 @@ use super::*;
 /// this operator's to set.
 pub(super) const PROVIDER_ROW_REFUSAL: &str = "read-only: pushed by a dog, not set here";
 
+impl App {
+    /// Refuse `row` when a provider pushed it: raise the grave
+    /// [`PROVIDER_ROW_REFUSAL`] notice, and report whether it did.
+    ///
+    /// The check [`Self::secrets_confirm`] and [`Self::arm_secret_delete`]
+    /// share, so the sentence is raised from one place.
+    pub(super) fn refuse_provider_row(&mut self, row: &SecretRow) -> bool {
+        if matches!(row.source, Source::Namespace(_)) {
+            self.notice = Some(Notice::grave(PROVIDER_ROW_REFUSAL.to_string()));
+            return true;
+        }
+        false
+    }
+}
+
 /// `D`'s refusal on a row whose value comes from the `all` slot while a
 /// named environment's tab is open.
 ///
