@@ -59,6 +59,24 @@ impl<'a> Ink<'a> {
             highlight_style: style,
         }
     }
+
+    /// A process-owned run's style, as this ink draws it.
+    ///
+    /// Live, that is exactly what the sheep asked for. Under a frozen data
+    /// palette it is the run's own modifiers over the one muted ink: the feed
+    /// stops re-reading the moment the link is lost, so a red two seconds after
+    /// the shepherd died is a reading, and a frozen screen renders no reading
+    /// as live. What the sheep *said* survives the freeze: bold, underline and
+    /// reverse video are not colour, the same way reverse video survives
+    /// `NO_COLOR` in `docs/lookout/frames.txt`.
+    fn run_style(self, run: Style) -> Style {
+        if !self.palette.is_frozen() {
+            return run;
+        }
+        let mut collapsed = self.palette.muted();
+        collapsed.add_modifier = run.add_modifier;
+        collapsed
+    }
 }
 
 /// One feed line's text, as spans: the process's own runs where it set a
@@ -95,7 +113,7 @@ pub(crate) fn text_spans(line: &TailLine, ink: Ink<'_>) -> Vec<Span<'static>> {
                 line.runs
                     .iter()
                     .find(|run| run.range.start <= start && end <= run.range.end)
-                    .map_or(base, |run| run.style)
+                    .map_or(base, |run| ink.run_style(run.style))
             };
             Span::styled(line.text[start..end].to_string(), style)
         })
@@ -136,6 +154,13 @@ pub(crate) fn fitted_spans(line: &TailLine, ink: Ink<'_>, budget: u16) -> Vec<Sp
             last = span.style;
             fitted.push(Span::styled(kept, span.style));
         }
+        // A span this cut short is where the line ends. A double-width
+        // character that would straddle the budget is dropped whole and leaves
+        // a column spare, and filling that column from the *next* span would
+        // show text that comes after the cut.
+        if columns < text_columns(span.content.as_ref()) {
+            break;
+        }
     }
     fitted.push(Span::styled("…", last));
     if taken < width - 1 {
@@ -155,7 +180,7 @@ fn covered(ranges: &[(usize, usize)], start: usize, end: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::style::Color;
+    use ratatui::style::{Color, Modifier};
 
     use super::super::super::tail::Stream;
     use super::super::fixtures::{coloured, no_color};
@@ -247,6 +272,31 @@ mod tests {
             frozen.muted(),
             "a frozen feed wears the muted ink, not bark"
         );
+
+        // The feed stops re-reading the moment the link is lost, so a sheep's
+        // own colour on that screen is a reading too, and a red two seconds
+        // after the shepherd died is the lie `Palette::frozen` exists to stop.
+        // What the sheep said survives: bold is not a colour.
+        let styled = TailLine::new(Stream::Out, "\u{1b}[1;31mred bold\u{1b}[0m");
+        let spans = text_spans(&styled, Ink::plain(frozen));
+        assert_eq!(
+            spans[0].style.fg,
+            frozen.muted().fg,
+            "a frozen feed collapses the sheep's own colour too"
+        );
+        assert_eq!(
+            spans[0].style.add_modifier,
+            Modifier::BOLD,
+            "and keeps what the sheep said rather than what it wore"
+        );
+
+        let live = TailLine::new(Stream::Out, "\u{1b}[1;31mred bold\u{1b}[0m");
+        let spans = text_spans(&live, Ink::plain(coloured()));
+        assert_eq!(
+            spans[0].style,
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            "a live feed paints exactly what the sheep asked for"
+        );
     }
 
     /// A line too wide for the strip is cut the way [`fit`] cuts it, and the
@@ -266,5 +316,23 @@ mod tests {
         assert_eq!(text(&padded), "ok    ");
         assert_eq!(padded[0].style, palette.ink(Role::Meadow));
         assert_eq!(fit("ok", 6), text(&padded), "and it matches `fit`");
+    }
+
+    /// A double-width character that would straddle the budget is dropped whole
+    /// and leaves a column spare. Filling that column from the next span would
+    /// show text that comes after the cut.
+    #[test]
+    fn a_cut_span_ends_the_fitted_line_and_hides_what_comes_after_it() {
+        let line = TailLine::new(Stream::Out, "\u{1b}[31mabc界\u{1b}[0m z");
+        let fitted = fitted_spans(&line, Ink::plain(coloured()), 5);
+        let drawn = text(&fitted);
+
+        assert!(drawn.starts_with("abc…"), "got {drawn:?}");
+        assert!(!drawn.contains('z'), "nothing after the cut shows");
+        assert_eq!(
+            fitted[1].style,
+            Style::default().fg(Color::Red),
+            "the ellipsis wears the run it cut into"
+        );
     }
 }

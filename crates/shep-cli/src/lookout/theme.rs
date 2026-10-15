@@ -34,6 +34,11 @@ pub struct Palette {
     line: Option<Color>,
     paper2: Option<Color>,
     gauge_rest: Option<Color>,
+    /// Whether this is what [`Self::frozen`] produced. A flag rather than a
+    /// reading of the colours: `NO_COLOR` flattens the same roles and is not a
+    /// freeze, and a caller that guessed from the colours would mute a sheep's
+    /// own colour at an operator who only asked shep for none.
+    frozen: bool,
 }
 
 impl Palette {
@@ -60,6 +65,7 @@ impl Palette {
                 line: None,
                 paper2: None,
                 gauge_rest: None,
+                frozen: false,
             };
         }
         let deep = crate::style::deep_colour_terminal(term, colorterm);
@@ -81,6 +87,7 @@ impl Palette {
                 line: Some(Color::Indexed(238)),
                 paper2: Some(Color::Indexed(235)),
                 gauge_rest: Some(Color::Indexed(236)),
+                frozen: false,
             }
         } else {
             Self {
@@ -95,6 +102,7 @@ impl Palette {
                 // fall back to an ASCII marker instead.
                 paper2: None,
                 gauge_rest: Some(Color::DarkGray),
+                frozen: false,
             }
         }
     }
@@ -151,6 +159,11 @@ impl Palette {
     /// mistaken for live: an `online` in meadow two seconds after the
     /// shepherd died is the one lie this screen can tell.
     ///
+    /// It reaches a sheep's own colour too. The bleats feed stops re-reading
+    /// the moment the link is lost, so a red line still bright on that screen
+    /// is a reading rather than a decoration, and [`super::view::feed_ink`
+    /// collapses it onto the same ink while keeping the run's modifiers.
+    ///
     /// [`Self::line`] and [`Self::ground`] keep their colours. Both are
     /// chrome rather than a reading: a rule separates regions and the
     /// ground carries the cursor, and `j`/`k` still move while the link is
@@ -166,7 +179,19 @@ impl Palette {
             gauge_rest: self.ink3,
             line: self.line,
             paper2: self.paper2,
+            frozen: true,
         }
+    }
+
+    /// Whether data renders through this palette collapsed to one muted ink:
+    /// what [`Self::frozen`] returned.
+    ///
+    /// A caller that draws something a sheep styled has to ask this rather than
+    /// compare colours: a `NO_COLOR` palette has no colour either, and there is
+    /// no freeze to collapse a sheep's own colour into.
+    #[must_use]
+    pub const fn is_frozen(self) -> bool {
+        self.frozen
     }
 
     /// Damage that has happened: a spent reconnect ladder, a failed poll.

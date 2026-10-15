@@ -11,7 +11,6 @@
 
 use std::collections::BTreeMap;
 use std::io::{Read as _, Seek as _, SeekFrom};
-use std::iter::Peekable;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -227,18 +226,67 @@ fn split_runs(clean: &str) -> (String, Vec<InkRun>) {
     (text, runs)
 }
 
+/// One field of an SGR parameter list: its value, and the separator that
+/// ended it.
+///
+/// The separator matters for the extended colour forms alone. `38;2;255;0;0`
+/// names its components directly, while the ITU T.416 spelling
+/// `38:2::255:0:0` carries a colorspace field between the `2` and the
+/// components, empty for the default one. Flattening both separators into one
+/// number stream reads that field as a component and shifts the colour one
+/// place, leaving a zero behind to reset the line.
+#[derive(Clone, Copy)]
+struct Field {
+    value: Option<u32>,
+    colon: bool,
+}
+
+/// Split an SGR parameter list into its fields.
+///
+/// An empty field is `None`: zero for an ordinary code, which the grammar gives
+/// as a reset, and the absent colorspace field for an extended colour.
+fn fields(params: &str) -> Vec<Field> {
+    let mut out: Vec<Field> = Vec::new();
+    let mut current = String::new();
+    for c in params.chars() {
+        if c != ';' && c != ':' {
+            current.push(c);
+            continue;
+        }
+        out.push(Field {
+            value: current.parse::<u32>().ok(),
+            colon: c == ':',
+        });
+        current = String::new();
+    }
+    out.push(Field {
+        value: current.parse::<u32>().ok(),
+        colon: false,
+    });
+    out
+}
+
+/// The field at `at`, with `at` moved past it. `None` when the list has no
+/// field there.
+fn take(fields: &[Field], at: &mut usize) -> Option<Field> {
+    let field = fields.get(*at).copied()?;
+    *at += 1;
+    Some(field)
+}
+
 /// Fold one SGR parameter list into `sgr`.
 ///
 /// `;` separates parameters and `:` separates the sub-parameters of the
-/// `38;2;r;g;b` extended forms. Flattening both into one number stream reads
-/// `38:5:196` and `38;5;196` alike, and an empty parameter reads as zero, the
-/// default the grammar gives it, which is a reset.
+/// extended colour forms, and which one ended a field is what tells the two
+/// spellings apart. An empty parameter reads as zero, the default the grammar
+/// gives it, which is a reset.
 fn apply_sgr(params: &str, sgr: &mut Sgr) {
-    let mut numbers = params
-        .split([';', ':'])
-        .map(|part| part.parse::<u32>().unwrap_or(0))
-        .peekable();
-    while let Some(code) = numbers.next() {
+    let fields = fields(params);
+    let mut at = 0usize;
+    while at < fields.len() {
+        let field = fields[at];
+        at += 1;
+        let code = field.value.unwrap_or(0);
         match code {
             0 => *sgr = Sgr::default(),
             1 => sgr.modifiers |= Modifier::BOLD,
@@ -254,14 +302,14 @@ fn apply_sgr(params: &str, sgr: &mut Sgr) {
             29 => sgr.modifiers.remove(Modifier::CROSSED_OUT),
             30..=37 => sgr.fg = Some(STANDARD_COLOURS[usize::try_from(code - 30).unwrap_or(0)]),
             38 => {
-                if let Some(colour) = extended_colour(&mut numbers) {
+                if let Some(colour) = extended_colour(&fields, &mut at, field.colon) {
                     sgr.fg = Some(colour);
                 }
             }
             39 => sgr.fg = None,
             40..=47 => sgr.bg = Some(STANDARD_COLOURS[usize::try_from(code - 40).unwrap_or(0)]),
             48 => {
-                if let Some(colour) = extended_colour(&mut numbers) {
+                if let Some(colour) = extended_colour(&fields, &mut at, field.colon) {
                     sgr.bg = Some(colour);
                 }
             }
@@ -276,24 +324,30 @@ fn apply_sgr(params: &str, sgr: &mut Sgr) {
     }
 }
 
-/// The colour a `38` or a `48` names, reading its own parameters off the same
-/// stream. `None` for a spelling that carries none or a component no colour
-/// takes, which styles nothing rather than guessing one from the bytes there.
+/// The colour a `38` or a `48` names, reading its own fields off the same list
+/// and always consuming them. A field left behind would be read as the next SGR
+/// code, so a malformed spelling would apply a reset it never asked for.
 ///
-/// Every component is read off the stream whatever its value. A leftover number
-/// would be read as the next SGR code, and a malformed `38;2;999;0;0` would
-/// then apply two resets the line never asked for.
-fn extended_colour(numbers: &mut Peekable<impl Iterator<Item = u32>>) -> Option<Color> {
-    match numbers.next()? {
-        5 => u8::try_from(numbers.next()?).ok().map(Color::Indexed),
+/// `None` for a spelling that carries no colour or a component no colour takes,
+/// which styles nothing rather than guessing one from the bytes there.
+fn extended_colour(fields: &[Field], at: &mut usize, colon_form: bool) -> Option<Color> {
+    match take(fields, at)?.value.unwrap_or(0) {
+        5 => {
+            let index = take(fields, at);
+            u8::try_from(index?.value?).ok().map(Color::Indexed)
+        }
         2 => {
-            let red = numbers.next()?;
-            let green = numbers.next()?;
-            let blue = numbers.next()?;
+            if colon_form {
+                // The colorspace field, empty for the default one.
+                take(fields, at);
+            }
+            let red = take(fields, at);
+            let green = take(fields, at);
+            let blue = take(fields, at);
             Some(Color::Rgb(
-                u8::try_from(red).ok()?,
-                u8::try_from(green).ok()?,
-                u8::try_from(blue).ok()?,
+                u8::try_from(red?.value?).ok()?,
+                u8::try_from(green?.value?).ok()?,
+                u8::try_from(blue?.value?).ok()?,
             ))
         }
         _ => None,
@@ -787,6 +841,45 @@ mod tests {
             "an index no colour takes styles nothing"
         );
         assert!(!indexed.own_colour, "so the line is still a plain one");
+    }
+
+    /// The ITU spelling of an extended colour carries a colorspace field
+    /// between the `2` and the components, empty for the default one. Read as
+    /// a component it shifts the colour one place and leaves a zero behind to
+    /// reset the line.
+    #[test]
+    fn a_colon_form_truecolor_reads_its_own_colorspace_field() {
+        let defaulted = TailLine::new(Stream::Out, "\u{1b}[38:2::255:0:0mred\u{1b}[0m");
+        assert_eq!(defaulted.text, "red");
+        assert_eq!(
+            defaulted.runs,
+            vec![InkRun {
+                range: 0..3,
+                style: Style::default().fg(Color::Rgb(255, 0, 0)),
+            }],
+            "the empty colorspace field is not a component"
+        );
+
+        let named = TailLine::new(Stream::Out, "\u{1b}[38:2:1:0:255:0mgreen\u{1b}[0m");
+        assert_eq!(
+            named.runs[0].style,
+            Style::default().fg(Color::Rgb(0, 255, 0)),
+            "a named colorspace is skipped rather than painted"
+        );
+
+        let legacy = TailLine::new(Stream::Out, "\u{1b}[38;2;0;0;255mblue\u{1b}[0m");
+        assert_eq!(
+            legacy.runs[0].style,
+            Style::default().fg(Color::Rgb(0, 0, 255)),
+            "the semicolon form names its components directly"
+        );
+
+        let indexed = TailLine::new(Stream::Out, "\u{1b}[38:5:196mindexed\u{1b}[0m");
+        assert_eq!(
+            indexed.runs[0].style,
+            Style::default().fg(Color::Indexed(196)),
+            "and the colon form of the indexed one reads the same"
+        );
     }
 
     /// The reader is the seam the panes see: a coloured line off disk arrives
