@@ -133,10 +133,11 @@ pub(crate) enum Body {
     Sheep(Box<SheepPane>),
 }
 
-// Accessors rather than a match at each call site: a method on the body
-// borrows only the body field, so a caller can still read `App::now` or
-// `App::mode` while it holds a pane. Every match below lists every variant,
-// so a new variant fails to compile.
+/// The body's own pane accessors, so a call site need not match on it.
+///
+/// A method on the body borrows only the body field, which is what lets a
+/// caller still read `App::now` or `App::mode` while it holds a pane. Every
+/// match below lists every variant, so a new variant fails to compile.
 impl Body {
     /// The open config pane, or `None` on any other variant.
     #[must_use]
