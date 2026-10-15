@@ -115,7 +115,7 @@ fn refuse_if_skewed(client: &Client) -> Result<(), CallToolResult> {
             "message": format!(
                 "this shep is {}, the running shepherd is {}; \
                  `cargo install shep` replaced the binary without \
-                 restarting it — run `shep daemon reload`",
+                 restarting it. Run `shep daemon reload`",
                 env!("CARGO_PKG_VERSION"),
                 client.daemon().daemon_version,
             ),

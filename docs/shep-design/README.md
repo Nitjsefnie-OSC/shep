@@ -191,7 +191,7 @@ Four registers. Getting these wrong undoes the design.
 | Landing page | playful | `shep keeps your flock alive.` | `Enterprise-grade process orchestration.` |
 | Docs prose | playful, precise | `A dog watches the flock rather than being part of it.` | `Woof! Let's get your doggos going!` |
 | Config reference | plain | `instances — number of processes to run.` | `instances — how many sheep in this pen.` |
-| Errors and logs | technical only | `no shepherd channel — set channel = true` | `Oh no, the sheep wandered off! 🐑` |
+| Errors and logs | technical only | `no shepherd channel: set channel = true` | `Oh no, the sheep wandered off! 🐑` |
 
 Three standing rules: whimsy in prose, plain in reference; never charming about damage (`kill`, `delete`, errors, exit codes stay literal); every themed word has a straight twin, forever (`bleats` is also `logs`).
 
