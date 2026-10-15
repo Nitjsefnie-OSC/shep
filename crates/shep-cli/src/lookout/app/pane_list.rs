@@ -179,17 +179,7 @@ impl App {
     /// without being read, so an operator who is not told now finds out from
     /// the dog's own log, or never.
     pub(super) fn on_list_text_key(&mut self, key: KeyPress) -> Effect {
-        // See the comment in `Self::take_pane_writes`: a direct field
-        // match, not `Self::config_pane_mut`, so `self.mode` stays
-        // reachable below.
-        let Some(pane) = (match &mut self.body {
-            Body::ConfigPane(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }) else {
+        let Some(pane) = self.body.config_pane_mut() else {
             return Effect::None;
         };
         let Some(list) = pane.list_mut() else {
@@ -230,17 +220,7 @@ impl App {
     /// key typed by mistake costs an `u` rather than an override the
     /// operator cannot read back.
     pub(super) fn on_env_text_key(&mut self, key: KeyPress) -> Effect {
-        // See the comment in `Self::take_pane_writes`: a direct field
-        // match, not `Self::config_pane_mut`, so `self.mode` stays
-        // reachable below.
-        let Some(pane) = (match &mut self.body {
-            Body::ConfigPane(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }) else {
+        let Some(pane) = self.body.config_pane_mut() else {
             return Effect::None;
         };
         match key {

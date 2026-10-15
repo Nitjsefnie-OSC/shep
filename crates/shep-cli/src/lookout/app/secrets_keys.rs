@@ -166,16 +166,10 @@ impl App {
     }
 
     /// The open secrets pane, or `None` on any other screen, for
-    /// `on_secrets_key`'s handlers.
+    /// `on_secrets_key`'s handlers: [`Body::secrets_pane_mut`] over this
+    /// app's body.
     pub(super) fn secrets_pane_mut(&mut self) -> Option<&mut SecretsPane> {
-        match &mut self.body {
-            Body::Secrets(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::ConfigPane(_)
-            | Body::Bleats(_)
-            | Body::Sheep(_) => None,
-        }
+        self.body.secrets_pane_mut()
     }
 
     /// Whether the secrets pane owns the body.
