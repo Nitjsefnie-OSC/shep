@@ -1,6 +1,8 @@
 //! The bleats pane and the dashboard's own feed: the axes, the scroll and the
-//! match box.
+//! match box. The keys this pane and the sheep pane's embedded feed answer
+//! the same way live in [`super::feed_keys`].
 
+use super::feed_keys::{FeedAxis, cycle_feed_axis};
 use super::*;
 
 impl App {
@@ -34,7 +36,7 @@ impl App {
                 Effect::None
             }
             // Opens the match box: `on_text_key` routes the keystrokes that
-            // follow to `on_bleats_text_key` once this pane owns
+            // follow to `on_feed_text_key` once this pane owns
             // `InputMode::Text`. `begin_match_edit` remembers what the axis
             // held, so an abandoned edit restores it rather than losing it.
             KeyPress::FilterStart => {
@@ -44,33 +46,17 @@ impl App {
                 self.mode = InputMode::Text;
                 Effect::None
             }
-            // `o`: `None` (both streams) -> `Out` -> `Err` -> `None`.
+            // `o` and `m`: the two cycle axes, cycled by the same function
+            // the sheep pane's embedded feed calls.
             KeyPress::StreamCycle => {
                 if let Some(pane) = self.bleats_pane_mut() {
-                    let next = match pane.filters().stream {
-                        None => Some(Stream::Out),
-                        Some(Stream::Out) => Some(Stream::Err),
-                        Some(Stream::Err) => None,
-                    };
-                    pane.set_stream(next);
+                    cycle_feed_axis(pane, FeedAxis::Stream);
                 }
                 Effect::None
             }
-            // `m`: every `Level` in ascending order, then back to `None`.
-            // The cycle must reach `None` again, or an operator who sets a
-            // minimum can never see an unclassifiable line again without
-            // closing the pane.
             KeyPress::LevelCycle => {
                 if let Some(pane) = self.bleats_pane_mut() {
-                    let next = match pane.filters().min_level {
-                        None => Some(Level::Trace),
-                        Some(Level::Trace) => Some(Level::Debug),
-                        Some(Level::Debug) => Some(Level::Info),
-                        Some(Level::Info) => Some(Level::Warn),
-                        Some(Level::Warn) => Some(Level::Error),
-                        Some(Level::Error) => None,
-                    };
-                    pane.set_min_level(next);
+                    cycle_feed_axis(pane, FeedAxis::Level);
                 }
                 Effect::None
             }
@@ -198,40 +184,6 @@ impl App {
             | KeyPress::Group(_)
             | KeyPress::Undo
             | KeyPress::Continue => Effect::None,
-        }
-    }
-
-    /// The bleats pane's match box, in force while it owns
-    /// [`InputMode::Text`]. Follows the flock table's own text keymap
-    /// ([`Self::on_filter_text_key`]) with one difference the design calls
-    /// for: typing narrows live through [`BleatsPane::set_match`], but
-    /// `TextAbandon` restores whatever [`BleatsPane::begin_match_edit`] saw
-    /// rather than clearing the axis outright, since the axis may already
-    /// have held a chip from an earlier edit.
-    pub(super) fn on_bleats_text_key(&mut self, key: KeyPress) -> Effect {
-        match key {
-            KeyPress::Quit => Effect::Quit,
-            KeyPress::TextChar(_) | KeyPress::TextBackspace | KeyPress::TextEdit(_) => {
-                if let Some(pane) = self.bleats_pane_mut() {
-                    pane.edit_match_box(|text| text.handle(key));
-                }
-                Effect::None
-            }
-            KeyPress::TextApply => {
-                self.mode = InputMode::Normal;
-                if let Some(pane) = self.bleats_pane_mut() {
-                    pane.commit_match_edit();
-                }
-                Effect::None
-            }
-            KeyPress::TextAbandon => {
-                self.mode = InputMode::Normal;
-                if let Some(pane) = self.bleats_pane_mut() {
-                    pane.abandon_match_edit();
-                }
-                Effect::None
-            }
-            _ => Effect::None,
         }
     }
 
