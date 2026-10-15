@@ -109,7 +109,10 @@ export const BUDGETS: Record<string, number> = {
   // shows above every table on this page, so four transcripts gained a line
   // and the page gained a section saying what the four figures are and why
   // a rate can read `-`.
-  output: 3130, // 3111
+  // Raised from 3130 on 2026-10-15 for "Following logs" saying which stream
+  // colour a plain line gets, that a line carrying its own colour is left
+  // alone, and that `--format json` stays raw. Required content for #846.
+  output: 3190, // 3185
   // Raised from 2980 on 2026-10-13 for the `log_match` rule: a new `on`
   // value, its `stream` key, and the loss and secrets caveats are
   // operator-facing surface, not prose to trim back out.
@@ -170,7 +173,10 @@ export const BUDGETS: Record<string, number> = {
   // sheep with `log_timestamps = false` carries no stamp for `bleats` to
   // strip, and it paid for that line by tightening the sentences around it
   // instead of raising the ceiling. Measured 1914 against 1900 before the cut.
-  logs: 1895, // 1892
+  // Raised from 1895 on 2026-10-15 for the same #846 rule on this page:
+  // which lines are coloured, the fallback for a line that already has its
+  // own colour, and what a table strips out of a line.
+  logs: 1995, // 1988
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim
   // back out.
