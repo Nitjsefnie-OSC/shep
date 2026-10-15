@@ -276,10 +276,14 @@ fn take(fields: &[Field], at: &mut usize) -> Option<Field> {
 
 /// Fold one SGR parameter list into `sgr`.
 ///
-/// `;` separates parameters and `:` separates the sub-parameters of the
-/// extended colour forms, and which one ended a field is what tells the two
+/// `;` separates parameters and `:` separates the sub-parameters of a
+/// parameter that has them, and which one ended a field is what tells the two
 /// spellings apart. An empty parameter reads as zero, the default the grammar
 /// gives it, which is a reset.
+///
+/// Every parameter takes its own sub-parameters with it, drawn or not, so a
+/// code this pane does not draw cannot leave one behind to be read as the next
+/// code.
 fn apply_sgr(params: &str, sgr: &mut Sgr) {
     let fields = fields(params);
     let mut at = 0usize;
@@ -287,6 +291,14 @@ fn apply_sgr(params: &str, sgr: &mut Sgr) {
         let field = fields[at];
         at += 1;
         let code = field.value.unwrap_or(0);
+        // A field ended by `:` carries sub-parameters, and they belong to it:
+        // an underline style (`4:3`), a strike style (`9:1`), a framed border
+        // (`51:1`). Read them off the list rather than let the next pass take
+        // one as the SGR code it was written as a style of. The extended colour
+        // codes below read their own fields themselves.
+        if field.colon && !matches!(code, 38 | 48 | 58) {
+            drop_subparameters(&fields, &mut at);
+        }
         match code {
             0 => *sgr = Sgr::default(),
             1 => sgr.modifiers |= Modifier::BOLD,
@@ -302,18 +314,26 @@ fn apply_sgr(params: &str, sgr: &mut Sgr) {
             29 => sgr.modifiers.remove(Modifier::CROSSED_OUT),
             30..=37 => sgr.fg = Some(STANDARD_COLOURS[usize::try_from(code - 30).unwrap_or(0)]),
             38 => {
-                if let Some(colour) = extended_colour(&fields, &mut at, field.colon) {
+                if let Some(colour) = extended_colour(&fields, &mut at) {
                     sgr.fg = Some(colour);
                 }
             }
             39 => sgr.fg = None,
             40..=47 => sgr.bg = Some(STANDARD_COLOURS[usize::try_from(code - 40).unwrap_or(0)]),
             48 => {
-                if let Some(colour) = extended_colour(&fields, &mut at, field.colon) {
+                if let Some(colour) = extended_colour(&fields, &mut at) {
                     sgr.bg = Some(colour);
                 }
             }
             49 => sgr.bg = None,
+            58 => {
+                // The underline colour. It spells itself exactly like a `38`, so
+                // its components are read and dropped: this pane draws no
+                // underline colour, and leaving them on the list is how
+                // `58;2;0;0;0` came to reset the line it was styling.
+                extended_colour(&fields, &mut at);
+            }
+            59 => {}
             90..=97 => sgr.fg = Some(BRIGHT_COLOURS[usize::try_from(code - 90).unwrap_or(0)]),
             100..=107 => sgr.bg = Some(BRIGHT_COLOURS[usize::try_from(code - 100).unwrap_or(0)]),
             // Every other parameter this pane does not draw: a font, a framed
@@ -324,33 +344,83 @@ fn apply_sgr(params: &str, sgr: &mut Sgr) {
     }
 }
 
+/// Read a colon-terminated field's sub-parameters off the list. The chain ends
+/// at a field that a `;` ended or at the end of the list.
+fn drop_subparameters(fields: &[Field], at: &mut usize) {
+    let mut parent_colon = true;
+    while parent_colon {
+        let Some(field) = take(fields, at) else {
+            break;
+        };
+        parent_colon = field.colon;
+    }
+}
+
+/// The fields a truecolor `2` names its components with, always read off the
+/// list whole.
+///
+/// The semicolon form names three ordinary parameters. The colon form's are
+/// sub-parameters, and a colorspace field may lead them, so the whole chain
+/// comes back and [`extended_colour`] says which field is which.
+fn colour_fields(fields: &[Field], at: &mut usize, colon_form: bool) -> Vec<Field> {
+    if !colon_form {
+        return (0..3).filter_map(|_| take(fields, at)).collect();
+    }
+    let mut chain = Vec::new();
+    let mut parent_colon = true;
+    while parent_colon {
+        let Some(field) = take(fields, at) else {
+            break;
+        };
+        parent_colon = field.colon;
+        chain.push(field);
+    }
+    chain
+}
+
 /// The colour a `38` or a `48` names, reading its own fields off the same list
 /// and always consuming them. A field left behind would be read as the next SGR
 /// code, so a malformed spelling would apply a reset it never asked for.
 ///
 /// `None` for a spelling that carries no colour or a component no colour takes,
 /// which styles nothing rather than guessing one from the bytes there.
-fn extended_colour(fields: &[Field], at: &mut usize, colon_form: bool) -> Option<Color> {
-    match take(fields, at)?.value.unwrap_or(0) {
+fn extended_colour(fields: &[Field], at: &mut usize) -> Option<Color> {
+    let mode = take(fields, at)?;
+    match mode.value.unwrap_or(0) {
         5 => {
             let index = take(fields, at);
             u8::try_from(index?.value?).ok().map(Color::Indexed)
         }
         2 => {
-            if colon_form {
-                // The colorspace field, empty for the default one.
-                take(fields, at);
-            }
-            let red = take(fields, at);
-            let green = take(fields, at);
-            let blue = take(fields, at);
+            let chain = colour_fields(fields, at, mode.colon);
+            // The ITU spelling may lead with a colorspace field, empty for the
+            // default one and an id for a named one. xterm and kitty also take
+            // the three components with no colorspace field at all, which is
+            // what a logger that writes `38:2:255:0:0` emits, so the count of
+            // what the `2` named says which of the two this is.
+            let components = if mode.colon && chain.len() >= 4 {
+                &chain[1..]
+            } else {
+                &chain[..]
+            };
+            let [red, green, blue] = components else {
+                return None;
+            };
             Some(Color::Rgb(
-                u8::try_from(red?.value?).ok()?,
-                u8::try_from(green?.value?).ok()?,
-                u8::try_from(blue?.value?).ok()?,
+                u8::try_from(red.value?).ok()?,
+                u8::try_from(green.value?).ok()?,
+                u8::try_from(blue.value?).ok()?,
             ))
         }
-        _ => None,
+        // A mode this pane does not know, `38:1` for a CMYK colour. Its fields
+        // still belong to it, so they are read off the list and nothing is
+        // drawn.
+        _ => {
+            if mode.colon {
+                drop_subparameters(fields, at);
+            }
+            None
+        }
     }
 }
 
@@ -879,6 +949,73 @@ mod tests {
             indexed.runs[0].style,
             Style::default().fg(Color::Indexed(196)),
             "and the colon form of the indexed one reads the same"
+        );
+    }
+
+    /// xterm and kitty also take the three components with no colorspace field
+    /// at all, and that is what a logger writing `38:2:255:0:0` emits. Reading
+    /// the first component as a colorspace loses the colour, and with a
+    /// parameter after it it reaches into that one and uses it up as blue.
+    #[test]
+    fn a_colon_form_truecolor_needs_no_colorspace_field_to_be_a_colour() {
+        let bare = TailLine::new(Stream::Out, "\u{1b}[38:2:255:0:0mred\u{1b}[0m");
+        assert_eq!(
+            bare.runs,
+            vec![InkRun {
+                range: 0..3,
+                style: Style::default().fg(Color::Rgb(255, 0, 0)),
+            }],
+            "three fields after the 2 are the components"
+        );
+
+        let then_bold = TailLine::new(Stream::Out, "\u{1b}[38:2:255:0:0;1mred\u{1b}[0m");
+        assert_eq!(
+            then_bold.runs[0].style,
+            Style::default()
+                .fg(Color::Rgb(255, 0, 0))
+                .add_modifier(Modifier::BOLD),
+            "the bold after the colour is the sheep's own and stays its own"
+        );
+
+        let named_space = TailLine::new(Stream::Out, "\u{1b}[38:2:0:255:0:0mred\u{1b}[0m");
+        assert_eq!(
+            named_space.runs[0].style,
+            Style::default().fg(Color::Rgb(255, 0, 0)),
+            "four fields after the 2 lead with the colorspace"
+        );
+    }
+
+    /// A parameter this pane does not draw still owns its sub-parameters. Left
+    /// on the list, the next pass takes them as SGR codes: an underline colour
+    /// reset the red the sheep asked for, and a curly underline asked for an
+    /// italic it never wrote.
+    #[test]
+    fn a_code_this_pane_does_not_draw_takes_its_own_parameters_with_it() {
+        let underline_colour = TailLine::new(Stream::Out, "\u{1b}[31;58;2;0;0;0mtext\u{1b}[0m");
+        assert_eq!(
+            underline_colour.runs,
+            vec![InkRun {
+                range: 0..4,
+                style: Style::default().fg(Color::Red),
+            }],
+            "the underline colour is read and dropped, not applied as DIM and a reset"
+        );
+
+        let curly = TailLine::new(Stream::Out, "\u{1b}[4:3mtext\u{1b}[0m");
+        assert_eq!(
+            curly.runs,
+            vec![InkRun {
+                range: 0..4,
+                style: Style::default().add_modifier(Modifier::UNDERLINED),
+            }],
+            "the underline style is not an italic"
+        );
+
+        let unknown_mode = TailLine::new(Stream::Out, "\u{1b}[38:1:100:200:0:0mtext\u{1b}[0m");
+        assert!(
+            unknown_mode.runs.is_empty(),
+            "a CMYK colour this pane does not draw styles nothing and leaves \
+             nothing behind to be read as a code"
         );
     }
 

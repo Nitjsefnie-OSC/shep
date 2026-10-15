@@ -16,6 +16,7 @@ use crate::lookout::tail::{Stream, TailLine};
 use crate::lookout::theme::Palette;
 
 use super::super::detail::chip_text;
+use super::super::feed_ink;
 use super::super::flock::fit;
 use super::layout::{COLUMN_BODY_ROWS, FEED_WIDTH, FEED_X};
 
@@ -51,10 +52,16 @@ pub(super) fn draw_feed(
     // it also compiled the classifier's regexes a second time per frame.
     let survivors = feed.visible(&tail.lines, &levels);
     let hidden = survivors.len().saturating_sub(COLUMN_BODY_ROWS);
+    let ink = feed_ink::Ink::plain(app.data_palette());
     write_feed_row(buffer, area, top, &feed_header_line(feed, hidden, palette));
 
     for (i, line) in survivors.iter().skip(hidden).enumerate() {
-        write_feed_row(buffer, area, top + 1 + i as u16, &feed_line(line, palette));
+        write_feed_row(
+            buffer,
+            area,
+            top + 1 + i as u16,
+            &feed_line(line, palette, ink),
+        );
     }
 }
 
@@ -64,15 +71,24 @@ pub(super) fn draw_feed(
 /// not `--bark`), then the text, truncated rather than wrapped, since this
 /// column has no row budget to spend on a second line for one that
 /// overruns.
-fn feed_line(line: &TailLine, palette: Palette) -> Line<'static> {
+///
+/// The text goes through [`feed_ink`] like the other two places the feed is
+/// drawn: a plain stdout line is meadow, a plain stderr line is bark, and a
+/// line that coloured itself keeps its own runs. `App::data_palette` is the
+/// palette for it, so a sheep pane open on a dashboard that lost its link
+/// draws that feed muted rather than live.
+fn feed_line(line: &TailLine, palette: Palette, ink: feed_ink::Ink<'_>) -> Line<'static> {
     let tag = match line.stream {
         Stream::Out => "out",
         Stream::Err => "err",
     };
-    Line::from(vec![
-        Span::styled(format!("{tag}  "), palette.muted()),
-        Span::raw(fit(&line.text, FEED_WIDTH.saturating_sub(5))),
-    ])
+    let mut spans = vec![Span::styled(format!("{tag}  "), palette.muted())];
+    spans.extend(feed_ink::fitted_spans(
+        line,
+        ink,
+        FEED_WIDTH.saturating_sub(5),
+    ));
+    Line::from(spans)
 }
 
 /// The feed's header row: the `BLEATS` chip, then `out then err`, then how
@@ -142,6 +158,7 @@ fn write_feed_row(buffer: &mut Buffer, area: Rect, row: u16, line: &Line<'static
 
 #[cfg(test)]
 mod tests {
+    use ratatui::style::Color;
     use shep_core::protocol::ProcessInfo;
     use shep_core::status::ProcStatus;
 
@@ -149,6 +166,7 @@ mod tests {
     use crate::lookout::frames::render_text;
     use crate::lookout::level::{Classifier, Level};
     use crate::lookout::tail::Tail;
+    use crate::vocabulary::Role;
 
     use super::super::super::fixtures;
     use super::super::draw;
@@ -214,6 +232,76 @@ mod tests {
         assert!(
             text.contains("alpha wrote this"),
             "the pinned sheep's own line must still draw: {text:?}"
+        );
+    }
+
+    /// The embedded column draws its text through [`feed_ink`] like the
+    /// dashboard strip and the full-screen pane: a plain stdout line is meadow,
+    /// a plain stderr line is bark, and a line that coloured itself keeps the
+    /// colour it wrote, which [`TailLine::new`] has already taken out of `text`.
+    #[test]
+    fn the_embedded_feed_colours_a_plain_line_and_keeps_a_sheeps_own() {
+        let palette = fixtures::coloured();
+        let ink = feed_ink::Ink::plain(palette);
+        let out = feed_line(
+            &TailLine::new(Stream::Out, "alpha wrote this"),
+            palette,
+            ink,
+        );
+        let err = feed_line(&TailLine::new(Stream::Err, "warn: retrying"), palette, ink);
+        let own = feed_line(
+            &TailLine::new(Stream::Out, "\u{1b}[31mconnection refused\u{1b}[0m"),
+            palette,
+            ink,
+        );
+
+        assert_eq!(out.spans[0].style, palette.muted(), "the tag stays muted");
+        assert_eq!(
+            out.spans[1].style.fg,
+            palette.ink(Role::Meadow).fg,
+            "a plain stdout line is meadow"
+        );
+        assert_eq!(
+            err.spans[1].style.fg,
+            palette.ink(Role::Bark).fg,
+            "a plain stderr line is bark"
+        );
+        assert_eq!(
+            own.spans[1].content, "connection refused",
+            "the escapes are out of the text the column measures"
+        );
+        assert_eq!(
+            own.spans[1].style.fg,
+            Some(Color::Red),
+            "and the red the sheep wrote is still on it"
+        );
+    }
+
+    /// A line too long for the column is cut the way [`fit`] cuts it, ellipsis
+    /// included, and the ellipsis wears the colour of the run it cut into.
+    #[test]
+    fn the_embedded_feed_cuts_a_long_line_inside_its_own_run() {
+        let palette = fixtures::coloured();
+        let ink = feed_ink::Ink::plain(palette);
+        let line = feed_line(
+            &TailLine::new(
+                Stream::Err,
+                &format!("\u{1b}[31m{}\u{1b}[0m", "x".repeat(90)),
+            ),
+            palette,
+            ink,
+        );
+        let body: String = line.spans[1..].iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            body.starts_with(&format!("{}\u{2026}", "x".repeat(77))),
+            "77 characters plus the ellipsis in the column's 78: {body:?}"
+        );
+        assert!(!body.contains(&"x".repeat(78)), "and no further: {body:?}");
+        let ellipsis = &line.spans[1];
+        assert_eq!(
+            ellipsis.style.fg,
+            Some(Color::Red),
+            "the ellipsis belongs to the run it landed in"
         );
     }
 
