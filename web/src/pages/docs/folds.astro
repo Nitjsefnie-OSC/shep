@@ -74,12 +74,12 @@ ID  NAME    STATUS  PID    RESTARTS  EXIT  CFG  CPU  MEM   UPTIME  FOLD     SMIT
 0   web     online  64778  0         -     -    -    4.2M  1s      backend  -
 1   worker  online  64782  0         -     -    -    4.2M  1s      backend  -
 
-Lambs of web (id 0) — parent-pid descendants of 64778, which is not exactly the set a stop kills
+Lambs of web (id 0): parent-pid descendants of 64778, which is not exactly the set a stop kills
 PID    NAME
 64780  sleep
 64781  sleep
 
-Lambs of worker (id 1) — parent-pid descendants of 64782, which is not exactly the set a stop kills
+Lambs of worker (id 1): parent-pid descendants of 64782, which is not exactly the set a stop kills
 PID    NAME
 64784  sleep
 64785  sleep`}</CodeBlock>

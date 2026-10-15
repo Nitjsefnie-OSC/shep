@@ -33,7 +33,7 @@ impl Whistle {
     /// anyway. Refuses the whole call if any matched instance is running.
     #[tool(
         name = "start_sheep",
-        description = "Start a registered sheep that is currently stopped. Cannot register new processes — the sheep must already be in the flock. The running check is a courtesy, not a guarantee: a sheep that comes up between the check and the call is restarted. For a multi-instance app, the whole call is refused if any instance is running.",
+        description = "Start a registered sheep that is currently stopped. Cannot register new processes: the sheep must already be in the flock. The running check is a courtesy, not a guarantee: a sheep that comes up between the check and the call is restarted. For a multi-instance app, the whole call is refused if any instance is running.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,

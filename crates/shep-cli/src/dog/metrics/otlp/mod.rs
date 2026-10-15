@@ -351,9 +351,12 @@ mod tests {
             self.seen.lock().unwrap().clone()
         }
 
-        /// Waits until `want` requests have arrived. The bound is the test's
-        /// own, so a collector that never answers fails here rather than
-        /// hanging.
+        /// Waits until `want` requests have arrived, looking every 20ms. It
+        /// returns the moment the count is reached, so it can carry more than
+        /// `want`: a caller that asserts an exact count needs an export
+        /// cadence wider than this poll, or two ticks can land between two
+        /// looks. The bound is the test's own, so a collector that never
+        /// answers fails here rather than hanging.
         async fn wait_for(&self, want: usize) -> Vec<String> {
             let budget = tokio::time::Instant::now() + Duration::from_secs(10);
             loop {
@@ -511,13 +514,22 @@ mod tests {
 
     /// A 500 is a failed export, and a failed export is a log line: the
     /// loop keeps ticking, and the next tick sends current values.
+    ///
+    /// The 250ms cadence is against `wait_for`'s 20ms look, not a taste. The
+    /// direct export above lands one request, so the count this asserts is
+    /// two ticks, and at a 20ms cadence a third tick can land before the poll
+    /// has looked at the second: `wait_for` hands back four and the count is
+    /// wrong on a runner with a coarse clock, where a 20ms sleep rounds up to
+    /// the ~16ms Windows quantum. Measured on the ticker and the poll alone,
+    /// no sockets: 3 overshoots in 300 runs at 20ms, 0 in 1000 at 250ms with
+    /// twelve spinning threads running.
     #[tokio::test]
     async fn a_5xx_is_a_failed_export_and_the_next_tick_still_runs() {
         let collector = collector(vec![500]).await;
         let dir = tempfile::tempdir().unwrap();
         let socket = shep_client::testing::control_address(dir.path());
         let (client, _daemon) = fake_reconnecting_client_on(&socket).await;
-        let exporter = exporter_on(collector.addr, Duration::from_millis(20));
+        let exporter = exporter_on(collector.addr, Duration::from_millis(250));
         let store = SampleStore::new();
 
         let err = exporter
