@@ -55,10 +55,10 @@ impl Ink {
         }
     }
 
-    // `runs` truncated to exactly `width` columns, one `Span` per surviving
-    // run plus the tail. Calls [`super::flock::take_columns`] once per run
-    // with the budget its predecessors left. A run whose first character
-    // does not fit contributes nothing: later runs still get what remains.
+    /// `runs` truncated to exactly `width` columns, one `Span` per surviving
+    /// run plus the tail. Calls [`super::flock::take_columns`] once per run
+    /// with the budget its predecessors left. A run whose first character
+    /// does not fit contributes nothing: later runs still get what remains.
     fn fit(runs: &[Run], width: u16, palette: Palette) -> Vec<Span<'static>> {
         let width = usize::from(width);
         let total: usize = runs
