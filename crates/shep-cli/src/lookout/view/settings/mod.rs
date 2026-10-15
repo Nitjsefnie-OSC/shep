@@ -30,7 +30,11 @@ use crate::commands::settings::SettingField;
 use dogs::{DOGS_CAPTION, dog_header_line, dog_line};
 use scalars::{scalar_line, scalar_view};
 
-pub use dogs::{columns_for, dog_rows};
+// `DogColumn` and `DogRow` travel with the two functions that hand them
+// out: re-exporting `columns_for` and `dog_rows` alone would leave
+// `view::settings::columns_for` returning a `DogColumn` no caller can name,
+// which is the path the single file had all four on.
+pub use dogs::{DogColumn, DogRow, columns_for, dog_rows};
 pub(super) use scalars::field_label;
 
 /// The width the rows themselves are laid out in: the terminal minus
@@ -133,7 +137,7 @@ fn cursor_only(
             table_width,
         )),
         Some(SettingsRow::Dog(index)) => {
-            let dogs = dog_rows(app, table_width);
+            let dogs: Vec<DogRow> = dog_rows(app, table_width);
             if let Some(dog) = dogs.get(*index) {
                 lines.push(dog_line(dog, columns_for(table_width), table_width, true));
             }
@@ -248,10 +252,10 @@ fn body_from(
             format!("  {}", fit(DOGS_CAPTION, table_width)),
             palette.muted(),
         )));
-        let rendered_columns = columns_for(table_width);
+        let rendered_columns: &[DogColumn] = columns_for(table_width);
         dogs_header.push(dog_header_line(rendered_columns, table_width, palette));
 
-        let dogs = dog_rows(app, table_width);
+        let dogs: Vec<DogRow> = dog_rows(app, table_width);
         if dogs.is_empty() {
             // Nothing to gate a header this function will never draw
             // otherwise: the empty flock still gets to say "[dogs]", same
