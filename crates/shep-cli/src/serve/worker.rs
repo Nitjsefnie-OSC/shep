@@ -33,8 +33,8 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// How many connections may be in flight at once.
 ///
 /// A permit is held for the whole life of a connection task, so this
-/// bounds tasks, open files and sockets together. 512 sits comfortably
-/// below a default `RLIMIT_NOFILE`.
+/// bounds tasks, sockets and open files together. A full 512 can want
+/// 1024 descriptors: over macOS's 256 `maxfiles`, over Linux's 1024.
 const MAX_CONNECTIONS: usize = 512;
 
 /// The whole-connection deadline every real `shep serve` runs with: read,
