@@ -13,7 +13,7 @@ use super::super::tail::{FEED_WINDOW_BYTES, Stream, TailLine};
 use super::cell;
 use super::flock::fit;
 use crate::output::human_bytes;
-use crate::output::width::char_columns;
+use crate::output::width::{char_columns, text_columns};
 use crate::vocabulary::Role;
 
 /// The stream tag's own width, shared by [`feed_line_rows`] (what it
@@ -439,7 +439,7 @@ fn filter_row_line(
         // the sentence would overrun the line. Saturating, because the match
         // text is whatever an operator typed and three capped chips plus
         // their separators can still overflow a `u16`.
-        let chip_columns = text.chars().map(char_columns).sum::<usize>();
+        let chip_columns = text_columns(&text);
         used = used.saturating_add(u16::try_from(chip_columns).unwrap_or(width));
         spans.push(Span::styled(text, ground));
         spans.push(Span::raw(" "));

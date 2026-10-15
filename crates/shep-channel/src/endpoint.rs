@@ -108,14 +108,52 @@ pub(crate) type ReadHalf = Transport;
 #[cfg(windows)]
 pub(crate) type ReadHalf = PipeReader;
 
-/// How long the Windows reader sleeps between peeks at an empty pipe.
+/// The floor of the Windows reader's sleep between peeks at an empty pipe.
 ///
-/// The price of not parking inside `ReadFile`. Compared to
-/// `action_timeout` and `kill_timeout`, both in seconds, 20 ms is
-/// invisible. Shorter wastes cycles for nothing; longer shows up in
-/// how fast an app answers `shep trigger`.
-#[cfg(windows)]
+/// The price of not parking inside `ReadFile`. An empty peek doubles the
+/// next sleep, up to [`PIPE_POLL_CAP`]: 20, 40, 80, 100, 100 ms. The first
+/// message after a quiet spell therefore waits up to 100 ms, which
+/// `action_timeout` and `kill_timeout`, both in seconds, absorb. A lower
+/// floor wastes cycles for nothing; a higher ceiling shows up in how fast
+/// an app answers `shep trigger`.
+#[cfg(any(windows, test))]
 const PIPE_POLL_INTERVAL: core::time::Duration = core::time::Duration::from_millis(20);
+
+/// The most the Windows reader ever sleeps between peeks at an empty pipe.
+///
+/// The ceiling of [`PIPE_POLL_INTERVAL`]'s doubling. An idle app pays one
+/// peek per 100 ms instead of fifty per second, forever.
+#[cfg(any(windows, test))]
+const PIPE_POLL_CAP: core::time::Duration = core::time::Duration::from_millis(100);
+
+/// The Windows reader's growing sleep between peeks at an empty pipe.
+///
+/// Starts at [`PIPE_POLL_INTERVAL`], doubles per empty peek, stops growing
+/// at [`PIPE_POLL_CAP`]. Built fresh per `PipeReader::read` call: a `read`
+/// that returns data ends the call, so the next call starts at the floor
+/// and nothing else needs resetting.
+#[cfg(any(windows, test))]
+#[derive(Debug)]
+struct PollBackoff {
+    next_sleep: core::time::Duration,
+}
+
+#[cfg(any(windows, test))]
+impl PollBackoff {
+    /// A backoff that starts at the floor.
+    fn new() -> Self {
+        Self {
+            next_sleep: PIPE_POLL_INTERVAL,
+        }
+    }
+
+    /// The next sleep, and the growth of the one after it.
+    fn next(&mut self) -> core::time::Duration {
+        let sleep = self.next_sleep;
+        self.next_sleep = (sleep * 2).min(PIPE_POLL_CAP);
+        sleep
+    }
+}
 
 /// Reads the channel's named pipe without parking inside `ReadFile`.
 ///
@@ -188,12 +226,16 @@ impl std::io::Read for PipeReader {
         if buf.is_empty() {
             return Ok(0);
         }
+        let mut backoff = PollBackoff::new();
         loop {
             let Some(buffered) = self.buffered()? else {
                 return Ok(0);
             };
             if buffered == 0 {
-                std::thread::sleep(PIPE_POLL_INTERVAL);
+                // Overlapped I/O (`FILE_FLAG_OVERLAPPED` on both handles)
+                // is the fix if this backoff's latency or idle wakeups ever
+                // matter, and it likely needs the shepherd side too.
+                std::thread::sleep(backoff.next());
                 continue;
             }
             // Never more than the peek just reported. Asking for more would
@@ -382,6 +424,49 @@ mod tests {
     fn the_other_endpoints_print_only_what_they_hold() {
         assert_eq!(format!("{:?}", Endpoint::Descriptor(3)), "Descriptor(3)");
         assert_eq!(format!("{:?}", Endpoint::Absent), "Absent");
+    }
+
+    /// Fails if the first sleep at an empty pipe is not the floor.
+    #[test]
+    fn the_poll_starts_at_the_floor() {
+        let mut backoff = PollBackoff::new();
+        assert_eq!(backoff.next(), PIPE_POLL_INTERVAL);
+    }
+
+    /// Fails if the sleep stays flat while the pipe keeps answering empty.
+    /// Expected sleeps are literals, not a recomputation of the doubling.
+    #[test]
+    fn the_poll_grows_while_the_pipe_stays_empty() {
+        let mut backoff = PollBackoff::new();
+        assert_eq!(backoff.next(), core::time::Duration::from_millis(20));
+        assert_eq!(backoff.next(), core::time::Duration::from_millis(40));
+        assert_eq!(backoff.next(), core::time::Duration::from_millis(80));
+        assert_eq!(backoff.next(), core::time::Duration::from_millis(100));
+    }
+
+    /// Fails if the doubling runs away: 1000 empty peeks, none sleeping
+    /// past the cap. Without the cap the fourth sleep already overshoots,
+    /// and a long quiet spell would overflow `Duration * 2`.
+    #[test]
+    fn the_poll_never_passes_the_cap() {
+        let mut backoff = PollBackoff::new();
+        for _ in 0..1000 {
+            assert!(backoff.next() <= PIPE_POLL_CAP);
+        }
+    }
+
+    /// Fails if a grown backoff's state leaks into the next one. This is
+    /// the reset rule for a `read` that returned data: `read` builds a
+    /// fresh `PollBackoff` per call, so the next call starts at the floor
+    /// and nothing else needs resetting.
+    #[test]
+    fn a_new_backoff_starts_over_at_the_floor() {
+        let mut grown = PollBackoff::new();
+        for _ in 0..10 {
+            grown.next();
+        }
+        let mut fresh = PollBackoff::new();
+        assert_eq!(fresh.next(), PIPE_POLL_INTERVAL);
     }
 
     /// Fails if a descriptor the shepherd could never have passed is
