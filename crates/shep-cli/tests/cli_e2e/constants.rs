@@ -108,15 +108,6 @@ pub(crate) const SERVE_HTTP_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// [`poll_http_get`]'s retry loop.
 pub(crate) const SERVE_HTTP_READ_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Bound [`a_served_sheep_stops_on_sigterm_rather_than_riding_the_ladder_to_sigkill`]
-/// asserts `shep stop`'s wall clock against.
-///
-/// `Command::Stop` defers its reply until the sheep has exited, so elapsed
-/// time reports which rung of the kill ladder answered: `SIGKILL` takes at
-/// least `kill_timeout`, 1600ms; a handled `SIGTERM` takes tens of
-/// milliseconds.
-pub(crate) const SERVE_STOP_DEADLINE: Duration = Duration::from_millis(1000);
-
 /// How long [`a_cron_occurrence_restarts_a_sheep_on_the_real_clock`] waits.
 ///
 /// A `* * * * *` pattern armed at an arbitrary moment is up to 60s from its

@@ -64,8 +64,21 @@ fn serve_refuses_a_docroot_that_is_not_a_directory() {
 }
 
 #[cfg(unix)]
-/// A worker that only handles SIGINT rides the kill ladder to SIGKILL on
-/// every `shep stop`. [`SERVE_STOP_DEADLINE`] carries the bound's basis.
+/// Which rung of the kill ladder answered, read off the shepherd's own exit
+/// record rather than a wall clock.
+///
+/// `Command::Stop` defers its reply until the sheep has exited, and
+/// [`shep_core::protocol::ProcessInfo::last_exit`] carries why it exited:
+/// the rung is in the reply the verb already prints. A worker that handles
+/// `SIGTERM` leaves on its own terms, so the record is a code and no signal.
+/// One that only handles `SIGINT` rides the ladder to `kill_tree`'s `SIGKILL`
+/// and records signal 9 with no code. `docs/testing.md` puts a duration a
+/// contended runner cannot hold still in the slow tier; the rung is the same
+/// fact with no clock in it.
+///
+/// The `code` half is not decoration. A worker that never bound its listener
+/// exits 1, and a case that only asked "signal, or no signal" would read that
+/// crash as a handled `SIGTERM`.
 #[test]
 fn a_served_sheep_stops_on_sigterm_rather_than_riding_the_ladder_to_sigkill() {
     let dir = tempfile::tempdir().unwrap();
@@ -92,14 +105,25 @@ fn a_served_sheep_stops_on_sigterm_rather_than_riding_the_ladder_to_sigkill() {
     let (status, body) = poll_http_get(addr, "/", &[]);
     assert_eq!(status, 200, "body={body}");
 
-    let started = Instant::now();
-    let stop_output = shep(dir.path()).arg("stop").arg(name).output().unwrap();
-    let elapsed = started.elapsed();
+    let stop_output = shep(dir.path())
+        .arg("--format")
+        .arg("json")
+        .arg("stop")
+        .arg(name)
+        .output()
+        .unwrap();
     assert_success(&stop_output);
-    assert!(
-        elapsed < SERVE_STOP_DEADLINE,
-        "shep stop took {elapsed:?}, at or past SERVE_STOP_DEADLINE ({SERVE_STOP_DEADLINE:?}); \
-         a worker riding the ladder to SIGKILL takes at least the 1600ms kill_timeout default"
+    let envelope: serde_json::Value = serde_json::from_slice(&stop_output.stdout)
+        .unwrap_or_else(|e| panic!("stop stdout was not JSON: {e}"));
+    let row = sheep_named(&envelope["data"], name);
+
+    assert_eq!(row["status"], "stopped", "{row}");
+    assert_eq!(
+        row["last_exit"],
+        serde_json::json!({ "code": 0, "signal": null }),
+        "a served sheep must stop on the kill ladder's first rung. \
+         A worker that only handles SIGINT rides it to SIGKILL and records \
+         `{{\"code\": null, \"signal\": 9}}` instead: {row}"
     );
 
     graceful_kill(dir.path());
