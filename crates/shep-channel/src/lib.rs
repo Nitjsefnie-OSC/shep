@@ -46,6 +46,8 @@ mod endpoint;
 #[cfg(feature = "client")]
 mod error;
 #[cfg(feature = "client")]
+mod loops;
+#[cfg(feature = "client")]
 mod metric;
 #[cfg(feature = "client")]
 mod outbox;
