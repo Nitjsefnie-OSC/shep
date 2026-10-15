@@ -8,6 +8,7 @@ mod confirm_field;
 mod cycle_field;
 mod dispatch_writes;
 mod file_edit;
+mod pane_text_key;
 #[cfg(test)]
 mod paste;
 mod restore_default;

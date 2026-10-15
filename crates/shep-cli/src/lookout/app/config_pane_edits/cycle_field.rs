@@ -17,12 +17,7 @@ impl App {
         // `confirm_field` takes: it is the more specific fact, and
         // `--allow-control` would not change it. A screen that answers
         // one question two ways teaches an operator to believe neither.
-        if let Some((key, lock)) = self
-            .config_pane()
-            .and_then(ConfigPane::cursor_lock)
-            .map(|(key, lock)| (key.to_owned(), lock))
-        {
-            self.notice = Some(Notice::grave(Self::lock_refusal(&key, lock)));
+        if self.refuse_if_locked() {
             return Effect::None;
         }
         if self.authorize_write().is_none() {

@@ -46,8 +46,7 @@ impl App {
         }) else {
             return Effect::None;
         };
-        if matches!(row.source, Source::Namespace(_)) {
-            self.notice = Some(Notice::grave(PROVIDER_ROW_REFUSAL.to_string()));
+        if self.refuse_provider_row(&row) {
             return Effect::None;
         }
         if self.authorize_write().is_none() {
