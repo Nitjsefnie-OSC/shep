@@ -98,11 +98,11 @@ All three panes at 120x30: the host strip under the title, the detail pane and t
                                                                                                                         [0m
 [0m[38;5;238m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mapi  … 1 earlier line not shown                                                                              [0m
-[0m[38;5;245mout  [0mGET /healthz 200 3ms                                                                                               [0m
-[0m[38;5;245mout  [0mGET /v1/orders 200 44ms                                                                                            [0m
-[0m[38;5;245mout  [0mPOST /v1/orders 201 88ms                                                                                           [0m
-[0m[38;5;245mout  [0mGET /v1/orders/8821 200 9ms                                                                                        [0m
-[0m[38;5;245mout  [0mconnection pool: 14/50 in use                                                                                      [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /healthz 200 3ms[0m                                                                                               [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders 200 44ms[0m                                                                                            [0m
+[0m[38;5;245mout  [0m[38;5;29mPOST /v1/orders 201 88ms[0m                                                                                           [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/8821 200 9ms[0m                                                                                        [0m
+[0m[38;5;245mout  [0m[38;5;29mconnection pool: 14/50 in use[0m                                                                                      [0m
 [0m[38;5;221m[48;5;235mq quit   j/k select   / filter   F folds   x stop   R restart   L reload   s settings   e edit   * your…[0m[38;5;245m[48;5;235m control enabled[0m
 
 
@@ -133,11 +133,11 @@ One errored, one waiting to restart, one stopped, with the selection parked on t
                                                                                                                         [0m
 [0m[38;5;238m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mapi  … 1 earlier line not shown                                                                              [0m
-[0m[38;5;245mout  [0mGET /healthz 200 3ms                                                                                               [0m
-[0m[38;5;245mout  [0mGET /v1/orders 200 44ms                                                                                            [0m
-[0m[38;5;245mout  [0mPOST /v1/orders 201 88ms                                                                                           [0m
-[0m[38;5;245mout  [0mGET /v1/orders/8821 200 9ms                                                                                        [0m
-[0m[38;5;245mout  [0mconnection pool: 14/50 in use                                                                                      [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /healthz 200 3ms[0m                                                                                               [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders 200 44ms[0m                                                                                            [0m
+[0m[38;5;245mout  [0m[38;5;29mPOST /v1/orders 201 88ms[0m                                                                                           [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/8821 200 9ms[0m                                                                                        [0m
+[0m[38;5;245mout  [0m[38;5;29mconnection pool: 14/50 in use[0m                                                                                      [0m
 [0m[38;5;221m[48;5;235mq quit   j/k select   / filter   F folds   x stop   R restart   L reload   s settings   e edit   * your…[0m[38;5;245m[48;5;235m control enabled[0m
 
 
@@ -238,10 +238,10 @@ Three sheep under a FLOCK band and two dogs under a DOGS band: bark is built-in 
                                                                                                                         [0m
 [0m[38;5;238m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;245mlog-rotate  out then err  from the log files, re-read with each listing                                      [0m
-[0m[38;5;245mout  [0mrotated /var/log/api/access.log -> access.log.1                                                                    [0m
-[0m[38;5;245mout  [0mcompressed access.log.1 (4.2M -> 380K)                                                                             [0m
-[0m[38;5;245mout  [0mpruned 2 archives older than 14 days                                                                               [0m
-[0m[38;5;245mout  [0mnext rotation in 6h                                                                                                [0m
+[0m[38;5;245mout  [0m[38;5;29mrotated /var/log/api/access.log -> access.log.1[0m                                                                    [0m
+[0m[38;5;245mout  [0m[38;5;29mcompressed access.log.1 (4.2M -> 380K)[0m                                                                             [0m
+[0m[38;5;245mout  [0m[38;5;29mpruned 2 archives older than 14 days[0m                                                                               [0m
+[0m[38;5;245mout  [0m[38;5;29mnext rotation in 6h[0m                                                                                                [0m
                                                                                                                         [0m
 [0m[38;5;221m[48;5;235mq quit   j/k select   / filter   F folds   x stop   R restart   L reload   s settings   e edit   * your…[0m[38;5;245m[48;5;235m control enabled[0m
 
@@ -273,11 +273,11 @@ Three sheep with a max_memory ceiling configured, or not: web-headroom sits at a
                                                                                                                                                       [0m
 [0m[38;5;238m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mweb-hot  … 1 earlier line not shown                                                                                                        [0m
-[0m[38;5;245mout  [0mGET /healthz 200 3ms                                                                                                                             [0m
-[0m[38;5;245mout  [0mGET /v1/orders 200 44ms                                                                                                                          [0m
-[0m[38;5;245mout  [0mPOST /v1/orders 201 88ms                                                                                                                         [0m
-[0m[38;5;245mout  [0mGET /v1/orders/8821 200 9ms                                                                                                                      [0m
-[0m[38;5;245mout  [0mconnection pool: 14/50 in use                                                                                                                    [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /healthz 200 3ms[0m                                                                                                                             [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders 200 44ms[0m                                                                                                                          [0m
+[0m[38;5;245mout  [0m[38;5;29mPOST /v1/orders 201 88ms[0m                                                                                                                         [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/8821 200 9ms[0m                                                                                                                      [0m
+[0m[38;5;245mout  [0m[38;5;29mconnection pool: 14/50 in use[0m                                                                                                                    [0m
 [0m[38;5;221m[48;5;235mq quit   j/k select   / filter   F folds   x stop   R restart   L reload   s settings   e edit   * yours   ! parked                   [0m[38;5;245m[48;5;235m control enabled[0m
 
 
@@ -308,11 +308,11 @@ Three sheep with a max_memory ceiling configured, or not: web-headroom sits at a
                                                                                                                                             [0m
 [0m[38;5;238m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mweb  … 1 earlier line not shown                                                                                                  [0m
-[0m[38;5;245mout  [0mGET /healthz 200 3ms                                                                                                                   [0m
-[0m[38;5;245mout  [0mGET /v1/orders 200 44ms                                                                                                                [0m
-[0m[38;5;245mout  [0mPOST /v1/orders 201 88ms                                                                                                               [0m
-[0m[38;5;245mout  [0mGET /v1/orders/8821 200 9ms                                                                                                            [0m
-[0m[38;5;245mout  [0mconnection pool: 14/50 in use                                                                                                          [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /healthz 200 3ms[0m                                                                                                                   [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders 200 44ms[0m                                                                                                                [0m
+[0m[38;5;245mout  [0m[38;5;29mPOST /v1/orders 201 88ms[0m                                                                                                               [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/8821 200 9ms[0m                                                                                                            [0m
+[0m[38;5;245mout  [0m[38;5;29mconnection pool: 14/50 in use[0m                                                                                                          [0m
 [0m[38;5;221m[48;5;235mq quit   j/k select   / filter   F folds   x stop   R restart   L reload   s settings   e edit   * yours   ! parked         [0m[38;5;245m[48;5;235m control enabled[0m
 
 
@@ -408,11 +408,11 @@ The shepherd stopped answering. Five attempts over about eight seconds before th
                                                                                                                         [0m
 [0m[38;5;238m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mapi  … 1 earlier line not shown                                                                              [0m
-[0m[38;5;245mout  [0mGET /healthz 200 3ms                                                                                               [0m
-[0m[38;5;245mout  [0mGET /v1/orders 200 44ms                                                                                            [0m
-[0m[38;5;245mout  [0mPOST /v1/orders 201 88ms                                                                                           [0m
-[0m[38;5;245mout  [0mGET /v1/orders/8821 200 9ms                                                                                        [0m
-[0m[38;5;245mout  [0mconnection pool: 14/50 in use                                                                                      [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /healthz 200 3ms[0m                                                                                               [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders 200 44ms[0m                                                                                            [0m
+[0m[38;5;245mout  [0m[38;5;29mPOST /v1/orders 201 88ms[0m                                                                                           [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/8821 200 9ms[0m                                                                                        [0m
+[0m[38;5;245mout  [0m[38;5;29mconnection pool: 14/50 in use[0m                                                                                      [0m
 [0m[38;5;221m[48;5;235mq quit   j/k select   / filter   F folds   x stop   R restart   L reload   s settings   e edit   * your…[0m[38;5;245m[48;5;235m control enabled[0m
 
 
@@ -478,11 +478,11 @@ The ladder ran out. The band says so in bark, the whole table and the host strip
                                                                                                                         [0m
 [0m[38;5;238m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mapi  … 1 earlier line not shown                                                                              [0m
-[0m[38;5;245mout  [0mGET /healthz 200 3ms                                                                                               [0m
-[0m[38;5;245mout  [0mGET /v1/orders 200 44ms                                                                                            [0m
-[0m[38;5;245mout  [0mPOST /v1/orders 201 88ms                                                                                           [0m
-[0m[38;5;245mout  [0mGET /v1/orders/8821 200 9ms                                                                                        [0m
-[0m[38;5;245mout  [0mconnection pool: 14/50 in use                                                                                      [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /healthz 200 3ms[0m                                                                                               [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders 200 44ms[0m                                                                                            [0m
+[0m[38;5;245mout  [0m[38;5;29mPOST /v1/orders 201 88ms[0m                                                                                           [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/8821 200 9ms[0m                                                                                        [0m
+[0m[38;5;245mout  [0m[38;5;29mconnection pool: 14/50 in use[0m                                                                                      [0m
 [0m[38;5;166m[48;5;235mread-only: from --read-only or lookout.allow_control                                                          [0m[38;5;245m[48;5;235m read-only[0m
 
 
@@ -560,11 +560,11 @@ A query nothing matches. The table names the query rather than claiming the floc
                                                                                                                         [0m
 [0m[38;5;238m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mapi  … 1 earlier line not shown                                                                              [0m
-[0m[38;5;245mout  [0mGET /healthz 200 3ms                                                                                               [0m
-[0m[38;5;245mout  [0mGET /v1/orders 200 44ms                                                                                            [0m
-[0m[38;5;245mout  [0mPOST /v1/orders 201 88ms                                                                                           [0m
-[0m[38;5;245mout  [0mGET /v1/orders/8821 200 9ms                                                                                        [0m
-[0m[38;5;245mout  [0mconnection pool: 14/50 in use                                                                                      [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /healthz 200 3ms[0m                                                                                               [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders 200 44ms[0m                                                                                            [0m
+[0m[38;5;245mout  [0m[38;5;29mPOST /v1/orders 201 88ms[0m                                                                                           [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/8821 200 9ms[0m                                                                                        [0m
+[0m[38;5;245mout  [0m[38;5;29mconnection pool: 14/50 in use[0m                                                                                      [0m
 [0m[38;5;221m[48;5;235mq quit   j/k select   / filter   F folds   x stop   R restart   L reload   s settings   e edit   * your…[0m[38;5;245m[48;5;235m control enabled[0m
 
 
@@ -612,11 +612,11 @@ The feed under a burst: 3.8 megabytes were never read and some hundreds of lines
                                                                                                                         [0m
 [0m[38;5;238m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mapi  … 525 earlier lines not shown, and 3.8M before them never read                                          [0m
-[0m[38;5;245mout  [0mGET /v1/orders/25 200 33ms                                                                                         [0m
-[0m[38;5;245mout  [0mGET /v1/orders/26 200 34ms                                                                                         [0m
-[0m[38;5;245mout  [0mGET /v1/orders/27 200 35ms                                                                                         [0m
-[0m[38;5;245mout  [0mGET /v1/orders/28 200 36ms                                                                                         [0m
-[0m[38;5;245mout  [0mGET /v1/orders/29 200 37ms                                                                                         [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/25 200 33ms[0m                                                                                         [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/26 200 34ms[0m                                                                                         [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/27 200 35ms[0m                                                                                         [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/28 200 36ms[0m                                                                                         [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/29 200 37ms[0m                                                                                         [0m
 [0m[38;5;221m[48;5;235mq quit   j/k select   / filter   F folds   x stop   R restart   L reload   s settings   e edit   * your…[0m[38;5;245m[48;5;235m control enabled[0m
 
 
@@ -678,11 +678,11 @@ The selected sheep has never written a log in this $SHEP_HOME. The feed names th
                                  [0m
 [0m[38;5;238m─────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mapi  … 1 earlier line…[0m
-[0m[38;5;245mout  [0mGET /healthz 200 3ms        [0m
-[0m[38;5;245mout  [0mGET /v1/orders 200 44ms     [0m
-[0m[38;5;245mout  [0mPOST /v1/orders 201 88ms    [0m
-[0m[38;5;245mout  [0mGET /v1/orders/8821 200 9ms [0m
-[0m[38;5;245mout  [0mconnection pool: 14/50 in u…[0m
+[0m[38;5;245mout  [0m[38;5;29mGET /healthz 200 3ms[0m        [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders 200 44ms[0m     [0m
+[0m[38;5;245mout  [0m[38;5;29mPOST /v1/orders 201 88ms[0m    [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/8821 200 9ms[0m [0m
+[0m[38;5;245mout  [0m[38;5;29mconnection pool: 14/50 in u…[0m
 [0m[38;5;221m[48;5;235mq quit   j/k sel…[0m[38;5;245m[48;5;235m control enabled[0m
 
 
@@ -713,11 +713,11 @@ The selected sheep has never written a log in this $SHEP_HOME. The feed names th
                                                                                                                         [0m
 [0m[38;5;238m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mapi  … 1 earlier line not shown                                                                              [0m
-[0m[38;5;245mout  [0mGET /healthz 200 3ms                                                                                               [0m
-[0m[38;5;245mout  [0mGET /v1/orders 200 44ms                                                                                            [0m
-[0m[38;5;245mout  [0mPOST /v1/orders 201 88ms                                                                                           [0m
-[0m[38;5;245mout  [0mGET /v1/orders/8821 200 9ms                                                                                        [0m
-[0m[38;5;245mout  [0mconnection pool: 14/50 in use                                                                                      [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /healthz 200 3ms[0m                                                                                               [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders 200 44ms[0m                                                                                            [0m
+[0m[38;5;245mout  [0m[38;5;29mPOST /v1/orders 201 88ms[0m                                                                                           [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/8821 200 9ms[0m                                                                                        [0m
+[0m[38;5;245mout  [0m[38;5;29mconnection pool: 14/50 in use[0m                                                                                      [0m
 [0m[38;5;221m[48;5;235mq quit   j/k select   / filter   F folds   x stop   R restart   L reload   s settings   e edit   * your…[0m[38;5;245m[48;5;235m control enabled[0m
 
 
@@ -748,11 +748,11 @@ The detail pane with a lamb list: how many descendants the shepherd's walk found
                                                                                                                         [0m
 [0m[38;5;238m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mapi  … 1 earlier line not shown                                                                              [0m
-[0m[38;5;245mout  [0mGET /healthz 200 3ms                                                                                               [0m
-[0m[38;5;245mout  [0mGET /v1/orders 200 44ms                                                                                            [0m
-[0m[38;5;245mout  [0mPOST /v1/orders 201 88ms                                                                                           [0m
-[0m[38;5;245mout  [0mGET /v1/orders/8821 200 9ms                                                                                        [0m
-[0m[38;5;245mout  [0mconnection pool: 14/50 in use                                                                                      [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /healthz 200 3ms[0m                                                                                               [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders 200 44ms[0m                                                                                            [0m
+[0m[38;5;245mout  [0m[38;5;29mPOST /v1/orders 201 88ms[0m                                                                                           [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/8821 200 9ms[0m                                                                                        [0m
+[0m[38;5;245mout  [0m[38;5;29mconnection pool: 14/50 in use[0m                                                                                      [0m
 [0m[38;5;221m[48;5;235mq quit   j/k select   / filter   F folds   x stop   R restart   L reload   s settings   e edit   * your…[0m[38;5;245m[48;5;235m control enabled[0m
 
 
@@ -783,11 +783,11 @@ The same pane on a stopped sheep. The shepherd had no pid to walk from and left 
                                                                                                                         [0m
 [0m[38;5;238m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[7m[38;5;221m ██ BLEATS[0m [0m[38;5;221mcron  … 1 earlier line not shown                                                                             [0m
-[0m[38;5;245mout  [0mGET /healthz 200 3ms                                                                                               [0m
-[0m[38;5;245mout  [0mGET /v1/orders 200 44ms                                                                                            [0m
-[0m[38;5;245mout  [0mPOST /v1/orders 201 88ms                                                                                           [0m
-[0m[38;5;245mout  [0mGET /v1/orders/8821 200 9ms                                                                                        [0m
-[0m[38;5;245mout  [0mconnection pool: 14/50 in use                                                                                      [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /healthz 200 3ms[0m                                                                                               [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders 200 44ms[0m                                                                                            [0m
+[0m[38;5;245mout  [0m[38;5;29mPOST /v1/orders 201 88ms[0m                                                                                           [0m
+[0m[38;5;245mout  [0m[38;5;29mGET /v1/orders/8821 200 9ms[0m                                                                                        [0m
+[0m[38;5;245mout  [0m[38;5;29mconnection pool: 14/50 in use[0m                                                                                      [0m
 [0m[38;5;221m[48;5;235mq quit   j/k select   / filter   F folds   x stop   R restart   L reload   s settings   e edit   * your…[0m[38;5;245m[48;5;235m control enabled[0m
 
 
@@ -1115,8 +1115,8 @@ The full-screen bleats pane, pinned to api, with a stream, a minimum level and a
 [0m[7m[38;5;29mshep lookout   /home/ada/.shep                                                        6 in the flock[0m
 [0m[7m[38;5;29m ██ api  out /home/ada/.shep/logs/api-2-out.log  err /home/ada/.shep/logs/api-2-err.log  64.0K wind…[0m
 [0m[48;5;235m stream out [0m [0m[48;5;235m level ≥ warn [0m [0m[48;5;235m match /retry|jitter/ (regex) [0m [0m[38;5;245m1 of 16 lines in the window: all three m…[0m
-[0m[38;5;245mout  [0mWARN [0m[7m[38;5;221mretry[0ming upstream payment gateway after a timeout, backing off 500ms before trying again w[0m
-[0m[38;5;245m     [0mith [0m[7m[38;5;221mjitter[0m added so the whole fleet does not [0m[7m[38;5;221mretry[0m at once                                     [0m
+[0m[38;5;245mout  [0m[38;5;29mWARN [0m[7m[38;5;221mretry[0m[38;5;29ming upstream payment gateway after a timeout, backing off 500ms before trying again w[0m
+[0m[38;5;245m     [0m[38;5;29mith [0m[7m[38;5;221mjitter[0m[38;5;29m added so the whole fleet does not [0m[7m[38;5;221mretry[0m[38;5;29m at once[0m                                     [0m
                                                                                                     [0m
                                                                                                     [0m
                                                                                                     [0m

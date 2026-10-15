@@ -107,23 +107,27 @@ impl Palette {
     /// `Stopping` and `Stopped` are muted.
     #[must_use]
     pub fn status(self, status: ProcStatus) -> Style {
-        self.role_style(crate::vocabulary::role_of(status))
+        self.ink(crate::vocabulary::role_of(status))
     }
 
     /// The style for one row's STATUS cell, sheep or dog. A silent dog wears
     /// `--butter` here exactly as it does in `shep flock`'s own table.
     #[must_use]
     pub fn reported(self, reported: Reported) -> Style {
-        self.role_style(reported.role())
+        self.ink(reported.role())
     }
 
+    /// A role's own foreground, for text that carries a reading rather than a
+    /// band: a STATUS cell, a feed line's stream colour.
+    ///
     /// The mapping lives in `crate::vocabulary`, so the CLI's table and this
     /// pane cannot drift.
-    fn role_style(self, role: crate::vocabulary::Role) -> Style {
+    #[must_use]
+    pub fn ink(self, role: crate::vocabulary::Role) -> Style {
         Self::fg(self.of(role))
     }
 
-    /// One role's resolved colour, shared by [`Self::role_style`] and
+    /// One role's resolved colour, shared by [`Self::ink`] and
     /// [`Self::band`] so the mapping is written once.
     fn of(self, role: crate::vocabulary::Role) -> Option<Color> {
         match role {

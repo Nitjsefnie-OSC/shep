@@ -4,13 +4,13 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use super::super::app::{App, RowKey};
 use super::super::pane_bleats::{BleatsPane, Filters, MatchKind};
 use super::super::tail::{FEED_WINDOW_BYTES, Stream, TailLine};
 use super::cell;
+use super::feed_ink;
 use super::flock::fit;
 use crate::output::human_bytes;
 use crate::output::width::{char_columns, text_columns};
@@ -328,13 +328,14 @@ fn feed_line_rows(
     // the same choice.
     let prefix = format!("{tag}  ");
     let text_width = width.saturating_sub(TAG_PREFIX_WIDTH);
+    let ranges = filters.match_ranges(&line.text);
+    let ink = feed_ink::Ink::filtered(app.data_palette(), &ranges, palette.band(Role::Butter));
     if !wrap {
-        let text = fit(&line.text, text_width);
         let mut spans = vec![Span::styled(prefix, palette.muted())];
-        spans.extend(highlighted(&text, filters, palette.band(Role::Butter)));
+        spans.extend(feed_ink::fitted_spans(line, ink, text_width));
         return vec![Line::from(spans)];
     }
-    let spans = highlighted(&line.text, filters, palette.band(Role::Butter));
+    let spans = feed_ink::text_spans(line, ink);
     let indent = " ".repeat(usize::from(TAG_PREFIX_WIDTH));
     wrap_spans(spans, usize::from(text_width))
         .into_iter()
@@ -385,33 +386,6 @@ fn wrap_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Vec<Span<'static>>
         }
     }
     rows
-}
-
-/// Splits `text` into spans, styling every byte range [`Filters::match_ranges`]
-/// reports in `highlight` and leaving the rest at the default style.
-///
-/// A test asserting only that the line renders (its text is present) cannot
-/// tell this function apart from one that never highlights anything: see
-/// `bleats_full::tests::a_match_axis_highlights_its_hit_and_only_its_hit`,
-/// which inspects the spans themselves.
-fn highlighted(text: &str, filters: &Filters, highlight: Style) -> Vec<Span<'static>> {
-    let ranges = filters.match_ranges(text);
-    if ranges.is_empty() {
-        return vec![Span::raw(text.to_string())];
-    }
-    let mut spans = Vec::with_capacity(ranges.len() * 2 + 1);
-    let mut cursor = 0;
-    for (start, end) in ranges {
-        if start > cursor {
-            spans.push(Span::raw(text[cursor..start].to_string()));
-        }
-        spans.push(Span::styled(text[start..end].to_string(), highlight));
-        cursor = end;
-    }
-    if cursor < text.len() {
-        spans.push(Span::raw(text[cursor..].to_string()));
-    }
-    spans
 }
 
 /// The row under the title once any filter axis is set: a chip per set
@@ -555,6 +529,7 @@ fn sheep_id(pane: &BleatsPane) -> Option<u32> {
 mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
+    use ratatui::style::Style;
     use shep_core::protocol::ProcessInfo;
     use shep_core::status::ProcStatus;
 
@@ -604,10 +579,7 @@ mod tests {
     #[test]
     fn a_feed_with_lines_never_shows_the_note() {
         let app = with_feed(Tail {
-            lines: vec![TailLine {
-                stream: Stream::Out,
-                text: "listening".to_string(),
-            }],
+            lines: vec![TailLine::new(Stream::Out, "listening")],
             missed_lines: 0,
             missed_bytes: 0,
             read_bytes: 9,
@@ -865,13 +837,14 @@ mod tests {
             Style::default(),
             "the match must carry a style distinct from plain text"
         );
-        let plain = survivor
+        let rest: Vec<&Span<'static>> = survivor
             .spans
             .iter()
-            .find(|span| span.style == Style::default() && span.content.as_ref() != "pool");
+            .filter(|span| span.content.as_ref() != "pool")
+            .collect();
         assert!(
-            plain.is_some(),
-            "the rest of the line must stay unstyled, for contrast: {survivor:?}"
+            !rest.is_empty() && rest.iter().all(|span| span.style != hit.style),
+            "the rest of the line must not wear the highlight, for contrast: {survivor:?}"
         );
     }
 
@@ -931,10 +904,7 @@ mod tests {
         );
         app.update(Msg::Bleats {
             tail: Tail {
-                lines: vec![TailLine {
-                    stream: Stream::Out,
-                    text: "listening".to_string(),
-                }],
+                lines: vec![TailLine::new(Stream::Out, "listening")],
                 missed_lines: 0,
                 missed_bytes: 831 * 1024,
                 read_bytes: 4096,
@@ -1057,9 +1027,11 @@ mod tests {
         app.update(Msg::Bleats {
             tail: Tail {
                 lines: (0..80)
-                    .map(|i| TailLine {
-                        stream: if i % 2 == 0 { Stream::Out } else { Stream::Err },
-                        text: format!("worker[{i}] pool acquire ok user=ops{i}@example.com"),
+                    .map(|i| {
+                        TailLine::new(
+                            if i % 2 == 0 { Stream::Out } else { Stream::Err },
+                            &format!("worker[{i}] pool acquire ok user=ops{i}@example.com"),
+                        )
                     })
                     .collect(),
                 missed_lines: 0,

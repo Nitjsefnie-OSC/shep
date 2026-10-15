@@ -8,6 +8,7 @@ use super::super::app::{App, RowKey};
 use super::super::tail::Stream;
 use super::super::theme::Palette;
 use super::detail::chip_text;
+use super::feed_ink;
 use super::flock::fit;
 use crate::output::human_bytes;
 use crate::vocabulary::Role;
@@ -95,17 +96,20 @@ pub fn feed_lines(app: &App, width: u16, rows: usize) -> Vec<Line<'static>> {
     // The last lines that fit. `err` comes after `out` in `Tail::lines`, so
     // a crash on stderr survives a chatty stdout.
     let skip = feed.lines.len().saturating_sub(body);
+    let text_width = width.saturating_sub(5);
+    // The colour goes on the text, and through the data palette: a meadow line
+    // on a frozen dashboard is the same lie a meadow `online` is.
+    let ink = feed_ink::Ink::plain(app.data_palette());
     for line in feed.lines.iter().skip(skip) {
         let tag = match line.stream {
             Stream::Out => "out",
             Stream::Err => "err",
         };
-        out.push(Line::from(vec![
-            // Muted, both of them. The word carries the whole meaning, and
-            // a red `err` would say a stderr line is damage.
-            Span::styled(format!("{tag}  "), palette.muted()),
-            Span::raw(fit(&line.text, width.saturating_sub(5))),
-        ]));
+        // Muted, both of them. The word carries the whole meaning, and a red
+        // `err` would say a stderr line is damage.
+        let mut spans = vec![Span::styled(format!("{tag}  "), palette.muted())];
+        spans.extend(feed_ink::fitted_spans(line, ink, text_width));
+        out.push(Line::from(spans));
     }
     out
 }
@@ -168,10 +172,11 @@ mod tests {
     use super::super::super::app::{KeyPress, Msg, RowKey};
     use super::super::super::tail::{Stream, Tail};
     use super::super::fixtures::{
-        app_fixture, app_with, coloured, line, plain, render_all, with_feed, with_feed_and_palette,
+        app_with, coloured, line, plain, render_all, with_feed, with_feed_and_palette,
         with_feed_and_selection, with_no_selection,
     };
     use super::feed_lines;
+    use crate::vocabulary::Role;
 
     /// Needs `Msg::Frozen`: without it, selecting a group triggers a
     /// refresh that clears the stale lines, so this stays invisible live.
@@ -339,33 +344,25 @@ mod tests {
         );
     }
 
-    /// Most runtimes log to stderr by default, so it is not `--bark`.
+    /// Most runtimes log to stderr by default, so the tag stays muted and the
+    /// colour goes on the text: stdout meadow, stderr bark.
     #[test]
-    fn the_stream_tag_is_a_word_and_stderr_is_not_bark() {
+    fn the_stream_tag_is_a_word_and_only_the_text_wears_bark() {
         let palette = coloured();
-        let app = with_feed_and_palette(
-            Tail {
-                lines: vec![line(Stream::Out, "fine"), line(Stream::Err, "warning")],
-                missed_lines: 0,
-                missed_bytes: 0,
-                read_bytes: 32,
-                note: None,
-            },
-            palette,
-        );
-        let lines = feed_lines(&app, 120, 6);
-        let rendered = render_all(&lines);
+        let meadow = palette.ink(Role::Meadow).fg;
+        let bark = palette.alarm().fg;
+        let tail = Tail {
+            lines: vec![line(Stream::Out, "fine"), line(Stream::Err, "warning")],
+            ..Default::default()
+        };
+        let rows = feed_lines(&with_feed_and_palette(tail, palette), 120, 6);
+        let rendered = render_all(&rows);
         assert!(rendered.contains("out  fine"));
         assert!(rendered.contains("err  warning"));
-        let bark = palette.alarm().fg;
-        for line in &lines {
-            for span in &line.spans {
-                assert_ne!(
-                    span.style.fg, bark,
-                    "nothing in this pane is bark: {span:?}"
-                );
-            }
-        }
+        assert_eq!(rows[1].spans[0].style, palette.muted(), "out tag muted");
+        assert_eq!(rows[2].spans[0].style, palette.muted(), "err tag muted");
+        assert_eq!(rows[1].spans[1].style.fg, meadow, "stdout is meadow");
+        assert_eq!(rows[2].spans[1].style.fg, bark, "stderr is bark");
     }
 
     /// Confirms the note reaches the screen rather than a blank pane.
@@ -388,13 +385,5 @@ mod tests {
             rendered.contains("no sheep is selected"),
             "got {rendered:?}"
         );
-    }
-
-    /// bleats.rs:93 argues a coloured `err` says a stderr line is damage.
-    /// The redesign colours gauges, not this.
-    #[test]
-    fn the_stream_tag_is_still_muted() {
-        let line = feed_lines(&app_fixture(), 80, 4).remove(1);
-        assert_eq!(line.spans[0].style, app_fixture().palette().muted());
     }
 }
