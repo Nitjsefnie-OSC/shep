@@ -265,6 +265,8 @@ pub(crate) fn now_ms() -> u64 {
 
 #[cfg(test)]
 pub(crate) mod testing;
+#[cfg(test)]
+pub(crate) mod testing_http;
 
 // Reachable tier: `shep-cli`'s hidden `daemon` subcommand calls `boot` and
 // `RunningDaemon::run`, and `launch.rs` reads `DIR_MODE`. Portable on both

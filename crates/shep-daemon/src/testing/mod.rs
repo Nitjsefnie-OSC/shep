@@ -1,9 +1,9 @@
 // One crate-root fixture module: every test module in this crate shares these
 // helpers instead of hand-rolling its own. The scripted doubles live in
-// `doubles` and the loopback HTTP fake in `loopback_http`, both re-exported
-// below so every caller keeps writing `crate::testing::Name`.
+// `doubles`, re-exported below so every caller keeps writing
+// `crate::testing::Name`. The loopback HTTP fake lives in
+// `crate::testing_http`.
 mod doubles;
-mod loopback_http;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
@@ -18,7 +18,6 @@ pub(crate) use doubles::{
     ArmCall, RecordingEnforcer, ScriptedProber, ScriptedSampler, TestClock, probe_config, rss,
     rss_cpu,
 };
-pub(crate) use loopback_http::{HttpReply, loopback_http, loopback_http_on};
 
 use crate::assemble::assemble;
 use crate::bus::SharedEvent;
