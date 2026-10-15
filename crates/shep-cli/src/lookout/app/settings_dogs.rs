@@ -40,16 +40,8 @@ impl App {
             }
             // Also a mismatched guard above: an `EnableDog` answered by
             // `Response::Deleted`, or the reverse.
-            Ok(_unrecognised) => {
-                self.notice = Some(Notice::grave(format!(
-                    "{prefix}: the shepherd answered something this lookout does not understand"
-                )));
-            }
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice::grave(format!("{prefix}: {}", err.message)));
-            }
-            Err(other) => {
-                self.notice = Some(Notice::grave(format!("{prefix}: {other}")));
+            other => {
+                self.notice = Some(Notice::grave(format!("{prefix}: {}", failed_reply(other))));
             }
         }
         self.reread_settings()

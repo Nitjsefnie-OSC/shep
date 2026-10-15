@@ -65,21 +65,13 @@ impl App {
                 // belongs to a screen that never asked for it.
                 None | Some(ConfigFor::Editor) => self.open_or_refresh_config_pane(*view),
             },
-            Ok(_unrecognised) => {
-                self.notice = Some(Notice::grave(format!(
-                    "{name}: the shepherd answered something this lookout does not understand"
-                )));
-            }
             // Prefixed, like every other reply handler in this file: the
             // shepherd's refusals mostly name their own subject, but
             // `EngineStopped` renders as `the supervisor engine has
             // stopped`, naming neither the sheep nor the screen it came
             // from.
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice::grave(format!("{name}: {}", err.message)));
-            }
-            Err(other) => {
-                self.notice = Some(Notice::grave(format!("{name}: {other}")));
+            other => {
+                self.notice = Some(Notice::grave(format!("{name}: {}", failed_reply(other))));
             }
         }
         Effect::None
