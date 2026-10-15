@@ -68,16 +68,8 @@ impl App {
                         Some(Notice::grave(format!("{name}: {}", moved_entries(dropped))));
                 }
             }
-            Ok(_unrecognised) => {
-                self.notice = Some(Notice::grave(format!(
-                    "{name}: the shepherd answered something this lookout does not understand"
-                )));
-            }
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice::grave(format!("{name}: {}", err.message)));
-            }
-            Err(other) => {
-                self.notice = Some(Notice::grave(format!("{name}: {other}")));
+            other => {
+                self.notice = Some(Notice::grave(format!("{name}: {}", failed_reply(other))));
             }
         }
         Effect::None
@@ -154,18 +146,8 @@ impl App {
                     name: name.to_owned(),
                 })
             }
-            Ok(_unrecognised) => {
-                self.notice = Some(Notice::grave(format!(
-                    "{name}: the shepherd answered something this lookout does not understand"
-                )));
-                Effect::None
-            }
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice::grave(format!("{name}: {}", err.message)));
-                Effect::None
-            }
-            Err(other) => {
-                self.notice = Some(Notice::grave(format!("{name}: {other}")));
+            other => {
+                self.notice = Some(Notice::grave(format!("{name}: {}", failed_reply(other))));
                 Effect::None
             }
         }

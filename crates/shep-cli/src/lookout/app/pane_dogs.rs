@@ -275,11 +275,7 @@ impl App {
                     name: name.to_owned(),
                 });
             }
-            Ok(_unrecognised) => {
-                "the shepherd answered something this lookout does not understand".to_owned()
-            }
-            Err(RequestError::Rpc(err)) => err.message,
-            Err(other) => other.to_string(),
+            other => failed_reply(other),
         };
         self.notice = Some(Notice::grave(format!("{name}: {dog}: {why}")));
         Effect::None
