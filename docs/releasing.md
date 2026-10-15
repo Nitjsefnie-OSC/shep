@@ -244,6 +244,27 @@ it.
 What the guard does not do: it does not fix the walk. The next release pull
 request is built from the same under-read range and corrected again.
 
+### Auditing what already shipped
+
+`scripts/audit-changelog-gaps.py` is the read-only companion for releases
+that already merged. For every crate with a `CHANGELOG.md` and every
+released version, it reads the commits between the previous release tag and
+this one that touched the crate's directory, keeps the ones
+`release-plz-changelog.toml` would have given a changelog line (`feat`,
+`fix`, `perf`, a non-skipped `refactor`, anything breaking), and reports the
+lines that version's section does not carry. Run it from a full-history
+checkout with `python3 scripts/audit-changelog-gaps.py`: it prints four
+counts per crate (released sections, empty sections, empty sections that
+owed an entry, missing lines), then one line per gap, and writes nothing.
+It reads tags by the config's `tag_pattern` the way git-cliff does,
+unanchored, so every per-package tag matches and a tag on any crate dates
+the shared version for all of them; `shep-v0.9.0` is the `shep` package's
+own tag, not a stray one, and `pre-rebase-backup` matches nothing. A
+pre-release tag bounds the next range but is never itself audited, since no
+changelog section carries one. `scripts/test_audit_changelog_gaps.py` builds
+a throwaway two-crate repository for it, and `manifests.yml` runs those
+tests.
+
 The structural fix is a history with no diamonds in it. Requiring branches to
 be up to date before merging would deliver that, at the cost of re-running
 sixteen required checks on every open pull request each time anything merges.
