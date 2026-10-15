@@ -8,12 +8,22 @@
 //! the sheep writes, so the reader is bounded by itself and not by the writer.
 //! [`read`] is pure over the filesystem, which is what lets its tests drive
 //! it with a [`std::collections::BTreeMap`] and a `tempdir`.
+//!
+//! The grammar that turns a line's own escapes into [`InkRun`]s lives in
+//! [`runs`], with the tests for what it checks. What is here is the window,
+//! the counters, and the two types a view reads.
 
 use std::collections::BTreeMap;
 use std::io::{Read as _, Seek as _, SeekFrom};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use ratatui::style::Style;
+
 use crate::output::human_bytes;
+use crate::output::log_line;
+
+mod runs;
 
 /// The most of one log file this pane will read to find its lines.
 ///
@@ -40,15 +50,66 @@ pub enum Stream {
     Err,
 }
 
-/// One line, with the stream it came from.
+/// One stretch of a feed line's text the process itself styled.
+///
+/// `range` is a byte range into [`TailLine::text`], the same coordinate
+/// [`super::pane_bleats::Filters::match_ranges`] reports a filter highlight
+/// in, so the two can be merged without either translating the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InkRun {
+    /// The stretch of [`TailLine::text`] this style covers.
+    pub range: Range<usize>,
+    /// The styling the line's own SGR sequence asked for.
+    pub style: Style,
+}
+
+/// One line, with the stream it came from and the colour its writer asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TailLine {
     /// Which file it was in.
     pub stream: Stream,
-    /// The line, without its terminator. Decoded with
+    /// The line, without its terminator, decoded with
     /// [`String::from_utf8_lossy`]: a log file is whatever the child wrote and
-    /// is under no obligation to be UTF-8.
+    /// is under no obligation to be UTF-8. Every escape and every control
+    /// character but a tab is gone, so what a filter, a level rule and a wrap
+    /// count see is what an operator reads.
     pub text: String,
+    /// The process's own colour, as style runs over [`Self::text`].
+    ///
+    /// Empty for a line that styled nothing, which is what lets a view fall
+    /// back to the stream's own colour rather than repaint a line that has one
+    /// already.
+    pub runs: Vec<InkRun>,
+    /// Whether the line asked for a colour of its own.
+    ///
+    /// [`log_line::sets_colour`]'s answer over the escapes that survived as
+    /// styling, narrowed to what this pane can draw: a line whose only SGR is a
+    /// bare reset, a colour reset (`39`, `49`) or a code this pane does not
+    /// draw is still a plain line, and keeps its stream's colour.
+    pub own_colour: bool,
+}
+
+impl TailLine {
+    /// `raw`, one line as the sheep wrote it, read into plain text and runs.
+    ///
+    /// The escape policy is the one `shep bleats` already applies to the same
+    /// bytes: [`log_line::sanitize_log_line`] keeps a well-formed SGR and a tab
+    /// and drops every other escape, control character and C1 introducer.
+    #[must_use]
+    pub fn new(stream: Stream, raw: &str) -> Self {
+        let clean = log_line::sanitize_log_line(raw);
+        let (text, runs) = runs::split_runs(&clean);
+        // `sets_colour` counts any nonzero parameter, `39` and `49` included,
+        // and those ask for the default rather than for a colour. A line that
+        // asked for nothing this pane can draw is a plain line.
+        let own_colour = log_line::sets_colour(&clean) && !runs.is_empty();
+        Self {
+            stream,
+            text,
+            runs,
+            own_colour,
+        }
+    }
 }
 
 /// What one refresh of the feed found.
@@ -121,7 +182,7 @@ pub fn read(seen: &mut BTreeMap<PathBuf, u64>, out: Option<&Path>, err: Option<&
                     window
                         .lines
                         .into_iter()
-                        .map(|text| TailLine { stream, text }),
+                        .map(|text| TailLine::new(stream, &text)),
                 );
             }
             // The shepherd creates both files at spawn, so a missing one means
@@ -452,21 +513,33 @@ mod tests {
 
         let mut seen = BTreeMap::new();
         let tail = read(&mut seen, Some(&out), Some(&err));
-        assert_eq!(
-            tail.lines[0],
-            TailLine {
-                stream: Stream::Out,
-                text: "hello".to_string()
-            }
-        );
+        assert_eq!(tail.lines[0], TailLine::new(Stream::Out, "hello"));
         assert_eq!(
             tail.lines.last().unwrap(),
-            &TailLine {
-                stream: Stream::Err,
-                text: "panicked at 'boom'".to_string()
-            }
+            &TailLine::new(Stream::Err, "panicked at 'boom'")
         );
         assert_eq!(tail.note, None, "there was something to show");
+    }
+
+    /// The reader is the seam the panes see: a coloured line off disk arrives
+    /// already split, so no view has to know a log file carries escapes.
+    #[test]
+    fn a_line_off_disk_arrives_split_the_same_way_as_one_handbuilt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("web-err.log");
+        std::fs::write(&path, "\u{1b}[1;31mpanic\u{1b}[0m: index out of bounds\n").unwrap();
+
+        let mut seen = BTreeMap::new();
+        let tail = read(&mut seen, None, Some(&path));
+        assert_eq!(
+            tail.lines,
+            vec![TailLine::new(
+                Stream::Err,
+                "\u{1b}[1;31mpanic\u{1b}[0m: index out of bounds"
+            )],
+            "the reader and the constructor agree"
+        );
+        assert_eq!(tail.lines[0].text, "panic: index out of bounds");
     }
 
     #[test]

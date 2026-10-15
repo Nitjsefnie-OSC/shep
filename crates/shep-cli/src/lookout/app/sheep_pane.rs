@@ -523,14 +523,8 @@ mod tests {
         app.update(Msg::Bleats {
             tail: crate::lookout::tail::Tail {
                 lines: vec![
-                    crate::lookout::tail::TailLine {
-                        stream: Stream::Out,
-                        text: "boom detected".to_string(),
-                    },
-                    crate::lookout::tail::TailLine {
-                        stream: Stream::Out,
-                        text: "all quiet".to_string(),
-                    },
+                    crate::lookout::tail::TailLine::new(Stream::Out, "boom detected"),
+                    crate::lookout::tail::TailLine::new(Stream::Out, "all quiet"),
                 ],
                 missed_lines: 0,
                 missed_bytes: 0,
@@ -604,10 +598,7 @@ mod tests {
             tail: crate::lookout::tail::Tail {
                 lines: lines
                     .iter()
-                    .map(|text| crate::lookout::tail::TailLine {
-                        stream: Stream::Out,
-                        text: (*text).to_string(),
-                    })
+                    .map(|text| crate::lookout::tail::TailLine::new(Stream::Out, text))
                     .collect(),
                 missed_lines: 0,
                 missed_bytes: 0,

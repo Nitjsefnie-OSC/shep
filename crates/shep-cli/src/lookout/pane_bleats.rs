@@ -629,10 +629,7 @@ mod tests {
     use super::*;
 
     fn line(stream: Stream, text: &str) -> TailLine {
-        TailLine {
-            stream,
-            text: text.to_string(),
-        }
+        TailLine::new(stream, text)
     }
 
     /// The decision most likely to be quietly reversed. An app printing bare

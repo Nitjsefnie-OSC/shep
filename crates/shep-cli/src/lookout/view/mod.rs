@@ -9,6 +9,7 @@ pub mod bleats;
 pub mod bleats_full;
 pub mod cell;
 pub mod detail;
+mod feed_ink;
 pub mod flock;
 pub mod host;
 mod keymap;
