@@ -99,8 +99,8 @@ impl Outbox {
 
     /// Queues a message that may be dropped. Never blocks, never fails.
     ///
-    /// A full queue discards its oldest metric, never a `Ready` or an
-    /// `ActionReply`, and counts it. Newer samples are worth more, so the
+    /// A full queue discards its oldest metric or note, never a `Ready` or
+    /// an `ActionReply`, and counts it. Newer samples are worth more, so the
     /// older one goes. With nothing to evict, the incoming message is the
     /// one dropped instead.
     pub(crate) fn push_lossy(&self, message: ChildMessage) {
@@ -120,21 +120,22 @@ impl Outbox {
             return;
         }
         if inner.queue.len() >= self.capacity {
-            // Scans for a metric instead of taking the head. A droppable message
+            // Scans for a metric or note instead of the head. A droppable message
             // must never displace a `Ready` or an `ActionReply`. Evicting either
             // one hangs `wait_ready` or costs a full `action_timeout`. Only a
             // full queue pays for the scan.
-            let Some(oldest_metric) = inner
-                .queue
-                .iter()
-                .position(|queued| matches!(queued, ChildMessage::Metric { .. }))
-            else {
-                // Nothing in here may be given up, so the incoming metric is
+            let Some(oldest_lossy) = inner.queue.iter().position(|queued| {
+                matches!(
+                    queued,
+                    ChildMessage::Metric { .. } | ChildMessage::Note { .. }
+                )
+            }) else {
+                // Nothing in here may be given up, so the incoming message is
                 // what goes.
                 inner.dropped = inner.dropped.saturating_add(1);
                 return;
             };
-            inner.queue.remove(oldest_metric);
+            inner.queue.remove(oldest_lossy);
             inner.dropped = inner.dropped.saturating_add(1);
         }
         inner.queue.push_back(message);
@@ -395,6 +396,30 @@ mod tests {
             outbox.take(),
             vec![ChildMessage::Ready, metric(2.0), metric(3.0)],
             "readiness was evicted by a metric"
+        );
+    }
+
+    /// A note is as droppable as a sample, so a full queue of them still
+    /// makes room for what comes next.
+    #[test]
+    fn a_full_outbox_evicts_the_oldest_note_as_it_would_a_metric() {
+        let note = |value| ChildMessage::Note {
+            name: "lease.web.want.1".into(),
+            value,
+        };
+        let outbox = Outbox::new(3);
+        outbox
+            .push_blocking(ChildMessage::Ready)
+            .expect("room for readiness");
+        outbox.push_lossy(note(1.0));
+        outbox.push_lossy(note(2.0));
+
+        outbox.push_lossy(metric(3.0));
+
+        assert_eq!(outbox.dropped(), 1);
+        assert_eq!(
+            outbox.take(),
+            vec![ChildMessage::Ready, note(2.0), metric(3.0)]
         );
     }
 

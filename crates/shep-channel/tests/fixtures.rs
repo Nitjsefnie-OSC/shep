@@ -83,6 +83,13 @@ fn child_messages_match_their_fixtures() {
             },
         ),
         (
+            "child-note",
+            ChildMessage::Note {
+                name: "lease.web.want.1760500000".into(),
+                value: 1.0,
+            },
+        ),
+        (
             "child-action-reply",
             ChildMessage::ActionReply {
                 action: "gc".into(),

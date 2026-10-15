@@ -88,8 +88,8 @@ impl Shepherd {
         self.0.version.as_deref()
     }
 
-    /// How many metrics have been dropped because the shepherd was not
-    /// keeping up. Always 0 without a channel.
+    /// How many metric samples and notes have been dropped because the
+    /// shepherd was not keeping up. Always 0 without a channel.
     #[must_use]
     pub fn dropped_metrics(&self) -> u64 {
         self.0.outbox.as_ref().map_or(0, |outbox| outbox.dropped())
@@ -242,6 +242,21 @@ impl Shepherd {
                 metric_type: options.kind,
                 labels: options.labels,
                 help: options.help,
+            });
+        }
+    }
+
+    /// Sends a dog a name and a number that is not a metric sample.
+    ///
+    /// The shepherd publishes it as `channel.note`, which the metrics dog
+    /// does not subscribe to, so `name` needs no metric grammar. Never
+    /// blocks and never fails, like [`Shepherd::metric`]: a note may be
+    /// dropped under backpressure and counts in [`Shepherd::dropped_metrics`].
+    pub fn note(&self, name: impl Into<String>, value: f64) {
+        if let Some(outbox) = &self.0.outbox {
+            outbox.push_lossy(ChildMessage::Note {
+                name: name.into(),
+                value,
             });
         }
     }
@@ -425,6 +440,7 @@ mod tests {
         shepherd.on_shutdown(|| {});
         shepherd.metric("rps", 42.0);
         shepherd.metric_with("rps", 42.0, MetricOptions::new());
+        shepherd.note("lease.web.want.1", 1.0);
         shepherd.ready().expect("an inert ready is not an error");
         shepherd
             .flush(Duration::ZERO)
@@ -473,6 +489,22 @@ mod tests {
                 r#"{"kind":"metric","name":"queue_depth","value":3.0,"type":"counter","#,
                 r#""labels":{"model":"qwen"},"help":"Requests waiting for the lease."}"#,
             )
+        );
+    }
+
+    /// The lossy push, like a sample: a full queue drops and counts.
+    #[test]
+    fn a_note_goes_on_the_wire_and_drops_like_a_sample() {
+        let outbox = Arc::new(Outbox::new(1));
+        let shepherd = shepherd_over(&outbox);
+        shepherd.note("lease.web.want.1", 1.0);
+        shepherd.note("lease.web.want.2", 2.0);
+
+        assert_eq!(shepherd.dropped_metrics(), 1);
+        let taken = outbox.take();
+        assert_eq!(
+            serde_json::to_string(&taken).expect("encode"),
+            r#"[{"kind":"note","name":"lease.web.want.2","value":2.0}]"#
         );
     }
 

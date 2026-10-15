@@ -58,7 +58,8 @@ impl ChannelMetric {
             }),
             ChildMessage::Ready
             | ChildMessage::ActionReply { .. }
-            | ChildMessage::LambLabel { .. } => None,
+            | ChildMessage::LambLabel { .. }
+            | ChildMessage::Note { .. } => None,
         }
     }
 }
