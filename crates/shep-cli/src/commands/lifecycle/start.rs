@@ -219,17 +219,17 @@ async fn set_assignments(
 
 /// Writes `--no-log-timestamps` onto each sheep the flock already has
 ///
-/// The flag is a value the operator typed for this sheep, so it travels as
-/// an operator override rather than as a declared key: `merge_declared` at
+/// The flag is a value the operator typed, so it travels as an operator
+/// override, not as a declared key: `merge_declared` at
 /// [`ResetDepth::None`] takes a declared key only when nobody has
 /// established it. Being
 /// [`ApplyGroup::NeedsRespawn`](shep_core::config::ApplyGroup::NeedsRespawn),
-/// it parks for the spawn below. Returns the first write the shepherd
-/// refused, which stops the caller: a stamp the operator asked off is not a
-/// value to leave on.
+/// it parks: the shepherd's `pending` answer is reported, and a refused
+/// write stops the caller.
 async fn set_log_timestamps_off(
     client: &Client,
     streams: &mut Streams<'_>,
+    mode: Load,
     names: &[&str],
 ) -> ExitCode {
     for name in names {
@@ -239,7 +239,25 @@ async fn set_log_timestamps_off(
             value: serde_json::Value::Bool(false),
         };
         match client.request(body).await {
-            Ok(Response::SheepFieldSet { .. }) => {}
+            // A write that landed and a write that landed parked are not the
+            // same run, and only the shepherd knows which it answered. The
+            // clause is the one `apply_declared` prints for a parked field.
+            Ok(Response::SheepFieldSet {
+                pending, warning, ..
+            }) => {
+                if let Some(warning) = warning {
+                    streams.aside("warning", &warning);
+                }
+                if pending {
+                    streams.aside(
+                        mode.verb(),
+                        &format!(
+                            "{name}: log_timestamps waiting on the next spawn \
+                             (`shep reload {name}` promotes them)"
+                        ),
+                    );
+                }
+            }
             // `Response` is `#[non_exhaustive]`, so an answer this client
             // does not recognise is a daemon-side fault rather than a bad
             // value.
@@ -464,7 +482,7 @@ async fn load_one(
             .iter()
             .map(|(app, _)| app.config.name.as_str())
             .collect();
-        let stamp = set_log_timestamps_off(client, streams, &names).await;
+        let stamp = set_log_timestamps_off(client, streams, mode, &names).await;
         if stamp != ExitCode::Success {
             return first_failure(applied, stamp);
         }

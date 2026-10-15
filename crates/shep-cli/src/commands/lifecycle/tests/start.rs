@@ -426,6 +426,104 @@ async fn a_refused_field_write_fails_naming_the_sheep() {
     );
 }
 
+/// The shepherd parks a `NeedsRespawn` field and answers with the `pending`
+/// bit, the bit `SetSheepField` carries it for. A load that says nothing
+/// about a parked field reports a flock whose stamp is still on.
+#[tokio::test]
+async fn a_parked_stamp_write_says_what_promotes_it() {
+    use shep_client::testing::fake_client_answering;
+    use shep_core::status::ProcStatus;
+
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("zam");
+    std::fs::write(&script, "#!/bin/sh\nsleep 1\n").unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let flock = vec![ProcessInfo::builder(0, "zam", ProcStatus::Online).build()];
+    let (client, mut envelopes) =
+        fake_client_answering(&sock, move |request: &Request| match request {
+            Request::ListFlock => Response::Flock(flock.clone()),
+            Request::SetSheepField { name, key, .. } => Response::SheepFieldSet {
+                name: name.clone(),
+                key: key.clone(),
+                pending: true,
+                warning: None,
+            },
+            _ => Response::Pong,
+        })
+        .await;
+
+    let mut args = start_args(script.to_str().unwrap());
+    args.no_log_timestamps = true;
+    let (code, printed, said) = start_against_with_args(&client, &args).await;
+
+    assert_eq!(code, ExitCode::Success, "{said}");
+    assert!(
+        said.contains(
+            "notice[start]: zam: log_timestamps waiting on the next spawn \
+             (`shep reload zam` promotes them)"
+        ),
+        "the parked write is reported the way a parked declared key is: {said}"
+    );
+    assert!(
+        !printed.contains("log_timestamps"),
+        "a notice is not the answer the verb was asked for, so it stays off \
+         stdout: {printed}"
+    );
+    assert!(
+        respawns(&mut envelopes).is_empty(),
+        "an online sheep is left running, which is what makes the value parked"
+    );
+}
+
+/// `warning` is advisory beside a write that landed. The shepherd answers one
+/// only for `cwd`, `script`, `out_file` and `err_file`, so this pins the
+/// passthrough rather than a case `log_timestamps` produces.
+#[tokio::test]
+async fn a_field_write_warning_reaches_the_operator_as_the_shepherds_sentence() {
+    use shep_client::testing::fake_client_answering;
+    use shep_core::status::ProcStatus;
+
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("zam");
+    std::fs::write(&script, "#!/bin/sh\nsleep 1\n").unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let flock = vec![ProcessInfo::builder(0, "zam", ProcStatus::Stopped).build()];
+    let advisory = "cwd /tmp/gone does not exist";
+    let advisory_for_test = advisory.to_string();
+    let (client, _envelopes) =
+        fake_client_answering(&sock, move |request: &Request| match request {
+            Request::ListFlock => Response::Flock(flock.clone()),
+            Request::SetSheepField { name, key, .. } => Response::SheepFieldSet {
+                name: name.clone(),
+                key: key.clone(),
+                pending: false,
+                warning: Some(advisory_for_test.clone()),
+            },
+            Request::Restart { .. } => Response::Restarted {
+                accepted: vec![ProcessInfo::builder(0, "zam", ProcStatus::Online).build()],
+                refused: Vec::new(),
+            },
+            _ => Response::Pong,
+        })
+        .await;
+
+    let mut args = start_args(script.to_str().unwrap());
+    args.no_log_timestamps = true;
+    let (code, _printed, said) = start_against_with_args(&client, &args).await;
+
+    assert_eq!(code, ExitCode::Success, "{said}");
+    assert!(
+        said.contains(&format!("notice[warning]: {advisory}")),
+        "the write landed, so this is the shepherd's sentence about the disk \
+         and not a refusal: {said}"
+    );
+    assert!(
+        !said.contains("waiting on the next spawn"),
+        "the shepherd said the value is in force, so no parked clause belongs \
+         here: {said}"
+    );
+}
+
 #[tokio::test]
 async fn an_assignment_on_an_existing_sheep_is_recorded_before_it_resumes() {
     use shep_client::testing::fake_client_answering;

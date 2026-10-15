@@ -101,6 +101,66 @@ async fn add_merges_into_a_running_app_without_replacing_it() {
     );
 }
 
+/// `add` registers and stops, so a `NeedsRespawn` field it writes onto a
+/// sheep the flock already has parks with nothing to promote it. The write is
+/// `add`'s, and so is saying the value is not in force yet.
+#[tokio::test]
+async fn add_reports_the_stamp_it_left_waiting_on_a_spawn() {
+    use shep_core::status::ProcStatus;
+
+    let dir = tempfile::tempdir().unwrap();
+    let flockfile = dir.path().join("Flockfile.toml");
+    std::fs::write(
+        &flockfile,
+        "[[app]]\nname = \"zam\"\nscript = \"/bin/sleep\"\n",
+    )
+    .unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let flock = vec![ProcessInfo::builder(0, "zam", ProcStatus::Stopped).build()];
+    let (client, mut envelopes) =
+        fake_client_answering(&path, move |request: &Request| match request {
+            Request::ListFlock => Response::Flock(flock.clone()),
+            Request::SetSheepField { name, key, .. } => Response::SheepFieldSet {
+                name: name.clone(),
+                key: key.clone(),
+                pending: true,
+                warning: None,
+            },
+            _ => Response::Pong,
+        })
+        .await;
+
+    let mut args = start_args(flockfile.to_str().unwrap());
+    args.no_log_timestamps = true;
+    let (code, _out, said) = add_against_with_args(&client, &args).await;
+
+    assert_eq!(code, ExitCode::Success, "{said}");
+    let written: Vec<String> = sent(&mut envelopes)
+        .into_iter()
+        .filter_map(|request| match request {
+            Request::SetSheepField { name, key, value } => {
+                assert_eq!(name, "zam", "the sheep the flock already has");
+                assert_eq!(value, serde_json::json!(false));
+                Some(key)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        written,
+        vec!["log_timestamps".to_string()],
+        "add writes the flag onto a sheep the flock already has, the way start \
+         does: {said}"
+    );
+    assert!(
+        said.contains(
+            "notice[add]: zam: log_timestamps waiting on the next spawn \
+             (`shep reload zam` promotes them)"
+        ),
+        "and nothing in this verb spawns, so it says the value is parked: {said}"
+    );
+}
+
 /// A name target reads no Flockfile, and `add` sits behind that same
 /// boundary. Nothing is left for the verb to do but say so.
 #[tokio::test]

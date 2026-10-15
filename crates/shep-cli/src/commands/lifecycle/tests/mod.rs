@@ -425,7 +425,10 @@ fn sent(
 
 /// Runs `shep add` against `target` and hands back its code and streams.
 async fn add_against(client: &Client, target: &str) -> (ExitCode, String, String) {
-    let args = start_args(target);
+    add_against_with_args(client, &start_args(target)).await
+}
+
+async fn add_against_with_args(client: &Client, args: &StartArgs) -> (ExitCode, String, String) {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
@@ -435,7 +438,7 @@ async fn add_against(client: &Client, target: &str) -> (ExitCode, String, String
             style: crate::style::Presentation::BARE,
             fmt: Format::Table,
         };
-        add(client, &mut streams, &args, None, &BTreeMap::new()).await
+        add(client, &mut streams, args, None, &BTreeMap::new()).await
     };
     (
         code,
