@@ -513,30 +513,21 @@ impl App {
         authority
     }
 
-    /// The open config pane, or `None` while nothing is being edited.
+    /// The open config pane, or `None` while nothing is being edited:
+    /// [`Body::config_pane`] over this app's body.
     #[must_use]
     pub fn config_pane(&self) -> Option<&ConfigPane> {
-        match &self.body {
-            Body::ConfigPane(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }
+        self.body.config_pane()
     }
 
     /// [`Self::config_pane`]'s mutable twin, for the pane keymap and the
     /// handlers that settle a write or adopt a re-read in place.
+    ///
+    /// A caller that still needs another `App` field while it holds the pane
+    /// calls [`Body::config_pane_mut`] on `self.body` instead, which borrows
+    /// no more than the body.
     pub(super) fn config_pane_mut(&mut self) -> Option<&mut ConfigPane> {
-        match &mut self.body {
-            Body::ConfigPane(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }
+        self.body.config_pane_mut()
     }
 }
 

@@ -24,18 +24,7 @@ impl App {
         let Some(authority) = WriteAuthority::granted(self) else {
             return Vec::new();
         };
-        // A direct field match, not `Self::config_pane_mut`: that helper
-        // borrows the whole struct for as long as `pane` lives, and this
-        // function still needs `self.next_write_ticket` while it is in
-        // scope.
-        let Some(pane) = (match &mut self.body {
-            Body::ConfigPane(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }) else {
+        let Some(pane) = self.body.config_pane_mut() else {
             return Vec::new();
         };
         let edits = pane.close();

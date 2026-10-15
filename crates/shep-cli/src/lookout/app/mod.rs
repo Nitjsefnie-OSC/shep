@@ -133,6 +133,128 @@ pub(crate) enum Body {
     Sheep(Box<SheepPane>),
 }
 
+// Accessors rather than a match at each call site: a method on the body
+// borrows only the body field, so a caller can still read `App::now` or
+// `App::mode` while it holds a pane. Every match below lists every variant,
+// so a new variant fails to compile.
+impl Body {
+    /// The open config pane, or `None` on any other variant.
+    #[must_use]
+    pub(super) fn config_pane(&self) -> Option<&ConfigPane> {
+        match self {
+            Body::ConfigPane(pane) => Some(pane),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// [`Self::config_pane`]'s mutable twin.
+    pub(super) fn config_pane_mut(&mut self) -> Option<&mut ConfigPane> {
+        match self {
+            Body::ConfigPane(pane) => Some(pane),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// The settings screen, or `None` on any other variant.
+    #[must_use]
+    pub(super) fn settings(&self) -> Option<&Settings> {
+        match self {
+            Body::Settings(settings) => Some(settings),
+            Body::FlockTable
+            | Body::ConfigPane(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// [`Self::settings`]'s mutable twin.
+    pub(super) fn settings_mut(&mut self) -> Option<&mut Settings> {
+        match self {
+            Body::Settings(settings) => Some(settings),
+            Body::FlockTable
+            | Body::ConfigPane(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// The open sheep pane, or `None` on any other variant.
+    #[must_use]
+    pub(super) fn sheep_pane(&self) -> Option<&SheepPane> {
+        match self {
+            Body::Sheep(pane) => Some(pane.as_ref()),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::ConfigPane(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_) => None,
+        }
+    }
+
+    /// [`Self::sheep_pane`]'s mutable twin.
+    pub(super) fn sheep_pane_mut(&mut self) -> Option<&mut SheepPane> {
+        match self {
+            Body::Sheep(pane) => Some(pane.as_mut()),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::ConfigPane(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_) => None,
+        }
+    }
+
+    /// The full-screen bleats pane, or `None` on any other variant.
+    #[must_use]
+    pub(super) fn bleats_pane(&self) -> Option<&BleatsPane> {
+        match self {
+            Body::Bleats(pane) => Some(pane),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::ConfigPane(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// [`Self::bleats_pane`]'s mutable twin.
+    pub(super) fn bleats_pane_mut(&mut self) -> Option<&mut BleatsPane> {
+        match self {
+            Body::Bleats(pane) => Some(pane),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::ConfigPane(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// The open secrets pane, or `None` on any other variant.
+    ///
+    /// The mutable shape alone, as [`App::secrets_pane_mut`] has had it: no
+    /// reader needs the secrets pane by shared reference, the view reaching
+    /// it through [`App::body`].
+    pub(super) fn secrets_pane_mut(&mut self) -> Option<&mut SecretsPane> {
+        match self {
+            Body::Secrets(pane) => Some(pane),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::ConfigPane(_)
+            | Body::Bleats(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+}
+
 /// The whole dashboard's state.
 #[derive(Debug)]
 pub struct App {
@@ -324,4 +446,83 @@ fn refusal_sentence(refused: &[SheepRefusal]) -> Option<String> {
 /// `cast_possible_truncation`, not for a lookout left open 580 million years.
 fn millis(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lookout::view::fixtures;
+
+    /// The names of the [`Body`] accessors that answer for `body`, in the
+    /// order the type declares them.
+    fn answered(body: &mut Body) -> Vec<&'static str> {
+        let mut answered = Vec::new();
+        if body.config_pane().is_some() {
+            answered.push("config_pane");
+        }
+        if body.config_pane_mut().is_some() {
+            answered.push("config_pane_mut");
+        }
+        if body.settings().is_some() {
+            answered.push("settings");
+        }
+        if body.settings_mut().is_some() {
+            answered.push("settings_mut");
+        }
+        if body.sheep_pane().is_some() {
+            answered.push("sheep_pane");
+        }
+        if body.sheep_pane_mut().is_some() {
+            answered.push("sheep_pane_mut");
+        }
+        if body.bleats_pane().is_some() {
+            answered.push("bleats_pane");
+        }
+        if body.bleats_pane_mut().is_some() {
+            answered.push("bleats_pane_mut");
+        }
+        if body.secrets_pane_mut().is_some() {
+            answered.push("secrets_pane_mut");
+        }
+        answered
+    }
+
+    /// A dashboard with one sheep given the whole screen: `enter` on the
+    /// selected row, which is the only way this variant is ever reached.
+    fn app_in_sheep_pane() -> App {
+        let mut app =
+            fixtures::with_selection(ProcessInfo::builder(9, "web", ProcStatus::Online).build());
+        app.update(Msg::Key(KeyPress::Confirm));
+        app
+    }
+
+    /// Every pane variant is reached by its own accessors and by no
+    /// other's, and the dashboard by none. An accessor that answered for a
+    /// variant it does not name would hand a caller a pane the operator
+    /// never opened.
+    #[test]
+    fn each_body_accessor_answers_only_for_its_own_variant() {
+        let none: Vec<&'static str> = Vec::new();
+        assert_eq!(answered(&mut fixtures::full_app().body), none);
+        assert_eq!(
+            answered(&mut fixtures::app_in_settings().body),
+            ["settings", "settings_mut"]
+        );
+        assert_eq!(
+            answered(&mut fixtures::app_in_dog_pane().body),
+            ["config_pane", "config_pane_mut"]
+        );
+        assert_eq!(
+            answered(&mut fixtures::bleats_pane_with_filters().body),
+            ["bleats_pane", "bleats_pane_mut"]
+        );
+        assert_eq!(
+            answered(&mut fixtures::app_with_secrets().body),
+            ["secrets_pane_mut"]
+        );
+        assert_eq!(
+            answered(&mut app_in_sheep_pane().body),
+            ["sheep_pane", "sheep_pane_mut"]
+        );
+    }
 }
