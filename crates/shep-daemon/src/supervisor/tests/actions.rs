@@ -143,6 +143,35 @@ async fn a_metric_on_the_channel_reaches_the_bus_with_its_name_and_value() {
     );
 }
 
+/// fails if a note is acted on or dropped instead of reaching the bus.
+#[tokio::test(start_paused = true)]
+async fn a_note_on_the_channel_reaches_the_bus_as_it_was_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = AppConfig::minimal("web", "./srv");
+    app.channel = true;
+    let (_handle, runner, mut events) = started(&dir, app, vec![ProcScript::never_exits()]).await;
+    let io = runner.io_handles(0);
+    let note = ChildMessage::Note {
+        name: "lease.web.want.1760500000".to_string(),
+        value: 1.0,
+    };
+
+    io.from_child_tx.send(note.clone()).await.unwrap();
+
+    let seen = tokio::time::timeout(ACTION_WINDOW, async {
+        loop {
+            let event = events.recv().await.unwrap().to_event();
+            if let BusEvent::Channel { id, message } = &event {
+                break (*id, message.clone(), event.topic().into_owned());
+            }
+        }
+    })
+    .await
+    .expect("no channel event within the window");
+
+    assert_eq!(seen, (0, note, "channel.note".to_string()));
+}
+
 /// fails if an `action-reply` nobody is waiting for is dropped before the
 /// bus sees it. `handle_action_reply` finds no wait and discards it.
 #[tokio::test(start_paused = true)]

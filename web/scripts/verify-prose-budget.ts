@@ -183,7 +183,10 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 1890 for the "Metrics" section, which says where a `metric`
   // line turns up and what the dog refuses. New content rather than a
   // correction.
-  "shepherd-channel": 2060, // 2051
+  // Raised from 2060 for "Notes for a dog": `note` is a new message an app
+  // author has to be told about, and the section is already cut to the
+  // topic, the grammar and the drop.
+  "shepherd-channel": 2165, // 2158
   "from-pm2": 1720, // 1659
   "boot-order": 1670, // 1586
   "talking-to-a-sheep": 1620, // 1534
