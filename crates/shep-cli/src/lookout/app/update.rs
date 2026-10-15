@@ -69,12 +69,9 @@ impl App {
             }
             Msg::Event(event) => self.on_event(event),
             Msg::BusLagged { count } => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "lookout fell behind and lost {count} events; re-reading the flock"
-                    ),
-                    grave: false,
-                });
+                self.notice = Some(Notice::info(format!(
+                    "lookout fell behind and lost {count} events; re-reading the flock"
+                )));
                 Effect::PollNow
             }
             Msg::Retrying { attempt } => {
@@ -269,12 +266,11 @@ impl App {
             Msg::Unsent { sent } => match sent {
                 Sent::Action { verb, target, name } => {
                     self.action = None;
-                    self.notice = Some(Notice {
+                    self.notice = Some(Notice::grave(
                         // No cause: `Full` is reachable while the shepherd is
                         // merely slow, so naming one would invent it.
-                        text: format!("{}: it was not sent", target_prefix(verb, &target, &name)),
-                        grave: true,
-                    });
+                        format!("{}: it was not sent", target_prefix(verb, &target, &name)),
+                    ));
                     Effect::None
                 }
                 // A dropped lamb fetch already reads as "not read yet".
@@ -284,10 +280,10 @@ impl App {
                 // bound. A close waiting on it ends, having written nothing.
                 Sent::SheepConfig { name } => {
                     self.config_read_in_flight = false;
-                    self.notice = Some(Notice {
-                        text: format!("{name}: its config was not asked for{}", self.end_close()),
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(format!(
+                        "{name}: its config was not asked for{}",
+                        self.end_close()
+                    )));
                     Effect::None
                 }
                 // Both write arms name the field, and neither reaches for
@@ -295,34 +291,25 @@ impl App {
                 // every one of these lands with no pane on screen. The
                 // notice is the whole report.
                 Sent::ApplyField { name, key, .. } => {
-                    self.notice = Some(Notice {
-                        text: format!("{name}: {key} was not sent"),
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(format!("{name}: {key} was not sent")));
                     Effect::None
                 }
                 Sent::SetEnv { name, key, .. } => {
-                    self.notice = Some(Notice {
-                        text: format!("{name}: env {key} was not sent"),
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(format!("{name}: env {key} was not sent")));
                     Effect::None
                 }
                 // The dog twins of the two arms above: a read nobody took
                 // is reported, and so is a write nobody took.
                 Sent::DogSection { name } => {
                     self.config_read_in_flight = false;
-                    self.notice = Some(Notice {
-                        text: format!("{name}: its config was not asked for{}", self.end_close()),
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(format!(
+                        "{name}: its config was not asked for{}",
+                        self.end_close()
+                    )));
                     Effect::None
                 }
                 Sent::SetDogSection { name, .. } => {
-                    self.notice = Some(Notice {
-                        text: format!("{name}: its config was not sent"),
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(format!("{name}: its config was not sent")));
                     Effect::None
                 }
                 Sent::SetSheepDogTable { name, dog, .. } => self.on_table_unsent(&name, &dog),
@@ -337,10 +324,7 @@ impl App {
                         settings.resolve(ticket);
                     }
                     let verb = if enable { "enable" } else { "disable" };
-                    self.notice = Some(Notice {
-                        text: format!("{verb} {name}: it was not sent"),
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(format!("{verb} {name}: it was not sent")));
                     Effect::None
                 }
             },
@@ -394,10 +378,7 @@ impl App {
                         self.body = Body::Settings(settings);
                     }
                     Err(message) => {
-                        self.notice = Some(Notice {
-                            text: message,
-                            grave: true,
-                        });
+                        self.notice = Some(Notice::grave(message));
                     }
                 }
                 Effect::None
@@ -450,10 +431,7 @@ impl App {
                             self.keymap_open = false;
                             self.mode = InputMode::Text;
                         }
-                        self.notice = Some(Notice {
-                            text: message,
-                            grave: true,
-                        });
+                        self.notice = Some(Notice::grave(message));
                         Effect::None
                     }
                 }
@@ -487,10 +465,7 @@ impl App {
                     if let Some(settings) = self.settings_mut() {
                         settings.resolve(ticket);
                     }
-                    self.notice = Some(Notice {
-                        text: message,
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(message));
                     Effect::None
                 }
             },
@@ -554,10 +529,7 @@ impl App {
                             }
                         }
                         Err(message) => {
-                            self.notice = Some(Notice {
-                                text: message,
-                                grave: true,
-                            });
+                            self.notice = Some(Notice::grave(message));
                         }
                     }
                 }
@@ -585,17 +557,11 @@ impl App {
                 // destructive action reporting success over a no-op is the
                 // one answer this pane must never give.
                 Ok(false) => {
-                    self.notice = Some(Notice {
-                        text: NOTHING_REMOVED.to_string(),
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(NOTHING_REMOVED.to_string()));
                     Effect::None
                 }
                 Err(message) => {
-                    self.notice = Some(Notice {
-                        text: message,
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(message));
                     Effect::None
                 }
             },
@@ -631,19 +597,15 @@ impl App {
             // from `Msg::BusLagged`: an operator cannot tell which end of the
             // connection to investigate if the two read the same.
             BusEvent::Dropped { count } => {
-                self.notice = Some(Notice {
-                    text: format!("the shepherd dropped {count} events; re-reading the flock"),
-                    grave: false,
-                });
+                self.notice = Some(Notice::info(format!(
+                    "the shepherd dropped {count} events; re-reading the flock"
+                )));
                 Effect::PollNow
             }
             // A notice, not an exit: a dashboard that vanished would take the
             // last known state with it.
             BusEvent::DaemonShutdown => {
-                self.notice = Some(Notice {
-                    text: "the shepherd is shutting down".to_string(),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave("the shepherd is shutting down".to_string()));
                 Effect::None
             }
             // `BusEvent` is `#[non_exhaustive]`: a newer shepherd's variant

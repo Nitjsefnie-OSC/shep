@@ -22,10 +22,7 @@ impl App {
             .and_then(ConfigPane::cursor_lock)
             .map(|(key, lock)| (key.to_owned(), lock))
         {
-            self.notice = Some(Notice {
-                text: Self::lock_refusal(&key, lock),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(Self::lock_refusal(&key, lock)));
             return Effect::None;
         }
         if self.authorize_write().is_none() {

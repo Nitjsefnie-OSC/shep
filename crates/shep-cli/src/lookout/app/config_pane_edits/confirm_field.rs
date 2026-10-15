@@ -44,10 +44,9 @@ impl App {
         if let Some(probe) = self.dogs_row_effect() {
             // Each adopted dog's binary answers in its own time, up to
             // `VERSION_BUDGET` apiece, so the wait says what it is.
-            self.notice = Some(Notice {
-                text: "asking each dog for its per-sheep schema".to_owned(),
-                grave: false,
-            });
+            self.notice = Some(Notice::info(
+                "asking each dog for its per-sheep schema".to_owned(),
+            ));
             return probe;
         }
         let Some(pane) = self.config_pane() else {
@@ -89,10 +88,7 @@ impl App {
         // specific of the two answers, and `--allow-control` would not
         // help. Each lock says its own thing; see [`Self::lock_refusal`].
         if let Some((key, lock)) = locked {
-            self.notice = Some(Notice {
-                text: Self::lock_refusal(&key, lock),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(Self::lock_refusal(&key, lock)));
             return Effect::None;
         }
         if self.authorize_write().is_none() {

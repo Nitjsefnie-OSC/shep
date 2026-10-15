@@ -442,6 +442,26 @@ pub struct Notice {
 }
 
 impl Notice {
+    /// A refusal or a damage report: the status bar paints it in
+    /// [`Palette::refusal`].
+    #[must_use]
+    pub(super) fn grave(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            grave: true,
+        }
+    }
+
+    /// An informational line: the status bar paints it in
+    /// [`Palette::attention`].
+    #[must_use]
+    pub(super) fn info(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            grave: false,
+        }
+    }
+
     /// Whether this notice is a refusal or a damage report rather than an
     /// informational one.
     #[must_use]
@@ -453,5 +473,23 @@ impl Notice {
 impl fmt::Display for Notice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notice_grave_and_info_set_the_flag_and_keep_the_text() {
+        let grave = Notice::grave("refused: the control gate is closed");
+        assert!(grave.is_grave());
+        assert_eq!(grave.text, "refused: the control gate is closed");
+        assert_eq!(grave.to_string(), "refused: the control gate is closed");
+
+        let info = Notice::info("restart scheduled for api");
+        assert!(!info.is_grave());
+        assert_eq!(info.text, "restart scheduled for api");
+        assert_eq!(info.to_string(), "restart scheduled for api");
     }
 }
