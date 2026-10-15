@@ -1,5 +1,6 @@
 //! The bleats pane and the dashboard's own feed: the axes, the scroll and the
-//! match box.
+//! match box. The keys this pane and the sheep pane's embedded feed answer
+//! the same way live in [`super::feed_keys`].
 
 use super::*;
 
@@ -22,6 +23,12 @@ impl App {
     /// following, `f` toggles following explicitly, `w` toggles wrapping,
     /// and `n`/`N` step toward the newest or oldest matching line.
     pub(super) fn on_bleats_key(&mut self, key: KeyPress) -> Effect {
+        // `o`, `m` and `/`: claimed ahead of this keymap by [`Self::on_feed_key`],
+        // the dispatcher the sheep pane's embedded feed calls as well, so the
+        // two screens cannot answer one of them differently.
+        if let Some(effect) = self.on_feed_key(key, Self::bleats_pane_mut) {
+            return effect;
+        }
         match key {
             KeyPress::Quit => Effect::Quit,
             KeyPress::Escape => {
@@ -33,47 +40,12 @@ impl App {
                 }
                 Effect::None
             }
-            // Opens the match box: `on_text_key` routes the keystrokes that
-            // follow to `on_bleats_text_key` once this pane owns
-            // `InputMode::Text`. `begin_match_edit` remembers what the axis
-            // held, so an abandoned edit restores it rather than losing it.
-            KeyPress::FilterStart => {
-                if let Some(pane) = self.bleats_pane_mut() {
-                    pane.begin_match_edit();
-                }
-                self.mode = InputMode::Text;
-                Effect::None
-            }
-            // `o`: `None` (both streams) -> `Out` -> `Err` -> `None`.
-            KeyPress::StreamCycle => {
-                if let Some(pane) = self.bleats_pane_mut() {
-                    let next = match pane.filters().stream {
-                        None => Some(Stream::Out),
-                        Some(Stream::Out) => Some(Stream::Err),
-                        Some(Stream::Err) => None,
-                    };
-                    pane.set_stream(next);
-                }
-                Effect::None
-            }
-            // `m`: every `Level` in ascending order, then back to `None`.
-            // The cycle must reach `None` again, or an operator who sets a
-            // minimum can never see an unclassifiable line again without
-            // closing the pane.
-            KeyPress::LevelCycle => {
-                if let Some(pane) = self.bleats_pane_mut() {
-                    let next = match pane.filters().min_level {
-                        None => Some(Level::Trace),
-                        Some(Level::Trace) => Some(Level::Debug),
-                        Some(Level::Debug) => Some(Level::Info),
-                        Some(Level::Info) => Some(Level::Warn),
-                        Some(Level::Warn) => Some(Level::Error),
-                        Some(Level::Error) => None,
-                    };
-                    pane.set_min_level(next);
-                }
-                Effect::None
-            }
+            // Named here only to keep this keymap exhaustive: the guard above
+            // already answered all three. A wildcard would let a new
+            // `KeyPress` variant fall through unnoticed, which is what the
+            // long inert arms below exist to prevent; `config_pane.rs` names
+            // the `Quit` its own guard took for the same reason.
+            KeyPress::FilterStart | KeyPress::StreamCycle | KeyPress::LevelCycle => Effect::None,
             // `k`/`Up`: one line toward older lines.
             KeyPress::SelectUp => {
                 self.scroll_bleats_back(1);
@@ -198,40 +170,6 @@ impl App {
             | KeyPress::Group(_)
             | KeyPress::Undo
             | KeyPress::Continue => Effect::None,
-        }
-    }
-
-    /// The bleats pane's match box, in force while it owns
-    /// [`InputMode::Text`]. Follows the flock table's own text keymap
-    /// ([`Self::on_filter_text_key`]) with one difference the design calls
-    /// for: typing narrows live through [`BleatsPane::set_match`], but
-    /// `TextAbandon` restores whatever [`BleatsPane::begin_match_edit`] saw
-    /// rather than clearing the axis outright, since the axis may already
-    /// have held a chip from an earlier edit.
-    pub(super) fn on_bleats_text_key(&mut self, key: KeyPress) -> Effect {
-        match key {
-            KeyPress::Quit => Effect::Quit,
-            KeyPress::TextChar(_) | KeyPress::TextBackspace | KeyPress::TextEdit(_) => {
-                if let Some(pane) = self.bleats_pane_mut() {
-                    pane.edit_match_box(|text| text.handle(key));
-                }
-                Effect::None
-            }
-            KeyPress::TextApply => {
-                self.mode = InputMode::Normal;
-                if let Some(pane) = self.bleats_pane_mut() {
-                    pane.commit_match_edit();
-                }
-                Effect::None
-            }
-            KeyPress::TextAbandon => {
-                self.mode = InputMode::Normal;
-                if let Some(pane) = self.bleats_pane_mut() {
-                    pane.abandon_match_edit();
-                }
-                Effect::None
-            }
-            _ => Effect::None,
         }
     }
 
