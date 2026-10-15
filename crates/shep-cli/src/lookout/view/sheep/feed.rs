@@ -187,10 +187,7 @@ mod tests {
         );
         app.update(Msg::Bleats {
             tail: Tail {
-                lines: vec![TailLine {
-                    stream: Stream::Out,
-                    text: "alpha wrote this".to_string(),
-                }],
+                lines: vec![TailLine::new(Stream::Out, "alpha wrote this")],
                 missed_lines: 0,
                 missed_bytes: 0,
                 read_bytes: 0,
@@ -279,10 +276,7 @@ mod tests {
         let feed = BleatsPane::new(RowKey::Sheep(1));
         let tail = Tail {
             lines: (0..COLUMN_BODY_ROWS + 1)
-                .map(|n| TailLine {
-                    stream: Stream::Out,
-                    text: format!("line-{n}"),
-                })
+                .map(|n| TailLine::new(Stream::Out, &format!("line-{n}")))
                 .collect(),
             missed_lines: 0,
             missed_bytes: 0,
@@ -310,14 +304,11 @@ mod tests {
         app.update(Msg::Bleats {
             tail: Tail {
                 lines: (0..COLUMN_BODY_ROWS + 5)
-                    .map(|n| TailLine {
-                        stream: Stream::Out,
-                        text: format!("line-{n}"),
-                    })
-                    .chain(std::iter::once(TailLine {
-                        stream: Stream::Err,
-                        text: "x".repeat(200),
-                    }))
+                    .map(|n| TailLine::new(Stream::Out, &format!("line-{n}")))
+                    .chain(std::iter::once(TailLine::new(
+                        Stream::Err,
+                        &"x".repeat(200),
+                    )))
                     .collect(),
                 missed_lines: 0,
                 missed_bytes: 0,

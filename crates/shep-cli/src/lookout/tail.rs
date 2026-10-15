@@ -11,9 +11,14 @@
 
 use std::collections::BTreeMap;
 use std::io::{Read as _, Seek as _, SeekFrom};
+use std::iter::Peekable;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use ratatui::style::{Color, Modifier, Style};
+
 use crate::output::human_bytes;
+use crate::output::log_line;
 
 /// The most of one log file this pane will read to find its lines.
 ///
@@ -40,15 +45,206 @@ pub enum Stream {
     Err,
 }
 
-/// One line, with the stream it came from.
+/// One stretch of a feed line's text the process itself styled.
+///
+/// `range` is a byte range into [`TailLine::text`], the same coordinate
+/// [`super::pane_bleats::Filters::match_ranges`] reports a filter highlight
+/// in, so the two can be merged without either translating the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InkRun {
+    /// The stretch of [`TailLine::text`] this style covers.
+    pub range: Range<usize>,
+    /// The styling the line's own SGR sequence asked for.
+    pub style: Style,
+}
+
+/// One line, with the stream it came from and the colour its writer asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TailLine {
     /// Which file it was in.
     pub stream: Stream,
-    /// The line, without its terminator. Decoded with
+    /// The line, without its terminator, decoded with
     /// [`String::from_utf8_lossy`]: a log file is whatever the child wrote and
-    /// is under no obligation to be UTF-8.
+    /// is under no obligation to be UTF-8. Every escape and every control
+    /// character but a tab is gone, so what a filter, a level rule and a wrap
+    /// count see is what an operator reads.
     pub text: String,
+    /// The process's own colour, as style runs over [`Self::text`].
+    ///
+    /// Empty for a line that styled nothing, which is what lets a view fall
+    /// back to the stream's own colour rather than repaint a line that has one
+    /// already.
+    pub runs: Vec<InkRun>,
+    /// Whether the line asked for a colour of its own.
+    ///
+    /// [`log_line::sets_colour`]'s answer over the escapes that survived as
+    /// styling: a line whose only SGR is a bare reset is still a plain line.
+    pub own_colour: bool,
+}
+
+impl TailLine {
+    /// `raw`, one line as the sheep wrote it, read into plain text and runs.
+    ///
+    /// The escape policy is the one `shep bleats` already applies to the same
+    /// bytes: [`log_line::sanitize_log_line`] keeps a well-formed SGR and a tab
+    /// and drops every other escape, control character and C1 introducer.
+    #[must_use]
+    pub fn new(stream: Stream, raw: &str) -> Self {
+        let clean = log_line::sanitize_log_line(raw);
+        let own_colour = log_line::sets_colour(&clean);
+        let (text, runs) = split_runs(&clean);
+        Self {
+            stream,
+            text,
+            runs,
+            own_colour,
+        }
+    }
+}
+
+/// The eight SGR colours `30`..`37` name for a foreground and `40`..`47` for a
+/// background, in the order the numbers give them.
+const STANDARD_COLOURS: [Color; 8] = [
+    Color::Black,
+    Color::Red,
+    Color::Green,
+    Color::Yellow,
+    Color::Blue,
+    Color::Magenta,
+    Color::Cyan,
+    Color::Gray,
+];
+
+/// The same eight at full intensity, `90`..`97` and `100`..`107`.
+const BRIGHT_COLOURS: [Color; 8] = [
+    Color::DarkGray,
+    Color::LightRed,
+    Color::LightGreen,
+    Color::LightYellow,
+    Color::LightBlue,
+    Color::LightMagenta,
+    Color::LightCyan,
+    Color::White,
+];
+
+/// Walk a line already through [`log_line::sanitize_log_line`], where every
+/// remaining escape is a well-formed SGR, into its plain text and the runs its
+/// sequences ask for.
+///
+/// A run is recorded only where the current style says something a default
+/// cell does not, so a line that resets without ever colouring contributes no
+/// run for a view to paint.
+fn split_runs(clean: &str) -> (String, Vec<InkRun>) {
+    let mut text = String::with_capacity(clean.len());
+    let mut runs: Vec<InkRun> = Vec::new();
+    let mut style = Style::default();
+    let mut start = 0usize;
+    let mut chars = clean.char_indices().peekable();
+
+    while let Some((_, c)) = chars.next() {
+        if c != '\u{1b}' {
+            text.push(c);
+            continue;
+        }
+        chars.next();
+        let mut params = String::new();
+        while let Some(&(_, p)) = chars.peek() {
+            if !matches!(p, '0'..='9' | ';' | ':') {
+                break;
+            }
+            params.push(p);
+            chars.next();
+        }
+        // The final `m` is what makes the sequence styling rather than a
+        // cursor move; `sanitize_log_line` only ever leaves the styling kind.
+        match chars.next() {
+            Some((_, 'm')) => {}
+            _ => continue,
+        }
+        if style != Style::default() && text.len() > start {
+            runs.push(InkRun {
+                range: start..text.len(),
+                style,
+            });
+        }
+        apply_sgr(&params, &mut style);
+        start = text.len();
+    }
+
+    if style != Style::default() && text.len() > start {
+        runs.push(InkRun {
+            range: start..text.len(),
+            style,
+        });
+    }
+    (text, runs)
+}
+
+/// Fold one SGR parameter list into `style`.
+///
+/// `;` separates parameters and `:` separates the sub-parameters of the
+/// `38;2;r;g;b` extended forms. Flattening both into one number stream reads
+/// `38:5:196` and `38;5;196` alike, and an empty parameter reads as zero, the
+/// default the grammar gives it, which is a reset.
+fn apply_sgr(params: &str, style: &mut Style) {
+    let mut numbers = params
+        .split([';', ':'])
+        .map(|part| part.parse::<u32>().unwrap_or(0))
+        .peekable();
+    while let Some(code) = numbers.next() {
+        match code {
+            0 => *style = Style::default(),
+            1 => *style = style.add_modifier(Modifier::BOLD),
+            2 => *style = style.add_modifier(Modifier::DIM),
+            3 => *style = style.add_modifier(Modifier::ITALIC),
+            4 => *style = style.add_modifier(Modifier::UNDERLINED),
+            7 => *style = style.add_modifier(Modifier::REVERSED),
+            9 => *style = style.add_modifier(Modifier::CROSSED_OUT),
+            22 => *style = style.remove_modifier(Modifier::BOLD | Modifier::DIM),
+            23 => *style = style.remove_modifier(Modifier::ITALIC),
+            24 => *style = style.remove_modifier(Modifier::UNDERLINED),
+            27 => *style = style.remove_modifier(Modifier::REVERSED),
+            29 => *style = style.remove_modifier(Modifier::CROSSED_OUT),
+            30..=37 => *style = style.fg(STANDARD_COLOURS[usize::try_from(code - 30).unwrap_or(0)]),
+            38 => {
+                if let Some(colour) = extended_colour(&mut numbers) {
+                    *style = style.fg(colour);
+                }
+            }
+            39 => *style = style.fg(Color::Reset),
+            40..=47 => *style = style.bg(STANDARD_COLOURS[usize::try_from(code - 40).unwrap_or(0)]),
+            48 => {
+                if let Some(colour) = extended_colour(&mut numbers) {
+                    *style = style.bg(colour);
+                }
+            }
+            49 => *style = style.bg(Color::Reset),
+            90..=97 => *style = style.fg(BRIGHT_COLOURS[usize::try_from(code - 90).unwrap_or(0)]),
+            100..=107 => {
+                *style = style.bg(BRIGHT_COLOURS[usize::try_from(code - 100).unwrap_or(0)])
+            }
+            // Every other parameter this pane does not draw: a font, a framed
+            // border, an overline. It changes nothing rather than guessing at
+            // what a terminal would do with it.
+            _ => {}
+        }
+    }
+}
+
+/// The colour a `38` or `48` names, reading its own parameters off the same
+/// stream. `None` for a spelling that carries none, which styles nothing
+/// rather than guessing a colour from the bytes that are there.
+fn extended_colour(numbers: &mut Peekable<impl Iterator<Item = u32>>) -> Option<Color> {
+    match numbers.next()? {
+        5 => Some(Color::Indexed(u8::try_from(numbers.next()?).ok()?)),
+        2 => {
+            let red = u8::try_from(numbers.next()?).ok()?;
+            let green = u8::try_from(numbers.next()?).ok()?;
+            let blue = u8::try_from(numbers.next()?).ok()?;
+            Some(Color::Rgb(red, green, blue))
+        }
+        _ => None,
+    }
 }
 
 /// What one refresh of the feed found.
@@ -121,7 +317,7 @@ pub fn read(seen: &mut BTreeMap<PathBuf, u64>, out: Option<&Path>, err: Option<&
                     window
                         .lines
                         .into_iter()
-                        .map(|text| TailLine { stream, text }),
+                        .map(|text| TailLine::new(stream, &text)),
                 );
             }
             // The shepherd creates both files at spawn, so a missing one means
@@ -452,21 +648,71 @@ mod tests {
 
         let mut seen = BTreeMap::new();
         let tail = read(&mut seen, Some(&out), Some(&err));
-        assert_eq!(
-            tail.lines[0],
-            TailLine {
-                stream: Stream::Out,
-                text: "hello".to_string()
-            }
-        );
+        assert_eq!(tail.lines[0], TailLine::new(Stream::Out, "hello"));
         assert_eq!(
             tail.lines.last().unwrap(),
-            &TailLine {
-                stream: Stream::Err,
-                text: "panicked at 'boom'".to_string()
-            }
+            &TailLine::new(Stream::Err, "panicked at 'boom'")
         );
         assert_eq!(tail.note, None, "there was something to show");
+    }
+
+    /// The line an operator reads and the colour the sheep asked for are two
+    /// different fields: the text carries no escapes for ratatui to drop, and
+    /// the styling survives beside it.
+    #[test]
+    fn a_coloured_line_keeps_its_runs_and_a_plain_text() {
+        let line = TailLine::new(
+            Stream::Err,
+            "\u{1b}[31mconnection refused\u{1b}[0m on :8080",
+        );
+        assert_eq!(
+            line.text, "connection refused on :8080",
+            "no escape survives"
+        );
+        assert!(line.own_colour, "the line styled its own text");
+        assert_eq!(
+            line.runs,
+            vec![InkRun {
+                range: 0..18,
+                style: Style::default().fg(Color::Red),
+            }],
+            "the run covers the styled stretch and stops at the reset"
+        );
+    }
+
+    /// A log line is content. A cursor move inside one is a redraw the sheep
+    /// has no business asking a pane for, and `TailLine::text` is what every
+    /// filter, level rule and wrap count measures.
+    #[test]
+    fn a_cursor_move_in_a_log_line_is_dropped_from_the_text() {
+        let line = TailLine::new(Stream::Out, "over\u{1b}[2Cwritten\u{1b}[0m");
+        assert_eq!(line.text, "overwritten");
+        assert!(
+            !line.own_colour,
+            "a cursor move and a bare reset are not colours"
+        );
+        assert!(line.runs.is_empty(), "and nothing is left to paint");
+    }
+
+    /// The reader is the seam the panes see: a coloured line off disk arrives
+    /// already split, so no view has to know a log file carries escapes.
+    #[test]
+    fn a_line_off_disk_arrives_split_the_same_way_as_one_handbuilt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("web-err.log");
+        std::fs::write(&path, "\u{1b}[1;31mpanic\u{1b}[0m: index out of bounds\n").unwrap();
+
+        let mut seen = BTreeMap::new();
+        let tail = read(&mut seen, None, Some(&path));
+        assert_eq!(
+            tail.lines,
+            vec![TailLine::new(
+                Stream::Err,
+                "\u{1b}[1;31mpanic\u{1b}[0m: index out of bounds"
+            )],
+            "the reader and the constructor agree"
+        );
+        assert_eq!(tail.lines[0].text, "panic: index out of bounds");
     }
 
     #[test]
