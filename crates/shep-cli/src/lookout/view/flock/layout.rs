@@ -97,6 +97,28 @@ pub fn fit_owned(mut text: String, width: u16) -> String {
     fit(&text, u16::try_from(width).unwrap_or(u16::MAX))
 }
 
+/// `text` cut to at most `budget` display columns, and the columns it used
+///
+/// The truncation walk [`fit`] shares with the config pane's rows and the
+/// host strip's own fit. A character that would straddle the budget is
+/// dropped whole, since half a double-width glyph is not drawable. The `…`
+/// is not this function's: each caller reserves its own column for it, and
+/// a panel row pads nothing where a table cell pads to its width.
+#[must_use]
+pub(in crate::lookout::view) fn take_columns(text: &str, budget: usize) -> (String, usize) {
+    let mut kept = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let columns = char_columns(c);
+        if used + columns > budget {
+            break;
+        }
+        kept.push(c);
+        used += columns;
+    }
+    (kept, used)
+}
+
 #[must_use]
 pub fn fit(text: &str, width: u16) -> String {
     let width = usize::from(width);
@@ -109,20 +131,10 @@ pub fn fit(text: &str, width: u16) -> String {
     if width == 0 {
         return String::new();
     }
-    // One column pays for the `…`. A double-width character straddling the
-    // boundary is dropped rather than split, and its column is padded below
-    // so the cell still measures `width`.
+    // One column pays for the `…`. The budget the walk left unused is padded
+    // below so the cell still measures `width`.
     let budget = width - 1;
-    let mut out = String::new();
-    let mut used = 0;
-    for c in text.chars() {
-        let c_width = char_columns(c);
-        if used + c_width > budget {
-            break;
-        }
-        out.push(c);
-        used += c_width;
-    }
+    let (mut out, used) = take_columns(text, budget);
     out.push('…');
     out.extend(core::iter::repeat_n(' ', budget - used));
     out
@@ -194,6 +206,19 @@ mod tests {
         assert_eq!(text, ">");
         assert_eq!(style, Style::default());
         assert_eq!(gutter(false, off).0, " ");
+    }
+
+    #[test]
+    fn take_columns_with_no_budget_keeps_nothing() {
+        assert_eq!(take_columns("羊", 0), (String::new(), 0));
+    }
+
+    /// Half a double-width glyph is not drawable, so the glyph that would
+    /// straddle the budget is dropped whole and its column is left for the
+    /// caller to pad.
+    #[test]
+    fn take_columns_drops_a_wide_character_that_straddles_the_budget() {
+        assert_eq!(take_columns("羊羊", 3), ("羊".to_owned(), 2));
     }
 
     #[test]
