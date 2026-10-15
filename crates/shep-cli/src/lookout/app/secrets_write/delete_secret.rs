@@ -21,8 +21,7 @@ impl App {
             return Effect::None;
         };
         let environment = pane.environment().map(str::to_string);
-        if matches!(row.source, Source::Namespace(_)) {
-            self.notice = Some(Notice::grave(PROVIDER_ROW_REFUSAL.to_string()));
+        if self.refuse_provider_row(&row) {
             return Effect::None;
         }
         if environment.is_some_and(|tab| deletes_the_all_slot(&row, &tab)) {
@@ -289,6 +288,27 @@ mod tests {
 
         assert!(armed_of(&app).is_none());
         assert!(notice_of(&app).is_some_and(|n| n.contains("pushed by a dog")));
+    }
+
+    /// `D` and `Enter` refuse a provider row with the same sentence: one
+    /// fact, two doors, one wording.
+    #[test]
+    fn a_provider_row_is_refused_by_delete_and_by_write_with_one_sentence() {
+        let mut app = fixtures::app_with_a_pushed_secret_selected_and_control();
+
+        let _ = app.update(Msg::Key(KeyPress::SecretDelete));
+        let deleted = notice_of(&app);
+        assert!(armed_of(&app).is_none(), "it must refuse before it arms");
+
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        let written = notice_of(&app);
+        assert!(
+            typing_of(&app).is_none(),
+            "it must refuse before it opens the input"
+        );
+
+        assert_eq!(deleted.as_deref(), Some(PROVIDER_ROW_REFUSAL));
+        assert_eq!(written, deleted, "one sentence, both doors");
     }
 
     /// The row's value comes from the `all` slot, so an unset against the

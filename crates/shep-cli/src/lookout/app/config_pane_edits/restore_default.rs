@@ -15,12 +15,7 @@ impl App {
     /// on `+ add a key`, or with no row at all: [`ConfigPane::cursor_kind`]
     /// is `None` for exactly those, and there is no field to restore.
     pub(in crate::lookout::app) fn restore_default(&mut self) -> Effect {
-        if let Some((key, lock)) = self
-            .config_pane()
-            .and_then(ConfigPane::cursor_lock)
-            .map(|(key, lock)| (key.to_owned(), lock))
-        {
-            self.notice = Some(Notice::grave(Self::lock_refusal(&key, lock)));
+        if self.refuse_if_locked() {
             return Effect::None;
         }
         if self.config_pane().is_some_and(ConfigPane::cursor_on_entry) {

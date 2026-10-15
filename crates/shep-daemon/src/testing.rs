@@ -553,6 +553,37 @@ pub(crate) fn app_with(name: &str, mutate: impl FnOnce(&mut AppConfig)) -> Resol
     normalize(app).expect("the fixture app must normalize")
 }
 
+/// A [`ProcessEntry`] carrying nothing but its `id` and `spec`: `Online`,
+/// `pid` `None`, zero restarts, `instance` 0, empty log paths, nothing
+/// parked, no reload, no dog, no recorded exit, and
+/// [`SpawnIdentity::Resolved(None)`].
+///
+/// A case names the fields it is about and takes the rest, as
+/// `ProcessEntry { status: ProcStatus::Stopped, ..plain_entry(id, spec) }`.
+pub(crate) fn plain_entry(id: u32, spec: ResolvedApp) -> ProcessEntry {
+    ProcessEntry {
+        id,
+        spec,
+        pending: None,
+        pending_reidentifies: false,
+        overridden: Vec::new(),
+        instance: 0,
+        status: ProcStatus::Online,
+        pid: None,
+        restarts: 0,
+        started_at: None,
+        budget: RestartBudget::default(),
+        reload: ReloadState::None,
+        // A settled identity, which is what a registration through `Start`
+        // leaves behind once the entry is `Online`.
+        credentials: SpawnIdentity::Resolved(None),
+        out_file: PathBuf::new(),
+        err_file: PathBuf::new(),
+        dog: None,
+        last_exit: None,
+    }
+}
+
 /// An `Online` [`ProcessEntry`] shaped like one the actor really registered.
 ///
 /// Its two log paths come from [`assemble`] rather than being invented, so a
@@ -573,25 +604,11 @@ pub(crate) fn armed_entry(
     )
     .expect("the fixture app must assemble");
     ProcessEntry {
-        id,
-        spec: app,
-        pending: None,
-        pending_reidentifies: false,
-        overridden: Vec::new(),
         instance,
-        status: ProcStatus::Online,
         pid: Some(pid),
-        restarts: 0,
-        started_at: None,
-        budget: RestartBudget::default(),
-        reload: ReloadState::None,
-        // Online, so its identity is settled: this entry stands in for one
-        // the actor really registered through a `Start`.
-        credentials: SpawnIdentity::Resolved(None),
         out_file: spec.out_file,
         err_file: spec.err_file,
-        dog: None,
-        last_exit: None,
+        ..plain_entry(id, app)
     }
 }
 
