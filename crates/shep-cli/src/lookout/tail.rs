@@ -78,7 +78,9 @@ pub struct TailLine {
     /// Whether the line asked for a colour of its own.
     ///
     /// [`log_line::sets_colour`]'s answer over the escapes that survived as
-    /// styling: a line whose only SGR is a bare reset is still a plain line.
+    /// styling, narrowed to what this pane can draw: a line whose only SGR is a
+    /// bare reset, a colour reset (`39`, `49`) or a code this pane does not
+    /// draw is still a plain line, and keeps its stream's colour.
     pub own_colour: bool,
 }
 
@@ -91,8 +93,11 @@ impl TailLine {
     #[must_use]
     pub fn new(stream: Stream, raw: &str) -> Self {
         let clean = log_line::sanitize_log_line(raw);
-        let own_colour = log_line::sets_colour(&clean);
         let (text, runs) = split_runs(&clean);
+        // `sets_colour` counts any nonzero parameter, `39` and `49` included,
+        // and those ask for the default rather than for a colour. A line that
+        // asked for nothing this pane can draw is a plain line.
+        let own_colour = log_line::sets_colour(&clean) && !runs.is_empty();
         Self {
             stream,
             text,
@@ -127,17 +132,52 @@ const BRIGHT_COLOURS: [Color; 8] = [
     Color::White,
 ];
 
+/// The styling a line's own SGR sequences have asked for so far.
+///
+/// `None` is not ratatui's `Color::Reset`: it means no sequence asked for that
+/// attribute, which is what a `39` or a `49` puts back. A model that stored a
+/// reset as a colour would record a run for a line that only ever reset one,
+/// and a view would then paint an explicit reset over the stream's own colour.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct Sgr {
+    fg: Option<Color>,
+    bg: Option<Color>,
+    modifiers: Modifier,
+}
+
+impl Sgr {
+    /// Whether this says something a default cell does not.
+    fn styled(self) -> bool {
+        self.fg.is_some() || self.bg.is_some() || !self.modifiers.is_empty()
+    }
+
+    /// The same styling, as a cell style.
+    fn style(self) -> Style {
+        let mut style = Style::default();
+        if let Some(fg) = self.fg {
+            style = style.fg(fg);
+        }
+        if let Some(bg) = self.bg {
+            style = style.bg(bg);
+        }
+        if !self.modifiers.is_empty() {
+            style = style.add_modifier(self.modifiers);
+        }
+        style
+    }
+}
+
 /// Walk a line already through [`log_line::sanitize_log_line`], where every
 /// remaining escape is a well-formed SGR, into its plain text and the runs its
 /// sequences ask for.
 ///
-/// A run is recorded only where the current style says something a default
+/// A run is recorded only where the current styling says something a default
 /// cell does not, so a line that resets without ever colouring contributes no
 /// run for a view to paint.
 fn split_runs(clean: &str) -> (String, Vec<InkRun>) {
     let mut text = String::with_capacity(clean.len());
     let mut runs: Vec<InkRun> = Vec::new();
-    let mut style = Style::default();
+    let mut sgr = Sgr::default();
     let mut start = 0usize;
     let mut chars = clean.char_indices().peekable();
 
@@ -157,72 +197,77 @@ fn split_runs(clean: &str) -> (String, Vec<InkRun>) {
         }
         // The final `m` is what makes the sequence styling rather than a
         // cursor move; `sanitize_log_line` only ever leaves the styling kind.
+        // A terminator that is not one is dropped and the character after it
+        // stays log text, because losing a byte of what the sheep wrote is the
+        // worse way to be wrong about it.
         match chars.next() {
             Some((_, 'm')) => {}
-            _ => continue,
+            Some((_, other)) => {
+                text.push(other);
+                continue;
+            }
+            None => break,
         }
-        if style != Style::default() && text.len() > start {
+        if sgr.styled() && text.len() > start {
             runs.push(InkRun {
                 range: start..text.len(),
-                style,
+                style: sgr.style(),
             });
         }
-        apply_sgr(&params, &mut style);
+        apply_sgr(&params, &mut sgr);
         start = text.len();
     }
 
-    if style != Style::default() && text.len() > start {
+    if sgr.styled() && text.len() > start {
         runs.push(InkRun {
             range: start..text.len(),
-            style,
+            style: sgr.style(),
         });
     }
     (text, runs)
 }
 
-/// Fold one SGR parameter list into `style`.
+/// Fold one SGR parameter list into `sgr`.
 ///
 /// `;` separates parameters and `:` separates the sub-parameters of the
 /// `38;2;r;g;b` extended forms. Flattening both into one number stream reads
 /// `38:5:196` and `38;5;196` alike, and an empty parameter reads as zero, the
 /// default the grammar gives it, which is a reset.
-fn apply_sgr(params: &str, style: &mut Style) {
+fn apply_sgr(params: &str, sgr: &mut Sgr) {
     let mut numbers = params
         .split([';', ':'])
         .map(|part| part.parse::<u32>().unwrap_or(0))
         .peekable();
     while let Some(code) = numbers.next() {
         match code {
-            0 => *style = Style::default(),
-            1 => *style = style.add_modifier(Modifier::BOLD),
-            2 => *style = style.add_modifier(Modifier::DIM),
-            3 => *style = style.add_modifier(Modifier::ITALIC),
-            4 => *style = style.add_modifier(Modifier::UNDERLINED),
-            7 => *style = style.add_modifier(Modifier::REVERSED),
-            9 => *style = style.add_modifier(Modifier::CROSSED_OUT),
-            22 => *style = style.remove_modifier(Modifier::BOLD | Modifier::DIM),
-            23 => *style = style.remove_modifier(Modifier::ITALIC),
-            24 => *style = style.remove_modifier(Modifier::UNDERLINED),
-            27 => *style = style.remove_modifier(Modifier::REVERSED),
-            29 => *style = style.remove_modifier(Modifier::CROSSED_OUT),
-            30..=37 => *style = style.fg(STANDARD_COLOURS[usize::try_from(code - 30).unwrap_or(0)]),
+            0 => *sgr = Sgr::default(),
+            1 => sgr.modifiers |= Modifier::BOLD,
+            2 => sgr.modifiers |= Modifier::DIM,
+            3 => sgr.modifiers |= Modifier::ITALIC,
+            4 => sgr.modifiers |= Modifier::UNDERLINED,
+            7 => sgr.modifiers |= Modifier::REVERSED,
+            9 => sgr.modifiers |= Modifier::CROSSED_OUT,
+            22 => sgr.modifiers.remove(Modifier::BOLD | Modifier::DIM),
+            23 => sgr.modifiers.remove(Modifier::ITALIC),
+            24 => sgr.modifiers.remove(Modifier::UNDERLINED),
+            27 => sgr.modifiers.remove(Modifier::REVERSED),
+            29 => sgr.modifiers.remove(Modifier::CROSSED_OUT),
+            30..=37 => sgr.fg = Some(STANDARD_COLOURS[usize::try_from(code - 30).unwrap_or(0)]),
             38 => {
                 if let Some(colour) = extended_colour(&mut numbers) {
-                    *style = style.fg(colour);
+                    sgr.fg = Some(colour);
                 }
             }
-            39 => *style = style.fg(Color::Reset),
-            40..=47 => *style = style.bg(STANDARD_COLOURS[usize::try_from(code - 40).unwrap_or(0)]),
+            39 => sgr.fg = None,
+            40..=47 => sgr.bg = Some(STANDARD_COLOURS[usize::try_from(code - 40).unwrap_or(0)]),
             48 => {
                 if let Some(colour) = extended_colour(&mut numbers) {
-                    *style = style.bg(colour);
+                    sgr.bg = Some(colour);
                 }
             }
-            49 => *style = style.bg(Color::Reset),
-            90..=97 => *style = style.fg(BRIGHT_COLOURS[usize::try_from(code - 90).unwrap_or(0)]),
-            100..=107 => {
-                *style = style.bg(BRIGHT_COLOURS[usize::try_from(code - 100).unwrap_or(0)])
-            }
+            49 => sgr.bg = None,
+            90..=97 => sgr.fg = Some(BRIGHT_COLOURS[usize::try_from(code - 90).unwrap_or(0)]),
+            100..=107 => sgr.bg = Some(BRIGHT_COLOURS[usize::try_from(code - 100).unwrap_or(0)]),
             // Every other parameter this pane does not draw: a font, a framed
             // border, an overline. It changes nothing rather than guessing at
             // what a terminal would do with it.
@@ -231,17 +276,25 @@ fn apply_sgr(params: &str, style: &mut Style) {
     }
 }
 
-/// The colour a `38` or `48` names, reading its own parameters off the same
-/// stream. `None` for a spelling that carries none, which styles nothing
-/// rather than guessing a colour from the bytes that are there.
+/// The colour a `38` or a `48` names, reading its own parameters off the same
+/// stream. `None` for a spelling that carries none or a component no colour
+/// takes, which styles nothing rather than guessing one from the bytes there.
+///
+/// Every component is read off the stream whatever its value. A leftover number
+/// would be read as the next SGR code, and a malformed `38;2;999;0;0` would
+/// then apply two resets the line never asked for.
 fn extended_colour(numbers: &mut Peekable<impl Iterator<Item = u32>>) -> Option<Color> {
     match numbers.next()? {
-        5 => Some(Color::Indexed(u8::try_from(numbers.next()?).ok()?)),
+        5 => u8::try_from(numbers.next()?).ok().map(Color::Indexed),
         2 => {
-            let red = u8::try_from(numbers.next()?).ok()?;
-            let green = u8::try_from(numbers.next()?).ok()?;
-            let blue = u8::try_from(numbers.next()?).ok()?;
-            Some(Color::Rgb(red, green, blue))
+            let red = numbers.next()?;
+            let green = numbers.next()?;
+            let blue = numbers.next()?;
+            Some(Color::Rgb(
+                u8::try_from(red).ok()?,
+                u8::try_from(green).ok()?,
+                u8::try_from(blue).ok()?,
+            ))
         }
         _ => None,
     }
@@ -692,6 +745,48 @@ mod tests {
             "a cursor move and a bare reset are not colours"
         );
         assert!(line.runs.is_empty(), "and nothing is left to paint");
+    }
+
+    /// `39` and `49` ask for the default rather than for a colour. Stored as a
+    /// colour they paint an explicit reset over the stream's own, and a logger
+    /// that emits one before every line would empty the feed's palette.
+    #[test]
+    fn a_line_that_only_resets_a_colour_stays_a_plain_line() {
+        let line = TailLine::new(Stream::Out, "\u{1b}[39mplain\u{1b}[49m too");
+        assert_eq!(line.text, "plain too");
+        assert!(line.runs.is_empty(), "a reset contributes no run to paint");
+        assert!(!line.own_colour, "and it is not the line's own colour");
+    }
+
+    /// A `38` reads its own parameters off the same stream. A number left
+    /// behind is then read as the next SGR code, so a malformed extended colour
+    /// would apply resets the line never asked for.
+    #[test]
+    fn a_malformed_extended_colour_consumes_its_own_parameters() {
+        let line = TailLine::new(Stream::Out, "\u{1b}[31mred\u{1b}[38;2;999;0;0m still red");
+        assert_eq!(line.text, "red still red");
+        assert_eq!(
+            line.runs,
+            vec![
+                InkRun {
+                    range: 0..3,
+                    style: Style::default().fg(Color::Red),
+                },
+                InkRun {
+                    range: 3..13,
+                    style: Style::default().fg(Color::Red),
+                },
+            ],
+            "the malformed spelling styles nothing, and cancels nothing either"
+        );
+
+        let indexed = TailLine::new(Stream::Out, "\u{1b}[38;5;300mout of range");
+        assert_eq!(indexed.text, "out of range");
+        assert!(
+            indexed.runs.is_empty(),
+            "an index no colour takes styles nothing"
+        );
+        assert!(!indexed.own_colour, "so the line is still a plain one");
     }
 
     /// The reader is the seam the panes see: a coloured line off disk arrives

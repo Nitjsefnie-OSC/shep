@@ -197,6 +197,15 @@ mod tests {
             Style::default(),
             "the stretch the sheep left unstyled stays unstyled, not bark"
         );
+
+        let reset_only = TailLine::new(Stream::Err, "\u{1b}[39mwarn\u{1b}[49m");
+        let spans = text_spans(&reset_only, Ink::plain(palette));
+        assert_eq!(spans.len(), 1, "a colour reset leaves no run behind");
+        assert_eq!(
+            spans[0].style,
+            palette.ink(Role::Bark),
+            "and the line still wears its stream's colour"
+        );
     }
 
     #[test]
