@@ -7,7 +7,7 @@
 # #301
 1197 crates/shep-daemon/tests/real_runner.rs
 1124 crates/shep-cli/src/lookout/app/update.rs
-1115 crates/shep-daemon/src/supervisor/tests/mod.rs
+1109 crates/shep-daemon/src/supervisor/tests/mod.rs
 1014 crates/shep-cli/src/lookout/pane_bleats.rs
 1112 crates/shep-cli/src/serve/worker.rs
 1103 crates/shep-cli/src/lookout/app/bleats.rs
