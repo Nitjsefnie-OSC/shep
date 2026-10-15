@@ -47,10 +47,7 @@ impl App {
             return Effect::None;
         };
         if matches!(row.source, Source::Namespace(_)) {
-            self.notice = Some(Notice {
-                text: PROVIDER_ROW_REFUSAL.to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(PROVIDER_ROW_REFUSAL.to_string()));
             return Effect::None;
         }
         if self.authorize_write().is_none() {
@@ -136,10 +133,10 @@ impl App {
                     }
                     return Effect::None;
                 }
-                self.notice = Some(Notice {
-                    text: format!("{:?} is not a valid key: {NEW_KEY_GRAMMAR}", name.as_str()),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!(
+                    "{:?} is not a valid key: {NEW_KEY_GRAMMAR}",
+                    name.as_str()
+                )));
                 if let Some(pane) = self.secrets_pane_mut() {
                     pane.typing = Some(Typing {
                         what: TypingWhat::NewKey,
@@ -151,14 +148,11 @@ impl App {
             TypingWhat::ValueFor(key) => {
                 let value = typing.buffer;
                 if value.as_str().len() > shep_core::secrets::MAX_VALUE_BYTES {
-                    self.notice = Some(Notice {
-                        text: format!(
-                            "value is {} bytes, over the {}-byte limit",
-                            value.as_str().len(),
-                            shep_core::secrets::MAX_VALUE_BYTES
-                        ),
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(format!(
+                        "value is {} bytes, over the {}-byte limit",
+                        value.as_str().len(),
+                        shep_core::secrets::MAX_VALUE_BYTES
+                    )));
                     if let Some(pane) = self.secrets_pane_mut() {
                         pane.typing = Some(Typing {
                             what: TypingWhat::ValueFor(key),

@@ -48,33 +48,24 @@ impl App {
                 if let Some(warning) = warning {
                     text = format!("{text}; {warning}");
                 }
-                self.notice = Some(Notice { text, grave: false });
+                self.notice = Some(Notice::info(text));
                 Effect::Send(Sent::SheepConfig {
                     name: name.to_owned(),
                 })
             }
             Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{name}: {key}: the shepherd answered something this lookout does not \
-                             understand"
-                    ),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!(
+                    "{name}: {key}: the shepherd answered something this lookout does not \
+                     understand"
+                )));
                 Effect::None
             }
             Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {key}: {}", err.message),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{name}: {key}: {}", err.message)));
                 Effect::None
             }
             Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {key}: {other}"),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{name}: {key}: {other}")));
                 Effect::None
             }
         }

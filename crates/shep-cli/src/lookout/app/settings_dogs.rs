@@ -31,40 +31,25 @@ impl App {
         // stays registered.
         match result {
             Ok(Response::DogStarted(_)) if enable => {
-                self.notice = Some(Notice {
-                    text: format!("{prefix}: the shepherd started it"),
-                    grave: false,
-                });
+                self.notice = Some(Notice::info(format!("{prefix}: the shepherd started it")));
             }
             Ok(Response::Deleted(_)) if !enable => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{prefix}: the shepherd stopped it, and it stays listed as disabled"
-                    ),
-                    grave: false,
-                });
+                self.notice = Some(Notice::info(format!(
+                    "{prefix}: the shepherd stopped it, and it stays listed as disabled"
+                )));
             }
             // Also a mismatched guard above: an `EnableDog` answered by
             // `Response::Deleted`, or the reverse.
             Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{prefix}: the shepherd answered something this lookout does not understand"
-                    ),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!(
+                    "{prefix}: the shepherd answered something this lookout does not understand"
+                )));
             }
             Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{prefix}: {}", err.message),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{prefix}: {}", err.message)));
             }
             Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{prefix}: {other}"),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!("{prefix}: {other}")));
             }
         }
         self.reread_settings()
@@ -104,10 +89,7 @@ impl App {
     /// [`Pending::Sent`] for that method's reason.
     pub(super) fn cycle_dog(&mut self, index: usize) -> Effect {
         if matches!(self.link, Link::Lost { .. }) {
-            self.notice = Some(Notice {
-                text: LINK_GONE.to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(LINK_GONE.to_string()));
             return Effect::None;
         }
         // See the comment in `Self::take_pane_writes`: a direct field
