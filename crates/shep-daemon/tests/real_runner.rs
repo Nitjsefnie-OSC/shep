@@ -8,6 +8,8 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::future::Future;
+use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,8 +18,8 @@ use shep_core::signals::OperatorSignal;
 use shep_daemon::channel::{ChildMessage, ShepherdMessage};
 use shep_daemon::privilege::Credentials;
 use shep_daemon::runner::{
-    AdoptSpec, AdoptedReaper, LogLine, ProcIo, ProcessRunner, RunningProcess, SpawnSpec,
-    StdinWrite, StopSignal,
+    AdoptSpec, AdoptedReaper, ExitOutcome, LogLine, ProcIo, ProcessRunner, RunningProcess,
+    SpawnSpec, StdinWrite, StopSignal,
 };
 use shep_daemon::tokio_runner::TokioRunner;
 
@@ -56,12 +58,9 @@ const LOG_WRITE_DEADLINE: Duration = Duration::from_secs(5);
 /// Twice the other budgets in this file, for the cases written with more
 /// slack.
 ///
-/// Nothing distinguishes those cases. The literal arrived three separate
-/// times in three unrelated features, and one `proc.wait()` asserting
-/// "the adopted pid must be reaped within the budget" runs on
-/// [`REAP_DEADLINE`] while three others asserting the same thing run on
-/// this. Named so a slow-CI fix has one place to go, not because the
-/// difference means anything.
+/// Nothing distinguishes those cases: the same [`reaped`] wait runs on
+/// [`REAP_DEADLINE`] in some tests and on this in others. Both are named so a
+/// slow-CI fix has one place to go.
 const LONG_DEADLINE: Duration = Duration::from_secs(10);
 
 /// The child's next log line, or a named panic for either way there is not
@@ -115,6 +114,29 @@ async fn await_file_contents(path: &Path, expected: &str) {
         path.display(),
         fs::read_to_string(path)
     );
+}
+
+/// Waits for `proc` to exit, failing at `deadline`, and hands back the outcome.
+///
+/// `why` and [`Location::caller`]'s line ride on the panic. `#[track_caller]`
+/// is a no-op on an `async fn`, so this is a plain `fn` that reads the caller
+/// before it builds the future: a test that fails names its own line.
+///
+/// # Panics
+///
+/// If `proc` has not exited within `deadline`.
+#[track_caller]
+fn reaped<'a, P: RunningProcess>(
+    proc: &'a mut P,
+    deadline: Duration,
+    why: &'static str,
+) -> impl Future<Output = ExitOutcome> + 'a {
+    let site = Location::caller();
+    async move {
+        tokio::time::timeout(deadline, proc.wait())
+            .await
+            .unwrap_or_else(|_| panic!("{why} (at {site})"))
+    }
 }
 
 #[tokio::test]
@@ -193,7 +215,7 @@ async fn a_reopen_moves_a_real_childs_output_onto_the_recreated_path() {
     let (mut proc, mut io) = runner.spawn(&spec).unwrap();
     // The child blocks on the marker, so any assertion that fails before
     // it is written leaves a real process behind for the rest of the run.
-    let _reaper = Reaper(vec![i32::try_from(proc.pid()).unwrap()]);
+    let _reaper = Reaper::of(&proc);
 
     let line = recv_log(
         &mut io,
@@ -246,9 +268,12 @@ async fn a_reopen_moves_a_real_childs_output_onto_the_recreated_path() {
         "the renamed file must stop growing the moment the handle is swapped"
     );
 
-    let outcome = tokio::time::timeout(REAP_DEADLINE, proc.wait())
-        .await
-        .expect("the child exits once it has printed its second line");
+    let outcome = reaped(
+        &mut proc,
+        REAP_DEADLINE,
+        "the child exits once it has printed its second line",
+    )
+    .await;
     assert_eq!(outcome.code, Some(0));
 }
 
@@ -280,9 +305,7 @@ async fn signal_ignored_then_kill_tree_reaps() {
     );
 
     proc.kill_tree().unwrap();
-    let outcome = tokio::time::timeout(REAP_DEADLINE, proc.wait())
-        .await
-        .expect("kill_tree should reap promptly");
+    let outcome = reaped(&mut proc, REAP_DEADLINE, "kill_tree should reap promptly").await;
     assert_eq!(outcome.signal, Some(9));
 }
 
@@ -310,7 +333,7 @@ async fn a_process_signal_reaches_the_sheep_and_not_its_lamb() {
     );
     let runner = TokioRunner::new();
     let (mut proc, mut io) = runner.spawn(&spec).unwrap();
-    let _reaper = Reaper(vec![i32::try_from(proc.pid()).unwrap()]);
+    let _reaper = Reaper::of(&proc);
 
     let ready = recv_log(
         &mut io,
@@ -362,6 +385,13 @@ const REAP_DEADLINE: Duration = Duration::from_secs(5);
 /// spawns every child as its own group leader, so a leader-only signal
 /// would miss a forked grandchild.
 struct Reaper(Vec<i32>);
+
+impl Reaper {
+    /// One spawned sheep's pid, the shape every spawn in this file needs.
+    fn of(proc: &impl RunningProcess) -> Self {
+        Self(vec![i32::try_from(proc.pid()).unwrap()])
+    }
+}
 
 impl Drop for Reaper {
     fn drop(&mut self) {
@@ -437,9 +467,7 @@ async fn a_graceful_stop_reaches_a_forked_grandchild() {
     assert_ne!(grandchild, leader, "sanity: `&` really forked");
 
     proc.signal(StopSignal::Term).unwrap();
-    let outcome = tokio::time::timeout(REAP_DEADLINE, proc.wait())
-        .await
-        .expect("the wrapper must exit on SIGTERM");
+    let outcome = reaped(&mut proc, REAP_DEADLINE, "the wrapper must exit on SIGTERM").await;
     assert_eq!(
         outcome.signal,
         Some(StopSignal::Term.as_raw()),
@@ -472,9 +500,7 @@ async fn shepherd_channel_delivers_ready() {
     // SIGKILL, or the fork can miss the group signal entirely.
     tokio::time::sleep(Duration::from_millis(100)).await;
     proc.kill_tree().unwrap();
-    let outcome = tokio::time::timeout(REAP_DEADLINE, proc.wait())
-        .await
-        .expect("kill_tree should reap promptly");
+    let outcome = reaped(&mut proc, REAP_DEADLINE, "kill_tree should reap promptly").await;
     assert_eq!(outcome.signal, Some(9));
 }
 
@@ -598,7 +624,7 @@ async fn a_child_can_block_reading_the_shepherd_channel() {
     );
 
     let (mut proc, mut io) = runner.spawn(&spec).unwrap();
-    let _reaper = Reaper(vec![i32::try_from(proc.pid()).unwrap()]);
+    let _reaper = Reaper::of(&proc);
 
     let first = channel_round_trip(&mut io, 1, &err_file).await;
     assert_eq!(
@@ -621,9 +647,12 @@ async fn a_child_can_block_reading_the_shepherd_channel() {
         }
     );
 
-    let outcome = tokio::time::timeout(REAP_DEADLINE, proc.wait())
-        .await
-        .expect("the child exits once it has answered both rounds");
+    let outcome = reaped(
+        &mut proc,
+        REAP_DEADLINE,
+        "the child exits once it has answered both rounds",
+    )
+    .await;
     assert_eq!(
         outcome.code,
         Some(0),
@@ -931,9 +960,12 @@ async fn a_child_that_did_not_ask_for_stdin_gets_eof_at_once() {
     let (mut proc, io) = runner.spawn(&spec).unwrap();
 
     assert!(io.to_stdin.is_closed());
-    let outcome = tokio::time::timeout(LONG_DEADLINE, proc.wait())
-        .await
-        .expect("cat did not exit on EOF within 10s");
+    let outcome = reaped(
+        &mut proc,
+        LONG_DEADLINE,
+        "cat did not exit on EOF within 10s",
+    )
+    .await;
     assert_eq!(outcome.code, Some(0));
 }
 
@@ -997,9 +1029,12 @@ async fn an_adopted_proc_reports_its_real_exit() {
         "an adopted proc keeps the pid it was given"
     );
 
-    let outcome = tokio::time::timeout(LONG_DEADLINE, proc.wait())
-        .await
-        .expect("the adopted pid must be reaped within the budget");
+    let outcome = reaped(
+        &mut proc,
+        LONG_DEADLINE,
+        "the adopted pid must be reaped within the budget",
+    )
+    .await;
     assert_eq!((outcome.code, outcome.signal), (Some(3), None));
     drop(io);
 }
@@ -1016,9 +1051,12 @@ async fn a_spawned_proc_still_reports_its_real_exit() {
         .spawn(&spec_for(&dir, "/bin/sh", &["-c", "exit 4"]))
         .unwrap();
 
-    let outcome = tokio::time::timeout(LONG_DEADLINE, proc.wait())
-        .await
-        .expect("a spawned child must be waited within the budget");
+    let outcome = reaped(
+        &mut proc,
+        LONG_DEADLINE,
+        "a spawned child must be waited within the budget",
+    )
+    .await;
     assert_eq!((outcome.code, outcome.signal), (Some(4), None));
     drop(io);
 }
@@ -1047,9 +1085,12 @@ async fn an_adopted_proc_reports_a_signal_as_a_signal() {
     proc.signal_process(OperatorSignal::Kill)
         .expect("SIGKILL the adopted sheep");
 
-    let outcome = tokio::time::timeout(LONG_DEADLINE, proc.wait())
-        .await
-        .expect("the adopted pid must be reaped within the budget");
+    let outcome = reaped(
+        &mut proc,
+        LONG_DEADLINE,
+        "the adopted pid must be reaped within the budget",
+    )
+    .await;
     assert_eq!((outcome.code, outcome.signal), (None, Some(9)));
     drop(io);
 }
@@ -1102,9 +1143,12 @@ async fn an_adopted_pump_appends_the_carried_pipes_lines_through_the_carried_han
     assert_eq!(line.line, "after-the-handover");
     await_file_contents(&out_file, "before-the-handover\nafter-the-handover\n").await;
 
-    let outcome = tokio::time::timeout(LONG_DEADLINE, proc.wait())
-        .await
-        .expect("the adopted pid must be reaped within the budget");
+    let outcome = reaped(
+        &mut proc,
+        LONG_DEADLINE,
+        "the adopted pid must be reaped within the budget",
+    )
+    .await;
     assert_eq!(outcome.code, Some(0));
 }
 
@@ -1186,9 +1230,12 @@ async fn an_adopted_channel_reaches_a_real_child_that_blocks_on_fd_3() {
         }
     );
 
-    let outcome = tokio::time::timeout(REAP_DEADLINE, proc.wait())
-        .await
-        .expect("the adopted pid must be reaped within the budget");
+    let outcome = reaped(
+        &mut proc,
+        REAP_DEADLINE,
+        "the adopted pid must be reaped within the budget",
+    )
+    .await;
     assert_eq!(
         outcome.code,
         Some(0),
