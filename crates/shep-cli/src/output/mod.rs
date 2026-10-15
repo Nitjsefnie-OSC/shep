@@ -14,6 +14,9 @@
 mod described;
 mod diagnostics;
 mod flock;
+// `pub(crate)`: `commands/bleats` is outside `output` and renders every
+// log line through these three functions.
+pub(crate) mod log_line;
 
 // `pub(crate)`: `lookout::theme`'s test module calls `paint::style_for`
 // directly to pin the anstyle and ratatui colour bindings against each
