@@ -271,6 +271,13 @@ pub struct ProcessInfo {
     /// from every row that is not disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disabled: Option<bool>,
+    /// Whether this sheep's own log lines carry the shepherd's stamp, from
+    /// its [`AppConfig::log_timestamps`]. `Some(false)` is the only value a
+    /// daemon sets. `None` for a dog, which always stamps, and for a peer
+    /// daemon that predates the field: both read as stamped, which is what
+    /// every daemon before it wrote. Additive, like [`Self::disabled`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_timestamps: Option<bool>,
 }
 
 /// Orders one flock listing the way every operator-facing surface presents
@@ -326,6 +333,7 @@ impl ProcessInfo {
                 level_rules: Vec::new(),
                 reload_deadline_ms: None,
                 disabled: None,
+                log_timestamps: None,
             },
         }
     }
@@ -491,6 +499,13 @@ impl ProcessInfoBuilder {
         self
     }
 
+    /// Sets whether the sheep's app turns the shepherd's stamp off; `None`
+    /// for a dog, which always stamps.
+    pub fn log_timestamps(mut self, log_timestamps: Option<bool>) -> Self {
+        self.info.log_timestamps = log_timestamps;
+        self
+    }
+
     /// Finishes the row.
     #[must_use]
     pub fn build(self) -> ProcessInfo {
@@ -549,8 +564,14 @@ pub(super) fn sample_info() -> ProcessInfo {
         // `None` so the key is absent from the pinned bytes; its serialized
         // shape is pinned by `a_disabled_flag_is_absent_from_the_wire_until_set`.
         disabled: None,
+        // `None` for the same reason, its shape pinned by
+        // `a_stamps_off_flag_is_absent_from_the_wire_until_set`.
+        log_timestamps: None,
     }
 }
+
+#[cfg(test)]
+mod stamps;
 
 #[cfg(test)]
 mod tests {
@@ -855,6 +876,7 @@ mod tests {
         assert_eq!(info.max_memory, None);
         assert_eq!(info.reload_deadline_ms, None);
         assert_eq!(info.disabled, None);
+        assert_eq!(info.log_timestamps, None);
     }
 
     #[test]

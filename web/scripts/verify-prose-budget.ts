@@ -166,7 +166,11 @@ export const BUDGETS: Record<string, number> = {
   // Raised again for the same verb refusing a name it cannot judge, which is
   // an exit an operator hits. Paid for by tightening the sentence above it.
   lifecycle: 2245, // 2235
-  logs: 1900, // 1805
+  // Cut from 1900 for the stamps-off tail sentence: the page has to say a
+  // sheep with `log_timestamps = false` carries no stamp for `bleats` to
+  // strip, and it paid for that line by tightening the sentences around it
+  // instead of raising the ceiling. Measured 1914 against 1900 before the cut.
+  logs: 1895, // 1892
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim
   // back out.

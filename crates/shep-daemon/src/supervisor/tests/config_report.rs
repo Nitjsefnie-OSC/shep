@@ -76,6 +76,38 @@ async fn to_info_carries_a_sheep_s_declared_level_rules_in_order() {
     assert_eq!(to_info(entry, &actor.smits).level_rules, rules);
 }
 
+/// `shep bleats --no-follow` reads the log file and has to know whether the
+/// stamp on each line is the shepherd's or the app's own. A dog's config
+/// always stamps, so its row stays `None` on `handshook`'s two-case terms.
+#[tokio::test(start_paused = true)]
+async fn a_stamps_off_sheep_reports_it_and_a_stamped_one_stays_silent() {
+    let dir = tempfile::tempdir().unwrap();
+    let (actor, _enforcer) = actor_over(
+        &dir,
+        &[
+            app_with("quiet", |app| app.log_timestamps = false),
+            app_with("stamped", |_| {}),
+            dog_app("watcher"),
+        ],
+    );
+
+    assert_eq!(
+        to_info(&actor.sheep[&0].entry, &actor.smits).log_timestamps,
+        Some(false),
+        "the file this sheep's rows point at holds its lines as it wrote them"
+    );
+    assert_eq!(
+        to_info(&actor.sheep[&1].entry, &actor.smits).log_timestamps,
+        None,
+        "a stamped row carries no key at all"
+    );
+    assert_eq!(
+        to_info(&actor.sheep[&2].entry, &actor.smits).log_timestamps,
+        None,
+        "a dog's own log lines are always stamped"
+    );
+}
+
 /// A dog's `AppConfig::minimal` sets no ceiling, so its `ProcessInfo`
 /// must report `None` rather than inheriting a stray value.
 #[tokio::test(start_paused = true)]

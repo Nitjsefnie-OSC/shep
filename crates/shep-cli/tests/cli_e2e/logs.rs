@@ -60,6 +60,46 @@ fn bleats_no_follow_prints_what_a_sheep_actually_wrote() {
     graceful_kill(home);
 }
 
+/// A sheep whose app turns the shepherd's stamp off writes its own RFC 3339
+/// prefix into the log file. `bleats --no-follow` read that file and cut a
+/// stamp off every line in it, so it cut 30 bytes off a line the app had
+/// stamped itself, while `--follow` printed the same line whole.
+#[test]
+fn a_stamps_off_sheeps_own_timestamp_survives_bleats_no_follow() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    let own_line = "2026-09-02T14:22:31.412+02:00 the app stamped its own line";
+    let script = write_logging_script(&dir, own_line, None);
+    let mut guard = DaemonGuard::default();
+
+    let boot = shep(home)
+        .arg("start")
+        .arg(&script)
+        .arg("--name")
+        .arg("stamper")
+        .arg("--no-log-timestamps")
+        .output()
+        .unwrap();
+    guard.adopt_home(home);
+    assert_success(&boot);
+
+    let seen = bleats_no_follow_until_contains(home, &["all"], &[own_line]);
+    assert_eq!(
+        seen.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&seen.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&seen.stdout);
+    assert!(
+        stdout.contains(own_line),
+        "the file holds this sheep's line exactly as it wrote it, and the \
+         reading verb must print all of it: stdout={stdout}"
+    );
+
+    graceful_kill(home);
+}
+
 /// `create`-mode rotation: rename the live log, run `shep reopen`, and the
 /// sheep's next line reaches the recreated path.
 ///
