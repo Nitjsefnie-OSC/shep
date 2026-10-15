@@ -379,6 +379,119 @@ fn an_unstamped_log_takes_its_next_line_at_offset_zero_after_a_copytruncate() {
     copytruncate_leaves_the_next_line_at_offset_zero(false);
 }
 
+/// `--no-log-timestamps` on a sheep the flock already has.
+///
+/// The flag is a value the operator typed for that sheep, so it reaches the
+/// spawn the same load performs: recorded as an override, parked as a
+/// `NeedsRespawn` field, promoted by the resume that follows.
+///
+/// The assertion is on the raw file, not through `bleats`, which strips the
+/// stamp off whatever it reads. The gate opens only after the resume, so the
+/// line it releases cannot predate the spawn under test.
+#[test]
+fn no_log_timestamps_reaches_a_stopped_sheep_started_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    let gate = home.join("second-line");
+    let script = write_rotating_script(&dir, &gate);
+    let mut guard = DaemonGuard::default();
+
+    let boot = shep(home).arg("start").arg(&script).output().unwrap();
+    guard.adopt_home(home);
+    assert_success(&boot);
+
+    let before = bleats_no_follow_until_written(home, &["all"]);
+    let printed = String::from_utf8_lossy(&before.stdout);
+    assert!(
+        printed.contains(ROTATE_BEFORE),
+        "precondition: the sheep must have logged a line to be stamped: {printed}"
+    );
+
+    // Off the daemon's own snapshot, so the test cannot disagree about which
+    // file this is.
+    let online = poll_flock(home, |info| info["status"] == "online");
+    let out_file = PathBuf::from(
+        online["out_file"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
+    );
+    let stamped_first = std::fs::read_to_string(&out_file).unwrap();
+    assert_eq!(unstamped_file(&out_file), format!("{ROTATE_BEFORE}\n"));
+    let first = stamped_first.lines().next().unwrap_or_default();
+    assert_ne!(
+        shep_core::logstamp::strip(first),
+        first,
+        "precondition: this sheep was started stamped: {stamped_first}"
+    );
+
+    let stopped = shep(home).arg("stop").arg("rotating").output().unwrap();
+    assert_success(&stopped);
+    let parked = poll_flock(home, |info| info["status"] == "stopped");
+    assert_eq!(
+        parked["name"], "rotating",
+        "precondition: the flock must still hold this sheep for the load below \
+         to merge into: {parked}"
+    );
+
+    // The same target, the flag this time. The sheep is already registered,
+    // so this load merges into it and brings it back rather than registering
+    // a second copy.
+    let again = shep(home)
+        .arg("start")
+        .arg(&script)
+        .arg("--no-log-timestamps")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert_success(&again);
+    let envelope: serde_json::Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(
+        sheep_rows(&envelope["data"]).len(),
+        1,
+        "the load resumed the sheep the flock already had rather than adding \
+         another: {envelope}"
+    );
+
+    // Opened only now, so the line below cannot predate the resume. The
+    // restarted sheep writes its first line and blocks here until this exists.
+    std::fs::write(&gate, "").unwrap();
+
+    let after = bleats_no_follow_until_contains(home, &["all"], &[ROTATE_AFTER]);
+    let stdout = String::from_utf8_lossy(&after.stdout);
+    assert!(
+        stdout.contains(ROTATE_AFTER),
+        "the restarted sheep must reach the line past its gate: stdout={stdout}"
+    );
+    assert_eq!(
+        after.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&after.stderr)
+    );
+    let raw = std::fs::read_to_string(&out_file).unwrap();
+    assert_eq!(
+        unstamped_file(&out_file),
+        format!("{ROTATE_BEFORE}\n{ROTATE_BEFORE}\n{ROTATE_AFTER}\n"),
+        "the restarted sheep wrote two lines into the same file: {raw}"
+    );
+    assert_eq!(
+        raw.lines().last().unwrap_or_default(),
+        ROTATE_AFTER,
+        "the line the restarted sheep wrote must reach the file with no stamp \
+         in front of it: {raw}"
+    );
+    assert_eq!(
+        raw.lines()
+            .filter(|line| shep_core::logstamp::strip(line) != *line)
+            .count(),
+        1,
+        "only the sheep that was started stamped may carry a stamp: {raw}"
+    );
+
+    graceful_kill(home);
+}
+
 /// [`ROTATE_BEFORE`] being gone proves the truncate happened; [`ROTATE_AFTER`]
 /// arriving through the same untouched handle proves it survived.
 ///
