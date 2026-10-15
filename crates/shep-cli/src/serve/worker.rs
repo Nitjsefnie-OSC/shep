@@ -25,34 +25,29 @@ use crate::exit::ExitCode;
 use crate::http::{self, Header, HttpError, HttpRequest};
 
 /// How long [`http::read_request`] waits for a connected peer to finish
-/// sending its request before this worker gives up on it. Generous for
-/// an ordinary client, small enough that a peer that connects and says
-/// nothing does not hold a task, and here, a semaphore permit, open
+/// sending its request. Small enough that a peer that connects and says
+/// nothing does not hold a task, and here a semaphore permit, open
 /// indefinitely.
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How many connections may be in flight at once.
 ///
 /// A permit is held for the whole life of a connection task, so this
-/// bounds tasks, open files and sockets together: a client that stops
-/// reading holds all three until `tokio::io::copy` gives up. 512 sits
-/// comfortably below a default `RLIMIT_NOFILE`.
+/// bounds tasks, open files and sockets together. 512 sits comfortably
+/// below a default `RLIMIT_NOFILE`.
 const MAX_CONNECTIONS: usize = 512;
 
 /// The whole-connection deadline every real `shep serve` runs with: read,
 /// resolve, respond and copy together.
 ///
-/// `READ_TIMEOUT` bounds only the read phase. Carried on [`ServeConfig`]
-/// rather than read directly, so a test can use a duration it can wait
-/// out on a real clock rather than a paused one racing tokio's
-/// auto-advance against real socket IO.
+/// `READ_TIMEOUT` bounds only the read phase. A test overrides it through
+/// [`ServeConfig::connection_deadline`].
 pub const CONNECTION_DEADLINE: Duration = Duration::from_secs(60);
 
 /// What a running `serve` worker was told to do.
 ///
-/// No `Debug`: [`Credentials`] carries none, and a struct holding an
-/// `Option<Credentials>` inherits that rather than risking a
-/// hand-written impl that forgets to redact it.
+/// No `Debug`: [`Credentials`] carries none, and an
+/// `Option<Credentials>` inherits that.
 pub struct ServeConfig {
     /// The docroot, already canonical and already known to be a directory.
     pub root: PathBuf,
@@ -73,11 +68,8 @@ pub struct ServeConfig {
     /// passed straight through to `fs::contain`, whose own doc names the
     /// residual race each mode still leaves open.
     pub follow_symlinks: bool,
-    /// How long one connection may live, start to finish.
-    ///
-    /// [`CONNECTION_DEADLINE`] everywhere outside tests. A parameter
-    /// rather than a constant, so a test can pick a duration it can wait
-    /// out for real.
+    /// How long one connection may live, start to finish. A test picks
+    /// its own; [`CONNECTION_DEADLINE`] everywhere else.
     pub connection_deadline: Duration,
 }
 
@@ -85,11 +77,9 @@ pub struct ServeConfig {
 /// serves until `SIGINT` or `SIGTERM`, the latter being what the
 /// shepherd's own kill ladder sends first.
 ///
-/// A refused bind is fatal: a worker running but bound to nothing is
-/// worse than one `shep flock` reports as errored, since the first looks
-/// fine from the outside. Tests drive [`accept_forever`] directly rather
-/// than this function, since exercising `SIGTERM` needs a real stop
-/// ladder.
+/// A refused bind is fatal: a worker bound to nothing looks fine from
+/// outside. Tests drive [`accept_forever`] instead, since exercising
+/// `SIGTERM` needs a real stop ladder.
 pub async fn run(cfg: ServeConfig) -> ExitCode {
     let listener = match TcpListener::bind(cfg.bind).await {
         Ok(listener) => listener,
@@ -120,8 +110,8 @@ pub async fn run(cfg: ServeConfig) -> ExitCode {
 /// test aborts the [`tokio::task::JoinHandle`] it returns instead.
 ///
 /// A permit is acquired before the task is spawned, non-blockingly: a
-/// connection past the cap is closed immediately rather than queued,
-/// since queuing would still hold the accepted socket without a task.
+/// connection past the cap is closed rather than queued, since queuing
+/// would hold the socket with no task.
 async fn accept_forever(listener: TcpListener, cfg: Arc<ServeConfig>, semaphore: Arc<Semaphore>) {
     loop {
         match listener.accept().await {
@@ -146,23 +136,18 @@ async fn accept_forever(listener: TcpListener, cfg: Arc<ServeConfig>, semaphore:
 
 /// Answers exactly one request on `stream`: read, auth, method, body,
 /// resolve, hidden, contain, then a directory or a file, in that order.
-/// Every reply is logged as one access-log line before this returns.
 ///
-/// The reply is [`answer`]'s; the single `log_access` call is here, so no
-/// exit path can answer a request and leave it out of the log.
+/// The reply is [`answer`]'s; the single [`log_access`] call is here, so
+/// no exit path can answer a request and leave it out of the log.
 async fn handle_connection(mut stream: TcpStream, cfg: Arc<ServeConfig>) {
     let peer = stream.peer_addr().ok();
 
-    // 1. read, with its own bounded timeout. On any error there is no
-    // well-formed request to answer, so nothing is logged and nothing is
-    // written back.
+    // A failed read leaves no well-formed request to answer or log.
     let request = match http::read_request(&mut stream, READ_TIMEOUT).await {
         Ok(request) => request,
         Err(_err) => return,
     };
 
-    // The logged path starts as the raw target, escaped, and `answer`
-    // overwrites it with the resolved path once resolution succeeds.
     let mut logged_path = escape_for_log(path_of(&request.target));
     let (status, bytes) = answer(&mut stream, &cfg, &request, &mut logged_path).await;
     log_access(peer, &request.method, &logged_path, status, bytes);
@@ -176,13 +161,25 @@ fn path_of(target: &str) -> &str {
         .map_or(target, |(path, _rest)| path)
 }
 
+/// The `WWW-Authenticate` header every 401 this worker answers carries.
+const WWW_AUTHENTICATE: Header<'static> = Header {
+    name: "WWW-Authenticate",
+    value: "Basic realm=\"shep\"",
+};
+
+/// The `Allow` header every 405 this worker answers carries.
+const ALLOW: Header<'static> = Header {
+    name: "Allow",
+    value: "GET, HEAD",
+};
+
 /// Writes one reply to `stream`, returning the status answered and the
 /// body byte count for [`handle_connection`]'s access-log line.
 ///
-/// Steps 2 through 10; step 1, the read, is the caller's. `logged_path`
-/// arrives holding the escaped raw target and is overwritten with the
-/// resolved path as soon as resolution succeeds, so a refusal reached
-/// before then is still logged under the target the client sent.
+/// `logged_path` arrives holding the escaped raw target and is
+/// overwritten with the resolved path as soon as resolution succeeds, so
+/// a refusal reached before then is still logged under the target the
+/// client sent.
 async fn answer(
     stream: &mut TcpStream,
     cfg: &ServeConfig,
@@ -191,45 +188,22 @@ async fn answer(
 ) -> (u16, u64) {
     let raw_path = path_of(&request.target);
 
-    // 2. auth, before path resolution: an unauthenticated client must not
-    // use 400-vs-404 to map the filesystem before it proves who it is.
+    // Auth before path resolution: an unauthenticated client must not use
+    // 400-vs-404 to map the filesystem before it proves who it is.
     if let Some(creds) = &cfg.auth {
         let header = request.headers.get("authorization").map(String::as_str);
         if !creds.satisfies(header) {
             let body = b"unauthorized\n";
-            send(
-                stream,
-                401,
-                "text/plain",
-                body,
-                vec![Header {
-                    name: "WWW-Authenticate",
-                    value: "Basic realm=\"shep\"",
-                }],
-            )
-            .await;
-            return (401, body.len() as u64);
+            return reply(stream, 401, "text/plain", body, vec![WWW_AUTHENTICATE]).await;
         }
     }
 
-    // 3. method: this server answers GET and HEAD only.
     if request.method != "GET" && request.method != "HEAD" {
         let body = b"method not allowed; this server answers GET and HEAD\n";
-        send(
-            stream,
-            405,
-            "text/plain",
-            body,
-            vec![Header {
-                name: "Allow",
-                value: "GET, HEAD",
-            }],
-        )
-        .await;
-        return (405, body.len() as u64);
+        return reply(stream, 405, "text/plain", body, vec![ALLOW]).await;
     }
 
-    // 4. body: this server never reads one.
+    // This server never reads a request body.
     let has_declared_body = request
         .headers
         .get("content-length")
@@ -238,42 +212,35 @@ async fn answer(
         || request.headers.contains_key("transfer-encoding");
     if has_declared_body {
         let body = b"this server does not accept a request body\n";
-        send(stream, 400, "text/plain", body, vec![]).await;
-        return (400, body.len() as u64);
+        return reply(stream, 400, "text/plain", body, vec![]).await;
     }
 
-    // 5. resolve.
     let segments = match path::resolve(&request.target) {
         Ok(segments) => segments,
         Err(refusal) => {
             let body = refusal.to_string();
-            send(stream, 400, "text/plain", body.as_bytes(), vec![]).await;
-            return (400, body.len() as u64);
+            return reply(stream, 400, "text/plain", body.as_bytes(), vec![]).await;
         }
     };
     *logged_path = format!("/{}", segments.join("/"));
 
-    // 6. hidden: a 404, not a 403, checked before any filesystem access.
+    // Hidden: a 404, not a 403, checked before any filesystem access.
     if path::is_hidden(&segments) && !cfg.hidden {
         return send_not_found(stream, cfg, request).await;
     }
 
-    // 7. contain: the syscall tier's containment walk and symlink
-    // refusal, or canonicalize-and-check under `--follow-symlinks`.
     let Some(resolved) = fs::contain(&cfg.root, &segments, cfg.follow_symlinks).await else {
         return send_not_found(stream, cfg, request).await;
     };
 
-    // 8. metadata: a directory goes to step 9, anything else (a fifo, a
-    // socket, a device node) to step 10, where `fs::open_regular` refuses
-    // it.
+    // A directory goes to the directory branch below. A fifo, a socket or
+    // a device node reaches `fs::open_regular`, which refuses it.
     let metadata = match tokio::fs::metadata(&resolved).await {
         Ok(metadata) => metadata,
         Err(_err) => return send_not_found(stream, cfg, request).await,
     };
 
     if metadata.is_dir() {
-        // 9. directory.
         if !raw_path.ends_with('/') {
             let mut location = String::from("/");
             location.push_str(
@@ -284,26 +251,17 @@ async fn answer(
                     .join("/"),
             );
             location.push('/');
-            return match respond(
-                stream,
-                301,
-                "text/plain",
-                0,
-                vec![Header {
-                    name: "Location",
-                    value: location.as_str(),
-                }],
-            )
-            .await
-            {
+            let header = Header {
+                name: "Location",
+                value: location.as_str(),
+            };
+            return match respond(stream, 301, "text/plain", 0, vec![header]).await {
                 Ok(()) => (301, 0),
                 Err(_err) => {
                     // A peer disconnect, not a bad header: `encode_segment`
-                    // only ever produces printable ASCII, so `write_head`'s
-                    // control-byte check never fires from this call.
+                    // only ever produces printable ASCII.
                     let body = b"could not build the redirect\n";
-                    send(stream, 500, "text/plain", body, vec![]).await;
-                    (500, body.len() as u64)
+                    reply(stream, 500, "text/plain", body, vec![]).await
                 }
             };
         }
@@ -324,21 +282,13 @@ async fn answer(
                 prefix.push('/');
             }
             let html = listing::render(&prefix, &entries);
-            send(
-                stream,
-                200,
-                "text/html; charset=utf-8",
-                html.as_bytes(),
-                vec![],
-            )
-            .await;
-            return (200, html.len() as u64);
+            let body = html.as_bytes();
+            return reply(stream, 200, "text/html; charset=utf-8", body, vec![]).await;
         }
 
         return send_not_found(stream, cfg, request).await;
     }
 
-    // 10. file.
     let Some((file, len)) = fs::open_regular(&resolved).await else {
         return send_not_found(stream, cfg, request).await;
     };
@@ -350,9 +300,6 @@ async fn answer(
 /// the request's `Accept` header names `text/html`, serves the docroot's
 /// `index.html` with a 200 instead. Every 404 this worker would otherwise
 /// answer funnels through here, so the gate lives in one place.
-///
-/// Returns the status actually answered and the body byte count, for the
-/// caller's access-log line.
 async fn send_not_found(
     stream: &mut TcpStream,
     cfg: &ServeConfig,
@@ -371,9 +318,7 @@ async fn send_not_found(
             return (200, len);
         }
     }
-    let body = b"not found\n";
-    send(stream, 404, "text/plain", body, vec![]).await;
-    (404, body.len() as u64)
+    reply(stream, 404, "text/plain", b"not found\n", vec![]).await
 }
 
 /// Streams `file` (already open, `len` bytes long per its own metadata)
@@ -382,11 +327,9 @@ async fn send_not_found(
 ///
 /// `file.take(len)`, not a bare copy: `len` came from the open handle's
 /// own metadata, so a file that grew between the open and this copy still
-/// matches the `Content-Length` already declared. A file that shrank
-/// still sends fewer bytes than declared; `Connection: close` turns that
-/// into a visible truncation rather than a hang.
-///
-/// `HEAD` never copies the body, only its length.
+/// matches the `Content-Length` already declared. A file that shrank still
+/// sends fewer bytes than declared; `Connection: close` turns that into a
+/// visible truncation rather than a hang.
 async fn serve_file(
     stream: &mut TcpStream,
     request: &HttpRequest,
@@ -407,7 +350,7 @@ async fn serve_file(
 }
 
 /// Reads `dir`'s entries, dropping a leading-dot name unless `hidden` is
-/// set. Directories sort before files, each group alphabetically.
+/// set, directories before files.
 async fn read_listing(dir: &std::path::Path, hidden: bool) -> std::io::Result<Vec<listing::Entry>> {
     let mut dirs = Vec::new();
     let mut files = Vec::new();
@@ -433,8 +376,7 @@ async fn read_listing(dir: &std::path::Path, hidden: bool) -> std::io::Result<Ve
 
 /// Writes exactly one response head. Every reply funnels through here,
 /// and this is the one place the nosniff header is appended, since the
-/// listing renders attacker-influenced filenames into HTML. The body is
-/// always the caller's to write afterward.
+/// listing renders attacker-influenced filenames into HTML.
 ///
 /// # Errors
 /// [`HttpError`] if the write failed, or if a header value carried a
@@ -473,21 +415,31 @@ async fn send(
     }
 }
 
+/// [`send`] plus the `(status, byte count)` pair every in-memory reply
+/// returns for [`handle_connection`]'s access-log line.
+async fn reply(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+    headers: Vec<Header<'_>>,
+) -> (u16, u64) {
+    send(stream, status, content_type, body, headers).await;
+    (status, body.len() as u64)
+}
+
 /// One access-log line per request, written to stdout: `serve` runs as a
-/// registered sheep, so `shep bleats <name>` is this log.
-///
-/// `path` is the resolved path where resolution succeeded, or the raw
-/// target where it did not; [`escape_for_log`] has already run on it.
+/// registered sheep, so `shep bleats <name>` is this log. `path` has
+/// already been through [`escape_for_log`].
 fn log_access(peer: Option<SocketAddr>, method: &str, path: &str, status: u16, bytes: u64) {
     let peer = peer.map_or_else(|| "-".to_string(), |addr| addr.to_string());
     println!("{peer} \"{method} {path}\" {status} {bytes}");
 }
 
-/// Escapes every byte outside printable ASCII (`0x20..=0x7e`) as `\xNN`.
-///
-/// The raw request target can carry any byte a client sends, so this
-/// stops an operator reading `shep bleats` from receiving a stranger's
-/// ANSI escapes.
+/// Escapes every byte outside printable ASCII (`0x20..=0x7e`) as `\xNN`:
+/// a raw request target can carry any byte a client sends, and an
+/// operator reading `shep bleats` must not receive a stranger's ANSI
+/// escapes.
 fn escape_for_log(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for byte in s.bytes() {
@@ -864,6 +816,33 @@ mod tests {
         assert!(!response.body.contains("<h1>home</h1>"), "{response:?}");
     }
 
+    /// fails if a refusal reply loses its status, its own header, or the
+    /// byte count it declared.
+    #[tokio::test]
+    async fn a_refusal_reply_carries_its_status_headers_and_body_length() {
+        let outer = tempfile::tempdir().unwrap();
+        let root = outer.path().join("www");
+        write_tree(&root, &[("index.html", "<h1>home</h1>")]);
+        let guarded = serve_on_free_port(config_with_auth(&root)).await;
+        let open = serve_on_free_port(config(&root)).await;
+
+        let unauthorized = get(guarded.addr(), "/index.html").await;
+        assert_eq!(unauthorized.status, 401);
+        assert_eq!(unauthorized.body, "unauthorized\n");
+        assert_eq!(
+            unauthorized.headers["www-authenticate"],
+            "Basic realm=\"shep\""
+        );
+        assert_eq!(unauthorized.headers["content-length"], "13");
+
+        let refused = "method not allowed; this server answers GET and HEAD\n";
+        let not_allowed = request_with_method(open.addr(), "POST", "/index.html").await;
+        assert_eq!(not_allowed.status, 405);
+        assert_eq!(not_allowed.body, refused);
+        assert_eq!(not_allowed.headers["allow"], "GET, HEAD");
+        assert_eq!(not_allowed.headers["content-length"], "53");
+    }
+
     /// fails if a HEAD grows a body, or loses its Content-Length.
     #[tokio::test]
     async fn a_head_carries_the_length_and_no_body() {
@@ -1009,6 +988,27 @@ mod tests {
         assert!(!response.body.contains(".env"), "{response:?}");
         assert!(response.body.contains("app.js"), "{response:?}");
         assert_eq!(response.headers["x-content-type-options"], "nosniff");
+    }
+
+    /// fails if a listing goes out as plain text, or declares a length
+    /// that disagrees with the HTML it sent.
+    #[tokio::test]
+    async fn a_directory_listing_reply_is_html_and_counts_its_bytes() {
+        let outer = tempfile::tempdir().unwrap();
+        let root = outer.path().join("www");
+        write_tree(&root, &[("a.txt", "a"), ("b.txt", "bb")]);
+        let server = serve_on_free_port(config_with_listing(&root)).await;
+
+        let response = get(server.addr(), "/").await;
+        assert_eq!(response.status, 200);
+        assert_eq!(response.headers["content-type"], "text/html; charset=utf-8");
+        assert!(
+            response.body.contains("<h1>Index of /</h1>"),
+            "{response:?}"
+        );
+        assert!(response.body.contains("a.txt"), "{response:?}");
+        let declared = response.body.len().to_string();
+        assert_eq!(response.headers["content-length"], declared);
     }
 
     /// fails if a directory whose name is not ASCII answers 500 instead
