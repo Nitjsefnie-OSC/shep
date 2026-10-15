@@ -460,6 +460,11 @@ esc/s close   j/k select   g… control enabled`;
       counted the lines inside them:
     </p>
     <CodeBlock>{feedExcerpt}</CodeBlock>
+    <p>
+      A plain line arrives in its stream's colour, <code>out</code> meadow,
+      <code>err</code> bark; a line that colours itself keeps its own. The tags
+      stay muted. <code>NO_COLOR</code> adds none of shep's.
+    </p>
 
     <h2 id="the-sheep-pane">The sheep pane</h2>
     <p>
@@ -514,7 +519,8 @@ esc/s close   j/k select   g… control enabled`;
       Three filters stack on top of the feed, and a line has to pass all
       three to show. <code>o</code> cycles the stream (out, err, or both),{" "}
       <code>m</code> cycles a minimum level, and <code>/</code> opens a box
-      for a text or regex match, with matches highlighted. A level is a
+      for a text or regex match, with matches highlighted over a line's own
+      colour there. A level is a
       bare word like <code>WARN</code>, or a <code>level=warn</code> pair,
       so the filter works on logfmt output too. An app that writes neither
       can declare its own patterns, with{" "}
