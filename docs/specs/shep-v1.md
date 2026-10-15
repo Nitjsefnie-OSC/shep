@@ -293,11 +293,14 @@ of that exposure, so the socket would buy a round trip for nothing.
 
 - **Shepherd channel** (extra pipe fd, newline JSON, language-agnostic):
   child→daemon `{"kind":"ready"}`, `{"kind":"metric",...}`,
-  `{"kind":"action-reply",...}`, `{"kind":"lamb-label",...}`; daemon→child
+  `{"kind":"action-reply",...}`, `{"kind":"lamb-label",...}`,
+  `{"kind":"note",...}`; daemon→child
   `{"kind":"shutdown"}`, `{"kind":"action",...}`. Fd number exported as
   `SHEP_CHANNEL_FD`, wire version as `SHEP_CHANNEL_VERSION` (`1`). A
   `lamb-label` names one of the app's own lambs for `describe`; it is
-  additive, and an older daemon drops it as malformed. An `action` carries
+  additive, and an older daemon drops it as malformed. A `note` is a name
+  and a number for a dog, published as `channel.note` rather than read as a
+  metric sample; it is additive the same way. An `action` carries
   `name` and `id`, and `params` when the operator supplied any — the `params`
   key is absent otherwise, which is what keeps it additive (§9). `id` is the
   dispatch's correlation token; an app that echoes it back on its

@@ -9,7 +9,9 @@
  * daemon creates one: it opened the pipe TWICE until then, which succeeds
  * and silently drops everything the app writes. Quality bar:
  * getting-started.astro. The lamb-label shape runs against the real binary
- * in cli_e2e's a_sheep_labels_one_of_its_lambs_over_its_channel.
+ * in cli_e2e's a_sheep_labels_one_of_its_lambs_over_its_channel. The note
+ * shape runs against a real shepherd in daemon_e2e's
+ * a_childs_note_reaches_a_note_subscriber_and_not_a_metric_one.
  */
 import DocsLayout from "../../layouts/DocsLayout.astro";
 import ReferencePills from "../../components/docs/ReferencePills.astro";
@@ -124,6 +126,7 @@ channel = true`}</CodeBlock>
       <div class="row"><span><code>{`{"kind":"metric","name":"<n>","value":<num>}`}</code>, optionally <code>{`"type":"gauge"|"counter"`}</code>, <code>{`"labels":{…}`}</code>, <code>{`"help":"<t>"`}</code></span> <span data-label="Meaning">A custom metric sample. An absent <code>type</code> means gauge; an unknown one makes the line malformed. The metrics dog keeps it and serves it at <code>/metrics</code>: see <a href="#metrics">Metrics</a>.</span></div>
       <div class="row"><span><code>{`{"kind":"action-reply","action":"<n>","body":"<t>","id":<num>}`}</code></span> <span data-label="Meaning">Your answer to a triggered action. <code>id</code> is optional: echo the one from the <code>action</code> message and shep matches your reply to that exact request.</span></div>
       <div class="row"><span><code>{`{"kind":"lamb-label","pid":<num>,"label":"<t>"}`}</code></span> <span data-label="Meaning">Names one of your child processes in <code>shep describe</code>. See <a href="#naming-your-lambs">naming your lambs</a>.</span></div>
+      <div class="row"><span><code>{`{"kind":"note","name":"<t>","value":<num>}`}</code></span> <span data-label="Meaning">A name and a number for a dog of your own, not a metric sample. See <a href="#notes-for-a-dog">notes for a dog</a>.</span></div>
     </div>
     <p class="fine">
       In Rust, <code>Shepherd::metric_with(name, value, MetricOptions)</code>{" "}
@@ -163,6 +166,22 @@ channel = true`}</CodeBlock>
       latest value per name and label set is kept until your process stops,
       exits, restarts, is deleted or errors. A reload frees the drained
       instance's samples, never the ones the instance now serving sent.
+    </p>
+
+    <h2 id="notes-for-a-dog">Notes for a dog</h2>
+    <p>
+      To tell a dog of your own something that isn't a series, send a note:
+    </p>
+    <CodeBlock>{`{"kind":"note","name":"lease.web.want.1760500000","value":1}`}</CodeBlock>
+    <p>
+      It reaches a dog subscribed to <code>channel.note</code>. The metrics
+      dog never reads one, so the name needs no grammar: a pid or an epoch
+      in it costs nothing.
+    </p>
+    <p class="fine">
+      No labels or help, and nothing keeps a note. In Rust,{" "}
+      <code>Shepherd::note(name, value)</code> drops it under backpressure
+      like <code>metric</code>. An older shepherd logs it as malformed.
     </p>
 
     <h2 id="a-worked-example">A worked example</h2>
@@ -366,10 +385,11 @@ ID  NAME  OUTCOME     DETAIL
     <p>
       Every message you send on fd 3 (<code>ready</code>,{" "}
       <code>metric</code>, <code>action-reply</code>,{" "}
-      <code>lamb-label</code>) is republished on the daemon's event bus
-      under <code>channel.*</code> (<code>channel.ready</code>,{" "}
-      <code>channel.metric</code>, <code>channel.action_reply</code>,{" "}
-      <code>channel.lamb_label</code>), its own topic alongside{" "}
+      <code>lamb-label</code>, <code>note</code>) is republished on the
+      daemon's event bus under <code>channel.*</code>{" "}
+      (<code>channel.ready</code>, <code>channel.metric</code>,{" "}
+      <code>channel.action_reply</code>, <code>channel.lamb_label</code>,{" "}
+      <code>channel.note</code>), its own topic alongside{" "}
       <code>process.*</code> and the log topics. Anyone subscribed to{" "}
       <code>channel.*</code> sees it, not just the operator who happened to
       send the trigger you were answering.
