@@ -127,19 +127,23 @@ fn selector_allows(selector: &ProcessSelector, cache: &HashMap<u32, ProcessInfo>
     }
 }
 
-/// Writes one rendered line to `out`. `stream` is `"out"` or `"err"`, the
-/// sheep stream the line came from, not `out`'s own identity: every line
-/// this function is called with lands on [`Streams::out`].
+/// Writes one line, the backlog path and the follow path both through
+/// here, so a replayed line and a followed line render identically.
+///
+/// `stream` is `"out"` or `"err"`, the sheep stream the line came from,
+/// not `out`'s own identity: every line this function is called with
+/// lands on [`Streams::out`]. Table format sanitises the line and puts
+/// the stream's default colour on the line text, never on the `name |`
+/// label; JSON carries the raw line, sanitiser never applied.
 fn write_line(
-    out: &mut dyn io::Write,
-    fmt: Format,
+    streams: &mut Streams<'_>,
     id: u32,
     name: &str,
     instance: Option<u32>,
     stream: &'static str,
     line: &str,
 ) -> io::Result<()> {
-    match fmt {
+    match streams.fmt {
         Format::Json => {
             let payload = BleatLine {
                 schema_version: output::SCHEMA_VERSION,
@@ -149,13 +153,17 @@ fn write_line(
                 stream,
                 line,
             };
-            serde_json::to_writer(&mut *out, &payload)?;
-            writeln!(out)
+            serde_json::to_writer(&mut *streams.out, &payload)?;
+            writeln!(streams.out)
         }
-        Format::Table => match instance {
-            Some(slot) => writeln!(out, "{name}:{slot} | {line}"),
-            None => writeln!(out, "{name} | {line}"),
-        },
+        Format::Table => {
+            let clean = output::log_line::sanitize_log_line(line);
+            let text = output::log_line::paint_default(&clean, stream, streams.style);
+            match instance {
+                Some(slot) => writeln!(streams.out, "{name}:{slot} | {text}"),
+                None => writeln!(streams.out, "{name} | {text}"),
+            }
+        }
     }
 }
 
@@ -391,8 +399,7 @@ fn tail_log_files(
                         Ok((lines, _truncated)) => {
                             for line in lines {
                                 if let Err(write_err) = write_line(
-                                    streams.out,
-                                    streams.fmt,
+                                    streams,
                                     info.id,
                                     name,
                                     label_instance,
@@ -460,7 +467,7 @@ fn handle_event(
             if !args.err && selector_allows(selector, cache, id) {
                 let name = resolved_name(cache, id);
                 let instance = resolved_instance(cache, counts, id);
-                write_line(streams.out, streams.fmt, id, &name, instance, "out", &line)?;
+                write_line(streams, id, &name, instance, "out", &line)?;
             }
             Ok(())
         }
@@ -468,7 +475,7 @@ fn handle_event(
             if !args.out && selector_allows(selector, cache, id) {
                 let name = resolved_name(cache, id);
                 let instance = resolved_instance(cache, counts, id);
-                write_line(streams.out, streams.fmt, id, &name, instance, "err", &line)?;
+                write_line(streams, id, &name, instance, "err", &line)?;
             }
             Ok(())
         }

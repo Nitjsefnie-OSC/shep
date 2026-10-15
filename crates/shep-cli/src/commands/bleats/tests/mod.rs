@@ -114,5 +114,6 @@ fn no_follow_parses_and_plain_bleats_still_follows() {
 /// instead of a killed CI job.
 const RUN_TIMEOUT: Duration = Duration::from_secs(5);
 
+mod colour;
 mod follow;
 mod tail;
