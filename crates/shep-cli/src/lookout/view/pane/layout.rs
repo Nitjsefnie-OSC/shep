@@ -9,7 +9,7 @@
 use ratatui::text::Line;
 use shep_core::config::ApplyGroup;
 
-use super::super::flock::GUTTER;
+use super::super::flock::{GUTTER, take_columns};
 use crate::output::width::{char_columns, text_columns};
 
 /// The close dialog's own interior width, once it is boxed: what
@@ -231,16 +231,7 @@ pub(super) fn clipped(text: &str, width: u16) -> String {
         return String::new();
     }
     let budget = width - 1;
-    let mut out = String::new();
-    let mut used = 0;
-    for c in text.chars() {
-        let w = char_columns(c);
-        if used + w > budget {
-            break;
-        }
-        out.push(c);
-        used += w;
-    }
+    let (mut out, _) = take_columns(text, budget);
     out.push('…');
     out
 }
@@ -274,5 +265,17 @@ mod tests {
             let panel = panel_width(width).expect("the panel is drawn above 89");
             assert!(width - panel >= 40, "{} left at {width}", width - panel);
         }
+    }
+
+    /// A panel row is prose, not a table cell: a cut row stops at its `…`
+    /// rather than growing padded spaces across the column, and a row that
+    /// fits is returned whole.
+    #[test]
+    fn clipped_cuts_to_the_budget_and_pads_nothing() {
+        assert_eq!(clipped("explains the focused field", 12), "explains th…");
+        // The dropped glyph is the one that would straddle the budget.
+        assert_eq!(clipped("羊羊羊", 5), "羊羊…");
+        assert_eq!(clipped("short", 12), "short");
+        assert_eq!(clipped("anything", 0), "");
     }
 }

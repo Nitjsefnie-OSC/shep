@@ -18,6 +18,7 @@ use shep_core::status::ProcStatus;
 use super::super::app::App;
 use super::super::theme::Palette;
 use super::cell;
+use super::flock::take_columns;
 use crate::output::width::char_columns;
 use crate::output::{human_bytes, human_duration};
 
@@ -55,11 +56,9 @@ impl Ink {
     }
 
     // `runs` truncated to exactly `width` columns, one `Span` per surviving
-    // run plus the tail. Mirrors `super::flock::fit`'s own algorithm
-    // (single-width-char truncation, one column reserved for a trailing
-    // `…`) but walks a list of coloured runs instead of one string, so a
-    // caller with several roles on one line keeps the same
-    // drop-from-the-right behaviour.
+    // run plus the tail. Calls [`super::flock::take_columns`] once per run
+    // with the budget left, so several coloured roles on one line share the
+    // table's drop-from-the-right behaviour instead of restating its loop.
     fn fit(runs: &[Run], width: u16, palette: Palette) -> Vec<Span<'static>> {
         let width = usize::from(width);
         let total: usize = runs
@@ -85,15 +84,8 @@ impl Ink {
             if used >= budget {
                 break;
             }
-            let mut kept = String::new();
-            for c in run.text.chars() {
-                let c_width = char_columns(c);
-                if used + c_width > budget {
-                    break;
-                }
-                kept.push(c);
-                used += c_width;
-            }
+            let (kept, taken) = take_columns(&run.text, budget - used);
+            used += taken;
             if !kept.is_empty() {
                 spans.push(Span::styled(kept, run.ink.style(palette)));
             }
