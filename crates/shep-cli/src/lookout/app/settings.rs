@@ -457,30 +457,20 @@ pub(super) fn typed_text_of(edit: &SettingEdit) -> Option<(SettingField, TextBox
 
 impl App {
     /// The settings screen's own state, or `None` while the dashboard is
-    /// showing.
+    /// showing: [`Body::settings`] over this app's body.
     #[must_use]
     pub fn settings(&self) -> Option<&Settings> {
-        match &self.body {
-            Body::Settings(settings) => Some(settings),
-            Body::FlockTable
-            | Body::ConfigPane(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }
+        self.body.settings()
     }
 
     /// [`Self::settings`]'s mutable twin, for the settings keymap and the
     /// handlers that update a field or a pending edit in place.
+    ///
+    /// A caller that still needs another `App` field while it holds the
+    /// screen calls [`Body::settings_mut`] on `self.body` instead, which
+    /// borrows no more than the body.
     pub(super) fn settings_mut(&mut self) -> Option<&mut Settings> {
-        match &mut self.body {
-            Body::Settings(settings) => Some(settings),
-            Body::FlockTable
-            | Body::ConfigPane(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }
+        self.body.settings_mut()
     }
 
     /// The resolved style level and which layer chose it, which the STYLE LEVEL

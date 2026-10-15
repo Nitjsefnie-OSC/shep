@@ -28,6 +28,7 @@
 import Sheep from "../marks/Sheep.astro";
 import Dog from "../marks/Dog.astro";
 import Barn from "../marks/Barn.astro";
+import Tuft from "./Tuft.astro";
 
 const stars = [
   [8, 14, 3, 3.1], [16, 38, 2, 4.2], [24, 8, 2.5, 2.6], [33, 24, 3, 3.8], [41, 7, 2, 4.6],
@@ -251,7 +252,8 @@ const cloudMotion = (c: CloudSpec) => {
  * and take the far-depth filter; near ones sit on the near hill under
  * the fence. Retune these alongside the grazing/roaming configs above —
  * a tuft nobody stops at is scenery, a stop with no tuft is a sheep
- * staring at nothing.
+ * staring at nothing. Both layers draw through the one Tuft.astro
+ * component, so a retune here is the whole change.
  */
 interface TuftSpec {
   left: string;
@@ -405,26 +407,11 @@ const grazing = [
     </div>
 
     <div class="tuft-layer far" aria-hidden="true">
-      {tufts.filter((t) => t.far).map((t) => (
-        <span
-          class="tuft"
-          style={`left:${t.left};bottom:${t.bottom};width:${t.width}px;${t.flip ? "transform:scaleX(-1);" : ""}`}
-        >
-          <svg viewBox="0 0 32 18" width="100%" aria-hidden="true">
-            <g
-              fill="none"
-              stroke="var(--grass-deep)"
-              stroke-width="3"
-              stroke-linecap="round"
-            >
-              <path d="M6 17C5 11 3 8 2 3" />
-              <path d="M12 17C12 9 11 6 12 1" />
-              <path d="M18 17C19 10 21 7 23 3" />
-              <path d="M25 17C26 12 28 10 30 7" />
-            </g>
-          </svg>
-        </span>
-      ))}
+      {tufts
+        .filter((t) => t.far)
+        .map((t) => (
+          <Tuft {...t} />
+        ))}
     </div>
 
     <div class="barn">
@@ -445,26 +432,11 @@ const grazing = [
     </div>
 
     <div class="tuft-layer" aria-hidden="true">
-      {tufts.filter((t) => !t.far).map((t) => (
-        <span
-          class="tuft"
-          style={`left:${t.left};bottom:${t.bottom};width:${t.width}px;${t.flip ? "transform:scaleX(-1);" : ""}`}
-        >
-          <svg viewBox="0 0 32 18" width="100%" aria-hidden="true">
-            <g
-              fill="none"
-              stroke="var(--grass-deep)"
-              stroke-width="3"
-              stroke-linecap="round"
-            >
-              <path d="M6 17C5 11 3 8 2 3" />
-              <path d="M12 17C12 9 11 6 12 1" />
-              <path d="M18 17C19 10 21 7 23 3" />
-              <path d="M25 17C26 12 28 10 30 7" />
-            </g>
-          </svg>
-        </span>
-      ))}
+      {tufts
+        .filter((t) => !t.far)
+        .map((t) => (
+          <Tuft {...t} />
+        ))}
     </div>
 
     <div class="fence">
@@ -879,11 +851,6 @@ const grazing = [
 
   .tuft-layer.far {
     filter: saturate(0.58) brightness(1.07);
-  }
-
-  .tuft {
-    position: absolute;
-    line-height: 0;
   }
 
   .grazing-sheep {
