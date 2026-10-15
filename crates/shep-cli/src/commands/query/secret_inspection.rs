@@ -43,9 +43,9 @@ pub(super) async fn describe_selector(
                 let (rows, unreadable) = gather_secrets(paths, host_environment, &procs);
                 if let Some(error) = unreadable {
                     let message = format!(
-                        "the secret store at {} could not be read ({error}), so every \
-                         reference below reads as missing whether or not the store holds \
-                         a value for it",
+                        "the secret store at {} could not be read ({error}), so every bare \
+                         reference below reads as missing whether or not the store holds a value \
+                         for it; namespaced references still resolve from the provider cache",
                         paths.secrets.display()
                     );
                     streams.aside(SECRET_STORE_UNREADABLE_NOTICE, &message);
@@ -593,5 +593,150 @@ mod tests {
         );
         let rendered = String::from_utf8(out).unwrap();
         assert!(rendered.contains("DB_PASSWORD"), "{rendered}");
+    }
+
+    /// The whole notice, byte for byte. The old wording said "every
+    /// reference below reads as missing", which is true only of a bare one:
+    /// a namespaced reference resolves against the provider cache, a
+    /// separate file `gather_secrets` reads regardless. A store newer than
+    /// this build is the unreadable case whose failure text is this repo's
+    /// own, so the notice can be pinned as one literal rather than matched
+    /// around a `serde_json` message that a dependency bump may reword.
+    #[tokio::test]
+    async fn the_unreadable_store_notice_says_bare_references_read_as_missing_and_namespaced_ones_still_resolve()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let path = shep_client::testing::control_address(dir.path());
+        let (client, daemon) = fake_client_with_ack(&path, sample_ack()).await;
+        daemon.reply_to_describe(vec![
+            ProcessInfo::builder(1, "web", ProcStatus::Online).build(),
+        ]);
+        let home = dir.path().display().to_string();
+        let paths = ShepPaths::resolve(
+            &move |key| (key == "SHEP_HOME").then(|| home.clone()),
+            dir.path(),
+        );
+
+        let mut config = shep_core::config::AppConfig::minimal("web", "./srv");
+        config
+            .env
+            .insert("A".into(), "{{secret:DB_PASSWORD}}".into());
+        let roll = FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
+            app: config,
+            instances_running: 1,
+            disabled: false,
+        }]);
+        std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
+        std::fs::write(&paths.secrets, r#"{"version":99,"entries":{}}"#).unwrap();
+
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = {
+            let mut streams = Streams {
+                out: &mut out,
+                err: &mut err,
+                style: crate::style::Presentation::BARE,
+                fmt: Format::Table,
+            };
+            describe(
+                &client,
+                &mut streams,
+                &paths,
+                &SelectorArgs {
+                    selectors: vec!["all".into()],
+                },
+            )
+            .await
+        };
+
+        assert_eq!(code, ExitCode::Success);
+        assert_eq!(
+            String::from_utf8(err).unwrap(),
+            format!(
+                "notice[{SECRET_STORE_UNREADABLE_NOTICE}]: the secret store at {} could not be \
+                 read (secret store is version 99, newer than this build understands), so every \
+                 bare reference below reads as missing whether or not the store holds a value for \
+                 it; namespaced references still resolve from the provider cache\n",
+                paths.secrets.display()
+            ),
+            "the notice must name the file, say bare references read as missing, and say \
+             namespaced ones still resolve"
+        );
+    }
+
+    /// The case the old wording denied: `vercel/KEY` resolves against the
+    /// provider cache, a separate file `gather_secrets` reads whether or not
+    /// the store opened. So one run can print the notice and still call a
+    /// namespaced reference `resolved`.
+    #[tokio::test]
+    async fn a_namespaced_reference_still_resolves_while_the_store_is_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = shep_client::testing::control_address(dir.path());
+        let (client, daemon) = fake_client_with_ack(&path, sample_ack()).await;
+        daemon.reply_to_describe(vec![
+            ProcessInfo::builder(1, "web", ProcStatus::Online).build(),
+        ]);
+        let home = dir.path().display().to_string();
+        let paths = ShepPaths::resolve(
+            &move |key| (key == "SHEP_HOME").then(|| home.clone()),
+            dir.path(),
+        );
+
+        let mut config = shep_core::config::AppConfig::minimal("web", "./srv");
+        config
+            .env
+            .insert("A".into(), "{{secret:DB_PASSWORD}}".into());
+        config
+            .env
+            .insert("B".into(), "{{secret:vercel/KEY}}".into());
+        let roll = FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
+            app: config,
+            instances_running: 1,
+            disabled: false,
+        }]);
+        std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
+        std::fs::write(&paths.secrets, b"{not json").unwrap();
+        std::fs::write(
+            &paths.secrets_cache,
+            r#"{"version":2,"namespaces":{"vercel":{"KEY":{"production":"sk_live"}}},"pushed":{"vercel":["production"]}}"#,
+        )
+        .unwrap();
+
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = {
+            let mut streams = Streams {
+                out: &mut out,
+                err: &mut err,
+                style: crate::style::Presentation::BARE,
+                fmt: Format::Table,
+            };
+            describe(
+                &client,
+                &mut streams,
+                &paths,
+                &SelectorArgs {
+                    selectors: vec!["all".into()],
+                },
+            )
+            .await
+        };
+
+        assert_eq!(code, ExitCode::Success);
+        let warning = String::from_utf8(err).unwrap();
+        assert!(
+            warning.contains("could not be read"),
+            "the store still failed: {warning}"
+        );
+        let rendered = String::from_utf8(out).unwrap();
+        assert!(
+            rendered.contains("vercel/KEY (production): resolved"),
+            "the provider cache is read regardless of the store: {rendered}"
+        );
+        assert!(
+            rendered.contains("DB_PASSWORD (production): missing"),
+            "the bare reference is the one that reads as missing: {rendered}"
+        );
+        assert!(!rendered.contains("sk_live"), "never a value: {rendered}");
     }
 }
