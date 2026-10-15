@@ -9,13 +9,8 @@
 use ratatui::text::Line;
 use shep_core::config::ApplyGroup;
 
+use super::super::flock::GUTTER;
 use crate::output::width::{char_columns, text_columns};
-
-/// The columns every line spends on the selection mark and the space after
-/// it, before any cell is drawn. `settings::GUTTER`'s twin, private there,
-/// and it exists for the reason that one does: a budget that forgets it is
-/// a budget every line overruns.
-pub(super) const GUTTER: u16 = 2;
 
 /// The close dialog's own interior width, once it is boxed: what
 /// [`super::close::close_dialog_lines`] lays its rows out to when [`super::close::draw_close_dialog`]
