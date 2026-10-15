@@ -23,7 +23,10 @@ pre-release number carries no changelog section, so it counts as a range
 boundary but is never itself audited.
 
 Ranges use `git log --full-history` through the shared guard code, so a
-commit on a diamond leg the release-plz walk never crossed is still seen.
+commit on a diamond leg the release-plz walk never crossed is still seen. A
+parentless root commit has no first parent for the guard's diff, so it is
+diffed against the empty tree instead, the same bound the first range
+starts at.
 
 Output, per crate: released sections, empty sections, empty sections that
 owed an entry, and missing lines in total. Then one line per gap: crate,
@@ -185,6 +188,22 @@ def versioned_sections(text: str) -> dict[tuple[int, int, int], list[str]]:
     return found
 
 
+def touched_paths(repo: fix.Repo, sha: str) -> list[str]:
+    """Files the commit brought into the tree, the guard's way, plus the one
+    commit the guard cannot read: a parentless root commit has no `^1`, so
+    the guard's diff fails and it reports nothing. Diff it against the empty
+    tree, the bound the first release's range starts at, or the commit that
+    created a crate is never matched to that crate.
+    """
+    paths = fix.touched_paths(repo, sha)
+    if paths:
+        return paths
+    if repo.try_git("rev-parse", "--quiet", "--verify", f"{sha}^1") is not None:
+        return paths
+    raw = repo.try_git("diff", "--name-only", EMPTY_TREE, sha)
+    return [line for line in (raw or "").splitlines() if line]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", default=str(SCRIPTS.parent))
@@ -214,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         for commit in commits
     }
     paths = {
-        sha: fix.touched_paths(repo, sha)
+        sha: touched_paths(repo, sha)
         for sha, entry in entries.items()
         if entry is not None
     }

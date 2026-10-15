@@ -9,7 +9,9 @@ releases, each tagged per crate the way release-plz tags one, with one
 release per shape the audit has to tell apart: a feat whose section came out
 empty, a chore-only release, a docs commit, a breaking chore, a commit that
 only touched the other crate, and a section that already carries its line.
-Nothing here touches the real repository.
+The fixture's own root commit is a chore, so it owes no line; TestRootCommit
+builds a smaller repository where the parentless root commit is a feat that
+creates the crate itself. Nothing here touches the real repository.
 """
 
 from __future__ import annotations
@@ -44,7 +46,13 @@ HEADER = (
 
 
 class Fixture(unittest.TestCase):
-    """A two-crate repository with five tagged releases, one per audit case."""
+    """A two-crate repository with five tagged releases, one per audit case.
+
+    Subclasses that want a different repository override `crates` and
+    `_build_history`.
+    """
+
+    crates: tuple[str, ...] = ("shep-core", "shep-daemon")
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -60,13 +68,19 @@ class Fixture(unittest.TestCase):
             (self.repo / name).write_text((REPO_ROOT / name).read_text())
 
         self._write_manifests()
-        for crate in ("shep-core", "shep-daemon"):
+        for crate in self.crates:
             self.write(f"crates/{crate}/CHANGELOG.md", HEADER + "## [Unreleased]\n\n")
 
+        self._build_history()
+
+    def _build_history(self) -> None:
         # 0.1.0: a feat whose line release-plz did write. The baseline that
-        # the audit must not report.
+        # the audit must not report. The root commit is a chore, so the
+        # fixture's own root commit owes no line; TestRootCommit is the case
+        # where the root commit owes one.
+        self.commit("chore: fixture workspace with two crates", date="2026-01-01T00:00:00")
         self.write("crates/shep-core/src/lib.rs", "pub fn base() {}\n")
-        self.commit("feat(core): base work", date="2026-01-01T00:00:00")
+        self.commit("feat(core): base work", date="2026-01-01T01:00:00")
         self._release(
             "0.1.0",
             {"shep-core": "### Added\n\n- Base work\n"},
@@ -134,24 +148,24 @@ class Fixture(unittest.TestCase):
         return self.git("log", "-1", "--format=%H", f"--grep={subject}").strip()
 
     def _write_manifests(self) -> None:
+        members = "\n".join(f'    "crates/{crate}",' for crate in self.crates)
         self.write(
             "Cargo.toml",
             '[workspace]\n'
             'resolver = "3"\n'
             'members = [\n'
-            '    "crates/shep-core",\n'
-            '    "crates/shep-daemon",\n'
+            f"{members}\n"
             ']\n'
             '\n'
             '[workspace.package]\n'
             'version = "0.1.0"\n'
             'edition = "2024"\n',
         )
-        for directory, name in (("crates/shep-core", "shep-core"), ("crates/shep-daemon", "shep-daemon")):
+        for crate in self.crates:
             self.write(
-                f"{directory}/Cargo.toml",
+                f"crates/{crate}/Cargo.toml",
                 "[package]\n"
-                f'name = "{name}"\n'
+                f'name = "{crate}"\n'
                 'description = "fixture"\n'
                 "version.workspace = true\n"
                 "edition.workspace = true\n",
@@ -160,14 +174,14 @@ class Fixture(unittest.TestCase):
     def _release(self, version: str, sections: dict[str, str], date: str) -> None:
         """Append this release's section to each changelog, commit it, and tag
         every crate at it the way release-plz's per-package tags do."""
-        for crate in ("shep-core", "shep-daemon"):
+        for crate in self.crates:
             path = f"crates/{crate}/CHANGELOG.md"
             text = (self.repo / path).read_text()
             body = sections.get(crate, "")
             section = f"## [{version}] - {date}\n\n{body}\n" if body else f"## [{version}] - {date}\n\n\n"
             self.write(path, text.replace("## [Unreleased]\n\n", "## [Unreleased]\n\n" + section))
         self.commit(f"chore: release v{version}", date=f"{date}T00:00:00")
-        for crate in ("shep-core", "shep-daemon"):
+        for crate in self.crates:
             self.git("tag", f"{crate}-v{version}")
 
     # Running the audit.
@@ -315,6 +329,35 @@ class TestAudit(Fixture):
         self.assertEqual(self.gap_lines(run.stdout, "shep-core", "0.5.0"), [])
         self.assertEqual(self.gap_lines(run.stdout, "shep-core", "0.1.0"), [])
         self.assertNotIn("fix(core): close the gap", run.stdout)
+
+
+class TestRootCommit(Fixture):
+    """The first release's range starts at the empty tree, so it holds the
+    repository's parentless root commit. The guard diffs a commit against
+    its first parent, which a root commit does not have, so the audit has
+    to diff a parentless commit against the empty tree instead: a feat that
+    created the crate itself would otherwise never be matched to that
+    crate."""
+
+    crates = ("shep-core",)
+
+    def _build_history(self) -> None:
+        # The root commit is the feat that opens the crate.
+        self.write("crates/shep-core/src/lib.rs", "pub fn root() {}\n")
+        self.commit("feat(core): the root commit opens the crate", date="2026-01-01T00:00:00")
+        self._release("0.1.0", {}, date="2026-01-02")
+
+    def test_a_parentless_root_commit_that_owes_a_line_is_reported(self) -> None:
+        run = self.run_audit()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        core = self.counts(run.stdout, "shep-core")
+        self.assertEqual(core, {"sections": 1, "empty": 1, "owed": 1, "missing": 1})
+        gaps = self.gap_lines(run.stdout, "shep-core", "0.1.0")
+        self.assertEqual(len(gaps), 1)
+        self.assertIn("feat(core): the root commit opens the crate", gaps[0])
+        self.assertIn(
+            self.sha_of("feat(core): the root commit opens the crate")[:10], gaps[0]
+        )
 
 
 if __name__ == "__main__":
