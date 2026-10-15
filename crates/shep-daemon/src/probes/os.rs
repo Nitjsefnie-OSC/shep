@@ -321,7 +321,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
-    use crate::testing_http::{HttpReply, loopback_http, loopback_http_on};
+    use crate::testing::{HttpReply, loopback_http, loopback_http_on};
 
     /// Every test's probe timeout: generous enough that CI/loaded-machine
     /// scheduling jitter can't turn a real pass into a flaky timeout, small

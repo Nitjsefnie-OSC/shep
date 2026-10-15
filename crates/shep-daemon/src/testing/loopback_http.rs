@@ -1,5 +1,6 @@
-// The loopback HTTP fake split out of `testing`: the gate a probe test
-// dials, with its replies held by the test instead of scripted at bind.
+// The loopback HTTP fake: the gate a probe test dials, with its replies held
+// by the test instead of scripted at bind. Re-exported through
+// `crate::testing`.
 use std::net::SocketAddr;
 use std::time::Duration;
 

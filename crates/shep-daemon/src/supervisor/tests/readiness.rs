@@ -12,7 +12,7 @@
 //! come from a passing probe.
 
 use super::*;
-use crate::testing_http::{HttpReply, loopback_http};
+use crate::testing::{HttpReply, loopback_http};
 
 #[tokio::test(start_paused = true)]
 async fn wait_ready_app_stays_starting_until_the_channel_signals() {
