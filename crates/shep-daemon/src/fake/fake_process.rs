@@ -161,7 +161,7 @@ impl RunningProcess for FakeProc {
     // A scripted proc models exactly one process with no descendants, so
     // `signal`'s group-wide contract and a leader-only delivery are
     // indistinguishable here. Neither is evidence that a real sheep's
-    // forked lambs are signalled; `tests/real_runner.rs` proves that.
+    // forked lambs are signalled; `tests/real_runner/signals.rs` proves that.
     fn signal(&mut self, sig: StopSignal) -> Result<(), RunnerError> {
         self.state.record_signal(sig.as_raw());
         Ok(())

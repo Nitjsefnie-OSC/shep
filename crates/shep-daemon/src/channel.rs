@@ -3,7 +3,7 @@
 //! Defined in `shep-channel`, reached here through shep-core's `protocol`
 //! module. This module keeps the name shep-daemon code already uses.
 //! `ChildMessage`/`ShepherdMessage` appear across the runner, the
-//! supervisor, the scripted fake, and `tests/real_runner.rs`.
+//! supervisor, the scripted fake, and `tests/real_runner/`.
 //!
 //! Nothing is defined here. Add a variant, a field, or a fixture in
 //! shep-channel.
