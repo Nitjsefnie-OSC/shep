@@ -139,12 +139,48 @@ impl Render for DogRows {
     const PRIORITIES: &'static [u8] = &[0, 0, 0, 2, 4, 6, 5, 3, 1, 7];
 }
 
+/// `DogActionRow`'s STATUS cell and the SHEPHERD cell beside it, as one
+/// choice.
+///
+/// The two are never independent: a dog verb reaches for one of its own
+/// `no shepherd` sentences exactly when no shepherd answered, and for a
+/// status the shepherd reported exactly when it did. Holding the pair in one
+/// type is what makes the other combination a type error instead of a field
+/// no test read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DogActionStatus {
+    /// No shepherd answered: the verb wrote the config and reports what the
+    /// next shepherd will do. `shepherd_acted` reads `false`.
+    NoShepherd(&'static str),
+    /// A shepherd answered the verb's request. `shepherd_acted` reads `true`.
+    Acted(&'static str),
+}
+
+impl DogActionStatus {
+    /// The STATUS cell's text, which for [`Self::NoShepherd`] is a whole
+    /// sentence rather than a status rendering.
+    #[must_use]
+    pub const fn text(self) -> &'static str {
+        match self {
+            Self::NoShepherd(text) | Self::Acted(text) => text,
+        }
+    }
+
+    /// Whether a shepherd acted, which is what the SHEPHERD column and the
+    /// `shepherd_acted` JSON key report.
+    #[must_use]
+    pub const fn shepherd_acted(self) -> bool {
+        matches!(self, Self::Acted(..))
+    }
+}
+
 /// `shep enable`/`disable`/`adopt`, and `shep delete`/`rehome` on a dog's,
 /// one-row reply: what the config edit and, if a shepherd was reached, the
 /// resulting RPC did.
 ///
 /// [`Self::shepherd_acted`] and [`Self::status`] are how a `--format json`
-/// consumer tells the two outcomes apart.
+/// consumer tells the two outcomes apart. Both come out of the one
+/// [`DogActionStatus`] the row is built from, so they cannot disagree.
 ///
 /// `source` keeps the whole [`DogSource`], so JSON carries an adopted
 /// binary's path; the SOURCE column renders the kind alone, which is all a
@@ -159,20 +195,19 @@ pub struct DogActionRow {
 }
 
 impl DogActionRow {
-    /// `source` takes a [`DogSource`] or an [`Option`] of one; `status` takes
-    /// a [`ProcStatus`](shep_core::status::ProcStatus) or one of the dog
-    /// verbs' own sentences.
+    /// `source` takes a [`DogSource`] or an [`Option`] of one; `status` says
+    /// at once what the STATUS cell reads and whether a shepherd acted.
+    #[must_use]
     pub fn new(
         name: impl Into<String>,
         source: impl Into<Option<DogSource>>,
-        status: impl Into<&'static str>,
-        shepherd_acted: bool,
+        status: DogActionStatus,
     ) -> Self {
         Self {
             name: name.into(),
             source: source.into(),
-            shepherd_acted,
-            status: status.into(),
+            shepherd_acted: status.shepherd_acted(),
+            status: status.text(),
         }
     }
 }
@@ -269,7 +304,11 @@ pub(crate) mod tests {
     #[test]
     fn dog_enabled_row_does_not_drift() {
         assert_no_drift(
-            &DogActionRow::new("metrics", DogSource::BuiltIn, "online", true),
+            &DogActionRow::new(
+                "metrics",
+                DogSource::BuiltIn,
+                DogActionStatus::Acted("online"),
+            ),
             |j| j,
             &["SOURCE"],
         );
@@ -282,8 +321,7 @@ pub(crate) mod tests {
             &DogActionRow::new(
                 "metrics",
                 DogSource::BuiltIn,
-                "not running; will not start with the next shepherd",
-                false,
+                DogActionStatus::NoShepherd("not running; will not start with the next shepherd"),
             ),
             |j| j,
             &["SOURCE"],
@@ -300,11 +338,43 @@ pub(crate) mod tests {
                     path: "/usr/local/bin/shep-otel".to_string(),
                     channel: false,
                 },
-                "online",
-                true,
+                DogActionStatus::Acted("online"),
             ),
             |j| j,
             &["SOURCE"],
+        );
+    }
+
+    /// The SHEPHERD cell and the `shepherd_acted` key are read off which
+    /// variant the status came in, so a verb cannot report that a shepherd
+    /// acted while its own STATUS says none did.
+    #[test]
+    fn the_shepherd_cell_and_key_come_from_the_status_variant() {
+        let acted = DogActionRow::new(
+            "metrics",
+            DogSource::BuiltIn,
+            DogActionStatus::Acted("online"),
+        );
+        assert_eq!(acted.rows()[0][2], "true");
+        assert_eq!(acted.rows()[0][3], "online");
+        assert_eq!(
+            serde_json::to_value(&acted).unwrap()["shepherd_acted"],
+            serde_json::json!(true)
+        );
+
+        let absent = DogActionRow::new(
+            "metrics",
+            DogSource::BuiltIn,
+            DogActionStatus::NoShepherd("no shepherd running; the config was written"),
+        );
+        assert_eq!(absent.rows()[0][2], "false");
+        assert_eq!(
+            absent.rows()[0][3],
+            "no shepherd running; the config was written"
+        );
+        assert_eq!(
+            serde_json::to_value(&absent).unwrap()["shepherd_acted"],
+            serde_json::json!(false)
         );
     }
 
@@ -319,8 +389,7 @@ pub(crate) mod tests {
                     path: "/usr/local/bin/shep-otel".to_string(),
                     channel: false,
                 },
-                "stopped",
-                true,
+                DogActionStatus::Acted("stopped"),
             ),
             |j| j,
             &["SOURCE"],
@@ -329,8 +398,7 @@ pub(crate) mod tests {
             &DogActionRow::new(
                 "ghost",
                 None::<DogSource>,
-                "not running; will not start with the next shepherd",
-                false,
+                DogActionStatus::NoShepherd("not running; will not start with the next shepherd"),
             ),
             |j| j,
             &["SOURCE"],
@@ -387,8 +455,7 @@ pub(crate) mod tests {
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
                 channel: false,
             },
-            "online",
-            true,
+            DogActionStatus::Acted("online"),
         );
         let row = &acted.rows_for(coloured(), true)[0];
         assert_eq!(
@@ -399,7 +466,11 @@ pub(crate) mod tests {
         assert_eq!(row[3], painted("(o.o) online", Role::Meadow));
 
         let sentence = "no shepherd running; the config was written";
-        let unacted = DogActionRow::new("log-rotate", DogSource::BuiltIn, sentence, false);
+        let unacted = DogActionRow::new(
+            "log-rotate",
+            DogSource::BuiltIn,
+            DogActionStatus::NoShepherd(sentence),
+        );
         let row = &unacted.rows_for(coloured(), true)[0];
         assert_eq!(row[3], sentence, "a sentence is left exactly as it was");
     }
@@ -411,8 +482,7 @@ pub(crate) mod tests {
         let row = &DogActionRow::new(
             "log-rotate",
             DogSource::BuiltIn,
-            "no shepherd running",
-            false,
+            DogActionStatus::NoShepherd("no shepherd running"),
         )
         .rows_for(coloured(), true)[0];
         assert_eq!(row[0], "log-rotate");
@@ -422,8 +492,12 @@ pub(crate) mod tests {
     /// `rehome` is the only one of the four whose SOURCE can be absent.
     #[test]
     fn a_rehomed_row_with_nothing_to_forget_still_mutes_its_source() {
-        let row = &DogActionRow::new("metrics", None::<DogSource>, "stopped", true)
-            .rows_for(coloured(), true)[0];
+        let row = &DogActionRow::new(
+            "metrics",
+            None::<DogSource>,
+            DogActionStatus::Acted("stopped"),
+        )
+        .rows_for(coloured(), true)[0];
         assert_eq!(row[1], painted("-", Role::Ink3));
         assert_eq!(row[3], painted("(-.-) stopped", Role::Ink3));
     }
@@ -440,8 +514,7 @@ pub(crate) mod tests {
                 path: "/usr/local/bin/shep-otel".to_string(),
                 channel: false,
             },
-            "online",
-            true,
+            DogActionStatus::Acted("online"),
         );
         assert_eq!(adopted.rows()[0][1], "adopted", "the column names a kind");
 
@@ -452,7 +525,11 @@ pub(crate) mod tests {
         assert_eq!(json["shepherd_acted"], serde_json::json!(true));
 
         // `rehome` alone reaches this: `null`, never the column's own `-`.
-        let forgotten = DogActionRow::new("metrics", None::<DogSource>, "stopped", false);
+        let forgotten = DogActionRow::new(
+            "metrics",
+            None::<DogSource>,
+            DogActionStatus::NoShepherd("not running; will not start with the next shepherd"),
+        );
         assert_eq!(forgotten.rows()[0][1], "-");
         assert_eq!(
             serde_json::to_value(&forgotten).unwrap()["source"],

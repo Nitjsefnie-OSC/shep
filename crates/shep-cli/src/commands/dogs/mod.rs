@@ -24,7 +24,7 @@ use shep_core::protocol::DogSource;
 
 use crate::commands::shep_toml::{ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
-use crate::output::{DogActionRow, Streams, emit, write_outcome};
+use crate::output::{DogActionRow, DogActionStatus, Streams, emit, write_outcome};
 
 mod adopt;
 mod barks;
@@ -60,36 +60,38 @@ pub(crate) use vet::{VERSION_BUDGET, ask_schema, dog_env};
 /// [`DogActionRow`]'s status when
 /// `enable` wrote the config and no shepherd answered. A success outcome:
 /// `enable` never autostarts one.
-const NO_SHEPHERD_ENABLE_STATUS: &str = "will start with the next shepherd";
+const NO_SHEPHERD_ENABLE_STATUS: DogActionStatus =
+    DogActionStatus::NoShepherd("will start with the next shepherd");
 
 /// [`DogActionRow`]'s status when
 /// `disable` wrote the config and no shepherd answered: the mirror of
 /// [`NO_SHEPHERD_ENABLE_STATUS`].
-const NO_SHEPHERD_DISABLE_STATUS: &str = "not running; will not start with the next shepherd";
+const NO_SHEPHERD_DISABLE_STATUS: DogActionStatus =
+    DogActionStatus::NoShepherd("not running; will not start with the next shepherd");
 
 /// [`DogActionRow`]'s status when a
 /// shepherd stopped the dog.
-const DISABLED_STATUS: &str = "stopped";
+const DISABLED_STATUS: DogActionStatus = DogActionStatus::Acted("stopped");
 
 /// Writes `verb`'s [`DogActionRow`] to stdout in the invocation's format
 /// and returns the exit code the write earns.
 ///
 /// Every dog verb ends here, from the branch where no shepherd answered
-/// (`shepherd_acted: false`) and from the one where it did.
+/// ([`NO_SHEPHERD_ENABLE_STATUS`] or [`NO_SHEPHERD_DISABLE_STATUS`]) and from
+/// the one where it did ([`DISABLED_STATUS`], or a status the shepherd
+/// reported).
 fn emit_dog_action(
     streams: &mut Streams<'_>,
     verb: &str,
     name: &str,
     source: impl Into<Option<DogSource>>,
-    status: impl Into<&'static str>,
-    shepherd_acted: bool,
+    status: DogActionStatus,
 ) -> ExitCode {
-    let row = DogActionRow::new(name, source, status, shepherd_acted);
     write_outcome(emit(
         &mut *streams.out,
         streams.fmt,
         verb,
-        row,
+        DogActionRow::new(name, source, status),
         streams.style,
     ))
 }

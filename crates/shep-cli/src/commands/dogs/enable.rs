@@ -10,7 +10,7 @@ use shep_core::protocol::{DogSource, Request, Response};
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::shep_toml::{ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
-use crate::output::Streams;
+use crate::output::{DogActionStatus, Streams};
 
 use super::{
     NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, emit_dog_action, fail_config,
@@ -138,7 +138,6 @@ async fn enable_after_config(
             name,
             source.clone(),
             NO_SHEPHERD_ENABLE_STATUS,
-            false,
         );
     };
     // A name a sheep already holds comes back as
@@ -148,9 +147,13 @@ async fn enable_after_config(
         source: source.clone(),
     };
     match client.request(request).await {
-        Ok(Response::DogStarted(info)) => {
-            emit_dog_action(streams, "enable", name, source.clone(), info.status, true)
-        }
+        Ok(Response::DogStarted(info)) => emit_dog_action(
+            streams,
+            "enable",
+            name,
+            source.clone(),
+            DogActionStatus::Acted(info.status.into()),
+        ),
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
     }
@@ -241,10 +244,10 @@ mod tests {
         );
     }
 
-    /// `shepherd_acted` separates "only the config changed" from "a shepherd
-    /// acted", and this verb's two branches differ in little else. The pair
-    /// is the guard: either case alone passes while the other branch carries
-    /// the wrong flag.
+    /// `shepherd_acted` and `status` together separate "only the config
+    /// changed" from "a shepherd acted", and this verb's two branches differ
+    /// in little else. The pair is the guard: either field alone passes while
+    /// the other branch carries the wrong one.
     #[tokio::test]
     async fn enable_reports_whether_a_shepherd_acted() {
         let dir = tempfile::tempdir().unwrap();
@@ -254,7 +257,10 @@ mod tests {
         })
         .await;
 
-        for (client, expected) in [(Some(&client), true), (None, false)] {
+        for (client, expected) in [
+            (Some(&client), DogActionStatus::Acted("online")),
+            (None, NO_SHEPHERD_ENABLE_STATUS),
+        ] {
             let mut out = Vec::new();
             let mut err = Vec::new();
             let mut streams = streams(&mut out, &mut err);
@@ -266,9 +272,15 @@ mod tests {
             let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
             assert_eq!(
                 json["data"]["shepherd_acted"],
-                serde_json::json!(expected),
+                serde_json::json!(expected.shepherd_acted()),
                 "client present: {}, payload: {}",
                 client.is_some(),
+                String::from_utf8_lossy(&out)
+            );
+            assert_eq!(
+                json["data"]["status"],
+                expected.text(),
+                "payload: {}",
                 String::from_utf8_lossy(&out)
             );
         }
@@ -394,7 +406,7 @@ mod tests {
         assert_ne!(code, ExitCode::Success);
         let text = String::from_utf8(err).unwrap();
         assert!(
-            !text.contains(NO_SHEPHERD_ENABLE_STATUS),
+            !text.contains(NO_SHEPHERD_ENABLE_STATUS.text()),
             "a refusal is not an absence: {text}"
         );
         assert!(text.contains("shep daemon reload"), "{text}");

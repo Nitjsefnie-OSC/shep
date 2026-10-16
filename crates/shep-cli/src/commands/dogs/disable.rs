@@ -64,7 +64,6 @@ async fn disable_after_config(
             name,
             source.clone(),
             NO_SHEPHERD_DISABLE_STATUS,
-            false,
         );
     };
     // `Response::Deleted`, the same reply `Delete` gives, though the dog stays
@@ -75,14 +74,9 @@ async fn disable_after_config(
         })
         .await
     {
-        Ok(Response::Deleted(_ids)) => emit_dog_action(
-            streams,
-            "disable",
-            name,
-            source.clone(),
-            DISABLED_STATUS,
-            true,
-        ),
+        Ok(Response::Deleted(_ids)) => {
+            emit_dog_action(streams, "disable", name, source.clone(), DISABLED_STATUS)
+        }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
     }
@@ -176,7 +170,7 @@ mod tests {
             "a shepherd answered Deleted, so it acted: {}",
             String::from_utf8_lossy(&out)
         );
-        assert_eq!(json["data"]["status"], DISABLED_STATUS);
+        assert_eq!(json["data"]["status"], DISABLED_STATUS.text());
     }
 
     /// The other half of the pair above. Pinning only the reached branch
@@ -199,7 +193,7 @@ mod tests {
             "no shepherd answered, so none acted: {}",
             String::from_utf8_lossy(&out)
         );
-        assert_eq!(json["data"]["status"], NO_SHEPHERD_DISABLE_STATUS);
+        assert_eq!(json["data"]["status"], NO_SHEPHERD_DISABLE_STATUS.text());
     }
 
     #[tokio::test]
