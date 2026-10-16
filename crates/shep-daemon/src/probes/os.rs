@@ -664,7 +664,7 @@ mod tests {
     /// transition all the way to `ESRCH` proves the process is really gone
     /// rather than exited-but-unreaped.
     ///
-    /// Copied from `tests/real_runner.rs`'s own `assert_reaped` for the same
+    /// Copied from `tests/real_runner/main.rs`'s own `assert_reaped` for the same
     /// reason that one is a copy of `daemon_e2e.rs`'s: an integration binary
     /// is a separate crate and cannot share a `#[cfg(test)]` helper with this
     /// module.

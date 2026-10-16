@@ -755,7 +755,7 @@ fn a_long_path_is_summarised_and_a_startup_units_own_path_is_not() {
 }
 
 // Everything else in this module needs a real OS child and lives in
-// `tests/real_runner.rs`; the pid cases below need no process at all.
+// `tests/real_runner/`; the pid cases below need no process at all.
 /// `cfg(unix)` alongside `signal_group`, the function it guards. There
 /// is no negative-pid primitive on Windows and so no zero-pid hazard:
 /// `kill_tree` addresses a job handle, which cannot accidentally name

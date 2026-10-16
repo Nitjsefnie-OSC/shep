@@ -300,7 +300,7 @@ pub mod notify;
 /// Unix only: built on `nix` process-group signals and `command-fds` fd-3
 /// passing, both `#[cfg(unix)]` deps. Public because `shep-cli` hands
 /// [`TokioRunner`](tokio_runner::TokioRunner) to [`boot`], and
-/// `tests/real_runner.rs` drives it against real children.
+/// `tests/real_runner/` drives it against real children.
 pub mod tokio_runner;
 
 // Portable: it names `shep_core::transport`, so one accept loop and
