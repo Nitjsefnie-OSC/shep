@@ -103,9 +103,9 @@ import { clouds, cloudMotion } from "./clouds";
     @supports (animation-timeline: scroll()) {
       /*
        * The `.cloud` member of the shared base for every scroll-driven
-       * element (its `.mist` member is now the only one still in
-       * SkyStage.astro). It has to be restated here rather than left in
-       * the parent's selector list: Astro scopes each component's
+       * element (the `.mist` member now lives in PastureScenery.astro).
+       * It has to be restated here rather than left in the parent's
+       * selector list: Astro scopes each component's
        * selectors to that component's own elements, so a `.cloud` in
        * SkyStage.astro would match nothing once the markup moved, and the
        * build stays green. Same three declarations, same order relative to
