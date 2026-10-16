@@ -1,0 +1,201 @@
+---
+/*
+ * The landing pasture's animals, in document order: the three grazing sheep
+ * (far, mid, near), the watch dog, then the three roamers that visit and
+ * leave. SkyStage.astro renders this after <PastureScenery /> as the rest of
+ * the children inside `.pasture`, with no wrapper element of its own: these
+ * blocks are direct children of the sticky pasture, in the same DOM order
+ * they had before the split, so their z-order against the fence and the hills
+ * is unchanged. The authored config lives in animals.ts; this is the markup
+ * and the rules that style it.
+ *
+ * Not a mark: the animals themselves are the Sheep.astro and Dog.astro marks,
+ * drawn through this scene component. The component is not one: it belongs to
+ * this scene, has no design-source page behind it as its own artwork, and
+ * takes no design token of its own beyond the fleece, ink and far-depth
+ * atmosphere the pieces already used.
+ *
+ * The rules here moved with the markup because Astro scopes a `<style>` to
+ * its own component: a `.grazing-sheep` rule left in SkyStage.astro would
+ * match nothing. The `:global(.sheep-mark)` and `:global(.dog-mark)` width
+ * overrides stay global past the scoped parent, because that class belongs to
+ * the markup Sheep.astro and Dog.astro render; every parent part of those
+ * selectors (.depth-far, .watch-dog, .roamer-mid, .lamb, ...) is scoped to
+ * the markup in this file.
+ *
+ * Two things reach across the component boundary, and need no rule here:
+ * --atmo, declared on SkyStage.astro's `.pasture` and inherited through the
+ * DOM, and the animation utility classes (anim-bob, anim-chew, anim-trot,
+ * anim-walk, anim-roam, anim-gambol) with the walk/roam/gambol/trot keyframes
+ * and the `.grazing-sheep .sheep-legs` trot gate, all in src/styles/motion.css
+ * and global because that stylesheet is never scoped. These animals are the
+ * pasture's own fixed layer: they drift with the sticky pasture rather than
+ * on a timeline of their own, so this file carries no scroll-driven rule and
+ * THE SPEED MODEL in SkyStage.astro has no member here.
+ */
+import Sheep from "../marks/Sheep.astro";
+import Dog from "../marks/Dog.astro";
+import { grazing, roaming } from "./animals";
+---
+
+{grazing.map((sheep) => (
+  <div
+    class={`grazing-sheep depth-${sheep.depth} anim-walk`}
+    style={`left:${sheep.left};bottom:${sheep.bottom};--walk-amp:${sheep.walkAmp};--walk-duration:${sheep.walkDuration};--walk-delay:${sheep.walkDelay};`}
+  >
+    <Sheep
+      width={sheep.width}
+      bob
+      bobDuration={sheep.bobDuration}
+      bobDelay={sheep.bobDelay}
+      chewing={sheep.chewing}
+      trot
+      trotDuration={sheep.trotDuration}
+    />
+  </div>
+))}
+
+<div class="watch-dog">
+  <Dog width={126} wag />
+</div>
+
+{roaming.map((r) => (
+  <div
+    class={`roamer roamer-${r.depth} anim-roam`}
+    style={`bottom:${r.bottom};--roam-from:${r.from};--roam-visit:${r.visit};--roam-shift:${r.shift};--face-in:${r.facingRight ? -1 : 1};--roam-duration:${r.duration};--roam-delay:${r.delay};`}
+  >
+    <div class="trek">
+      <Sheep
+        width={r.width}
+        fleece={r.fleece}
+        bob
+        bobDuration={r.bobDuration}
+        bobDelay={r.bobDelay}
+        trot
+        trotDuration={r.trotDuration}
+      />
+      {r.lamb && (
+        <div class="lamb" style={`--gambol-duration:${r.lamb.gambolDuration};`}>
+          <Sheep width={r.lamb.width} fleece={r.lamb.fleece} class="anim-gambol" />
+        </div>
+      )}
+    </div>
+  </div>
+))}
+
+<style>
+  .grazing-sheep {
+    position: absolute;
+  }
+
+  /*
+   * Depth: width is a clamp() rather than the Sheep.astro `width` prop's
+   * fixed px, so the footprint itself shrinks with the viewport (the same
+   * fluid-figure fix the barn's min() and the dog's clamp() widths use)
+   * instead of only its position — a fixed-px sheep next to a percentage
+   * lane is exactly how bug 2 happened. Further-away sheep are
+   * also smaller, higher up (bigger `bottom`, set inline per-instance),
+   * slower to walk, and desaturated/brightened to lose contrast against the
+   * hill, plus the far one paints behind .fence (z-index 1 < fence's 2, in
+   * PastureScenery.astro).
+   */
+  .depth-far {
+    z-index: 1;
+    filter: var(--atmo);
+  }
+
+  .depth-far :global(.sheep-mark) {
+    width: clamp(34px, 4.4vw, 58px) !important;
+  }
+
+  .depth-mid {
+    z-index: 3;
+  }
+
+  .depth-mid :global(.sheep-mark) {
+    width: clamp(48px, 6.2vw, 84px) !important;
+  }
+
+  .depth-near {
+    z-index: 3;
+  }
+
+  .depth-near :global(.sheep-mark) {
+    width: clamp(60px, 8vw, 108px) !important;
+  }
+
+  .watch-dog {
+    position: absolute;
+    right: 6%;
+    bottom: 4vh;
+    z-index: 3;
+  }
+
+  .watch-dog :global(.dog-mark) {
+    width: clamp(56px, 9.4vw, 126px) !important;
+  }
+
+  /*
+   * Roamers sit at left:0 and are carried across by the roam keyframes'
+   * translateX; the same var(--roam-from) as a static transform keeps them
+   * parked offscreen for reduced-motion visitors, who would otherwise find
+   * a stranger standing in the middle of the pasture. `.trek` carries the
+   * facing flip on its own element so it can't fight the roam transform,
+   * and the lamb always trails its ewe: it is the second flex child, and
+   * the flip mirrors the whole group, so the adult leads in both
+   * directions.
+   */
+  .roamer {
+    position: absolute;
+    left: 0;
+    transform: translateX(var(--roam-from, -30vw));
+  }
+
+  .trek {
+    display: flex;
+    align-items: flex-end;
+    gap: 7px;
+  }
+
+  .roamer-mid {
+    z-index: 3;
+  }
+
+  .roamer-far {
+    z-index: 1;
+    filter: var(--atmo);
+  }
+
+  .roamer-mid :global(.sheep-mark) {
+    width: clamp(44px, 5.6vw, 78px) !important;
+  }
+
+  .roamer-far :global(.sheep-mark) {
+    width: clamp(30px, 4vw, 56px) !important;
+  }
+
+  .roamer-mid .lamb :global(.sheep-mark) {
+    width: clamp(26px, 3.2vw, 42px) !important;
+  }
+
+  .roamer-far .lamb :global(.sheep-mark) {
+    width: clamp(22px, 2.6vw, 34px) !important;
+  }
+
+  /* Responsive first pass (docs/shep-design/README.md, "Responsive":
+     "scenery reduced to a band rather than removed"): the animal members of
+     it, the front line (the dog and the visiting mid roamer) dropped below
+     the fence's lowered bottom edge, which PastureScenery.astro's own media
+     block sets. That is the same feet-clear-of-the-bottom-rail rule the mid
+     grazer's 3vh was originally chosen for. The roamer's bottom is inline
+     (per-instance), hence the !important. */
+  @media (max-width: 600px) {
+    .watch-dog {
+      bottom: 1.2vh;
+    }
+
+    .roamer-mid {
+      bottom: 1.8vh !important;
+    }
+  }
+</style>

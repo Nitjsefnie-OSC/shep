@@ -5,8 +5,10 @@
  * layer, the fence. SkyStage.astro renders this as the first child inside
  * `.pasture`, with no wrapper element of its own: these seven blocks are
  * direct children of the sticky pasture, in the same DOM order they had
- * before the split, so the animals SkyStage draws after them still paint
- * in front.
+ * before the split, so the animals PastureAnimals.astro draws after them
+ * keep the z-order they were tuned to against this scenery: the near and
+ * mid grazers, the dog and the mid roamer at z-index 3 in front of
+ * `.fence`'s 2, the far grazers and far roamers at 1 behind it on purpose.
  *
  * Not a mark: it belongs to this scene, has no design-source page behind
  * it as its own artwork, and takes no design token of its own beyond the
@@ -31,11 +33,11 @@ const posts = [30, 180, 330, 480, 630, 780, 930, 1080, 1230, 1350];
  * Grass tufts. Positions land on the spots where an animal actually
  * stands still — each grazer's walk plateau (home + ~55% of its walk
  * amplitude) and each roamer's visit spot (both configs live in
- * SkyStage.astro) — so a stopped, bobbing sheep reads as eating, plus a
+ * animals.ts) — so a stopped, bobbing sheep reads as eating, plus a
  * few decorative extras. `far` tufts render in a layer just after the far
  * hill (behind the fog, fence and every animal) and take the far-depth
  * filter; near ones sit on the near hill under the fence. Retune these
- * alongside the grazing/roaming configs in SkyStage.astro — a tuft nobody
+ * alongside the grazing/roaming configs in animals.ts — a tuft nobody
  * stops at is scenery, a stop with no tuft is a sheep staring at nothing.
  * Both layers draw through the one Tuft.astro component, so a retune here
  * is the whole change.
@@ -139,7 +141,7 @@ const tufts: TuftSpec[] = [
     bottom: 7vh;
     height: 54px;
     /* Above the hills' implicit stacking order but below the near/mid sheep
-       and dog (z-index 3, in SkyStage.astro) — the far sheep (z-index 1)
+       and dog (z-index 3, in PastureAnimals.astro) — the far sheep (z-index 1)
        sits behind this on purpose, so it reads as grazing on the other
        side of the fence. */
     z-index: 2;
@@ -232,8 +234,9 @@ const tufts: TuftSpec[] = [
      desktop hill band moves with it. The barn and mist are re-seated onto
      the shrunken far hill (26% of the viewport floated the barn in open
      sky once the hill dropped to 22vh). SkyStage.astro's own media block
-     repeats the barn's new bottom for its glow and drops the dog and the
-     visiting mid roamer below this fence's lowered bottom edge. */
+     repeats the barn's new bottom for its glow, and PastureAnimals.astro's
+     drops the dog and the visiting mid roamer below this fence's lowered
+     bottom edge. */
   @media (max-width: 600px) {
     .far-hill,
     .near-hill {
