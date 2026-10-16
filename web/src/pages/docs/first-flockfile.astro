@@ -104,7 +104,7 @@ const fieldGroups: FieldGroup[] = [
   {
     title: "Startup signaling",
     fields: [
-      { name: "listen_timeout", type: "duration", default: "3s", does: "Readiness fallback when no ready signal or probe is configured." },
+      { name: "listen_timeout", type: "duration", default: "3s", does: "Readiness fallback when no ready signal or probe is configured. Also the bound a readiness probe's polling gap is cut to." },
       { name: "wait_ready", type: "bool", default: "false", does: "Expect {\"kind\":\"ready\"} on the shepherd channel before treating the sheep as up." },
       { name: "channel", type: "bool", default: "false", does: "Open the shepherd channel on fd 3, even without wait_ready or shutdown_with_message." },
       { name: "stdin", type: "bool", default: "false", does: "Open a pipe on the sheep's stdin so shep whisper can write to it." },
@@ -146,7 +146,7 @@ const fieldGroups: FieldGroup[] = [
     title: "Networking & probes",
     fields: [
       { name: "reuse_port", type: "bool", default: "false", does: "Asserts the app sets SO_REUSEPORT itself, which lets a reload overlap the old and new instance. A probed app that leaves this off is reloaded serially instead: the old instance drains before the new one starts." },
-      { name: "readiness_probe", type: "object?", default: "none", does: "HTTP/TCP/exec probe gating reload's await-ready step." },
+      { name: "readiness_probe", type: "object?", default: "none", does: "HTTP/TCP/exec probe gating reload's await-ready step. It polls at its own interval, never more than a quarter of listen_timeout apart." },
       { name: "liveness_probe", type: "object?", default: "none", does: "HTTP/TCP/exec probe whose failures feed the restart policy." },
     ],
   },

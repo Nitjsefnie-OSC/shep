@@ -175,9 +175,10 @@ mod tests {
 
     #[test]
     fn zero_interval_rejected() {
-        // fails if interval is never inspected: a zero interval would spin
-        // the readiness wait as fast as the runtime allows for the whole
-        // `listen_timeout` (`await_ready` does not floor it)
+        // fails if interval is never inspected: a zero interval would have the
+        // readiness wait probe back to back for the whole `listen_timeout`,
+        // and a typo is refused at `shep start` rather than quietly read as
+        // the daemon's own 1ms floor
         let mut app = AppConfig::minimal("web", "./srv");
         let mut probe = probe_config("http://127.0.0.1:8080/healthz");
         probe.interval = UpDuration::from_millis(0);
@@ -251,9 +252,10 @@ target = "http://127.0.0.1:8080/healthz"
     #[test]
     fn a_sub_second_readiness_interval_is_accepted() {
         // fails if both probes are validated against the liveness floor: a
-        // readiness wait is bounded by `listen_timeout` and honours its
-        // `interval` exactly as written, so a fast app polling every 50ms
-        // to leave `starting` sooner must not be refused.
+        // readiness wait is bounded by `listen_timeout` and shortens an
+        // `interval` only where it would push the next poll past a quarter of
+        // that bound, so a fast app polling every 50ms to leave `starting`
+        // sooner must not be refused.
         let mut app = AppConfig::minimal("web", "./srv");
         let mut probe = probe_config("http://127.0.0.1:8080/healthz");
         probe.interval = UpDuration::from_millis(50);

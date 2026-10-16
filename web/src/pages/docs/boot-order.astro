@@ -147,13 +147,14 @@ script     = "./api"
 depends_on = ["db"]`}</CodeBlock>
     <CodeBlock>{probedStart}</CodeBlock>
     <Callout variant="careful">
-      That <code>interval</code> is doing real work. A probe polls every ten
-      seconds by default and the first poll runs at spawn, so an app needing
-      fifty milliseconds to bind its port fails that first poll and has
-      nothing left to answer with before <code>listen_timeout</code>{" "}
-      elapses. Measured on the flock above: 0.14 seconds at an interval of
-      100ms, and the full 3.05 at the default. Set an interval shorter than
-      the app's own startup time or the probe buys you nothing at boot.
+      A readiness probe never waits longer than a quarter of{" "}
+      <code>listen_timeout</code> between polls, whatever its{" "}
+      <code>interval</code> says. The first poll lands at spawn, before the app
+      has bound anything, so the one that matters is the next: at the defaults
+      that is 750ms, 1500ms and 2250ms inside a three second deadline. An{" "}
+      <code>interval</code> under that quarter is honoured exactly, which is
+      what the 100ms above buys, a poll every hundred milliseconds instead of
+      one every 750.
     </Callout>
 
     <h2 id="dogs-run-last-unless-you-move-one">Dogs run last, unless you move one</h2>
