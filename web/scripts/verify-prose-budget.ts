@@ -440,10 +440,16 @@ test("no BUDGETS entry carries a hand-written measured count", async () => {
   const self = fileURLToPath(import.meta.url);
   const source = await readFile(self, "utf8");
   const start = source.indexOf("export const BUDGETS");
+  assert.notEqual(start, -1, "this guard reads the BUDGETS block by name, and the name is gone");
   const block = source.slice(start, source.indexOf("};", start));
-  const written = block
-    .split("\n")
-    .filter((line) => /^\s*"?[a-z][a-z0-9-]*"?:\s*\d+,?\s*\/\/\s*\d+\s*$/.test(line));
+  const lines = block.split("\n");
+  const entries = lines.filter((line) => /^\s*"?[a-z][a-z0-9-]*"?:\s*\d+,?\s*$/.test(line));
+  assert.equal(
+    entries.length,
+    Object.keys(BUDGETS).length,
+    "this guard only saw part of the block, so it checked nothing",
+  );
+  const written = lines.filter((line) => /^\s*"?[a-z][a-z0-9-]*"?:\s*\d+,?\s*\/\/\s*\d+\s*$/.test(line));
   assert.deepEqual(
     written,
     [],
