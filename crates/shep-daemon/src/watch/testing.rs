@@ -27,12 +27,10 @@ pub(super) const EVENT_WAIT: Duration = Duration::from_secs(30);
 /// for the group loop, the actor and a sheep's task each needing a
 /// scheduling turn. Never advances the paused clock itself.
 ///
-/// Safe to bound by a plain round count, unlike `tokio_runner`'s pump
-/// tests (see #294): everything this waits on is an in-process mpsc send
-/// or actor hop, woken by a direct push onto the run queue rather than by
-/// the OS reactor, so there is no event a busy runtime could leave
-/// undelivered. A wait on real OS I/O needs a real sleep to force the
-/// runtime to park and poll it instead.
+/// A plain round count bounds it because everything this waits on is an
+/// in-process mpsc send or actor hop, pushed straight onto the run queue.
+/// A wait on an OS-delivered event needs a real sleep instead, to force the
+/// runtime to park and poll its reactor.
 const SETTLE_YIELDS: usize = 16;
 
 pub(super) async fn settle() {
