@@ -25,7 +25,8 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Run things",
         &[
-            "start", "add", "serve", "stop", "restart", "reload", "delete", "stock",
+            "start", "add", "serve", "stop", "restart", "reload", "delete", "stock", "enable",
+            "disable",
         ],
     ),
     (
@@ -40,13 +41,10 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "The shepherd",
         &[
-            "ping", "kill", "reopen", "flush", "set", "get", "unset", "secret",
+            "ping", "kill", "reopen", "flush", "set", "get", "unset", "copy", "secret",
         ],
     ),
-    (
-        "Dogs and agents",
-        &["dogs", "enable", "disable", "adopt", "rehome", "whistle"],
-    ),
+    ("Dogs and agents", &["dogs", "adopt", "whistle"]),
     ("Foreground runs", &["runtime", "dev"]),
     ("Coming from pm2", &["import"]),
     ("Help", &["welcome", "init", "help", "completions", "style"]),
@@ -69,12 +67,12 @@ Getting started
   shep bleats server      follow its output
   shep startup            bring it back after a reboot
 
-Run things       start add serve stop restart reload delete stock
+Run things       start add serve stop restart reload delete stock enable disable
 See what's up    flock describe bleats lookout fold barks
 Survive reboots  save muster startup unstartup
 Talk to a sheep  trigger signal whisper
-The shepherd     ping kill reopen flush set get unset secret
-Dogs and agents  dogs enable disable adopt rehome whistle
+The shepherd     ping kill reopen flush set get unset copy secret
+Dogs and agents  dogs adopt whistle
 Foreground runs  runtime dev
 Coming from pm2  import
 Help             welcome init help completions style

@@ -138,11 +138,12 @@ pub fn spawn_cron_worker(
                         | SupervisorError::InvalidScale(_)
                         | SupervisorError::CannotStart(_)
                         | SupervisorError::IsADog(_)
+                        | SupervisorError::Disabled(_)
                         | SupervisorError::InvalidEnv(_)
                         | SupervisorError::InvalidField(_)
                         | SupervisorError::Overrides(_)),
                     ) => {
-                        // None of these nine can arrive here. A restart
+                        // None of these ten can arrive here. A restart
                         // writes no logs, reloads nothing, scales nothing,
                         // and names no dog, field or override. Named rather
                         // than a catch-all, so a new variant fails to compile.

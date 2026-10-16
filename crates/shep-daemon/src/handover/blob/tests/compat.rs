@@ -308,6 +308,7 @@ fn a_dogs_marker_crosses_the_blob() {
     let mut entry = entry_fixture(|_| {});
     entry.dog = Some(DogSource::Adopted {
         path: "/opt/bin/shep-log-rotate".to_string(),
+        channel: false,
     });
     let mut blob = sample_handover();
     blob.sheep[0] = CarriedSheep::from_entry(&entry, 7, fds_at(11), false, None, false, None);
@@ -319,6 +320,7 @@ fn a_dogs_marker_crosses_the_blob() {
         loaded.sheep[0].dog(),
         Some(&DogSource::Adopted {
             path: "/opt/bin/shep-log-rotate".to_string(),
+            channel: false,
         }),
         "a dog that crossed the exec as an ordinary sheep is one `shep dogs` has lost"
     );

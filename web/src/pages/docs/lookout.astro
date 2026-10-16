@@ -460,6 +460,12 @@ esc/s close   j/k select   g… control enabled`;
       counted the lines inside them:
     </p>
     <CodeBlock>{feedExcerpt}</CodeBlock>
+    <p>
+      A plain line arrives in its stream's colour, <code>out</code> meadow,
+      <code>err</code> bark; a line that colours itself keeps its own until the
+      link is lost. The tags stay muted. <code>NO_COLOR</code> adds none of
+      shep's.
+    </p>
 
     <h2 id="the-sheep-pane">The sheep pane</h2>
     <p>
@@ -480,7 +486,8 @@ esc/s close   j/k select   g… control enabled`;
     <CodeBlock label="160×48, the design size">{sheepPane}</CodeBlock>
     <p>
       Below the charts, a read-only listing of the sheep's config and env
-      keys sits beside a <code>BLEATS</code> feed scoped to this sheep.{" "}
+      keys sits beside a <code>BLEATS</code> feed scoped to this sheep,
+      coloured the same way. {""}
       <code>e</code> opens the same full editor the dashboard's own{" "}
       <code>e</code> does; <code>b</code> hands the embedded feed to the
       full-screen bleats pane, filter and all, rather than opening a fresh
@@ -488,8 +495,8 @@ esc/s close   j/k select   g… control enabled`;
       step to the next or previous sheep in the current sort and filter,
       re-fetching its config and re-scaling both charts without leaving the
       pane. <code>x</code>, <code>R</code> and <code>L</code> arm and
-      confirm against the pinned sheep, the same gate and the same prompt
-      the dashboard's own action keys use.
+      confirm against the pinned sheep, on the dashboard's own gate and
+      prompt.
     </p>
     <p>
       Narrower terminals give up the second chart before the first: below
@@ -514,7 +521,8 @@ esc/s close   j/k select   g… control enabled`;
       Three filters stack on top of the feed, and a line has to pass all
       three to show. <code>o</code> cycles the stream (out, err, or both),{" "}
       <code>m</code> cycles a minimum level, and <code>/</code> opens a box
-      for a text or regex match, with matches highlighted. A level is a
+      for a text or regex match, with matches highlighted over a line's own
+      colour there. A level is a
       bare word like <code>WARN</code>, or a <code>level=warn</code> pair,
       so the filter works on logfmt output too. An app that writes neither
       can declare its own patterns, with{" "}
@@ -581,6 +589,30 @@ esc/s close   j/k select   g… control enabled`;
       It drops columns as the terminal narrows, and under 13 rows it refuses
       and names the height it needs, since half a key list is worse than a
       sentence saying it does not fit.
+    </p>
+
+    <h2 id="editing-text">Editing text</h2>
+    <p>
+      Every text box (the filters, the config, environment, list and settings
+      editors, the secret writer) draws a cursor and scrolls sideways in a
+      narrow cell.
+    </p>
+    <ul>
+      <li>
+        <code>←</code>/<code>→</code> move a character,{" "}
+        <code>Alt-←</code>/<code>Alt-→</code> or <code>Alt-b</code>/
+        <code>Alt-f</code> a word, <code>Home</code>/<code>End</code> or{" "}
+        <code>Ctrl-a</code>/<code>Ctrl-e</code> to either end.
+      </li>
+      <li>
+        <code>Delete</code> erases forward, <code>Ctrl-w</code> or{" "}
+        <code>Alt-Backspace</code> the word behind, <code>Ctrl-u</code> and{" "}
+        <code>Ctrl-k</code> everything before or after the cursor.
+      </li>
+    </ul>
+    <p class="fine">
+      Bracketed paste inserts at the cursor with newlines and control
+      characters dropped. With no box open it does nothing.
     </p>
 
     <h2 id="when-the-terminal-is-small">When the terminal is small</h2>

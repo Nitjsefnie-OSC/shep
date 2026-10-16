@@ -210,6 +210,7 @@ mod tests {
         let mut adopted = entry_fixture(|_| {});
         adopted.dog = Some(DogSource::Adopted {
             path: "/opt/bin/shep-log-rotate".to_string(),
+            channel: false,
         });
         assert_eq!(fitness(&[plain(&adopted)]), Fitness::Carryable);
     }

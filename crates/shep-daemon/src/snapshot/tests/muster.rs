@@ -30,14 +30,17 @@ fn restorable_keeps_every_member_and_starts_only_what_was_up() {
         SavedApp {
             app: AppConfig::minimal("web", "./srv"),
             instances_running: 2,
+            disabled: false,
         },
         SavedApp {
             app: stopped,
             instances_running: 0,
+            disabled: false,
         },
         SavedApp {
             app: opted_out,
             instances_running: 1,
+            disabled: false,
         },
     ]);
     let restorable = restorable(roll);
@@ -98,10 +101,12 @@ async fn muster_restores_both_and_starts_only_the_one_that_was_up() {
         SavedApp {
             app: AppConfig::minimal("up", "./srv"),
             instances_running: 1,
+            disabled: false,
         },
         SavedApp {
             app: AppConfig::minimal("down", "./srv"),
             instances_running: 0,
+            disabled: false,
         },
     ]);
     write_atomic(&paths.snapshot, &roll).unwrap();

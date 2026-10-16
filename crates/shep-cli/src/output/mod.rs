@@ -14,6 +14,9 @@
 mod described;
 mod diagnostics;
 mod flock;
+// `pub(crate)`: `commands/bleats` is outside `output` and renders every
+// log line through these three functions.
+pub(crate) mod log_line;
 
 // `pub(crate)`: `lookout::theme`'s test module calls `paint::style_for`
 // directly to pin the anstyle and ratatui colour bindings against each
@@ -21,10 +24,10 @@ mod flock;
 pub(crate) mod paint;
 mod rows;
 mod table;
-// `pub(crate)` for `width::char_columns`, which `lookout::view::flock::fit`
-// pads by: one rule for how wide a `char` draws, shared by the two surfaces
-// that pad a cell, rather than a second copy that drifts on the first
-// double-width name. The same reasoning `paint` above is public for.
+// `pub(crate)` for `width::char_columns` and `width::text_columns`, which
+// `lookout::view::flock::fit` and the view's measuring sites pad and sum
+// by: one rule for how wide a `char` draws, shared rather than a second
+// copy that drifts. The same reasoning `paint` above is public for.
 pub(crate) mod width;
 
 use std::io;
@@ -43,11 +46,12 @@ pub use flock::emit_flock;
 // nothing names them and `unused_imports` still flags it there.
 #[cfg_attr(windows, allow(unused_imports))]
 pub use rows::{
-    AvailableDogRows, BarkRows, DeletedIds, DescribedSecret, DogActionRow, DogRows, EmptiedFile,
-    EmptiedFiles, FlockRows, FlushedRows, ImportEnvRow, ImportEnvRows, ImportRow, ImportRows,
-    KillRow, KvEntry, KvRows, KvUnsetRow, LabelledLambRows, LambRows, RolledSheep, RolledSheepRows,
-    SavedRollRow, SecretKeyRow, SecretKeyRows, SecretSlotRow, SecretStatus, SecretValueRow,
-    SentLineRows, SignalledRows, StartupStep, StartupSteps, TriggeredRows,
+    AvailableDogRows, BarkRows, CopyChange, CopyReport, DeletedIds, DescribedSecret, DogActionRow,
+    DogRows, EmptiedFile, EmptiedFiles, FlockRows, FlushedRows, ImportEnvRow, ImportEnvRows,
+    ImportRow, ImportRows, KillRow, KvEntry, KvRows, KvUnsetRow, LabelledLambRows, LambRows,
+    RolledSheep, RolledSheepRows, SavedRollRow, SecretKeyRow, SecretKeyRows, SecretSlotRow,
+    SecretStatus, SecretValueRow, SentLineRows, SignalledRows, StartupStep, StartupSteps,
+    TriggeredRows,
 };
 pub use table::{human_bytes, human_duration, local_timestamp, render_table};
 

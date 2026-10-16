@@ -61,18 +61,18 @@ starts a shepherd on your behalf to act on its own edit — that would be a
 bigger side effect than a config change should cause, and `shep muster` is
 the one verb in this CLI that autostarts anything.
 
-`enable` takes a built-in name or one `shep adopt` has already recorded,
-and refuses anything else before it writes:
+`enable` takes a built-in name or one `shep adopt` has already recorded.
+Any other name is read as a sheep's, so a mistyped dog is a name no sheep
+answers to either. With a shepherd running it exits 3 and lists the dogs;
+with none running it exits 5:
 
 ```
 $ shep enable pydog
-error[invalid_config]: `pydog` is not a dog; valid names are "metrics"
-and "bark" -- if you meant a third-party dog, run `shep adopt pydog` first
+error[not_found]: selector matched no registered sheep; the dogs are "metrics" and "bark"
 ```
 
 A refused `enable` writes nothing at all: a `$SHEP_HOME` that had no
-`shep.toml` still has none afterwards. The check reads `[daemon]
-adopted_dogs`, not the shepherd, so it holds with nothing listening.
+`shep.toml` still has none afterwards.
 
 The guard is on the verb, not on the file. Write a name into `[daemon]
 enabled_dogs` by hand and the shepherd still reads it at boot, still
@@ -83,9 +83,18 @@ that looks like from `shep dogs` is a climbing restart count against a
 is where the refusal itself shows up.
 
 `shep disable <name>` is the mirror: it stops the dog if one is running,
-and removes it from the boot list either way. It carries no name check of
-its own, deliberately, so it is what takes a hand-written entry back out
-of `enabled_dogs`.
+and removes it from the boot list either way. The dog stays registered, so
+`shep flock` lists it as `disabled` and `shep enable <name>` starts it again
+in the same row. It carries no name check of its own, deliberately, so it is
+what takes a hand-written entry back out of `enabled_dogs`.
+
+A `shep daemon reload` carries every dog holding a process, marked or not,
+and leaves a parked one behind. The predecessor never reads `shep.toml`; the
+successor boots from it, so a dog that is disabled and stopped is registered
+at rest there the way a cold boot registers it, under a new id. A dog
+`enabled_dogs` dropped is stopped and marked by the successor, whether it
+crossed the `execve` running or already sat stopped, and the successor keeps
+that row rather than issuing a second one.
 
 Running two of these at once is safe. A provisioning script that
 backgrounds `shep adopt` and `shep enable` together has each of them take
@@ -109,6 +118,10 @@ and separate from `shep.toml`, and they never travel through the dog's
 environment. Instead the dog connects to the socket and asks for its own
 section over the wire (`Request::DogConfig`), the daemon reads the file
 fresh for every such request rather than serving a copy it cached at boot.
+A credential need not sit in that file: a string value may be
+`{{secret:KEY}}` or `{{secret:namespace/KEY}}`, and a dog that asks with
+`Request::DogConfigResolved` receives the value, while `DogConfig` serves the
+reference as written. `dogs.toml` is never rewritten by either.
 
 **Editing `[<name>]` in `dogs.toml` does not reach a dog that is already
 running.** A running dog asked for its section once, at startup, and
@@ -215,9 +228,10 @@ bound to `127.0.0.1:9615` by default:
 bind = "127.0.0.1:9615"
 ```
 
-Nothing here accumulates between scrapes — every request rebuilds the
-reading from a fresh `ListFlock` and a fresh host sample, so there is no
-stale-cache window and no state a slow scraper could hold open.
+The flock and host series are rebuilt per scrape, from a fresh `ListFlock`
+and a fresh host sample. The channel samples are not. The dog keeps the last
+sample per sender, name and label set until that sender stops or restarts, so
+a process that died never keeps reporting a value it stopped updating.
 
 | Metric | Meaning |
 |---|---|
@@ -226,13 +240,14 @@ stale-cache window and no state a slow scraper could hold open.
 | `shep_sheep_restart_total` | Restart count since registration. |
 | `shep_sheep_uptime_seconds` | Seconds since this sheep's last successful start. |
 | `shep_sheep_status` | 1 for the status this sheep is currently in, 0 for every other status. |
-| `shep_dog_up` | 1 when this dog is online, 0 otherwise. |
+| `shep_dog_up` | 1 when this dog is online, 0 otherwise. A disabled dog has no series, so disabling one never reads as it going down. |
 | `shep_daemon_up` | Always 1: the scrape reached the shepherd. |
 | `shep_daemon_pid` | The shepherd's own pid, so a restart is visible as a step change. |
 | `shep_host_memory_total_bytes` | Total physical memory on the host. |
 | `shep_host_memory_used_bytes` | Memory in use on the host, as the platform reports it. |
 | `shep_host_processes` | Number of processes running on the host, the flock included. |
 | `shep_host_uptime_seconds` | Seconds since the host booted. |
+| `shep_channel_samples_refused_total` | Channel samples this dog refused, by reason. Absent until the first refusal. |
 
 A reference Grafana dashboard built against this exact metric set ships
 in `assets/grafana/`.
@@ -243,6 +258,110 @@ plenty of hosts a sheep's name is the name of an internal service.
 Widening `bind` to `0.0.0.0` (or any non-loopback address) is one config
 line away when you want it, but the metrics dog will not make that
 decision for you by shipping wide and asking you to lock it down.
+
+### Channel samples
+
+A sheep or a dog can send its own numbers on its shepherd channel, and the
+metrics dog keeps them and appends them to every scrape, after the groups
+above, and to every OTLP export. See `docs/shepherd-channel.md` for what to
+write on fd 3.
+
+Your samples carry the same sender labels the built-in series carry: a sheep
+gets `sheep`, `id` and `fold`, a dog gets `dog` and `source`. Your own labels
+follow them.
+
+What the dog accepts, and what it refuses:
+
+| Rule | Refusal reason |
+|---|---|
+| A name matches `[a-zA-Z_:][a-zA-Z0-9_:]*` and is at most 128 bytes. | `invalid_name` |
+| A name does not start with `shep_`, which is the shepherd's own namespace. | `reserved_name` |
+| A label name matches `[a-zA-Z_][a-zA-Z0-9_]*`, is at most 64 bytes, and does not start with `__`. | `invalid_label` |
+| A label is not named `sheep`, `id`, `fold`, `dog` or `source`, which the dog writes for you. | `reserved_label` |
+| At most 16 labels, a label value at most 256 bytes, help text at most 512 bytes. | `too_long` |
+| At most 256 series per sender. A new one is refused rather than an old one evicted. | `series_cap` |
+| A name keeps the kind its first sample set. `type` absent means gauge. | `type_conflict` |
+
+A refusal is counted in `shep_channel_samples_refused_total{reason="..."}` and
+printed once per sender and reason in the dog's own log, read with
+`shep bleats metrics`. A metric that never shows up is otherwise silent.
+
+A sender's samples go when it stops, exits, restarts, is deleted or errors. A
+reload frees what the drained instance sent, through that instance's own
+deregistration, and never the samples of the instance the reload put in its
+place. A scrape also drops a sender the flock no longer
+reports as online, or reports as an instance younger than the samples it is
+holding, which is what covers the events the dog never received.
+
+### OTLP export
+
+The same series can be pushed to an OTLP/HTTP collector instead of waited
+for. `otlp_endpoint` is the only key that turns it on:
+
+```toml
+[metrics]
+otlp_endpoint = "http://127.0.0.1:4318"
+otlp_interval = "60s"
+otlp_timeout = "10s"
+
+[metrics.otlp_headers]
+Authorization = "Bearer token-from-a-secret-manager"
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `otlp_endpoint` | none | Base URL of the collector, `http://` or `https://`. Absent means no export. `/v1/metrics` is appended to it. |
+| `otlp_interval` | `60s` | How long between exports. The first lands one interval after the dog starts. |
+| `otlp_timeout` | `10s` | One export's budget, connect through response. |
+| `otlp_headers` | empty | Extra headers, the shape an authenticated collector needs. Never printed. |
+
+Export is a cargo feature: on in every prebuilt release binary and the
+`.deb`, off in `cargo install shep` and the Homebrew formula:
+
+```bash
+cargo install shep --features otel
+```
+
+A build without it refuses `otlp_endpoint` at startup, exiting
+`invalid_config` and naming the feature, rather than running a dog that
+exports nothing while `shep list` reports it online.
+
+The body is OTLP/JSON, and it carries your samples too: they land after the
+built-in groups, named exactly as `/metrics` names them. Every series above
+is a `gauge` except `shep_sheep_restart_total` and the samples you sent as
+counters, which are monotonic cumulative `sum`s. A sum's
+`startTimeUnixNano` is when the process that sent it started, read off the
+listing's uptime and floored to a whole second, so a sheep that restarts
+moves it and a collector reads your counter dropping from 1000 to 3 as the
+reset it is. `shep_sheep_restart_total` and
+`shep_channel_samples_refused_total` carry the dog's own start: both are the
+dog's counters, and the dog restarting restarts the exporter with them. A
+sample's help text is its `description`, and a sample with none has no
+description either. `shep_channel_samples_refused_total` goes out as an
+integer sum. Integers are decimal strings, rates and sample values are
+numbers, and every Prometheus label is a string attribute, so the two paths
+report the same series with the same labels. A value OTLP has no number for
+(`NaN`, `+Inf`) is served by `/metrics` and dropped from the export. Resource attributes are
+`service.name = "shep"`, `service.version` and `host.name`.
+
+One failed export is one line in the dog's log, on the first failure after
+a success and again on recovery, never once per tick. A 2xx whose body names
+a `partialSuccess` counts as one: the line carries its
+`rejectedDataPoints` and `errorMessage`, and an empty `partialSuccess` is a
+clean export. The answer's body is read for that and nothing else, up to
+8 KiB. It never touches the scrape server or the dog's
+exit code, and there is no final flush on stop: the next tick sends current
+values anyway.
+
+The feature adds no dependency, and its cost is code only. Measured on this
+machine (macOS, Apple Silicon, raw file size, not #292's corrected
+install-size method, 2026-10-14):
+
+| Build | `target/release/shep` |
+|---|---|
+| default | 19,069,728 bytes |
+| `--features otel` | 19,166,944 bytes |
+| delta | 97,216 bytes |
 
 ## The bark dog
 
@@ -301,6 +420,23 @@ snapshot. A dropped frame triggers an immediate poll instead of waiting
 for the next scheduled one. The two routes share one debounce record per
 subject, so an `Errored` seen by both the bus and the very next poll
 fires once, not twice.
+
+To alert on a line a sheep prints, add a `log_match` rule:
+
+```toml
+[[bark.rules]]
+on = "log_match"
+pattern = "FATAL|panicked at"
+stream = "err"
+sinks = ["oncall"]
+```
+
+`pattern` is a regex, unanchored, and cannot be empty. `stream` is `out`,
+`err` or `both` (the default). The first matching line per sheep per
+debounce window is the one sent; later ones in the window are dropped. The
+shepherd forwards log lines to bark only while a `log_match` rule exists,
+and bark can miss lines when a sheep outruns it: the poll cannot recover a
+line. The line goes to the sink as written, so it can carry a secret.
 
 Every fired alert is appended to `$SHEP_HOME/barks.jsonl`, a byte-capped
 ring (1MiB by default, `history_bytes`) that evicts the oldest record
@@ -371,7 +507,14 @@ The wire a third-party dog speaks is the same client protocol
 every other client of this daemon: connect to the Unix socket at
 `$SHEP_HOME/run/shep.sock`, send `Hello`, wait for `HelloAck`, then send
 `Request::DogConfig { name }` to fetch your own `[<name>]` section as
-opaque text — parse it however your own config shape wants. Shep sets two
+opaque text — parse it however your own config shape wants. Send
+`Request::DogConfigResolved { name }` instead to get the same section with
+each `{{secret:...}}` reference replaced by its value, resolved in the
+shepherd's `[daemon] environment` and then the `all` slot; `DogConfig` still
+gives the text as written, which is what an editor must read, since writing a
+resolved section back would put the credential into `dogs.toml`. A reference
+that cannot resolve fails the request with `InvalidConfig`, naming the
+section, the key path and the reference, never a value. Shep sets two
 variables of its own on a dog: `$SHEP_HOME`, which is how it finds that
 socket in the first place, and `$SHEP_DOG_NAME`, which is the `name` to put
 in that request. No `[<name>]` value ever rides along beside them, for
@@ -476,6 +619,7 @@ and they answer different questions:
 |---|---|---|
 | the version on line 1 | which build of the dog this is | reported |
 | `shep-protocol` | whether this dog can handshake with this shepherd at all | below the floor, it cannot connect; above it, shep accepts it |
+| `shep-channel` | optional: `true` asks for the shepherd channel (below) | anything else is no ask |
 
 The format is line-oriented text:
 
@@ -533,11 +677,11 @@ process group is killed either way, so a dog that ignores both flags and
 runs costs that time and is adopted with an unknown protocol. It cannot
 hang the `adopt` that is vetting it.
 
-None of the answer is written down. `[daemon] adopted_dogs` records the
-path and nothing else, and a protocol stored at adopt time would be a copy
-of a number that can change on disk with nothing watching. That is G12's
-row 5, the one case where the stored copy would be wrong exactly when it
-mattered, so the binary is asked again rather than remembered.
+Only a channel ask is written down (see below). A protocol stored at
+adopt time would be a copy of a number that can change on disk with
+nothing watching. That is G12's row 5, the one case where the stored copy
+would be wrong exactly when it mattered, so the binary is asked again
+rather than remembered.
 
 A dog written against `shep-client` answers this probe and the schema one
 below with a single call, as the first line of `main`:
@@ -566,6 +710,54 @@ than shep does, and because a stranger writing a dog in a language shep
 has never seen gets two `printf` calls right on the first try. Hand
 written JSON is where the quoting and the trailing comma go wrong, and
 nothing here nests.
+
+### Asking for the shepherd channel
+
+shep starts a dog from a config it writes itself, so a dog has no
+shepherd channel unless it asks for one. A dog that wants
+`shep trigger <dog> <action>`, or to be stopped by a message rather than
+a signal, adds one line to its `--version` answer:
+
+```
+shep-otel 0.2.0
+shep-protocol: 11
+shep-channel: true
+```
+
+`shep adopt` reads it, says so in a `dog_channel` notice, and records the
+name in `[daemon] channel_dogs` in `shep.toml`. From then on every start
+of that dog (the adopt itself, `shep enable`, lookout's toggle, the next
+shepherd's boot) sets `channel` and `shutdown_with_message`, so the dog
+gets fd 3 (a named pipe on Windows) exactly as a sheep with those keys
+would. Only the exact value `true` asks.
+
+The dog asks, not the operator: there is no flag for it, and a built-in
+dog written into `channel_dogs` by hand is ignored. Unlike the protocol,
+the ask is written down, because shep needs it at every start and not only
+at the adopt. A build that adds or drops the line is recorded at the next
+`shep adopt`, which re-reads it and takes a dog that stopped asking back
+out. A dog already running keeps the config it started with, as it does
+for a new path, until `shep disable` and `shep enable` bounce it or the
+next shepherd starts it. `shep rehome` forgets it with the rest of the
+adoption.
+
+A dog written against `shep-client` asks through a `Probe`:
+
+```rust
+shep_client::dogs::Probe::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    .ask_for_channel()
+    .answer::<MyDogConfig>();
+```
+
+It then serves the channel with `shep-channel`, as a sheep does:
+`on_action` for each trigger, and `on_shutdown` for the stop, typically
+handing it a `shep_client::dogs::StopRequest`. A stop is the `shutdown`
+message with no signal behind it, so a dog that asked and ignores the
+message is killed once `kill_timeout` runs out.
+
+`shep trigger` against a dog that did not ask answers `dog_no_channel`
+rather than `no_channel`, whose advice names Flockfile keys a dog does not
+have.
 
 ### What `shep restart <dog>` does with the answer
 
@@ -838,6 +1030,38 @@ gives up on it, and the exit code or signal when its process stops.
 `shep bleats <name> --follow` sees the same lines live, marked the same
 way, interleaved with the dog's own output in arrival order.
 
+## Handing over in place
+
+A dog, or any sheep, can replace its own binary without dropping what it
+holds. [`shep-handover`](../crates/shep-handover/README.md) does the `execve`:
+the process keeps its pid, its children stay its children, and the
+descriptors and state you name arrive in the new image. It depends on no
+other shep crate, so a dog built against an older shep line can use it.
+
+- **Boot.** Call `shep_handover::boot::<YourState>()` first thing in `main`.
+  `None` is an ordinary start. `Some(arrival)` carries your `state` and the
+  descriptors by key (`arrival.fds.take("key")`), as async readers, writers or
+  streams. A pipe your dog's child writes to arrives mid-stream, and
+  `wait_for_child(pid)` reaps the exit code.
+- **Hand over.** `Handover::new(&state).carry("key", &fd).exec(&gate)`. Only
+  the descriptors you carry survive; the rest are closed. `gate` is your
+  `Fitness` check and can refuse the whole handover.
+- **A handover that does not happen** (a refusal, an unreadable target, a
+  failed `execve`) returns the reason with the old image still running. Fall
+  back to a stop and a start.
+- **A state your new build cannot read** is found out before the exec. The
+  old image starts the target with a probe variable set, and the target's
+  `boot` answers for its `State` and exits, so `boot` must run before `main`
+  does anything it would not want done twice. A target that cannot read the
+  format refuses the handover, and the old image keeps running. A target that
+  never reaches `boot` is killed after ten seconds and refuses it too;
+  `.unprobed()` skips the question for a target that cannot answer it.
+
+The blob is a `0600` file under the temp directory (or `blob_dir`), named in
+`SHEP_PROCESS_HANDOVER` and removed by `boot`. That is not the shepherd's own
+`SHEP_HANDOVER`, so a dog the shepherd handed over never reads that one. On
+Windows every entry point answers "not supported".
+
 ## When the shepherd goes away
 
 A dog's process outlives the shepherd that spawned it, and that is
@@ -888,8 +1112,8 @@ is yours to impose. Two calls do it:
   budget without coming back. Its clock runs only while the link is down,
   and it never resolves while the link is up, so it belongs in a
   `select!` arm beside whatever your dog does normally. For a dog that
-  touches its client only when something asks it to, like the metrics
-  dog, this is the only thing that will ever tell it.
+  touches its client only when something asks it to, a scrape server with
+  no subscription, this is the only thing that will ever tell it.
 - `connected_within(budget)` waits for the link to come back. Use it when
   you have something to re-arm.
 

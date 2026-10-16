@@ -132,6 +132,14 @@ pub enum RenderError {
         /// The environment the lookup ran against
         environment: String,
     },
+    /// A `{{secret:...}}` whose body is outside the reference grammar
+    ///
+    /// Only [`render_secrets`] reports this: `validate` has already refused
+    /// the spelling by the time [`render`] sees a value.
+    Malformed {
+        /// The token as it appears in the value, braces and all
+        reference: String,
+    },
 }
 
 impl RenderError {
@@ -164,6 +172,11 @@ impl fmt::Display for RenderError {
                 f,
                 "`{reference}` reads the `{namespace}` namespace, which no provider dog \
                  has pushed to for the `{environment}` environment yet"
+            ),
+            Self::Malformed { reference } => write!(
+                f,
+                "`{reference}` is not a valid secret reference: write `{{{{secret:KEY}}}}` \
+                 or `{{{{secret:namespace/KEY}}}}`"
             ),
         }
     }
@@ -438,6 +451,62 @@ pub fn render(
         }
         Ok(())
     })?;
+    Ok(out)
+}
+
+/// Substitutes only the `{{secret:...}}` tokens in `value`, resolving them
+/// against `secrets`, and copies every other byte through as written.
+///
+/// Other `{{...}}` tokens, the `{{{{` and `}}}}` escapes, and an unclosed
+/// `{{` all come out exactly as they went in: this is for text another
+/// reader will parse for its own tokens, so unescaping or expanding them
+/// here would change what that reader sees.
+///
+/// # Errors
+///
+/// - [`RenderError::Malformed`]: a `{{secret:` token outside the
+///   [`SecretRef::parse`] grammar. Refused rather than passed through, so a
+///   typo cannot reach a consumer as literal text.
+/// - [`RenderError::Unresolved`]: a reference the store has no value for in
+///   this view's environment.
+/// - [`RenderError::NamespaceUnready`]: a namespace no provider dog has
+///   pushed to for this view's environment yet.
+pub fn render_secrets(value: &str, secrets: &SecretView) -> Result<String, RenderError> {
+    let mut out = String::with_capacity(value.len());
+    // How much of `value` the segments so far account for. `walk` hands an
+    // escape over as the text it stands for, so the doubled form is read
+    // back off the source rather than rebuilt from the segment.
+    let mut at = 0;
+    let completion = walk(value, |segment| {
+        match segment {
+            Segment::Literal(literal @ ("{{" | "}}"))
+                if value[at..].starts_with(&literal.repeat(2)) =>
+            {
+                out.push_str(&literal.repeat(2));
+                at += 4;
+            }
+            Segment::Literal(literal) => {
+                out.push_str(literal);
+                at += literal.len();
+            }
+            Segment::Token(token) => {
+                match secret_reference(token) {
+                    Some(reference) => out.push_str(resolve_secret(&reference, secrets)?),
+                    None if token.starts_with(SECRET_PREFIX) => {
+                        let mut reference = String::new();
+                        push_token(&mut reference, token);
+                        return Err(RenderError::Malformed { reference });
+                    }
+                    None => push_token(&mut out, token),
+                }
+                at += token.len() + 4;
+            }
+        }
+        Ok(())
+    })?;
+    if matches!(completion, Completion::Unclosed) {
+        out.push_str(&value[at..]);
+    }
     Ok(out)
 }
 
@@ -806,6 +875,63 @@ mod tests {
             render_positional("{{secret:DB_PASSWORD}}-{{instance}}", "web", 2, None),
             "{{secret:DB_PASSWORD}}-2"
         );
+    }
+
+    #[test]
+    fn render_secrets_leaves_every_other_token_and_escape_alone() {
+        let value = "{{name}}|{{instance}}|{{SHEP_HOME}}|{{unknown}}|{{{{secret:DB_PASSWORD}}}}|\
+                     }}}}|a}}b|{\"a\":{\"b\":1}}|{{secret:DB_PASSWORD}}|{{secret:vercel/API_KEY}}";
+        assert_eq!(
+            render_secrets(value, &view("production")).unwrap(),
+            "{{name}}|{{instance}}|{{SHEP_HOME}}|{{unknown}}|{{{{secret:DB_PASSWORD}}}}|\
+             }}}}|a}}b|{\"a\":{\"b\":1}}|hunter2|sk_live"
+        );
+    }
+
+    #[test]
+    fn render_secrets_leaves_an_unclosed_token_as_literal_text() {
+        for value in ["token {{secret:DB_PASSWORD", "{{secret:", "x {{ y"] {
+            assert_eq!(render_secrets(value, &view("production")).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn render_secrets_refuses_a_malformed_secret_token_naming_it() {
+        for bad in ["{{secret:}}", "{{secret:bad key}}", "{{secret:a/b/c}}"] {
+            let err = render_secrets(&format!("ok {bad}"), &view("production")).unwrap_err();
+            assert_eq!(
+                err,
+                RenderError::Malformed {
+                    reference: bad.to_string()
+                }
+            );
+            assert!(err.to_string().contains(bad), "names it: {err}");
+            assert!(!err.is_retriable());
+        }
+    }
+
+    #[test]
+    fn render_secrets_error_names_the_reference_and_never_a_value() {
+        let unresolved = render_secrets("{{secret:ABSENT}}", &view("production")).unwrap_err();
+        assert_eq!(
+            unresolved.to_string(),
+            "`{{secret:ABSENT}}` has no value in the `production` environment"
+        );
+        let unready = render_secrets("{{secret:vault/ANY}}", &view("production")).unwrap_err();
+        assert!(unready.is_retriable());
+        let malformed = render_secrets("{{secret:bad key}}", &view("production")).unwrap_err();
+        assert_eq!(
+            format!("{malformed:?}"),
+            "Malformed { reference: \"{{secret:bad key}}\" }"
+        );
+        for err in [unresolved, unready, malformed] {
+            for rendered in [err.to_string(), format!("{err:?}")] {
+                assert!(
+                    !rendered.contains("hunter2") && !rendered.contains("sk_live"),
+                    "no value: {rendered}"
+                );
+            }
+        }
     }
 
     #[test]

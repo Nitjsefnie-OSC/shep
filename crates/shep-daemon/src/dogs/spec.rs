@@ -7,16 +7,21 @@
 //! over one that would not start.
 
 use core::fmt;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use shep_core::config::template::RenderError;
 use shep_core::config::{AppConfig, ResolvedApp, normalize};
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::DogSource;
+use shep_core::protocol::ProcessInfo;
+use shep_core::status::ProcStatus;
 
 use crate::bus::Bus;
 use crate::supervisor::SupervisorHandle;
 
 use super::narrate::narrate;
+use super::secrets::StoreFault;
 
 /// One dog the daemon knows about: its name, and where its binary comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,13 +32,28 @@ pub struct DogSpec {
     pub source: DogSource,
 }
 
+/// The sentence this shepherd answers a request to delete a built-in dog with.
+///
+/// A built-in dog is an argv branch of the shep binary, so nothing removes it:
+/// `delete` has no registration to forget and no binary to lose. `disable` is
+/// the verb that exists for it, and the refusal names it.
+///
+/// Public because `shep-cli` reports it for a shepherd that is not running and
+/// cannot be asked, so an operator reads one sentence either way.
+#[must_use]
+pub fn built_in_dog_refusal(name: &str) -> String {
+    format!("{name} is built in: `shep disable {name}`")
+}
+
 /// Error assembling a dog's app config, or reading its section
 ///
 /// `Debug` needs no redaction: a path, a normalizer complaint, or a TOML
-/// parser message, never a value read out of a parsed `[<name>]` table. A
-/// syntax error can quote a line of the section's own source, but only to
-/// the peer that asked, which peer-cred auth already established owns the
-/// file.
+/// parser message, never a value read out of a parsed `[<name>]` table. The
+/// two secret variants hold a key path, a reference as written, an
+/// environment name and a [`StoreFault`], so no field can hold a resolved
+/// value (IR-41). A syntax error can quote a line of the section's own
+/// source, but only to the peer that asked, which peer-cred auth already
+/// established owns the file.
 ///
 /// [`Self::NoBinary`] and [`Self::Io`] wrap their [`std::io::Error`] rather
 /// than rendering it, which costs this enum `Clone`, `PartialEq` and `Eq`.
@@ -54,6 +74,24 @@ pub enum DogError {
     Config(String),
     /// The file exists and could not be read
     Io(std::io::Error),
+    /// A `{{secret:...}}` in the section cannot be resolved: it names no
+    /// value, names a namespace no provider has pushed, or is outside the
+    /// reference grammar
+    Reference {
+        /// Where the string sits in the section, as `sinks.local.url` or
+        /// `rules[1].url`
+        key_path: String,
+        /// Which reference, and why. Holds the reference as written and the
+        /// environment, never a value.
+        source: RenderError,
+    },
+    /// The section names a reference and the secret store could not be read
+    SecretStore {
+        /// Where the first reference in the section sits
+        key_path: String,
+        /// What went wrong, without the store's own message
+        fault: StoreFault,
+    },
 }
 
 impl fmt::Display for DogError {
@@ -65,6 +103,11 @@ impl fmt::Display for DogError {
             }
             Self::Config(msg) => write!(f, "dog configuration is unusable: {msg}"),
             Self::Io(err) => write!(f, "dog configuration could not be read: {err}"),
+            Self::Reference { key_path, source } => write!(f, "`{key_path}`: {source}"),
+            Self::SecretStore { key_path, fault } => write!(
+                f,
+                "`{key_path}`: the secret store could not be read ({fault})"
+            ),
         }
     }
 }
@@ -73,7 +116,8 @@ impl core::error::Error for DogError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Self::NoBinary(err) | Self::Io(err) => Some(err),
-            Self::UnsupportedSource(_) | Self::Config(_) => None,
+            Self::Reference { source, .. } => Some(source),
+            Self::UnsupportedSource(_) | Self::Config(_) | Self::SecretStore { .. } => None,
         }
     }
 }
@@ -102,9 +146,11 @@ fn builtin_program() -> Result<PathBuf, DogError> {
 /// The app config the daemon spawns `spec` from.
 ///
 /// A built-in dog is `<this binary> dog <name>`; an adopted one is the
-/// operator's binary with no arguments. The environment carries exactly
-/// `SHEP_HOME` and `SHEP_DOG_NAME`, never a `[<name>]` value: a dog asks for
-/// its section over the socket.
+/// operator's binary with no arguments. The environment carries `SHEP_HOME`
+/// and `SHEP_DOG_NAME`, never a `[<name>]` value: a dog asks for its section
+/// over the socket. An adopted dog that asked for the shepherd channel gets
+/// `channel` and `shutdown_with_message`, and so the channel's own
+/// variables too; every other dog gets neither.
 ///
 /// # Errors
 /// - [`DogError::NoBinary`] if a built-in dog has no program to run.
@@ -112,19 +158,22 @@ fn builtin_program() -> Result<PathBuf, DogError> {
 ///   not know how to spawn.
 /// - [`DogError::Config`] if the assembled config failed `normalize`.
 pub fn dog_app(spec: &DogSpec, paths: &ShepPaths) -> Result<ResolvedApp, DogError> {
-    let (script, args) = match &spec.source {
+    let (script, args, channel) = match &spec.source {
         DogSource::BuiltIn => (
             builtin_program()?.display().to_string(),
             vec!["dog".to_string(), spec.name.clone()],
+            false,
         ),
         // No arguments: an adopted dog is somebody else's binary, and an argv
         // shep invented for it is one more thing it has to agree with.
-        DogSource::Adopted { path } => (path.clone(), Vec::new()),
+        DogSource::Adopted { path, channel } => (path.clone(), Vec::new(), *channel),
         source => return Err(DogError::UnsupportedSource(format!("{source:?}"))),
     };
 
     let mut config = AppConfig::minimal(&spec.name, &script);
     config.args = args;
+    config.channel = channel;
+    config.shutdown_with_message = channel;
     config
         .env
         .insert("SHEP_HOME".to_string(), paths.home.display().to_string());
@@ -137,13 +186,111 @@ pub fn dog_app(spec: &DogSpec, paths: &ShepPaths) -> Result<ResolvedApp, DogErro
     normalize(config).map_err(|err| DogError::Config(err.to_string()))
 }
 
+/// Registers every dog in `known` and `enabled` at rest, so the flock lists
+/// it whether or not it runs.
+///
+/// A dog outside `enabled` is registered `Stopped` and disabled; one in it is
+/// registered `Stopped` all the same, for [`spawn_enabled_dogs`] to start.
+/// A dog already registered under its name, running or a sheep, keeps its row
+/// and its mark, except for the ones `stop_unenabled_dogs` takes back: every
+/// dog row this config does not enable that is not already stopped and marked.
+/// Entries land in the order given, `enabled` first, so a dog's id does not
+/// depend on which of two lists named it.
+///
+/// Never fails the boot, for [`spawn_enabled_dogs`]'s reason: a dog that
+/// cannot be assembled is warned about and left out.
+pub async fn register_dogs_at_rest(
+    known: &[DogSpec],
+    enabled: &[DogSpec],
+    paths: &ShepPaths,
+    supervisor: &SupervisorHandle,
+) {
+    let mut seen = BTreeSet::new();
+    let mut dogs = Vec::new();
+    for spec in enabled.iter().chain(known) {
+        if !seen.insert(spec.name.as_str()) {
+            continue;
+        }
+        match dog_app(spec, paths) {
+            Ok(app) => dogs.push((app, spec.source.clone())),
+            Err(err) => tracing::warn!(dog = %spec.name, %err, "a dog was not listed"),
+        }
+    }
+    let disabled: BTreeSet<String> = known
+        .iter()
+        .map(|spec| spec.name.clone())
+        .filter(|name| !enabled.iter().any(|spec| spec.name == *name))
+        .collect();
+    if let Err(err) = supervisor.register_dogs_at_rest(dogs, disabled).await {
+        tracing::warn!(%err, "the dogs were not listed");
+        return;
+    }
+    // The flock, and not what this call handed the actor: a dog whose own
+    // config failed to assemble never reached the actor at all, and a carried
+    // one is running there regardless.
+    let flock = match supervisor.list_checked().await {
+        Ok(flock) => flock,
+        Err(err) => {
+            tracing::warn!(%err, "the flock could not be read to check its dogs against");
+            return;
+        }
+    };
+    stop_unenabled_dogs(&flock, enabled, supervisor).await;
+}
+
+/// Stops and marks every dog row in `flock` that `enabled` does not name,
+/// except one already stopped and marked.
+///
+/// The case is a handover successor's. A predecessor booted while `shep.toml`
+/// named the dog, ran it, and carried it across the `execve`; this boot read a
+/// file that has since dropped the name, by hand or through `shep disable`
+/// against a shepherd that has since been replaced. The successor owns the
+/// dog's row now, and a row it inherited running is not one its config says
+/// should run: it goes down through the operator's own door, which marks the
+/// app as it stops it, so `shep flock` reads `disabled` and
+/// `shep enable <name>` is the way back. A dog an operator stopped with
+/// `shep stop` and the config then dropped is marked by the same call, so the
+/// row does not go on reading as startable.
+///
+/// Reads the whole flock rather than the rows this boot registered, so a
+/// carried dog whose own config failed to assemble is stopped too: the process
+/// is in the flock and the assembly that would have described it is the half
+/// that failed. A cold boot never reaches the stop: it spawns only the dogs it
+/// enables, so every dog it registers at rest is already in the shape this
+/// passes by.
+///
+/// Awaits each dog's kill ladder, since the reply the supervisor owes is the
+/// exit's. Bounded by the dog's own `shutdown_timeout` and `kill_timeout`, and
+/// it delays the readiness this boot reports by that much.
+async fn stop_unenabled_dogs(
+    flock: &[ProcessInfo],
+    enabled: &[DogSpec],
+    supervisor: &SupervisorHandle,
+) {
+    for info in flock {
+        let named = enabled.iter().any(|spec| spec.name == info.name);
+        let parked = info.disabled == Some(true) && info.status == ProcStatus::Stopped;
+        if info.dog.is_none() || named || parked {
+            continue;
+        }
+        if let Err(err) = supervisor.disable_dog(info.name.clone()).await {
+            tracing::warn!(
+                dog = %info.name,
+                %err,
+                "a dog this shepherd's config does not enable was left running"
+            );
+        }
+    }
+}
+
 /// Starts every dog in `specs`, warning and carrying on for each one that
 /// will not start.
 ///
 /// Never fails the boot: a dog that cannot be spawned is a monitoring gap, and
 /// refusing to bring the flock up over it turns that gap into an outage.
-/// [`SupervisorHandle::start_dog`] is idempotent by name, so an `Ok` reply
-/// carrying no `dog` means a sheep already held the name and nothing started.
+/// [`SupervisorHandle::start_dog`] is idempotent by name for a dog that runs,
+/// so an `Ok` reply carrying no `dog` means a sheep already held the name and
+/// nothing started.
 pub async fn spawn_enabled_dogs(
     specs: &[DogSpec],
     paths: &ShepPaths,
@@ -188,22 +335,34 @@ mod tests {
     use crate::testing::test_paths;
 
     /// `current_exe` cannot safely be made to return `" (deleted)"`, so this
-    /// drives `crate::handover::resolve_target`, which `builtin_program`
-    /// delegates to. Unix only, because `handover` is.
+    /// pins what `builtin_program` does with the answer it gets: it is the
+    /// shared resolution's, which is never a deleted inode and always a file.
     #[cfg(unix)]
     #[test]
-    fn a_deleted_inode_answer_from_current_exe_never_becomes_a_dogs_script() {
-        let refusal = crate::handover::resolve_target(
-            [None, Some(PathBuf::from("/opt/shep/shep (deleted)"))],
-            None,
-        )
-        .unwrap_err();
+    fn a_built_in_dogs_program_is_the_resolved_exec_target_and_never_a_deleted_inode() {
+        let program = builtin_program().expect("the test binary resolves");
+
+        assert_eq!(program, crate::handover::exec_target().unwrap());
+        assert!(program.is_file(), "{}", program.display());
+        assert!(
+            !program.to_string_lossy().ends_with(" (deleted)"),
+            "{}",
+            program.display()
+        );
+    }
+
+    #[test]
+    fn an_unresolvable_binary_says_so_and_keeps_the_refusal_as_its_source() {
+        use core::error::Error as _;
+
+        let refusal = std::io::Error::new(std::io::ErrorKind::NotFound, "no binary to exec");
         let err = DogError::NoBinary(refusal);
+
         assert_eq!(
             err.to_string(),
-            "this binary's own path is unresolvable: no binary to exec: \
-             /opt/shep/shep (deleted) (names a deleted inode, not a file)"
+            "this binary's own path is unresolvable: no binary to exec"
         );
+        assert_eq!(err.source().unwrap().to_string(), "no binary to exec");
     }
 
     /// Asserted over the assembled spec rather than the config, because
@@ -277,6 +436,7 @@ mod tests {
                 name: "otel".to_string(),
                 source: DogSource::Adopted {
                     path: "/usr/local/bin/shep-otel".to_string(),
+                    channel: false,
                 },
             },
             &paths,
@@ -309,6 +469,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn only_an_adopted_dog_that_asked_gets_the_channel_and_a_stop_by_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = test_paths(&dir);
+        let adopted = |channel| DogSource::Adopted {
+            path: "/usr/local/bin/shep-otel".to_string(),
+            channel,
+        };
+
+        for (source, expected) in [
+            (adopted(true), true),
+            (adopted(false), false),
+            (DogSource::BuiltIn, false),
+        ] {
+            let spec = DogSpec {
+                name: "otel".to_string(),
+                source: source.clone(),
+            };
+            let app = dog_app(&spec, &paths).unwrap();
+            let config = app.config();
+            assert_eq!(config.channel, expected, "{source:?}");
+            assert_eq!(config.shutdown_with_message, expected, "{source:?}");
+        }
+    }
+
     /// An adopted dog is given no argv, so the environment is its only
     /// channel, and a mismatch looks exactly like a dog with no configuration.
     /// The name is the one the operator chose, not the binary's file stem.
@@ -322,6 +507,7 @@ mod tests {
                 name: "telemetry".to_string(),
                 source: DogSource::Adopted {
                     path: "/usr/local/bin/shep-otel".to_string(),
+                    channel: false,
                 },
             },
             &paths,

@@ -18,6 +18,7 @@ use shep_core::status::ProcStatus;
 use super::super::app::App;
 use super::super::theme::Palette;
 use super::cell;
+use super::flock::take_columns;
 use crate::output::width::char_columns;
 use crate::output::{human_bytes, human_duration};
 
@@ -54,12 +55,10 @@ impl Ink {
         }
     }
 
-    // `runs` truncated to exactly `width` columns, one `Span` per surviving
-    // run plus the tail. Mirrors `super::flock::fit`'s own algorithm
-    // (single-width-char truncation, one column reserved for a trailing
-    // `…`) but walks a list of coloured runs instead of one string, so a
-    // caller with several roles on one line keeps the same
-    // drop-from-the-right behaviour.
+    /// `runs` truncated to exactly `width` columns, one `Span` per surviving
+    /// run plus the tail. Calls [`super::flock::take_columns`] once per run
+    /// with the budget its predecessors left. A run whose first character
+    /// does not fit contributes nothing: later runs still get what remains.
     fn fit(runs: &[Run], width: u16, palette: Palette) -> Vec<Span<'static>> {
         let width = usize::from(width);
         let total: usize = runs
@@ -85,15 +84,8 @@ impl Ink {
             if used >= budget {
                 break;
             }
-            let mut kept = String::new();
-            for c in run.text.chars() {
-                let c_width = char_columns(c);
-                if used + c_width > budget {
-                    break;
-                }
-                kept.push(c);
-                used += c_width;
-            }
+            let (kept, taken) = take_columns(&run.text, budget - used);
+            used += taken;
             if !kept.is_empty() {
                 spans.push(Span::styled(kept, run.ink.style(palette)));
             }
@@ -301,6 +293,7 @@ mod tests {
     use super::*;
     use shep_core::protocol::ProcessInfo;
     use shep_core::status::ProcStatus;
+    use std::ffi::OsStr;
 
     /// `fixture_with` in the brief's own words: an app over one flock and no
     /// host reading, since these tests exercise `summary` alone.
@@ -370,6 +363,44 @@ mod tests {
             full.contains("up 6d"),
             "the last segment is there: {full:?}"
         );
+    }
+
+    /// `Ink::fit` cuts each run against the budget the runs before it left,
+    /// not the whole line as one string: a run too narrow for its own first
+    /// character contributes nothing and a later run still draws.
+    #[test]
+    fn a_run_too_narrow_for_its_first_character_contributes_nothing() {
+        let narrow_runs = [
+            Run {
+                text: "ab".to_owned(),
+                ink: Ink::Muted,
+            },
+            Run {
+                text: "羊".to_owned(),
+                ink: Ink::Muted,
+            },
+            Run {
+                text: "cd".to_owned(),
+                ink: Ink::Muted,
+            },
+        ];
+        // Budget 3: `ab` spends two columns, `羊` needs two of the one left,
+        // and `c` takes the last.
+        let line = Line::from(Ink::fit(
+            &narrow_runs,
+            4,
+            Palette::detect(Some(OsStr::new("1")), None, None),
+        ));
+        assert_eq!(rendered(&line), "abc…");
+
+        // The strip's own runs never hit that case: each starts one column
+        // wide, so a run goes off the end only once the budget is spent.
+        let built = runs(&with_host(sample(), flock_of(4, 1)));
+        assert!(built.len() > 1, "an empty walk would pass this vacuously");
+        for run in &built {
+            let first = run.text.chars().next().expect("every run has text");
+            assert_eq!(char_columns(first), 1, "{:?} starts a run", run.text);
+        }
     }
 
     /// `ProcessInfo`'s `None` covers three cases (not running, under one

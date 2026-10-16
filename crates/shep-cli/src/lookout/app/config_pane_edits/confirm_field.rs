@@ -1,9 +1,17 @@
 use super::super::*;
 
 impl App {
-    /// The operator's `Enter` on the config pane. Four meanings, picked in
+    /// The operator's `Enter` on the config pane. Seven meanings, picked in
     /// this order:
     ///
+    /// - The cursor is on a table of a dog's pane, or on a list of choices:
+    ///   opens it if it is closed and closes it if it is open.
+    /// - The cursor is on `+ new` under an array or map of tables: adds an
+    ///   entry, at once to an array, and for a map through a text editor for
+    ///   its key, which switches [`InputMode::Text`] on. Behind the write
+    ///   gate, like an edit.
+    /// - The cursor is on a name in a list of choices: toggles it, as
+    ///   `space` does.
     /// - The cursor is on a sheep's `dogs` row: probes the dogs for the
     ///   sub-screen that lists them. A read, so no gate.
     /// - The cursor is on an env row or `+ add a key`: opens the env
@@ -12,23 +20,41 @@ impl App {
     /// - The cursor is on a typed field: opens the editor and switches
     ///   [`InputMode::Text`] on.
     ///
-    /// The other three go through [`Self::authorize_write`], the editor included,
+    /// The last three go through [`Self::authorize_write`], the editor included,
     /// for the reason [`Self::confirm_setting`]'s own doc gives: the gate
     /// is checked on the keystroke that would file an edit, not on the
     /// close that writes them.
     pub(in crate::lookout::app) fn confirm_field(&mut self) -> Effect {
+        if let Some(pane) = self.config_pane_mut()
+            && pane.toggle_table()
+        {
+            return Effect::None;
+        }
+        if self.config_pane().is_some_and(ConfigPane::cursor_on_new) {
+            if self.authorize_write().is_some()
+                && let Some(pane) = self.config_pane_mut()
+            {
+                pane.begin_new_entry();
+                if pane.typing().is_some() {
+                    self.mode = InputMode::Text;
+                }
+            }
+            return Effect::None;
+        }
         if let Some(probe) = self.dogs_row_effect() {
             // Each adopted dog's binary answers in its own time, up to
             // `VERSION_BUDGET` apiece, so the wait says what it is.
-            self.notice = Some(Notice {
-                text: "asking each dog for its per-sheep schema".to_owned(),
-                grave: false,
-            });
+            self.notice = Some(Notice::info(
+                "asking each dog for its per-sheep schema".to_owned(),
+            ));
             return probe;
         }
         let Some(pane) = self.config_pane() else {
             return Effect::None;
         };
+        if matches!(pane.cursor(), Some(PaneRow::Choice { .. })) {
+            return self.cycle_field();
+        }
         if matches!(pane.cursor(), Some(PaneRow::Env(_) | PaneRow::AddEnv)) {
             if self.authorize_write().is_none() {
                 return Effect::None;
@@ -45,7 +71,11 @@ impl App {
         let locked = pane.cursor_lock().map(|(key, lock)| (key.to_owned(), lock));
         let opens = matches!(
             kind,
-            FieldKind::List(_) | FieldKind::Text | FieldKind::Integer | FieldKind::Suggested(_)
+            FieldKind::List(_)
+                | FieldKind::Text
+                | FieldKind::Integer
+                | FieldKind::Number
+                | FieldKind::Suggested(_)
         );
         // A row `Enter` was never going to open raises nothing at all: a
         // refusal about a key that was never going to act trains an
@@ -58,10 +88,7 @@ impl App {
         // specific of the two answers, and `--allow-control` would not
         // help. Each lock says its own thing; see [`Self::lock_refusal`].
         if let Some((key, lock)) = locked {
-            self.notice = Some(Notice {
-                text: Self::lock_refusal(&key, lock),
-                grave: true,
-            });
+            self.refuse_locked(&key, lock);
             return Effect::None;
         }
         if self.authorize_write().is_none() {
@@ -82,7 +109,6 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::*;
     use super::*;
     use crate::lookout::app::testing::*;
 

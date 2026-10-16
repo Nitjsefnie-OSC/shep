@@ -5,7 +5,7 @@ expression: render_text(&buffer)
 shep lookout   /home/ada/.shep                                             6 in the flock
                                                                                          
  ██ api  (sheep config)  2 edits                                                         
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab ne…
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs    …
   ───────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                            LANDS     
   Where stderr goes. Written out, the default is                                         

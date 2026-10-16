@@ -9,7 +9,7 @@ use ratatui::style::Style;
 use ratatui::text::Span;
 
 use super::super::super::theme::Palette;
-use crate::output::width::char_columns;
+use crate::output::width::{char_columns, text_columns};
 
 /// The narrowest terminal the table will draw into.
 ///
@@ -29,6 +29,11 @@ pub const MIN_HEIGHT: u16 = 6;
 /// `width - GUTTER` starting at `x + GUTTER`, so every threshold in
 /// `columns::TIERS` and every arithmetic in
 /// [`super::columns::name_width`] is untouched by the marker.
+///
+/// The whole view pays this one, not the flock table alone: the settings
+/// screen, the config pane and the secrets table each draw [`mark`] plus a
+/// space before their first cell too. A width budget anywhere that forgets
+/// it is a budget every line overruns.
 pub const GUTTER: u16 = 2;
 
 /// The marker for the selected row, or a blank for every other row.
@@ -83,7 +88,7 @@ pub fn gutter(selected: bool, palette: Palette) -> (&'static str, Style) {
 /// way, so the rule stays in one place.
 #[must_use]
 pub fn fit_owned(mut text: String, width: u16) -> String {
-    let columns: usize = text.chars().map(char_columns).sum();
+    let columns: usize = text_columns(&text);
     let width = usize::from(width);
     if columns <= width {
         text.extend(core::iter::repeat_n(' ', width - columns));
@@ -92,10 +97,32 @@ pub fn fit_owned(mut text: String, width: u16) -> String {
     fit(&text, u16::try_from(width).unwrap_or(u16::MAX))
 }
 
+/// `text` cut to at most `budget` display columns, and the columns it used
+///
+/// The truncation walk [`fit`] shares with the config pane's rows and the
+/// host strip's own fit. A character that would straddle the budget is
+/// dropped whole, since half a double-width glyph is not drawable. The `…`
+/// is not this function's: each caller reserves its own column for it, and
+/// a panel row pads nothing where a table cell pads to its width.
+#[must_use]
+pub(in crate::lookout::view) fn take_columns(text: &str, budget: usize) -> (String, usize) {
+    let mut kept = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let columns = char_columns(c);
+        if used + columns > budget {
+            break;
+        }
+        kept.push(c);
+        used += columns;
+    }
+    (kept, used)
+}
+
 #[must_use]
 pub fn fit(text: &str, width: u16) -> String {
     let width = usize::from(width);
-    let columns: usize = text.chars().map(char_columns).sum();
+    let columns: usize = text_columns(text);
     if columns <= width {
         let mut out = String::from(text);
         out.extend(core::iter::repeat_n(' ', width - columns));
@@ -104,20 +131,10 @@ pub fn fit(text: &str, width: u16) -> String {
     if width == 0 {
         return String::new();
     }
-    // One column pays for the `…`. A double-width character straddling the
-    // boundary is dropped rather than split, and its column is padded below
-    // so the cell still measures `width`.
+    // One column pays for the `…`. The budget the walk left unused is padded
+    // below so the cell still measures `width`.
     let budget = width - 1;
-    let mut out = String::new();
-    let mut used = 0;
-    for c in text.chars() {
-        let c_width = char_columns(c);
-        if used + c_width > budget {
-            break;
-        }
-        out.push(c);
-        used += c_width;
-    }
+    let (mut out, used) = take_columns(text, budget);
     out.push('…');
     out.extend(core::iter::repeat_n(' ', budget - used));
     out
@@ -134,7 +151,11 @@ pub fn fit(text: &str, width: u16) -> String {
 /// selected row's ground would end mid-row
 /// on exactly the terminals narrow enough to need the signal most. A no-op
 /// when `used >= width` or `ground` carries no colour.
-pub(super) fn pad_ground(spans: &mut Vec<Span<'static>>, used: u16, width: u16, ground: Style) {
+///
+/// The one padding every table row in the view goes through: the flock
+/// table's two renderers and the secrets table's two both end a selected
+/// row's paint at the same column.
+pub fn pad_ground(spans: &mut Vec<Span<'static>>, used: u16, width: u16, ground: Style) {
     let short = width.saturating_sub(used);
     if short > 0 {
         spans.push(Span::styled(" ".repeat(usize::from(short)), ground));
@@ -161,7 +182,6 @@ pub fn scroll_offset(selected: usize, viewport: usize, total: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::width::char_columns;
     use std::ffi::OsStr;
 
     #[test]
@@ -186,6 +206,19 @@ mod tests {
         assert_eq!(text, ">");
         assert_eq!(style, Style::default());
         assert_eq!(gutter(false, off).0, " ");
+    }
+
+    #[test]
+    fn take_columns_with_no_budget_keeps_nothing() {
+        assert_eq!(take_columns("羊", 0), (String::new(), 0));
+    }
+
+    /// Half a double-width glyph is not drawable, so the glyph that would
+    /// straddle the budget is dropped whole and its column is left for the
+    /// caller to pad.
+    #[test]
+    fn take_columns_drops_a_wide_character_that_straddles_the_budget() {
+        assert_eq!(take_columns("羊羊", 3), ("羊".to_owned(), 2));
     }
 
     #[test]
@@ -223,7 +256,7 @@ mod tests {
         // Truncate branch. Budget is 4 columns plus the `…`: two characters
         // fit, the third would draw past the cell.
         assert_eq!(fit("日本語アプリ", 5), "日本…");
-        assert_eq!(columns_of(&fit("日本語アプリ", 5)), 5);
+        assert_eq!(text_columns(&fit("日本語アプリ", 5)), 5);
         // A `char` count would call this a pad (3 chars into 3 columns) and
         // emit `日本語`, six columns wide, with no `…` to say it was cut.
         assert_eq!(fit("日本語", 3), "日…");
@@ -231,7 +264,7 @@ mod tests {
         // budget, `本` does not, and half a character is not drawable, so
         // the leftover column is a space rather than a short cell.
         assert_eq!(fit("日本語", 4), "日… ");
-        assert_eq!(columns_of(&fit("日本語", 4)), 4);
+        assert_eq!(text_columns(&fit("日本語", 4)), 4);
         // Nothing but the marker fits, at either width.
         assert_eq!(fit("日本語", 1), "…");
         assert_eq!(fit("日本語", 2), "… ");
@@ -255,7 +288,7 @@ mod tests {
             for width in 0..=12u16 {
                 let cell = fit(name, width);
                 assert_eq!(
-                    columns_of(&cell),
+                    text_columns(&cell),
                     usize::from(width),
                     "fit({name:?}, {width}) == {cell:?}"
                 );
@@ -271,16 +304,9 @@ mod tests {
     fn an_escape_sequence_is_measured_as_the_text_it_will_be_drawn_as() {
         let styled = "\u{1b}[32mup";
         // ESC is zero-width; `[32mup` is six columns.
-        assert_eq!(columns_of(styled), 6);
-        assert_eq!(columns_of(&fit(styled, 4)), 4);
+        assert_eq!(text_columns(styled), 6);
+        assert_eq!(text_columns(&fit(styled, 4)), 4);
         assert!(fit(styled, 4).ends_with('…'));
-    }
-
-    /// The columns a rendered cell actually draws in, by the same rule
-    /// [`fit`] pads by. Not `chars().count()`: that is the measurement
-    /// under test.
-    fn columns_of(s: &str) -> usize {
-        s.chars().map(char_columns).sum()
     }
 
     /// Colour and a `REVERSED` modifier are both rejected: every signal on

@@ -19,6 +19,8 @@ const (
 	KindActionReply = "action-reply"
 	// KindLambLabel names one of the app's own child processes.
 	KindLambLabel = "lamb-label"
+	// KindNote is a name and a number for a dog, not a metric sample.
+	KindNote = "note"
 	// KindShutdown is the shepherd asking the app to stop.
 	KindShutdown = "shutdown"
 	// KindAction is the shepherd dispatching one custom action.
@@ -30,15 +32,21 @@ const (
 // Kind selects which other fields carry meaning. Each of those is a
 // pointer. Dropping a zero would lose a metric of 0 or an empty label,
 // which clears one.
+//
+// Labels is a plain map, not a pointer: an empty one and an absent one
+// are the same message, so omitempty on it loses nothing.
 type ChildMessage struct {
-	Kind   string   `json:"kind"`
-	Name   *string  `json:"name,omitempty"`
-	Value  *float64 `json:"value,omitempty"`
-	Action *string  `json:"action,omitempty"`
-	Body   *string  `json:"body,omitempty"`
-	ID     *uint64  `json:"id,omitempty"`
-	PID    *uint32  `json:"pid,omitempty"`
-	Label  *string  `json:"label,omitempty"`
+	Kind   string            `json:"kind"`
+	Name   *string           `json:"name,omitempty"`
+	Value  *float64          `json:"value,omitempty"`
+	Type   *string           `json:"type,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
+	Help   *string           `json:"help,omitempty"`
+	Action *string           `json:"action,omitempty"`
+	Body   *string           `json:"body,omitempty"`
+	ID     *uint64           `json:"id,omitempty"`
+	PID    *uint32           `json:"pid,omitempty"`
+	Label  *string           `json:"label,omitempty"`
 }
 
 // ShepherdMessage is one line the shepherd writes to the app.

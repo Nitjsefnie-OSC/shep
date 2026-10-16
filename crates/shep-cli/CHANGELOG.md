@@ -13,6 +13,213 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-16
+
+### Added
+
+- A read log line keeps its own colour as runs over plain text
+- The feed colours a plain line by stream and keeps its own
+- The feed colours a plain line by stream and keeps its own colour
+
+### Changed
+
+- Give the bleats match box its own module
+- Hand pane_bleats.rs's match filters to their own module
+
+### Fixed
+
+- Drop every em dash from a non-test string literal
+- Name both group keys on the config pane's tab row
+- A reset or a malformed colour reads as a plain line
+- Three ways a feed line's colour came out wrong
+- The embedded feed wears the ink, and an SGR keeps its own sub-parameters
+
+
+## [0.15.0] - 2026-10-15
+
+### Added
+
+- Copy a setting or a dog table from one sheep onto another
+- Let a sheep send a dog a note that is not a metric sample **(BREAKING)**
+- Edit a decimal number field instead of drawing it read-only
+- Add output::width::text_columns for drawn-text column counts
+- Bleats keeps a sheep's own colour and paints plain lines by stream
+
+### Changed
+
+- Fold page_lines_back onto tail_window_start
+- Re-export the dogs table's types beside the functions that return them
+- Name the dogs module at the reach its re-exported functions need
+- Restart and reload share one refusal tail
+- The two feed screens answer their keys from one place
+- The two feed screens claim their keys in one dispatcher
+- Measure view text width through output::width::text_columns
+- One GUTTER and one row pad for the lookout view
+- Notice is built by Notice::grave or Notice::info
+- One column walk behind the view's three truncations
+- One failed_reply sentence for every lookout reply site
+- Write the lock refusal and the provider-row refusal once
+- Body answers its own pane accessors
+- Answer serve's seven replies through one helper
+
+### Fixed
+
+- Refuse a copy that would write through a value that is not a table
+- Read a dotted dog name and a dotted key against the tables
+- Read a copy's dog name as a table before a flock dog
+- Print the copy change list before asking, in every output form
+- Report a failed clock read in bark and keep its stamps moving
+- --no-log-timestamps reaches a sheep the flock already has
+- Report a parked stamp write and the shepherd's warning beside it
+- --no-log-timestamps reaches a sheep the token named
+- Enforce a schema's strict bounds and name an empty range
+- Enforce exact strict bounds and numeric enums
+- Say bare references read as missing in describe's unreadable-store notice
+- Bleats keeps a stamps-off sheep's own timestamp in the file tail
+- Bleats keeps an app's own timestamp in the file tail of a stamps-off sheep
+- Escape the serve access log at the one print site
+- Read every all-zero SGR as a bare reset
+- Drop bare resets a stream colour would cancel
+
+### Added
+
+- Copy a setting or a dog table from one sheep onto another
+
+### Performance
+
+- Count bleats instances once per follow, not per log line
+
+
+## [0.14.0] - 2026-10-14
+
+### Added
+
+- Pass every known dog's source to the shepherd at boot
+- Add an entry to an array or map of tables
+- Read a tagged union off a dog's schema
+- Edit a dog setting that is a tagged union
+- Push the metrics dog's series to an OTLP endpoint
+- The metrics dog serves the samples a sheep sends on its channel
+- The otlp exporter carries the samples a sheep sends on its channel
+- Edit a list of choices as a checklist under its row
+- Enable and disable take a fold, a regex or all, and CLI sweeps pass a disabled sheep by
+- Remove an entry from an array or map of tables
+- List every known dog at rest **(BREAKING)**
+- Wildcards pass a disabled sheep by, and enable and disable take any selector
+- A disabled dog exports no shep_dog_up series
+- Enable and disable of an unknown name list the dogs
+- Disabling a dog stops it and keeps it listed
+- Delete removes a dog for good, and rehome goes hidden
+- Delete removes a dog for good
+- Push the metrics dog's series to an OTLP endpoint behind `otel`
+- A handover leaves a parked dog behind
+
+### Fixed
+
+- Hold the close while a picked union tag lacks a required field
+- Hold a close read's write while a union lacks a required field
+- A collector's partialSuccess is a failed export, not a clean one
+- Read a collector's partialSuccess as OTLP spells it
+- An event kind the metrics dog has not been taught frees samples
+- A reload keeps the samples of the instance it put in place
+- Start an exported channel counter at the time its sender started
+- Keep a flat pane's choice list openable and the cursor off a toggled name
+- Toggling a name on and off in an absent list files nothing
+- A repeated disable sweep succeeds and the log verbs still reach a disabled sheep
+- Undo a entry removal gives back its folded edits and open entries
+- Rehome deletes the dog by name
+- Disabling a dog no longer says it was deregistered
+- Delete refuses a name it cannot judge rather than guessing
+
+### Performance
+
+- Write the bark ring off the tokio worker
+
+## [0.13.0] - 2026-10-13
+
+### Added
+
+- Edit a dog's nested tables as dotted rows in the dog config pane
+- Let the bark dog replace its bus topics on a live connection
+- Add a bark rule that fires on a log line
+- Disable and enable a sheep by name
+- Move enable and disable to Run things in help
+- Lookout and the whistle show a disabled sheep
+- The roll keeps a sheep's disabled mark across a restart **(BREAKING)**
+
+### Fixed
+
+- Report flock's first connect error under json instead of reconnecting
+- Keep the OS cause when vetting an adopt path fails for a reason other than absence
+- Hand an unsearchable adopt path to the vet instead of reading it as absent
+- A dog write keeps the section's own shape, and a no-op unset rides
+- A table created inside an inline table is an inline table
+- A dog close with nothing left to write is not a refusal
+- Keep a list whose items can be null a read-only row
+- Wait out a handover that lands during set_topics
+- Review round 1 on disable and enable
+- Pass a disabled sheep by on a Flockfile re-run
+
+
+## [0.12.5] - 2026-10-07
+
+
+## [0.12.4] - 2026-10-06
+
+### Fixed
+
+- Send stop and delete with the stop budget
+
+
+## [0.12.3] - 2026-10-02
+
+### Changed
+
+- Share the open-pane step across lookout fixtures
+
+### Fixed
+
+- Clear clippy lints that fire on stable 1.98
+
+
+## [0.12.2] - 2026-10-02
+
+### Fixed
+
+- Open the list editor on a dog table's string and integer lists
+- Keep secret lists read-only and reseed an open list on refresh
+
+
+## [0.12.1] - 2026-10-02
+
+### Added
+
+- Give a sheep's dogs row its own tab
+- Bind shift-tab to the previous lookout group
+
+### Fixed
+
+- Keep bleats.rs and sheep_pane.rs from growing
+
+
+## [0.12.0] - 2026-09-30
+
+### Added
+
+- Let a dog's --version answer ask for the shepherd channel **(BREAKING)**
+- Record on an adopted DogSource whether it asked for the channel **(BREAKING)**
+- Name a dog's missing channel in its own trigger outcome
+- Shep adopt records a dog's channel ask and every start honours it
+
+### Changed
+
+- Add a name to a [daemon] array through one ShepToml helper
+
+### Fixed
+
+- Refuse a second config read while one is still out
+
+
 ## [0.11.0] - 2026-09-29
 
 ### Added

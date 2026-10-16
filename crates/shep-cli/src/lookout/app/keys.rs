@@ -29,6 +29,27 @@ impl App {
         }
     }
 
+    /// A bracketed paste: each printable character goes through the open
+    /// box's own [`KeyPress::TextChar`] path, so every editor keeps its own
+    /// rules. Nothing happens outside [`InputMode::Text`].
+    ///
+    /// The effects of the single characters collapse to the first one that
+    /// asks for anything: every effect a text box raises is a re-read, and
+    /// asking twice reads the same files twice.
+    pub(super) fn on_paste(&mut self, text: &str) -> Effect {
+        if self.mode != InputMode::Text {
+            return Effect::None;
+        }
+        let mut effect = Effect::None;
+        for typed in TextBox::pasted(text) {
+            let next = self.on_text_key(KeyPress::TextChar(typed));
+            if effect == Effect::None {
+                effect = next;
+            }
+        }
+        effect
+    }
+
     pub(super) fn on_key(&mut self, key: KeyPress) -> Effect {
         // While the box is open every key is text.
         if self.mode == InputMode::Text {
@@ -68,25 +89,10 @@ impl App {
         if self.sheep_pane().is_some() {
             return self.on_sheep_pane_key(key);
         }
-        // A cancelling keypress is consumed: a stray `j` cancels the confirm
-        // and does not also move the selection, or the next reflexive Enter
-        // acts on a target the operator lost track of. Cancelling is silent.
-        if self
-            .action
-            .as_ref()
-            .is_some_and(|action| action.stage == Stage::Armed)
-        {
-            if key == KeyPress::Confirm {
-                return self.confirm();
-            }
-            // The one key the cancel does not consume: an operator whose
-            // Ctrl-C does nothing reaches for `kill -9`, past every restore
-            // path `crate::lookout::term` has. Quitting discards the confirm.
-            if key == KeyPress::Quit {
-                return Effect::Quit;
-            }
-            self.action = None;
-            return Effect::None;
+        // The armed-confirm prelude, the same one `on_sheep_pane_key` runs
+        // ahead of its own keymap.
+        if let Some(effect) = self.on_armed_key(key) {
+            return effect;
         }
         self.notice = None;
         match key {
@@ -97,17 +103,14 @@ impl App {
                 if self.filter.is_empty() {
                     Effect::Quit
                 } else {
-                    self.set_filter(String::new())
+                    self.set_filter(TextBox::new())
                 }
             }
             // Once the link task has ended its poll receiver is gone, so an
             // `Effect::PollNow` would be silence with no reason for it.
             KeyPress::Refresh => {
                 if matches!(self.link, Link::Lost { .. }) {
-                    self.notice = Some(Notice {
-                        text: LINK_GONE.to_string(),
-                        grave: true,
-                    });
+                    self.notice = Some(Notice::grave(LINK_GONE.to_string()));
                     return Effect::None;
                 }
                 Effect::PollNow
@@ -118,11 +121,11 @@ impl App {
             KeyPress::SelectLast => self.select_at(self.visible_len().saturating_sub(1), -1),
             KeyPress::Action(verb) => self.arm(verb),
             // An armed confirm (including one already in flight) owns
-            // `Enter` before it ever reaches here: the routing rule above
-            // fires only on `Stage::Armed`. With nothing armed, `Enter`
-            // opens the sheep pane on the selected row, or does nothing on
-            // a dog, a group or a fold header, none of which is a sheep to
-            // open one on.
+            // `Enter` before it ever reaches here: the prelude above fires
+            // only on `Stage::Armed`. With nothing armed, `Enter` opens the
+            // sheep pane on the selected row, or does nothing on a dog, a
+            // group or a fold header, none of which is a sheep to open one
+            // on.
             KeyPress::Confirm => self.open_sheep_pane(),
             KeyPress::FilterStart => {
                 self.mode = InputMode::Text;
@@ -132,16 +135,18 @@ impl App {
             // only from text mode, already branched above. `map_key` also
             // sends `Remove`/`StepUp`/`StepDown` from Normal mode
             // (`d`/`K`/`J`), so those land here too, just inert.
-            // `NextGroup`/`Group`/`Undo` belong to the config pane: no other
+            // `NextGroup`/`PrevGroup`/`Group`/`Undo` belong to the config pane: no other
             // screen has groups to walk or a filed edit set to undo.
             KeyPress::TextChar(_)
             | KeyPress::TextBackspace
+            | KeyPress::TextEdit(_)
             | KeyPress::TextApply
             | KeyPress::TextAbandon
             | KeyPress::Remove
             | KeyPress::StepUp
             | KeyPress::StepDown
             | KeyPress::NextGroup
+            | KeyPress::PrevGroup
             | KeyPress::Group(_)
             | KeyPress::Undo
             | KeyPress::Continue => Effect::None,
@@ -284,13 +289,13 @@ impl App {
             return self.on_settings_text_key(key);
         }
         if self.bleats_pane().is_some() {
-            return self.on_bleats_text_key(key);
+            return self.on_feed_text_key(key, Self::bleats_pane_mut);
         }
         if matches!(self.body, Body::Secrets(_)) {
             return self.on_secrets_text_key(key);
         }
         if self.sheep_pane().is_some() {
-            return self.on_sheep_feed_text_key(key);
+            return self.on_feed_text_key(key, Self::sheep_feed_mut);
         }
         self.on_filter_text_key(key)
     }
@@ -306,12 +311,17 @@ impl App {
             KeyPress::Quit => Effect::Quit,
             KeyPress::TextChar(typed) => {
                 let mut query = self.filter.clone();
-                query.push(typed);
+                query.insert(typed);
                 self.set_filter(query)
             }
             KeyPress::TextBackspace => {
                 let mut query = self.filter.clone();
-                query.pop();
+                query.backspace();
+                self.set_filter(query)
+            }
+            KeyPress::TextEdit(edit) => {
+                let mut query = self.filter.clone();
+                query.edit(edit);
                 self.set_filter(query)
             }
             KeyPress::TextApply => {
@@ -320,7 +330,7 @@ impl App {
             }
             KeyPress::TextAbandon => {
                 self.mode = InputMode::Normal;
-                self.set_filter(String::new())
+                self.set_filter(TextBox::new())
             }
             _ => Effect::None,
         }
@@ -328,8 +338,13 @@ impl App {
 
     /// Replaces the filter and puts the selection back on a visible sheep: a
     /// keystroke that narrows the query can hide the selected one.
-    pub(super) fn set_filter(&mut self, query: String) -> Effect {
+    pub(super) fn set_filter(&mut self, query: TextBox) -> Effect {
         if self.filter == query {
+            return Effect::None;
+        }
+        // A cursor move changes no row, so there is nothing to reseat.
+        if self.filter.as_str() == query.as_str() {
+            self.filter = query;
             return Effect::None;
         }
         let previous = self.selected_index();
@@ -345,6 +360,12 @@ impl App {
     /// The filter as typed, empty when there is none.
     #[must_use]
     pub fn filter(&self) -> &str {
+        self.filter.as_str()
+    }
+
+    /// The filter box itself, for the bar that draws its cursor.
+    #[must_use]
+    pub(crate) fn filter_box(&self) -> &TextBox {
         &self.filter
     }
 
@@ -684,5 +705,52 @@ mod tests {
         });
         let _ = app.update(Msg::Key(KeyPress::Help));
         assert!(app.keymap_open());
+    }
+
+    /// The `/` box takes a paste at the cursor and narrows live, like typing.
+    #[test]
+    fn a_paste_into_the_filter_box_lands_at_the_cursor_and_narrows() {
+        let mut app = fixtures::full_app();
+        app.update(Msg::Key(KeyPress::FilterStart));
+        for typed in "wb".chars() {
+            app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        app.update(Msg::Key(KeyPress::TextEdit(TextEdit::Left)));
+
+        app.update(Msg::Paste(Pasted::new("e\n".to_string())));
+
+        assert_eq!(app.filter(), "web");
+        assert_eq!(app.filter_box().cursor(), 2);
+        assert_eq!(app.mode(), InputMode::Text, "the newline did not apply it");
+    }
+
+    /// Outside a text box a paste is dropped, not replayed as normal-mode
+    /// keys (`q` would quit, `x` would arm a stop).
+    #[test]
+    fn a_paste_in_normal_mode_does_nothing() {
+        let mut app = fixtures::full_app();
+
+        let effect = app.update(Msg::Paste(Pasted::new("qx\nj".to_string())));
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(app.mode(), InputMode::Normal);
+        assert_eq!(app.filter(), "");
+    }
+
+    /// Moving the cursor edits nothing, so the selection stays where it is.
+    #[test]
+    fn moving_the_cursor_in_the_filter_box_changes_no_rows() {
+        let mut app = fixtures::full_app();
+        app.update(Msg::Key(KeyPress::FilterStart));
+        for typed in "web".chars() {
+            app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        let selected = app.selected_index();
+
+        let effect = app.update(Msg::Key(KeyPress::TextEdit(TextEdit::Home)));
+
+        assert_eq!(effect, Effect::None);
+        assert_eq!(app.filter_box().cursor(), 0);
+        assert_eq!(app.selected_index(), selected);
     }
 }

@@ -31,7 +31,7 @@ impl App {
             };
             pane.typing = Some(Typing {
                 what: TypingWhat::NewKey,
-                buffer: String::new(),
+                buffer: TextBox::new(),
             });
             self.mode = InputMode::Text;
             return Effect::None;
@@ -46,11 +46,7 @@ impl App {
         }) else {
             return Effect::None;
         };
-        if matches!(row.source, Source::Namespace(_)) {
-            self.notice = Some(Notice {
-                text: PROVIDER_ROW_REFUSAL.to_string(),
-                grave: true,
-            });
+        if self.refuse_provider_row(&row) {
             return Effect::None;
         }
         if self.authorize_write().is_none() {
@@ -64,7 +60,7 @@ impl App {
         // limit or its own `[secrets] allow_read` check.
         pane.typing = Some(Typing {
             what: TypingWhat::ValueFor(row.key),
-            buffer: String::new(),
+            buffer: TextBox::new(),
         });
         self.mode = InputMode::Text;
         Effect::None
@@ -80,7 +76,7 @@ impl App {
                     .secrets_pane_mut()
                     .and_then(|pane| pane.typing.as_mut())
                 {
-                    typing.buffer.push(typed);
+                    typing.buffer.insert(typed);
                 }
             }
             KeyPress::TextBackspace => {
@@ -88,7 +84,15 @@ impl App {
                     .secrets_pane_mut()
                     .and_then(|pane| pane.typing.as_mut())
                 {
-                    typing.buffer.pop();
+                    typing.buffer.backspace();
+                }
+            }
+            KeyPress::TextEdit(edit) => {
+                if let Some(typing) = self
+                    .secrets_pane_mut()
+                    .and_then(|pane| pane.typing.as_mut())
+                {
+                    typing.buffer.edit(edit);
                 }
             }
             KeyPress::TextApply => return self.apply_secrets_text(),
@@ -119,19 +123,19 @@ impl App {
         match typing.what {
             TypingWhat::NewKey => {
                 let name = typing.buffer;
-                if shep_core::secrets::is_name(&name) {
+                if shep_core::secrets::is_name(name.as_str()) {
                     if let Some(pane) = self.secrets_pane_mut() {
                         pane.typing = Some(Typing {
-                            what: TypingWhat::ValueFor(name),
-                            buffer: String::new(),
+                            what: TypingWhat::ValueFor(name.as_str().to_string()),
+                            buffer: TextBox::new(),
                         });
                     }
                     return Effect::None;
                 }
-                self.notice = Some(Notice {
-                    text: format!("{name:?} is not a valid key: {NEW_KEY_GRAMMAR}"),
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(format!(
+                    "{:?} is not a valid key: {NEW_KEY_GRAMMAR}",
+                    name.as_str()
+                )));
                 if let Some(pane) = self.secrets_pane_mut() {
                     pane.typing = Some(Typing {
                         what: TypingWhat::NewKey,
@@ -142,15 +146,12 @@ impl App {
             }
             TypingWhat::ValueFor(key) => {
                 let value = typing.buffer;
-                if value.len() > shep_core::secrets::MAX_VALUE_BYTES {
-                    self.notice = Some(Notice {
-                        text: format!(
-                            "value is {} bytes, over the {}-byte limit",
-                            value.len(),
-                            shep_core::secrets::MAX_VALUE_BYTES
-                        ),
-                        grave: true,
-                    });
+                if value.as_str().len() > shep_core::secrets::MAX_VALUE_BYTES {
+                    self.notice = Some(Notice::grave(format!(
+                        "value is {} bytes, over the {}-byte limit",
+                        value.as_str().len(),
+                        shep_core::secrets::MAX_VALUE_BYTES
+                    )));
                     if let Some(pane) = self.secrets_pane_mut() {
                         pane.typing = Some(Typing {
                             what: TypingWhat::ValueFor(key),
@@ -175,7 +176,7 @@ impl App {
                     SecretEdit {
                         key,
                         environment,
-                        value: Some(value),
+                        value: Some(value.as_str().to_string()),
                     },
                     authority,
                 )
@@ -201,7 +202,8 @@ mod tests {
         let typing = typing_of(&app).expect("the input is open");
         assert_eq!(typing.what, TypingWhat::ValueFor("DB_PASSWORD".into()));
         assert_eq!(
-            typing.buffer, "",
+            typing.buffer.as_str(),
+            "",
             "seeding it with the stored value would put a secret on screen \
                  that `v` and its gate exist to control"
         );
@@ -333,5 +335,37 @@ mod tests {
             notice_of(&app).is_some_and(|n| n.contains("pushed by a dog")),
             "and it says why rather than doing nothing"
         );
+    }
+
+    /// A pasted secret goes through the same box as a typed one, and nothing
+    /// that prints a message or a `Debug` carries it.
+    #[test]
+    fn a_pasted_value_is_never_printed_in_a_notice_or_a_debug() {
+        let mut app = fixtures::app_typing_a_value();
+        let paste = Msg::Paste(Pasted::new("hunter2\nsecond".to_string()));
+
+        assert_eq!(format!("{paste:?}"), "Paste(Pasted(<14 bytes>))");
+        let _ = app.update(paste);
+
+        let typing = typing_of(&app).expect("the newline did not apply the input");
+        assert_eq!(typing.buffer.as_str(), "hunter2second");
+        assert_eq!(
+            format!("{typing:?}"),
+            "Typing { what: ValueFor(\"DB_PASSWORD\"), buffer: <13 bytes> }"
+        );
+        assert_eq!(notice_of(&app), None);
+    }
+
+    /// The cursor keys edit a secret in the middle too.
+    #[test]
+    fn a_secret_value_can_be_corrected_at_the_cursor() {
+        let mut app = fixtures::app_typing_a_value();
+        for typed in "xz".chars() {
+            let _ = app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        let _ = app.update(Msg::Key(KeyPress::TextEdit(TextEdit::Left)));
+        let _ = app.update(Msg::Key(KeyPress::TextChar('y')));
+
+        assert_eq!(typing_of(&app).unwrap().buffer.as_str(), "xyz");
     }
 }

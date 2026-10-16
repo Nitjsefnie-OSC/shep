@@ -23,7 +23,7 @@
 //!
 //! - A slow handler delays the next message: the reader thread runs
 //!   handlers itself. `action_timeout` (default 3s) sets the budget.
-//! - `metric` drops a sample under backpressure. `ready` and a reply block
+//! - `metric` and `note` drop under backpressure. `ready` and a reply block
 //!   for room instead, since losing either is worse.
 //! - Sending queues; a writer thread does the writing. An app that ends
 //!   itself, typically from `on_shutdown`, calls `flush` first or loses
@@ -46,6 +46,10 @@ mod endpoint;
 #[cfg(feature = "client")]
 mod error;
 #[cfg(feature = "client")]
+mod loops;
+#[cfg(feature = "client")]
+mod metric;
+#[cfg(feature = "client")]
 mod outbox;
 #[cfg(feature = "client")]
 mod serve;
@@ -62,5 +66,9 @@ pub use endpoint::{Endpoint, FD_VAR, PIPE_VAR, VERSION_VAR, discover};
 #[cfg(feature = "client")]
 pub use error::ChannelError;
 #[cfg(feature = "client")]
+pub use metric::MetricOptions;
+#[cfg(feature = "client")]
 pub use serve::{Shepherd, serve};
-pub use wire::{CHANNEL_VERSION, ChildMessage, LambLabel, LambLabelError, ShepherdMessage};
+pub use wire::{
+    CHANNEL_VERSION, ChildMessage, LambLabel, LambLabelError, MetricType, ShepherdMessage,
+};

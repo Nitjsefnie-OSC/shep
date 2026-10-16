@@ -1,24 +1,23 @@
 ---
 source: crates/shep-cli/src/lookout/frames/mod.rs
-assertion_line: 91
 expression: render_text(&buffer)
 ---
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)                                                                                                                                         
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab next group   1…8 jump                                                     
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
-   args                       ["--port","8080"]                               respawn    FOCUSED  dogs  opaque                                                  
-   channel                    false                                           respawn     Settings for one dog on this sheep alone, opaque to shep              
->› dogs                       jobs, legacy                                    now                                                                               
-   environment                (unset)                                         respawn     now     jobs, legacy                                                  
-   stdin                      false                                           respawn     default {}                                                            
-                                                                                          example (none)                                                        
+>› dogs                       jobs, legacy                                    now        FOCUSED  dogs  opaque                                                  
+                                                                                          Settings for one dog on this sheep alone, opaque to shep              
   env                                                                                                                                                           
-   DATABASE_URL               (set)                                                       ● now  the running sheep picks it up without stopping                 
-   NODE_ENV                   (set)                                                                                      pick the timing when you close the pane
-   + add a key                                                                                                                                                  
+   DATABASE_URL               (set)                                                       now     jobs, legacy                                                  
+   NODE_ENV                   (set)                                                       default {}                                                            
+   + add a key                                                                            example (none)                                                        
+                                                                                                                                                                
+                                                                                          ● now  the running sheep picks it up without stopping                 
+                                                                                                                         pick the timing when you close the pane
+                                                                                                                                                                
                                                                                           ──────────────────────────────────────────────────────────────────────
                                                                                           VALIDATION                                                            
                                                                                           █ a table of dog name to a table of settings                          

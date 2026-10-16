@@ -196,9 +196,10 @@ impl RunningProcess for TokioProc {
     /// Terminates the sheep's whole job: every process it spawned, however
     /// deeply nested.
     ///
-    /// Stronger than the unix rung: a grandchild that calls `setsid` escapes
-    /// its process group, while a job member cannot leave its job or spawn
-    /// outside it, since `sys_windows::Job::create` grants no breakaway.
+    /// Stronger than the unix rung, which a grandchild escapes by calling
+    /// `setsid` and leaves to the lamb sweep. A job member cannot leave its
+    /// job or spawn outside it, since `sys_windows::Job::create` grants no
+    /// breakaway.
     #[cfg(windows)]
     fn kill_tree(&mut self) -> Result<(), RunnerError> {
         self.job
@@ -235,18 +236,29 @@ impl RunningProcess for TokioProc {
     fn signal_process(&mut self, sig: OperatorSignal) -> Result<(), RunnerError> {
         // Positive pid, unlike `signal_group`'s negative one: this reaches the
         // sheep alone, that one reaches its whole group.
-        let pid = i32::try_from(self.pid)
-            .ok()
-            .filter(|pid| *pid > 0)
-            .ok_or_else(|| {
-                RunnerError::SignalFailed(format!(
-                    "pid {} is not a signallable process id",
-                    self.pid
-                ))
-            })?;
+        let pid = signallable_pid(self.pid)?;
         signal::kill(Pid::from_raw(pid), to_nix_operator_signal(sig))
             .map_err(|error| RunnerError::SignalFailed(error.to_string()))
     }
+}
+
+/// Narrows a spawn's pid to the `i32` form `kill(2)` takes, refusing one it
+/// cannot take.
+///
+/// A zero pid must never reach the syscall: `-0` is `0`, and `kill(0, ..)`
+/// signals the daemon's own group. A pid above `i32::MAX` has no `i32` form.
+///
+/// # Errors
+///
+/// [`RunnerError::SignalFailed`] if `pid` is 0 or above `i32::MAX`.
+#[cfg(unix)]
+pub(super) fn signallable_pid(pid: u32) -> Result<i32, RunnerError> {
+    i32::try_from(pid)
+        .ok()
+        .filter(|pid| *pid > 0)
+        .ok_or_else(|| {
+            RunnerError::SignalFailed(format!("pid {pid} is not a signallable process id"))
+        })
 }
 
 // Group-wide for both stop rungs and for the exec prober's timeout path
@@ -256,8 +268,9 @@ impl RunningProcess for TokioProc {
 /// Sends `sig` to the whole process group led by `pid`.
 ///
 /// `-pid` names the group `spawn`'s `process_group(0)` establishes. A
-/// descendant that forks and then calls `setsid` lands in its own session,
-/// which neither stop rung reaches.
+/// descendant that calls `setsid` lands in its own session, which this
+/// misses. A sheep's lamb sweep ends it after the leader exits; a probe's
+/// child has no sweep.
 ///
 /// # Errors
 ///
@@ -265,14 +278,7 @@ impl RunningProcess for TokioProc {
 /// the `kill(2)` itself failed (typically `ESRCH`: no group led by `pid`).
 #[cfg(unix)]
 pub(crate) fn signal_group(pid: u32, sig: Signal) -> Result<(), RunnerError> {
-    // `-0` is `0`, and `kill(0, ..)` means the daemon's own group: a zero pid
-    // must never reach the syscall.
-    let pid = i32::try_from(pid)
-        .ok()
-        .filter(|pid| *pid > 0)
-        .ok_or_else(|| {
-            RunnerError::SignalFailed(format!("pid {pid} is not a signallable process id"))
-        })?;
+    let pid = signallable_pid(pid)?;
     signal::kill(Pid::from_raw(-pid), sig)
         .map_err(|error| RunnerError::SignalFailed(error.to_string()))
 }

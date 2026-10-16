@@ -17,7 +17,7 @@ use super::super::theme::Palette;
 use super::cell;
 use super::flock::fit;
 use super::lamb_line::lamb_line;
-use crate::output::width::char_columns;
+use crate::output::width::{char_columns, text_columns};
 use crate::output::{human_bytes, human_duration};
 use crate::vocabulary::Role;
 
@@ -59,14 +59,14 @@ fn fold_lines(app: &App, name: &str, width: u16, palette: Palette) -> Vec<Line<'
     // as truncates, and a padded head leaves the rollup nothing.
     let status = fit(
         &status,
-        width.min(u16::try_from(columns(&status)).unwrap_or(width)),
+        width.min(u16::try_from(text_columns(&status)).unwrap_or(width)),
     );
-    let head_budget = width.saturating_sub(u16::try_from(columns(&status)).unwrap_or(0));
+    let head_budget = width.saturating_sub(u16::try_from(text_columns(&status)).unwrap_or(0));
     let head = fit(
         &head,
-        head_budget.min(u16::try_from(columns(&head)).unwrap_or(head_budget)),
+        head_budget.min(u16::try_from(text_columns(&head)).unwrap_or(head_budget)),
     );
-    let used = columns(&head) + columns(&status);
+    let used = text_columns(&head) + text_columns(&status);
     let status_style = app
         .fold_uniform_status(name)
         .map_or(Style::default(), |status| palette.status(status));
@@ -130,14 +130,14 @@ fn group_lines(app: &App, name: &str, width: u16, palette: Palette) -> Vec<Line<
     // Both fit before either is measured, the rule the fold branch states.
     let status = fit(
         &status,
-        width.min(u16::try_from(columns(&status)).unwrap_or(width)),
+        width.min(u16::try_from(text_columns(&status)).unwrap_or(width)),
     );
-    let head_budget = width.saturating_sub(u16::try_from(columns(&status)).unwrap_or(0));
+    let head_budget = width.saturating_sub(u16::try_from(text_columns(&status)).unwrap_or(0));
     let head = fit(
         &head,
-        head_budget.min(u16::try_from(columns(&head)).unwrap_or(head_budget)),
+        head_budget.min(u16::try_from(text_columns(&head)).unwrap_or(head_budget)),
     );
-    let used = columns(&head) + columns(&status);
+    let used = text_columns(&head) + text_columns(&status);
     // `palette.status`, not `palette.reported`: a selected group is always
     // an app's own instances, never a dog.
     let status_style = app
@@ -233,7 +233,7 @@ pub(crate) fn identity_line(app: &App, row: &Row, width: u16, palette: Palette) 
         match &info.dog {
             None => String::new(),
             Some(DogSource::BuiltIn) => "   dog built-in".to_string(),
-            Some(DogSource::Adopted { path }) => format!("   dog adopted {path}"),
+            Some(DogSource::Adopted { path, .. }) => format!("   dog adopted {path}"),
             // `DogSource` is `#[non_exhaustive]`: a source a newer shepherd
             // added must not take the pane down, and must not be reported as
             // anything it is not.
@@ -246,7 +246,7 @@ pub(crate) fn identity_line(app: &App, row: &Row, width: u16, palette: Palette) 
         // drops rather than the one field immune to truncation.
         cfg_text,
     );
-    let used = columns(&chip) + columns(&facts) + columns(&status);
+    let used = text_columns(&chip) + text_columns(&facts) + text_columns(&status);
 
     Line::from(vec![
         Span::styled(chip, palette.band(Role::Meadow)),
@@ -267,7 +267,7 @@ pub(crate) fn identity_line(app: &App, row: &Row, width: u16, palette: Palette) 
 /// rather than re-deriving the same natural-width computation.
 pub(crate) fn chip_text(label: &str) -> String {
     let natural = format!(" \u{2588}\u{2588} {label}");
-    let cells: usize = natural.chars().map(char_columns).sum();
+    let cells: usize = text_columns(&natural);
     cell::band(label, cells)
 }
 
@@ -302,12 +302,12 @@ fn log_row(app: &App, width: u16) -> Line<'static> {
         .log_size_for(info.id)
         .map(|bytes| format!("   {} on disk", human_bytes(bytes)));
 
-    let overhead = columns(OUT_LABEL) + columns(DIVIDER) + columns(ERR_LABEL);
+    let overhead = text_columns(OUT_LABEL) + text_columns(DIVIDER) + text_columns(ERR_LABEL);
     let width_usize = usize::from(width);
-    let paths_len = overhead + columns(out_full) + columns(err_full);
+    let paths_len = overhead + text_columns(out_full) + text_columns(err_full);
 
     let (out_val, err_val, size_val) =
-        if paths_len + size_text.as_deref().map_or(0, columns) <= width_usize {
+        if paths_len + size_text.as_deref().map_or(0, text_columns) <= width_usize {
             (out_full.to_string(), err_full.to_string(), size_text)
         } else if paths_len <= width_usize {
             (out_full.to_string(), err_full.to_string(), None)
@@ -337,7 +337,7 @@ fn log_row(app: &App, width: u16) -> Line<'static> {
     ];
     let used: usize = spans
         .iter()
-        .map(|span| columns(span.content.as_ref()))
+        .map(|span| text_columns(span.content.as_ref()))
         .sum();
     if used < width_usize {
         spans.push(Span::styled(
@@ -351,7 +351,7 @@ fn log_row(app: &App, width: u16) -> Line<'static> {
 /// Keeps `path`'s tail, the half that identifies the file, marking the drop
 /// with a leading `\u{2026}` when it does not fit `budget` columns.
 fn truncate_from_left(path: &str, budget: usize) -> String {
-    if columns(path) <= budget {
+    if text_columns(path) <= budget {
         return path.to_string();
     }
     if budget == 0 {
@@ -370,12 +370,6 @@ fn truncate_from_left(path: &str, budget: usize) -> String {
     }
     kept.reverse();
     format!("\u{2026}{}", kept.into_iter().collect::<String>())
-}
-
-/// The display-column width of a whole string, the same measure
-/// [`super::flock::fit`] uses.
-fn columns(text: &str) -> usize {
-    text.chars().map(char_columns).sum()
 }
 
 #[cfg(test)]
@@ -589,6 +583,7 @@ mod tests {
             .pid(Some(4_242))
             .dog(Some(DogSource::Adopted {
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
+                channel: false,
             }))
             .handshook(Some(false))
             .build();
@@ -733,9 +728,9 @@ mod tests {
         let lines = detail_lines(&app, width);
         let first = rendered(&lines[0]);
         assert!(
-            columns(&first) <= usize::from(width),
+            text_columns(&first) <= usize::from(width),
             "first line is {} columns wide, wanted at most {width}: {first:?}",
-            columns(&first)
+            text_columns(&first)
         );
     }
 
@@ -769,9 +764,9 @@ mod tests {
         let lines = detail_lines(&app, width);
         let first = rendered(&lines[0]);
         assert!(
-            columns(&first) <= usize::from(width),
+            text_columns(&first) <= usize::from(width),
             "first line is {} columns wide, wanted at most {width}: {first:?}",
-            columns(&first)
+            text_columns(&first)
         );
     }
 
@@ -814,7 +809,7 @@ mod tests {
                     .map(|span| span.content.as_ref())
                     .collect();
                 assert!(
-                    columns(&drawn) <= 33,
+                    text_columns(&drawn) <= 33,
                     "{selected} row overflowed 33 columns: {drawn:?}"
                 );
             }
@@ -840,7 +835,7 @@ mod tests {
                 .map(|span| span.content.as_ref())
                 .collect();
             assert!(
-                columns(&drawn) <= 33,
+                text_columns(&drawn) <= 33,
                 "a detail row overflowed 33 columns: {drawn:?}"
             );
         }

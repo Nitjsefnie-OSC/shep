@@ -113,7 +113,7 @@ only that half:
   channel.
 
 **The wire format below is unchanged** — same newline-delimited JSON, same
-`ready`/`metric`/`action-reply`/`lamb-label` outbound and `shutdown`/`action` inbound
+`ready`/`metric`/`action-reply`/`lamb-label`/`note` outbound and `shutdown`/`action` inbound
 shapes, same correlation id. A named pipe opened in byte mode is a blocking
 byte stream, so "read a line, parse it, act on it" still describes reading
 it exactly.
@@ -140,7 +140,8 @@ Two ways out. Pick one before you write the reader:
   to arrive; issue a `ReadFile` only for bytes it has just told you are
   there. This holds the file object for the length of a copy rather than the
   length of a wait, so the writer gets in between polls. It is what
-  `shep-channel` does, polling every 20 ms. Note what it does not buy you:
+  `shep-channel` does, polling on a backoff from 20 ms to 100 ms. Note what
+  it does not buy you:
   the handle is still synchronous, so a peek queues behind any operation
   already running on it, and Microsoft documents `PeekNamedPipe` as able to
   block in a multithreaded application for that reason. A writer parked on a
@@ -175,9 +176,10 @@ build a JSON object, append `\n`, write it.
 | Message | Meaning |
 |---|---|
 | `{"kind":"ready"}` | You are up and ready to serve. Only meaningful if `wait_ready = true`; the daemon is otherwise not waiting for it. |
-| `{"kind":"metric","name":"<name>","value":<number>}` | A custom metric sample. Currently logged by the daemon at debug level and nothing more — no dog reads it yet. |
+| `{"kind":"metric","name":"<name>","value":<number>}`, optionally with `"type":"gauge"|"counter"`, `"labels":{"<key>":"<value>", ...}` and `"help":"<text>"` | A custom metric sample. An absent `type` means gauge; an unknown one makes the line malformed and the daemon drops it. `labels` is a string map: an absent key and an empty map are the same message. `help` is free text. The metrics dog keeps it and serves it at `/metrics`: see [Metrics](#metrics). |
 | `{"kind":"action-reply","action":"<name>","body":"<text>","id":<number>}` | Your answer to a triggered action. `action` names which one; `body` is free-form text and becomes what the operator sees. `id` is optional — echo the `id` from the `action` message you are answering and shep matches your reply to that exact request. |
 | `{"kind":"lamb-label","pid":<number>,"label":"<text>"}` | Names one of your own child processes in `shep describe` and lookout. An empty `label` clears it. See [Naming your lambs](#naming-your-lambs). |
+| `{"kind":"note","name":"<text>","value":<number>}` | A name and a number for a dog of your own, not a metric sample. The metrics dog never reads one. See [Notes for a dog](#notes-for-a-dog). |
 
 ### What you receive (daemon writes this)
 
@@ -191,6 +193,69 @@ committed at `crates/shep-channel/wire/channel.go`. It is the same file
 `github.com/shep-pm/shep-go/channel` ships as `channel/wire.go`. Copy it
 rather than retyping it: every optional field is a pointer, because Go's
 `omitempty` on a plain value drops a metric of zero and an id of zero.
+
+## Metrics
+
+A `metric` line is a sample the metrics dog keeps. It shows up on that dog's
+`/metrics` endpoint (`127.0.0.1:9615` by default) after shep's own series, as
+one `# HELP`/`# TYPE` block per name with one series per label set.
+
+Your sample carries the labels shep already uses for your process: `sheep`,
+`id` and `fold` for a sheep, `dog` and `source` for a dog. Your own labels come
+after those, so a label named `sheep`, `id`, `fold`, `dog` or `source` is
+refused.
+
+What the dog enforces, and the reason it reports when you break one:
+
+- A name matches `[a-zA-Z_:][a-zA-Z0-9_:]*` and is at most 128 bytes
+  (`invalid_name`), and does not start with `shep_`, which is the shepherd's
+  own namespace (`reserved_name`).
+- A label name matches `[a-zA-Z_][a-zA-Z0-9_]*`, is at most 64 bytes, and does
+  not start with `__` (`invalid_label`).
+- At most 16 labels, a label value at most 256 bytes, help text at most 512
+  bytes (`too_long`).
+- At most 256 series per sender. A new one is refused rather than an old one
+  evicted (`series_cap`).
+- A name keeps the kind its first sample set, so a `counter` for a name already
+  held as a `gauge` is refused (`type_conflict`). An absent `type` means gauge.
+
+A refusal is counted in `shep_channel_samples_refused_total{reason="..."}` on
+the same endpoint, and the dog prints one line per sender and reason in its own
+log, read with `shep bleats metrics`. Nothing else tells you a sample was
+dropped.
+
+The dog keeps your latest value per name and label set until your process
+stops, exits, restarts, is deleted or errors. A reload frees what the drained
+instance sent, and never what the instance it put in place sends, so a value
+from the old one never outlives it.
+
+## Notes for a dog
+
+A `metric` line reaches every dog that reads samples, the metrics dog
+included. To tell a dog of your own something that is not a series, send a
+note instead:
+
+```json
+{"kind":"note","name":"lease.web.want.1760500000","value":1}
+```
+
+The shepherd publishes it on the bus as `channel.note`, and a dog that
+subscribes to that topic receives it. The metrics dog subscribes to
+`channel.metric` only, so a note is never served at `/metrics` and never
+counted as refused.
+
+- **`name` is any string and `value` any number.** There is no grammar
+  check, so a pid or an epoch in the name costs nothing. There are no
+  labels and no help. A line missing either field is malformed.
+- **Nothing keeps a note.** The shepherd hands it to whoever is subscribed
+  at that moment and stores nothing. A dog that subscribes later never
+  sees it.
+
+A shepherd that predates this message logs it as malformed and carries on.
+
+In Rust, `shep_channel::Shepherd::note(name, value)` sends one. Like a
+metric sample, it never blocks: when the shepherd falls behind, a note is
+dropped and counted in `Shepherd::dropped_metrics`.
 
 ## Custom actions — the part most worth reading closely
 
@@ -321,9 +386,9 @@ down while you wait.
 ## Everything you write here is also public on the bus
 
 Every message you send on fd 3 — `ready`, `metric`, `action-reply`,
-`lamb-label` — is republished on the daemon's event bus under `channel.*`
+`lamb-label`, `note` — is republished on the daemon's event bus under `channel.*`
 (`channel.ready`, `channel.metric`, `channel.action_reply`,
-`channel.lamb_label`), as its own
+`channel.lamb_label`, `channel.note`), as its own
 topic alongside `process.*` and the log topics. Anyone subscribed to
 `channel.*` sees it, not just the operator who happened to send the
 `trigger` you were answering.

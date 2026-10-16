@@ -161,13 +161,13 @@ impl<R: ProcessRunner> Actor<R> {
 
         let stamp = self.next_deadline;
         self.next_deadline += 1;
-        let Some(job) = self.reloads.get_mut(name) else {
-            // Every caller arms with its job already in the map; without one
-            // there is nothing for a watchdog to end, so arming would leak a
-            // timer that could only be dropped as stale.
-            debug_assert!(false, "arm_reload_deadline: no job to arm for");
-            return;
-        };
+        // Every caller arms with its job already in the map; without one
+        // there is nothing for a watchdog to end, so arming would leak a
+        // timer that could only be dropped as stale.
+        let job = self
+            .reloads
+            .get_mut(name)
+            .expect("arm_reload_deadline: no job to arm for");
         job.deadline = stamp;
 
         let tx = self.tx.clone();

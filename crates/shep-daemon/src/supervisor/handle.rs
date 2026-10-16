@@ -75,16 +75,51 @@ impl SupervisorHandle {
     /// Idempotent by name: an app already known is returned as it stands, so
     /// restoring a roll over a live flock disturbs nothing.
     ///
+    /// `disabled` names the apps of `apps` to mark disabled as they register,
+    /// so nothing can spawn them in between. A name not in `apps` is ignored.
+    ///
     /// # Errors
     ///
     /// - [`SupervisorError::EngineStopped`]: the actor is gone.
     pub(crate) async fn register_at_rest(
         &self,
         apps: Vec<ResolvedApp>,
+        disabled: BTreeSet<String>,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
         let (reply, rx) = oneshot::channel();
         self.tx
-            .send(Msg::Command(Command::RegisterAtRest { apps, reply }))
+            .send(Msg::Command(Command::RegisterAtRest {
+                apps,
+                disabled,
+                reply,
+            }))
+            .await
+            .map_err(|_| SupervisorError::EngineStopped)?;
+        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+    }
+
+    /// Registers each dog as a flock member without starting it.
+    ///
+    /// Idempotent by name, as [`Self::register_at_rest`] is: a dog or sheep
+    /// already registered under the name is left as it stands. `disabled`
+    /// names the dogs of `dogs` to mark disabled as they register, and a name
+    /// registered already keeps whatever mark it has.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::EngineStopped`]: the actor is gone.
+    pub(crate) async fn register_dogs_at_rest(
+        &self,
+        dogs: Vec<(ResolvedApp, DogSource)>,
+        disabled: BTreeSet<String>,
+    ) -> Result<Vec<ProcessInfo>, SupervisorError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Command(Command::RegisterDogsAtRest {
+                dogs,
+                disabled,
+                reply,
+            }))
             .await
             .map_err(|_| SupervisorError::EngineStopped)?;
         rx.await.map_err(|_| SupervisorError::EngineStopped)?
@@ -165,7 +200,7 @@ impl SupervisorHandle {
     /// operator override. Answers `Ok(None)` when no sheep has that name.
     ///
     /// The `Some` carries the config now parked for that sheep's next spawn.
-    /// `rpc.rs` hands it to [`crate::snapshot::FlockRegistry::record`], the
+    /// `rpc/dispatch.rs` hands it to [`crate::snapshot::FlockRegistry::record`], the
     /// way the `Scale` and `ApplyConfig` arms hand it theirs: the muster roll
     /// is written from the registry and nothing on the restore path reads the
     /// override store, so an edit that skipped this survives a
@@ -210,7 +245,7 @@ impl SupervisorHandle {
     /// [`Actor::handle_set_sheep_env_batch`] states what `force` and
     /// `dry_run` do and when the batch is refused whole. The `Some` carries
     /// [`EnvBatch`], whose `app` is the config now parked for that sheep's
-    /// next spawn and is `None` whenever nothing was written; `rpc.rs` hands
+    /// next spawn and is `None` whenever nothing was written; `rpc/dispatch.rs` hands
     /// it to the registry for [`Self::set_sheep_env`]'s reason.
     ///
     /// # Errors
@@ -334,8 +369,11 @@ impl SupervisorHandle {
 
     /// Registers and starts one dog, marked as coming from `source`.
     ///
-    /// Idempotent by name: a dog already registered under `app`'s name is
-    /// reported as it stands rather than started twice.
+    /// Idempotent by name: a dog already running under `app`'s name is
+    /// reported as it stands rather than started twice. A dog registered at
+    /// rest (`Stopped`) is not running, so it is started in its own entry
+    /// from `app` and `source`, replacing the ones it was registered with,
+    /// and any disabled mark on it is cleared.
     ///
     /// # Errors
     ///
@@ -372,6 +410,74 @@ impl SupervisorHandle {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(Msg::Command(Command::Stop { selector, reply }))
+            .await
+            .map_err(|_| SupervisorError::EngineStopped)?;
+        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+    }
+
+    /// Disables the app of every sheep matching `selector` and stops it.
+    ///
+    /// The mark belongs to the app, so a selector that matched one instance
+    /// disables all of them. Every returned row carries
+    /// [`ProcessInfo::disabled`] as `Some(true)`.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::NotFound`]: nothing matched.
+    /// - [`SupervisorError::EngineStopped`]: the actor is gone.
+    pub(crate) async fn disable(
+        &self,
+        selector: ProcessSelector,
+    ) -> Result<Vec<ProcessInfo>, SupervisorError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Command(Command::Disable { selector, reply }))
+            .await
+            .map_err(|_| SupervisorError::EngineStopped)?;
+        let mut infos = rx.await.map_err(|_| SupervisorError::EngineStopped)??;
+        for info in &mut infos {
+            info.disabled = Some(true);
+        }
+        Ok(infos)
+    }
+
+    /// Stops the dog registered as `name` and marks it disabled, leaving it
+    /// registered at rest.
+    ///
+    /// Answers with the dog's id. A dog that is already stopped is marked and
+    /// answered the same way.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::NotFound`]: no dog is registered under `name`.
+    ///   A sheep holding the name is left alone.
+    /// - [`SupervisorError::EngineStopped`]: the actor is gone.
+    pub(crate) async fn disable_dog(&self, name: String) -> Result<Vec<u32>, SupervisorError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Command(Command::DisableDog { name, reply }))
+            .await
+            .map_err(|_| SupervisorError::EngineStopped)?;
+        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+    }
+
+    /// Clears the disabled mark on the app of every sheep matching `selector`
+    /// and starts it.
+    ///
+    /// Answers with the instances it started, which is empty when every
+    /// matched app was not disabled.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::NotFound`]: nothing matched.
+    /// - [`SupervisorError::EngineStopped`]: the actor is gone.
+    pub(crate) async fn enable(
+        &self,
+        selector: ProcessSelector,
+    ) -> Result<Vec<ProcessInfo>, SupervisorError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Command(Command::Enable { selector, reply }))
             .await
             .map_err(|_| SupervisorError::EngineStopped)?;
         rx.await.map_err(|_| SupervisorError::EngineStopped)?
@@ -488,6 +594,8 @@ impl SupervisorHandle {
     /// # Errors
     ///
     /// - [`SupervisorError::NotFound`]: nothing matched.
+    /// - [`SupervisorError::IsADog`]: the selector reached a built-in dog,
+    ///   which no verb removes; the message names `shep disable`.
     /// - [`SupervisorError::EngineStopped`]: the actor is gone.
     pub(crate) async fn delete(
         &self,

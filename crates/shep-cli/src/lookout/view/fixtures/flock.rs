@@ -132,6 +132,7 @@ pub fn app_with_a_dog_selected_and_control() -> App {
         .pid(Some(90_000))
         .dog(Some(DogSource::Adopted {
             path: "/opt/otel".to_string(),
+            channel: false,
         }))
         .build();
     let mut app = app_with(vec![decoy, dog], plain());

@@ -66,7 +66,7 @@ fn rehoming_a_dog_forgets_its_adoption_and_keeps_its_settings() {
     // but an un-migrated file carries one.
     std::fs::write(&path, "[dog.otel]\ndebounce = \"30s\"\n").unwrap();
     ShepToml::edit(&path, |doc| {
-        doc.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"))
+        doc.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"), false)
             .unwrap();
     })
     .unwrap();
@@ -98,7 +98,7 @@ fn adopted_dog_path_reads_what_adopt_dog_wrote_and_nothing_else() {
     let path = dir.path().join("shep.toml");
     ShepToml::edit(&path, |doc| {
         doc.enable_dog("metrics").unwrap(); // built-in: no `adopted_dogs` entry at all
-        doc.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"))
+        doc.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"), false)
             .unwrap();
 
         assert_eq!(
@@ -266,7 +266,7 @@ fn a_hand_edited_daemon_key_is_refused_rather_than_panicked_on() {
         // `adopt_dog` reaches all three keys: `[daemon]`, then
         // `adopted_dogs`, then `enabled_dogs` through `enable_dog`.
         let refusal = ShepToml::try_edit(&path, |cfg| {
-            cfg.adopt_dog("metrics", Path::new("/usr/local/bin/shep-metrics"))
+            cfg.adopt_dog("metrics", Path::new("/usr/local/bin/shep-metrics"), false)
         });
 
         match refusal {
@@ -300,7 +300,7 @@ fn a_daemon_table_shep_wrote_itself_still_takes_a_dog() {
     std::fs::write(&path, "[daemon]\nlog_level = \"info\"\n").unwrap();
 
     ShepToml::try_edit(&path, |cfg| {
-        cfg.adopt_dog("metrics", Path::new("/usr/local/bin/shep-metrics"))
+        cfg.adopt_dog("metrics", Path::new("/usr/local/bin/shep-metrics"), false)
     })
     .unwrap();
 
@@ -311,4 +311,91 @@ fn a_daemon_table_shep_wrote_itself_still_takes_a_dog() {
         written.contains("shep-metrics"),
         "the binary landed: {written}"
     );
+}
+
+/// A re-adopt reads the binary as it is now, so a dog whose new build stops
+/// asking must lose the channel rather than keep a stale grant.
+#[test]
+fn a_channel_ask_is_recorded_and_a_readopt_that_does_not_ask_forgets_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("shep.toml");
+    let binary = Path::new("/usr/local/bin/shep-otel");
+
+    ShepToml::try_edit(&path, |cfg| cfg.adopt_dog("otel", binary, true)).unwrap();
+    let written = std::fs::read_to_string(&path).unwrap();
+    let cfg = DaemonConfig::load(Some(&written), &|_| None).unwrap();
+    assert_eq!(cfg.daemon.channel_dogs, vec!["otel"]);
+    assert!(
+        ShepToml::read_only(&path)
+            .unwrap()
+            .asked_for_channel("otel")
+    );
+
+    ShepToml::try_edit(&path, |cfg| cfg.adopt_dog("otel", binary, false)).unwrap();
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !ShepToml::read_only(&path)
+            .unwrap()
+            .asked_for_channel("otel")
+    );
+    assert!(
+        !written.contains("channel_dogs"),
+        "an emptied key goes, so an older shep still loads the file: {written}"
+    );
+}
+
+/// The ordinary adopt writes no key an older shep would refuse to load.
+#[test]
+fn adopting_a_dog_that_did_not_ask_writes_no_channel_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("shep.toml");
+
+    ShepToml::try_edit(&path, |cfg| {
+        cfg.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"), false)
+    })
+    .unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(!written.contains("channel_dogs"), "{written}");
+}
+
+#[test]
+fn rehoming_a_dog_forgets_its_channel_ask_and_keeps_another_dogs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("shep.toml");
+    ShepToml::try_edit(&path, |cfg| {
+        cfg.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"), true)?;
+        cfg.adopt_dog("jobs", Path::new("/usr/local/bin/shep-jobs"), true)
+    })
+    .unwrap();
+
+    ShepToml::edit(&path, |cfg| cfg.rehome_dog("otel")).unwrap();
+
+    let cfg = ShepToml::read_only(&path).unwrap();
+    assert!(!cfg.asked_for_channel("otel"));
+    assert!(cfg.asked_for_channel("jobs"));
+}
+
+#[test]
+fn a_hand_edited_channel_dogs_is_refused_rather_than_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("shep.toml");
+    let original = "[daemon]\nchannel_dogs = \"otel\"\n";
+    std::fs::write(&path, original).unwrap();
+
+    let refusal = ShepToml::try_edit(&path, |cfg| {
+        cfg.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"), true)
+    });
+
+    assert!(
+        matches!(
+            refusal,
+            Err(ShepTomlError::WrongShape {
+                key: "channel_dogs",
+                ..
+            })
+        ),
+        "{refusal:?}"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
 }

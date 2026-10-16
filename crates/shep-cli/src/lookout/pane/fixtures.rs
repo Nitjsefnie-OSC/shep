@@ -77,6 +77,23 @@ pub(super) fn secret_dog_pane() -> ConfigPane {
     )
 }
 
+/// A dog whose schema publishes a decimal money cap: `shep-kelpie`'s
+/// `budget.per_item_usd`, `type: number`, `format: double`,
+/// `exclusiveMinimum: 0`. The one scalar shape the pane had no editor for
+/// until `kind_of` gained a `Number` arm.
+pub(super) fn money_schema() -> Value {
+    serde_json::json!({
+        "properties": {
+            "per_item_usd": { "type": "number", "format": "double", "exclusiveMinimum": 0 },
+        },
+    })
+}
+
+/// [`money_schema`] over `section`.
+pub(super) fn money_pane(section: &str) -> ConfigPane {
+    ConfigPane::dog("kelpie".into(), None, money_schema(), section.to_owned())
+}
+
 /// A field edit, filed the way [`Edits::set`] wants it, for the tests
 /// below that build a batch by hand rather than by keystroke.
 pub(super) fn field(key: &str, value: serde_json::Value) -> PaneEdit {
@@ -84,4 +101,157 @@ pub(super) fn field(key: &str, value: serde_json::Value) -> PaneEdit {
         key: key.to_owned(),
         value: value.into(),
     }
+}
+
+/// A dog whose schema nests: two top-level tables that each hold a `model`,
+/// one holding a table of its own, and a leaf after them.
+pub(super) fn tree_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "agents": {
+                "type": "object",
+                "properties": {
+                    "model": { "type": "string" },
+                    "retries": { "type": "integer" },
+                },
+            },
+            "budget": {
+                "type": "object",
+                "properties": {
+                    "cap": { "type": "integer" },
+                    "model": { "type": "string" },
+                },
+            },
+            "deep": {
+                "type": "object",
+                "properties": {
+                    "inner": {
+                        "type": "object",
+                        "properties": { "leaf": { "type": "boolean" } },
+                    },
+                },
+            },
+            "name": { "type": "string" },
+        },
+    })
+}
+
+pub(super) fn tree_section() -> String {
+    "name = \"x\"\n[agents]\nmodel = \"small\"\n[budget]\nmodel = \"large\"\ncap = 3\n".to_owned()
+}
+
+/// [`tree_schema`] over [`tree_section`].
+pub(super) fn tree_pane() -> ConfigPane {
+    ConfigPane::dog("tree".into(), None, tree_schema(), tree_section())
+}
+
+/// A paddock-shaped dog: a `clients` array whose entries carry a secret
+/// `key` beside a `name` or an `id`, a nested `limits` table and a list of
+/// their own `peers`, a `models` map, and a scalar after them.
+pub(super) fn entries_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "clients": { "type": "array", "items": { "$ref": "#/$defs/Client" } },
+            "models": {
+                "type": "object",
+                "additionalProperties": { "$ref": "#/$defs/Model" },
+            },
+            "retries": { "type": "integer" },
+        },
+        "$defs": {
+            "Client": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "key": { "type": "string", "x-shep-secret": true },
+                    "limits": {
+                        "type": "object",
+                        "properties": { "rate": { "type": "integer" } },
+                    },
+                    "name": { "type": "string" },
+                    "peers": { "type": "array", "items": { "$ref": "#/$defs/Client" } },
+                },
+            },
+            "Model": {
+                "type": "object",
+                "properties": {
+                    "context": { "type": "integer" },
+                    "provider": { "type": "string" },
+                },
+            },
+        },
+    })
+}
+
+/// [`entries_schema`]'s section: three clients, the first named, the second
+/// with only an id and the third with neither, and two models.
+pub(super) fn entries_section() -> String {
+    concat!(
+        "retries = 3\n",
+        "[[clients]]\nname = \"alpha\"\nkey = \"hunter2\"\n[clients.limits]\nrate = 5\n",
+        "[[clients]]\nid = \"b-2\"\nkey = \"hunter3\"\n",
+        "[[clients]]\nkey = \"hunter4\"\n",
+        "[models.small]\nprovider = \"local\"\ncontext = 4096\n",
+        "[models.large]\nprovider = \"remote\"\n",
+    )
+    .to_owned()
+}
+
+/// [`entries_schema`] over [`entries_section`].
+pub(super) fn entries_pane() -> ConfigPane {
+    ConfigPane::dog("paddock".into(), None, entries_schema(), entries_section())
+}
+
+/// [`entries_schema`] with defaults on the items: a client defaults to
+/// enabled, with a secret `key` and a nested `limits` table of its own
+/// default `rate`; a model defaults its `context`. Neither names a `name`,
+/// `provider` or `burst`, which a new entry therefore lacks.
+pub(super) fn defaulted_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "clients": { "type": "array", "items": { "$ref": "#/$defs/Client" } },
+            "models": {
+                "type": "object",
+                "additionalProperties": { "$ref": "#/$defs/Model" },
+            },
+            "retries": { "type": "integer" },
+        },
+        "$defs": {
+            "Client": {
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean", "default": true },
+                    "key": { "type": "string", "x-shep-secret": true, "default": "change-me" },
+                    "limits": {
+                        "type": "object",
+                        "properties": {
+                            "burst": { "type": "integer" },
+                            "rate": { "type": "integer", "default": 5 },
+                        },
+                    },
+                    "name": { "type": "string" },
+                },
+            },
+            "Model": {
+                "type": "object",
+                "properties": {
+                    "context": { "type": "integer", "default": 4096 },
+                    "provider": { "type": "string" },
+                },
+            },
+        },
+    })
+}
+
+/// [`defaulted_schema`] over [`entries_section`].
+pub(super) fn defaulted_pane() -> ConfigPane {
+    ConfigPane::dog(
+        "paddock".into(),
+        None,
+        defaulted_schema(),
+        entries_section(),
+    )
 }

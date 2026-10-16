@@ -29,6 +29,14 @@ pub struct DaemonSection {
     /// and a shep-owned key inside it would collide with a third-party
     /// dog's schema.
     pub adopted_dogs: BTreeMap<String, PathBuf>,
+    /// Adopted dogs whose `--version` answer asked for the shepherd channel,
+    /// so they are spawned with `channel` and `shutdown_with_message` set.
+    ///
+    /// `shep adopt` writes this from the dog's own answer, never from an
+    /// operator's flag, and `shep rehome` removes it. Here rather than in
+    /// `dogs.toml` for the reason [`Self::adopted_dogs`] gives. A name
+    /// absent from [`Self::adopted_dogs`] is inert here.
+    pub channel_dogs: Vec<String>,
     /// Dogs that run before every sheep, rather than after the flock.
     ///
     /// The default position for a dog is a final stage, for the reason
@@ -66,6 +74,7 @@ impl Default for DaemonSection {
             socket: None,
             enabled_dogs: Vec::new(),
             adopted_dogs: BTreeMap::new(),
+            channel_dogs: Vec::new(),
             boot_first_dogs: Vec::new(),
             max_cron_sleep: None,
         }
@@ -242,7 +251,7 @@ mod tests {
         let cfg = DaemonConfig::load(Some("[dog.metrics]\nport = 9615"), &no_env).unwrap();
         assert_eq!(
             format!("{cfg:?}"),
-            "DaemonConfig { daemon: DaemonSection { log_json: false, log_level: Warn, environment: \"production\", socket: None, enabled_dogs: [], adopted_dogs: {}, boot_first_dogs: [], max_cron_sleep: None }, whistle: WhistleSection { allow_control: false }, secrets: SecretsSection { allow_read: false }, style: StyleSection { level: None }, interpreters: {}, dog: <1 tables> }"
+            "DaemonConfig { daemon: DaemonSection { log_json: false, log_level: Warn, environment: \"production\", socket: None, enabled_dogs: [], adopted_dogs: {}, channel_dogs: [], boot_first_dogs: [], max_cron_sleep: None }, whistle: WhistleSection { allow_control: false }, secrets: SecretsSection { allow_read: false }, style: StyleSection { level: None }, interpreters: {}, dog: <1 tables> }"
         );
     }
 }

@@ -7,22 +7,69 @@ use std::time::Duration;
 
 use shep_client::dogs::{Stop, parse_section};
 use shep_core::protocol::BusEvent;
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, MissedTickBehavior};
 
+use super::clock::Clock;
 use super::config::{BarkConfig, rules_for};
 use super::delivery::{Delivery, spawn_firings};
 use super::rules::Rules;
 use super::source::{ConfigSource, EventSource, FlockSource, Resubscribe};
 use crate::exit::ExitCode;
 
+/// The least time between a poll and the next one a dropped frame asks for.
+///
+/// A poll awaits a `ListFlock` round trip inline, so frames queue behind it
+/// and a busy bus can lap the subscriber again at once. Lags inside the gap
+/// share one deferred poll.
+const LAG_POLL_MIN_GAP: Duration = Duration::from_secs(1);
+
+/// When bark last polled, and whether a dropped frame is waiting on the
+/// next one.
+#[derive(Debug, Default)]
+struct LagPacing {
+    last_poll: Option<Instant>,
+    lag_pending: bool,
+}
+
+impl LagPacing {
+    /// Records a poll, which answers every lag before it.
+    fn polled(&mut self) {
+        self.last_poll = Some(Instant::now());
+        self.lag_pending = false;
+    }
+
+    /// Whether a lag now polls at once. When it does not, the lag is held
+    /// for [`Self::deferred_poll_at`].
+    fn lag_polls_now(&mut self) -> bool {
+        match self.last_poll {
+            Some(last) if last.elapsed() < LAG_POLL_MIN_GAP => {
+                self.lag_pending = true;
+                false
+            }
+            _ => true,
+        }
+    }
+
+    /// When the held lag's poll is due, or `None` with no lag held.
+    fn deferred_poll_at(&self) -> Option<Instant> {
+        self.last_poll
+            .filter(|_| self.lag_pending)
+            .map(|last| last + LAG_POLL_MIN_GAP)
+    }
+}
+
 /// Bark's loop: subscribe for speed, poll for correctness. Ends on
 /// `stop`, or when `events` ends and its re-subscribe fails.
 ///
-/// A dropped frame polls immediately, since the bus drops what a lagging
-/// subscriber cannot keep up with. Firings are spawned, never awaited
+/// A dropped frame polls immediately unless the last poll was under
+/// [`LAG_POLL_MIN_GAP`] ago, since the bus drops what a lagging subscriber
+/// cannot keep up with. Firings are spawned, never awaited
 /// inline, or a slow sink causes the drop this loop exists to catch.
 /// Appends serialize behind an in-process [`tokio::sync::Mutex`]; the
 /// cross-process race is `barks::append`'s own `flock(2)`.
+///
+/// One [`Clock`] for the whole run: one view of the wall clock, and one
+/// report of a clock that reads before the epoch.
 ///
 /// A plain `fn`, not `async fn`: the returned future must borrow neither
 /// `config` nor `barks_path`, so callers can spawn it.
@@ -42,8 +89,20 @@ pub fn run_loop<E: EventSource, F: FlockSource, C: ConfigSource>(
         let mut events = events;
         let mut rules = rules;
         let mut stop = stop;
+        let mut clock = Clock::system();
 
         let mut poll_interval = poll_timer(poll_period);
+        let mut pacing = LagPacing::default();
+
+        // Log lines name a sheep by id, so the names are read once up
+        // front. Not a reconcile: that would fire `gave_up` for a sheep
+        // already errored earlier than it fires without a log rule.
+        if !rules.log_topics().is_empty() {
+            match flock.flock().await {
+                Ok(snapshot) => rules.learn(&snapshot),
+                Err(err) => eprintln!("shep dog bark: could not read the flock's names: {err}"),
+            }
+        }
 
         loop {
             tokio::select! {
@@ -62,15 +121,10 @@ pub fn run_loop<E: EventSource, F: FlockSource, C: ConfigSource>(
                                 // gone, and the verdict decides nothing
                                 // here: bark debounces on a sheep's name,
                                 // never on an id the shepherd minted.
-                                reconcile(&flock, &mut rules, &delivery).await;
+                                reconcile(&flock, &mut rules, &mut clock, &delivery).await;
+                                pacing.polled();
                             }
-                            Err(failed) => {
-                                eprintln!("shep dog bark: {failed}");
-                                break match &failed {
-                                    Resubscribe::Lost(lost) => ExitCode::from(lost),
-                                    Resubscribe::Request(err) => ExitCode::from(err),
-                                };
-                            }
+                            Err(failed) => break exit_for(&failed),
                         },
                         // Matched on the variant rather than on the dog's
                         // name: the subscription already narrows this to
@@ -85,44 +139,98 @@ pub fn run_loop<E: EventSource, F: FlockSource, C: ConfigSource>(
                                 // per-subject debounce: carrying it over
                                 // a renumbered rule set would key state on
                                 // an index that moved.
+                                let mut next_rules = next_rules;
+                                next_rules.take_names_from(&mut rules);
                                 rules = next_rules;
                                 if next.poll.as_duration() != poll_period {
                                     poll_period = next.poll.as_duration();
                                     poll_interval = poll_timer(poll_period);
                                 }
                                 eprintln!("shep dog bark: reloaded [bark] from dogs.toml");
+                                // The reload may have added or dropped the
+                                // rules that read logs, and the shepherd
+                                // forwards a line only to a subscriber that
+                                // asked for its topic.
+                                let wanted = wanted_topics(&events, &rules);
+                                if wanted != events.topics() {
+                                    if let Err(failed) = events.set_topics(wanted).await {
+                                        break exit_for(&failed);
+                                    }
+                                    // Frames unread on the old stream are gone.
+                                    reconcile(&flock, &mut rules, &mut clock, &delivery).await;
+                                    pacing.polled();
+                                }
                             }
                         }
                         Some(Ok(event)) => {
-                            let firings = rules.on_event(&event, now_ms());
+                            let firings = rules.on_event(&event, clock.now_ms());
                             spawn_firings(firings, &delivery);
                         }
                         Some(Err(_dropped)) => {
                             // The drop says nothing about what was lost;
                             // only the shepherd can.
-                            reconcile(&flock, &mut rules, &delivery).await;
+                            if pacing.lag_polls_now() {
+                                reconcile(&flock, &mut rules, &mut clock, &delivery).await;
+                                pacing.polled();
+                            }
                         }
                     }
                 }
+                () = deferred_poll(pacing.deferred_poll_at()) => {
+                    reconcile(&flock, &mut rules, &mut clock, &delivery).await;
+                    pacing.polled();
+                }
                 _ = poll_interval.tick() => {
-                    reconcile(&flock, &mut rules, &delivery).await;
+                    reconcile(&flock, &mut rules, &mut clock, &delivery).await;
+                    pacing.polled();
                 }
             }
         }
     }
 }
 
+/// The topics `rules` need on top of what `events` already holds: its
+/// non-log topics, then the log ones the rules read.
+///
+/// Derived from the source rather than passed in, so the loop has one list
+/// of base topics, the one the subscription was built with.
+fn wanted_topics<E: EventSource>(events: &E, rules: &Rules) -> Vec<String> {
+    let mut topics: Vec<String> = events
+        .topics()
+        .iter()
+        .filter(|topic| !topic.starts_with("log."))
+        .cloned()
+        .collect();
+    topics.extend(rules.log_topics());
+    topics
+}
+
+/// Reports why bark cannot keep its subscription and the exit code that
+/// ends the dog.
+fn exit_for(failed: &Resubscribe) -> ExitCode {
+    eprintln!("shep dog bark: {failed}");
+    match failed {
+        Resubscribe::Lost(lost) => ExitCode::from(lost),
+        Resubscribe::Request(err) => ExitCode::from(err),
+    }
+}
+
 /// One reconciliation pass: ask `flock` what the flock looks like now, run
-/// it through [`Rules::on_poll`], and spawn a delivery for anything that
-/// fires. Shared by [`run_loop`]'s lag arm and interval arm, so the two
-/// polls are one code path.
+/// it through [`Rules::on_poll`] stamped by `clock`, and spawn a delivery
+/// for anything that fires. Shared by [`run_loop`]'s lag arm and interval
+/// arm, so the two polls are one code path.
 ///
 /// A failed poll is logged and dropped: the next bus event or interval
 /// tick tries again.
-pub(super) async fn reconcile<F: FlockSource>(flock: &F, rules: &mut Rules, delivery: &Delivery) {
+pub(super) async fn reconcile<F: FlockSource>(
+    flock: &F,
+    rules: &mut Rules,
+    clock: &mut Clock,
+    delivery: &Delivery,
+) {
     match flock.flock().await {
         Ok(snapshot) => {
-            let firings = rules.on_poll(&snapshot, now_ms());
+            let firings = rules.on_poll(&snapshot, clock.now_ms());
             spawn_firings(firings, delivery);
         }
         Err(err) => eprintln!("shep dog bark: reconciliation poll failed: {err}"),
@@ -162,6 +270,14 @@ pub(super) async fn reloaded_config<C: ConfigSource>(source: &C) -> Option<(Bark
     }
 }
 
+/// Resolves at `due`, or never when there is no held lag.
+async fn deferred_poll(due: Option<Instant>) {
+    match due {
+        Some(due) => tokio::time::sleep_until(due).await,
+        None => core::future::pending().await,
+    }
+}
+
 /// The poll timer for `period`.
 ///
 /// `interval_at`, not `interval`: a plain `interval` fires its first tick
@@ -177,16 +293,8 @@ fn poll_timer(period: Duration) -> tokio::time::Interval {
     interval
 }
 
-/// Wall-clock milliseconds since the Unix epoch.
-///
-/// [`Rules::on_event`] and [`Rules::on_poll`] take a caller-supplied
-/// timestamp so a test can fix it; this is the production caller.
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
-}
+#[cfg(test)]
+mod log_match_tests;
 
 #[cfg(test)]
 mod tests {
@@ -532,6 +640,165 @@ mod tests {
             "two handovers, two re-subscribes, no more"
         );
         loop_handle.abort();
+    }
+
+    /// An [`EventSource`] whose every item is a lag notice, sent when the
+    /// test says so.
+    struct LagSource(tokio::sync::mpsc::UnboundedReceiver<u64>);
+
+    impl EventSource for LagSource {
+        async fn next(&mut self) -> Option<Result<BusEvent, u64>> {
+            self.0.recv().await.map(Err)
+        }
+
+        fn topics(&self) -> &[String] {
+            &[]
+        }
+
+        async fn set_topics(&mut self, _topics: Vec<String>) -> Result<(), Resubscribe> {
+            Ok(())
+        }
+
+        async fn resubscribe(&mut self) -> Result<(), Resubscribe> {
+            Err(Resubscribe::Lost(LinkLost::Budget {
+                waited: Duration::ZERO,
+            }))
+        }
+    }
+
+    /// A loop over a [`LagSource`] polling every `poll`, with an empty flock
+    /// so a poll fires nothing.
+    ///
+    /// The directory is returned to keep it alive for the loop's lifetime.
+    fn lagging_loop(
+        poll: Duration,
+    ) -> (
+        tokio::sync::mpsc::UnboundedSender<u64>,
+        ScriptedFlock,
+        tokio::task::JoinHandle<ExitCode>,
+        tempfile::TempDir,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let flock = ScriptedFlock::answering(Vec::new());
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = config_with_sink("127.0.0.1:1".parse().unwrap());
+        config.poll = UpDuration::from_millis(poll.as_millis() as u64);
+        let handle = tokio::spawn(run_loop(
+            LagSource(rx),
+            flock.clone(),
+            gave_up_rules(),
+            &config,
+            &dir.path().join("barks.jsonl"),
+            ScriptedConfig::answering(String::new()),
+            Stop::never(),
+        ));
+        (tx, flock, handle, dir)
+    }
+
+    /// Moves the paused clock by `by`, then lets the loop run everything
+    /// that became ready.
+    async fn advance_and_settle(by: Duration) {
+        tokio::time::advance(by).await;
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    /// Fails if a busy bus can trigger a poll per lag notice: five notices
+    /// inside one gap cost the immediate poll and one deferred to the end of
+    /// the gap, no earlier.
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_of_lags_costs_one_immediate_poll_and_one_deferred() {
+        let (tx, flock, handle, _dir) = lagging_loop(Duration::from_secs(60));
+
+        tx.send(1).unwrap();
+        advance_and_settle(Duration::ZERO).await;
+        assert_eq!(flock.calls(), 1, "the first lag after quiet polls at once");
+
+        for _ in 0..4 {
+            advance_and_settle(Duration::from_millis(200)).await;
+            tx.send(1).unwrap();
+        }
+        advance_and_settle(Duration::from_millis(199)).await;
+        assert_eq!(
+            flock.calls(),
+            1,
+            "four lags inside the gap wait for its end"
+        );
+
+        advance_and_settle(Duration::from_millis(1)).await;
+        assert_eq!(flock.calls(), 2, "the deferred poll runs when the gap ends");
+
+        advance_and_settle(LAG_POLL_MIN_GAP * 5).await;
+        assert_eq!(flock.calls(), 2, "the deferred poll is spent, not repeated");
+
+        handle.abort();
+    }
+
+    /// Fails if a lag that arrives once the gap has passed is made to wait.
+    #[tokio::test(start_paused = true)]
+    async fn a_lag_after_the_gap_polls_immediately() {
+        let (tx, flock, handle, _dir) = lagging_loop(Duration::from_secs(60));
+
+        tx.send(1).unwrap();
+        advance_and_settle(Duration::ZERO).await;
+        assert_eq!(flock.calls(), 1);
+
+        advance_and_settle(LAG_POLL_MIN_GAP).await;
+        tx.send(1).unwrap();
+        advance_and_settle(Duration::ZERO).await;
+        assert_eq!(flock.calls(), 2, "a full gap since the last poll is enough");
+
+        advance_and_settle(LAG_POLL_MIN_GAP * 5).await;
+        assert_eq!(flock.calls(), 2, "nothing was deferred");
+
+        handle.abort();
+    }
+
+    /// Fails if the lag floor holds back the interval: a tick inside the gap
+    /// polls on schedule.
+    #[tokio::test(start_paused = true)]
+    async fn a_lag_does_not_postpone_the_interval_poll() {
+        let (tx, flock, handle, _dir) = lagging_loop(Duration::from_secs(2));
+
+        tx.send(1).unwrap();
+        advance_and_settle(Duration::ZERO).await;
+        advance_and_settle(Duration::from_millis(1_500)).await;
+        tx.send(1).unwrap();
+        advance_and_settle(Duration::ZERO).await;
+        assert_eq!(flock.calls(), 2, "the second lag is past the gap");
+
+        // The tick is due at 2s, half a gap after the last poll.
+        advance_and_settle(Duration::from_millis(499)).await;
+        assert_eq!(flock.calls(), 2);
+        advance_and_settle(Duration::from_millis(1)).await;
+        assert_eq!(flock.calls(), 3, "the tick polls at its own time");
+
+        handle.abort();
+    }
+
+    /// Fails if a lag already answered by a later poll is polled for again.
+    #[tokio::test(start_paused = true)]
+    async fn an_interval_poll_answers_a_pending_lag() {
+        let (tx, flock, handle, _dir) = lagging_loop(Duration::from_secs(2));
+
+        tx.send(1).unwrap();
+        advance_and_settle(Duration::ZERO).await;
+        advance_and_settle(Duration::from_millis(1_500)).await;
+        tx.send(1).unwrap();
+        advance_and_settle(Duration::from_millis(250)).await;
+        tx.send(1).unwrap();
+        advance_and_settle(Duration::ZERO).await;
+        assert_eq!(flock.calls(), 2, "the third lag is inside the gap");
+
+        advance_and_settle(Duration::from_millis(250)).await;
+        assert_eq!(flock.calls(), 3, "the tick polls");
+
+        // Short of the next tick at 4s, past where a held lag would poll.
+        advance_and_settle(LAG_POLL_MIN_GAP).await;
+        assert_eq!(flock.calls(), 3, "the tick already covered the lag");
+
+        handle.abort();
     }
 
     /// Runs the loop on `source` until `tx` is dropped and the dog exits on

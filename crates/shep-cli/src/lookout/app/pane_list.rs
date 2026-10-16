@@ -2,6 +2,7 @@
 //! environment.
 
 use super::*;
+use crate::lookout::validation::Refusal;
 
 impl App {
     /// One `Request::SetSheepEnv` reply.
@@ -23,36 +24,18 @@ impl App {
         match result {
             Ok(Response::SheepEnvSet { .. }) => {
                 let verb = if was_set { "set" } else { "removed" };
-                self.notice = Some(Notice {
-                    text: format!("{name}: env {key} {verb}, and waits for `shep reload {name}`"),
-                    grave: false,
-                });
+                self.notice = Some(Notice::info(format!(
+                    "{name}: env {key} {verb}, and waits for `shep reload {name}`"
+                )));
                 Effect::Send(Sent::SheepConfig {
                     name: name.to_owned(),
                 })
             }
-            Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{name}: env {key}: the shepherd answered something this lookout does not \
-                         understand"
-                    ),
-                    grave: true,
-                });
-                Effect::None
-            }
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: env {key}: {}", err.message),
-                    grave: true,
-                });
-                Effect::None
-            }
-            Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: env {key}: {other}"),
-                    grave: true,
-                });
+            other => {
+                self.notice = Some(Notice::grave(format!(
+                    "{name}: env {key}: {}",
+                    failed_reply(other)
+                )));
                 Effect::None
             }
         }
@@ -114,18 +97,20 @@ impl App {
                 if self.authorize_write().is_none() {
                     return Effect::None;
                 }
-                if let Some(pane) = self.config_pane_mut() {
-                    pane.file_list_removal();
-                }
+                let refused = self
+                    .config_pane_mut()
+                    .and_then(|pane| pane.file_list_removal().err());
+                self.notice_refusal(refused);
             }
             KeyPress::StepUp | KeyPress::StepDown => {
                 if self.authorize_write().is_none() {
                     return Effect::None;
                 }
                 let delta = if key == KeyPress::StepUp { -1 } else { 1 };
-                if let Some(pane) = self.config_pane_mut() {
-                    pane.file_list_reorder(delta);
-                }
+                let refused = self
+                    .config_pane_mut()
+                    .and_then(|pane| pane.file_list_reorder(delta).err());
+                self.notice_refusal(refused);
             }
             KeyPress::Help => {
                 self.open_keymap();
@@ -136,6 +121,7 @@ impl App {
             | KeyPress::FilterStart
             | KeyPress::TextChar(_)
             | KeyPress::TextBackspace
+            | KeyPress::TextEdit(_)
             | KeyPress::TextApply
             | KeyPress::TextAbandon
             | KeyPress::FoldView
@@ -172,28 +158,28 @@ impl App {
             }
             // The groups belong to the field list; the sub-screen is one
             // field's own array and has none to walk.
-            KeyPress::NextGroup | KeyPress::Group(_) => {}
+            KeyPress::NextGroup | KeyPress::PrevGroup | KeyPress::Group(_) => {}
         }
         Effect::None
     }
 
+    /// Shows `refused`, when there is one, as a grave notice.
+    fn notice_refusal(&mut self, refused: Option<Refusal>) {
+        if let Some(refused) = refused {
+            self.notice = Some(Notice::grave(refused.text));
+        }
+    }
+
     /// The list sub-screen's own text keymap.
     ///
-    /// `TextApply` files the whole array. An integer element whose buffer
-    /// does not parse keeps the editor open, which is why the mode follows
-    /// what the sub-screen did rather than what the key asked for.
+    /// `TextApply` files the whole array. An element the item schema refuses
+    /// keeps the editor open, which is why the mode follows what the
+    /// sub-screen did rather than what the key asked for, and the sentence
+    /// naming the rule goes in the status bar: a dog's table is written
+    /// without being read, so an operator who is not told now finds out from
+    /// the dog's own log, or never.
     pub(super) fn on_list_text_key(&mut self, key: KeyPress) -> Effect {
-        // See the comment in `Self::take_pane_writes`: a direct field
-        // match, not `Self::config_pane_mut`, so `self.mode` stays
-        // reachable below.
-        let Some(pane) = (match &mut self.body {
-            Body::ConfigPane(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }) else {
+        let Some(pane) = self.body.config_pane_mut() else {
             return Effect::None;
         };
         let Some(list) = pane.list_mut() else {
@@ -202,13 +188,19 @@ impl App {
         match key {
             KeyPress::TextChar(typed) => list.type_char(typed),
             KeyPress::TextBackspace => list.type_backspace(),
+            KeyPress::TextEdit(edit) => list.edit_text(edit),
             KeyPress::TextApply => {
                 let applied = list.apply_typing();
                 if list.typing().is_none() {
                     self.mode = InputMode::Normal;
                 }
-                if let Some(text) = applied {
-                    pane.file_list_element(text);
+                match applied {
+                    Ok(Some(text)) => {
+                        let refused = pane.file_list_element(text).err();
+                        self.notice_refusal(refused);
+                    }
+                    Ok(None) => {}
+                    Err(refused) => self.notice_refusal(Some(refused)),
                 }
             }
             KeyPress::TextAbandon => {
@@ -228,22 +220,13 @@ impl App {
     /// key typed by mistake costs an `u` rather than an override the
     /// operator cannot read back.
     pub(super) fn on_env_text_key(&mut self, key: KeyPress) -> Effect {
-        // See the comment in `Self::take_pane_writes`: a direct field
-        // match, not `Self::config_pane_mut`, so `self.mode` stays
-        // reachable below.
-        let Some(pane) = (match &mut self.body {
-            Body::ConfigPane(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }) else {
+        let Some(pane) = self.body.config_pane_mut() else {
             return Effect::None;
         };
         match key {
             KeyPress::TextChar(typed) => pane.type_env_char(typed),
             KeyPress::TextBackspace => pane.type_env_backspace(),
+            KeyPress::TextEdit(edit) => pane.edit_env_text(edit),
             KeyPress::TextApply => {
                 pane.apply_env_typing();
                 self.mode = InputMode::Normal;
@@ -362,6 +345,92 @@ mod tests {
         };
         assert_eq!(key, "args");
         assert_eq!(value, serde_json::json!(["9090"]));
+    }
+
+    /// A refused element keeps `InputMode::Text` on, files nothing, and puts
+    /// the sentence naming the rule in the status bar, grave for the same
+    /// reason a scalar field's refusal is: a dog's table is written without
+    /// being read.
+    ///
+    /// `stop_exit_codes` is the list the Flockfile schema puts no bound on
+    /// its items, so the rule here is the one every integer list carries:
+    /// the element has to be a whole number.
+    #[test]
+    fn a_refused_list_element_keeps_text_mode_on_and_says_why() {
+        let mut app = fixtures::app_in_sheep_pane_with_control();
+        pane_to(&mut app, "stop_exit_codes");
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        let _ = app.update(Msg::Key(KeyPress::Edit));
+        assert_eq!(app.mode(), InputMode::Text, "e opens the element editor");
+        let _ = app.update(Msg::Key(KeyPress::TextChar('x')));
+        assert_eq!(
+            app.update(Msg::Key(KeyPress::TextApply)),
+            Effect::None,
+            "a refusal is not a send"
+        );
+        assert_eq!(
+            app.mode(),
+            InputMode::Text,
+            "the editor stays open on what was typed"
+        );
+        let notice = app.notice().expect("a refusal answers");
+        assert!(notice.is_grave(), "{notice}");
+        assert_eq!(
+            notice.to_string(),
+            "stop_exit_codes is \"x\", which is not a whole number shep accepts"
+        );
+        assert!(
+            app.config_pane()
+                .expect("the pane is open")
+                .edits()
+                .is_empty(),
+            "nothing was filed"
+        );
+        assert!(
+            app.config_pane()
+                .expect("the pane is open")
+                .list()
+                .expect("the sub-screen is still up")
+                .typing()
+                .is_some(),
+            "and the buffer is still in the editor"
+        );
+    }
+
+    /// A hand-written `ports = [80, "http"]` opens as it is. A dog's writer
+    /// has no cell for a list that mixes the two, so the keystroke that
+    /// would file one says which element is the trouble, and nothing is
+    /// filed that would take the pane's other edits down on close.
+    #[test]
+    fn a_dogs_integer_list_with_a_stray_string_refuses_to_file_and_names_it() {
+        let mut app = fixtures::app_in_dog_pane_over_lists(
+            "ports = [80, \"http\"]\nhosts = [\"a.example\"]\n".to_owned(),
+        );
+        pane_to(&mut app, "ports");
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        let _ = app.update(Msg::Key(KeyPress::SelectLast));
+        let _ = app.update(Msg::Key(KeyPress::Edit));
+        for typed in "443".chars() {
+            let _ = app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        let _ = app.update(Msg::Key(KeyPress::TextApply));
+        let notice = app.notice().expect("the refusal answers");
+        assert!(notice.is_grave(), "{notice}");
+        assert_eq!(
+            notice.to_string(),
+            "ports holds \"http\", which is not an integer; remove it before changing ports"
+        );
+        let pane = app.config_pane().expect("the pane is open");
+        assert!(pane.edits().is_empty(), "nothing was filed");
+
+        let _ = app.update(Msg::Key(KeyPress::SelectFirst));
+        let _ = app.update(Msg::Key(KeyPress::SelectDown));
+        let _ = app.update(Msg::Key(KeyPress::Remove));
+        assert_eq!(
+            filed_value(&app, "ports"),
+            serde_json::json!([80]),
+            "removing the odd element files the rest"
+        );
     }
 
     /// `Escape` backs out of the sub-screen and leaves the pane up, the

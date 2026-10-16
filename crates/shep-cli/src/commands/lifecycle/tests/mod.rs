@@ -9,9 +9,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use shep_client::testing::{
-    fake_client_answering, fake_client_capturing_envelopes, fake_client_replying_err,
+    fake_client_answering, fake_client_capturing_envelopes, fake_client_needing_budget,
+    fake_client_replying_err,
 };
-use shep_client::{Client, DEFAULT_DEADLINE, RELOAD_DEADLINE, START_DEADLINE};
+use shep_client::{Client, RELOAD_DEADLINE, START_DEADLINE, STOP_DEADLINE};
 use shep_core::config::{AppConfig, FlockFormat, Flockfile, ResetDepth};
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::{
@@ -21,6 +22,7 @@ use shep_core::selector::ProcessSelector;
 
 use crate::cli::{Format, ResetMode, SelectorArgs, StartArgs, StockArgs};
 use crate::commands::lifecycle::configure::{applied_line, mapped_interpreter};
+use crate::commands::lifecycle::operational::delete_sheep;
 use crate::commands::lifecycle::operational::restart_within;
 use crate::commands::lifecycle::resolve::{TargetError, evaluate_js_flockfile, split_assignments};
 use crate::commands::lifecycle::respawn::unique_names;
@@ -34,12 +36,17 @@ use crate::output::{FlockRows, Streams};
 mod add;
 mod configure;
 mod deadline;
+mod disabled_selectors;
 mod dogs;
 mod interpreters_stock;
 mod operational;
 mod resolve;
 mod selectors;
 mod start;
+mod start_disabled;
+mod start_named;
+mod toggle;
+mod toggle_unknown;
 
 /// The first envelope that is not a `ListFlock`.
 async fn next_start(
@@ -102,6 +109,7 @@ fn a_flock_with_a_dog() -> Vec<shep_core::protocol::ProcessInfo> {
         ProcessInfo::builder(3, "log-rotate", ProcStatus::Online)
             .dog(Some(DogSource::Adopted {
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
+                channel: false,
             }))
             .build(),
     ]
@@ -362,7 +370,7 @@ fn adopted_dog(dir: &Path, name: &str, answer: &str) -> ShepPaths {
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     crate::commands::shep_toml::ShepToml::edit(&paths.daemon_config, |cfg| {
-        cfg.adopt_dog(name, &binary).unwrap();
+        cfg.adopt_dog(name, &binary, false).unwrap();
     })
     .unwrap();
     paths
@@ -418,7 +426,10 @@ fn sent(
 
 /// Runs `shep add` against `target` and hands back its code and streams.
 async fn add_against(client: &Client, target: &str) -> (ExitCode, String, String) {
-    let args = start_args(target);
+    add_against_with_args(client, &start_args(target)).await
+}
+
+async fn add_against_with_args(client: &Client, args: &StartArgs) -> (ExitCode, String, String) {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
@@ -428,7 +439,7 @@ async fn add_against(client: &Client, target: &str) -> (ExitCode, String, String
             style: crate::style::Presentation::BARE,
             fmt: Format::Table,
         };
-        add(client, &mut streams, &args, None, &BTreeMap::new()).await
+        add(client, &mut streams, args, None, &BTreeMap::new()).await
     };
     (
         code,

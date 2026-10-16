@@ -2,7 +2,7 @@
 //! helpers built on it, used by [`log_io`] and [`handover`] (a third
 //! module, spawn_io, is pending separately).
 //!
-//! Tests needing a real child live in `tests/real_runner.rs`; a
+//! Tests needing a real child live in `tests/real_runner/`; a
 //! `tokio::io::duplex` half stands in for the pump's `AsyncRead` here.
 //! `a_flush_reports_the_write_its_file_never_took` drives a `LogFile`
 //! directly, the only way to force a write failure. Real clock, not paused,

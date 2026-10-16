@@ -55,6 +55,7 @@ use crate::rpc::RpcContext;
 use crate::runner::ProcessRunner;
 use crate::snapshot::{self, FlockRegistry, spawn_snapshot_writer};
 use crate::supervisor::{SupervisorBuilder, SupervisorHandle};
+use crate::sweep::LambSweep;
 
 /// Capacity of each of the two lifecycle-extra report channels.
 ///
@@ -98,22 +99,29 @@ pub struct BootOptions {
     /// Assembled by the caller from `[daemon] enabled_dogs` and
     /// `[daemon] adopted_dogs`, so shep-daemon never reads `shep.toml` itself.
     pub dogs: Vec<DogSpec>,
-    /// Every dog name this shepherd may hold a section for, running or
-    /// not: the built-in dogs plus every name `[daemon] adopted_dogs`
-    /// records, plus whatever `[daemon] enabled_dogs` names.
+    /// Every dog this shepherd may hold a section for, running or not, with
+    /// the source it would spawn from: the built-in dogs, every dog
+    /// `[daemon] adopted_dogs` records, and whatever `[daemon] enabled_dogs`
+    /// names.
     ///
     /// Assembled by the caller from the same file [`Self::dogs`] comes out
     /// of, and for the same reason: shep-daemon never reads `shep.toml`
-    /// itself.
+    /// itself. A [`shep_core::protocol::DogSource::Adopted`] carries whether
+    /// the dog declared the shepherd channel (`[daemon] channel_dogs`), which
+    /// is what lets a dog be registered at rest without the file in hand.
     ///
     /// A superset of [`Self::dogs`], and the difference is the whole point
     /// of carrying both. That one is the spawn list, so it holds only the
     /// dogs an operator has switched on; this one holds the dogs that
-    /// exist. `Request::SetDogConfig` is guarded on this one, because the
-    /// dog most in need of configuring is the one that is disabled or has
-    /// never started, and a guard on the running set refuses exactly that
-    /// dog.
-    pub known_dogs: Vec<String>,
+    /// exist. Every entry here is registered once the flock is restored: a
+    /// dog outside [`Self::dogs`] sits `Stopped` and disabled until an
+    /// `EnableDog` starts it. `Request::SetDogConfig` is guarded on this
+    /// one, because the dog most in need of configuring is the one that is
+    /// disabled or has never started, and a guard on the running set
+    /// refuses exactly that dog.
+    ///
+    /// A dog in [`Self::dogs`] and absent here is registered all the same.
+    pub known_dogs: Vec<DogSpec>,
     /// Which of [`Self::dogs`] run before every sheep rather than after the
     /// flock, from `[daemon] boot_first_dogs`.
     ///
@@ -163,7 +171,21 @@ pub struct BootOptions {
 pub async fn boot<R: ProcessRunner>(
     runner: R,
     paths: ShepPaths,
+    options: BootOptions,
+) -> Result<RunningDaemon, BootError> {
+    boot_with_sweep(runner, paths, options, None).await
+}
+
+/// [`boot`], ending lambs through `sweep` in place of the real one when given.
+///
+/// # Errors
+///
+/// As [`boot`].
+pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
+    runner: R,
+    paths: ShepPaths,
     mut options: BootOptions,
+    sweep: Option<Arc<dyn LambSweep>>,
 ) -> Result<RunningDaemon, BootError> {
     // Before anything else: it reads the current directory, which is the
     // startup directory only until something moves it.
@@ -191,7 +213,7 @@ pub async fn boot<R: ProcessRunner>(
     // still held. Rebinding would race the predecessor's own socket file, and
     // re-locking would mean releasing first.
     #[cfg(unix)]
-    let (mut pidfile_lock, listener, inherited) = match successor_handover() {
+    let (mut pidfile_lock, listener, inherited) = match successor_handover()? {
         Some(carried) => {
             let (lock, listener, flock) = rehydrate(carried, &paths)?;
             (lock, listener, Some(flock))
@@ -226,13 +248,16 @@ pub async fn boot<R: ProcessRunner>(
     let dog_watch = spawn_dog_watch(events.subscribe(), events.clone(), paths.barks.clone());
     let (breach_tx, breach_rx) = mpsc::channel(EXTRAS_REPORT_CAPACITY);
     let (live_tx, live_rx) = mpsc::channel(EXTRAS_REPORT_CAPACITY);
-    let extras = Extras::real(
+    let mut extras = Extras::real(
         ExtrasReports {
             breaches: breach_tx,
             liveness: live_tx,
         },
         max_cron_sleep(&options),
     );
+    if let Some(sweep) = sweep {
+        extras.lamb_sweep = sweep;
+    }
     // One `StatsState`, two owners: the extras record the periodic CPU
     // baseline and the RPC layer reads a live sample against it, so a second
     // state would leave one of them on an empty watch set.
@@ -253,6 +278,13 @@ pub async fn boot<R: ProcessRunner>(
     let mut builder = SupervisorBuilder::new(runner, paths.clone(), events.clone())
         .extras(extras)
         .provider_secrets(Arc::clone(&provider_secrets));
+    // Cloned before the `take` below feeds the supervisor, and defaulted the
+    // way the builder defaults it, so a dog and a sheep that name no
+    // environment resolve in the same one.
+    let host_environment = options
+        .environment
+        .clone()
+        .unwrap_or_else(|| crate::supervisor::DEFAULT_ENVIRONMENT.to_string());
     if let Some(environment) = options.environment.take() {
         builder = builder.environment(environment);
     }
@@ -315,6 +347,16 @@ pub async fn boot<R: ProcessRunner>(
     #[cfg(windows)]
     let inherited_flock = false;
 
+    // A saved sheep keeps its name against a dog, built-in or adopted: an
+    // upgrade that starts listing the built-ins must not cost anyone an app.
+    if options.restore && !inherited_flock {
+        crate::dogs::leave_held_names(
+            &mut options.dogs,
+            &mut options.known_dogs,
+            &crate::dogs::saved_sheep_names(&paths.snapshot),
+        );
+    }
+
     // Split around the restore rather than run whole after it: a log-rotation
     // dog has to be running before a sheep starts writing, while a metrics dog
     // must not answer for a flock that is not up. Both are true in one flock,
@@ -342,6 +384,11 @@ pub async fn boot<R: ProcessRunner>(
         .await?;
     }
 
+    // After the restore, so no saved sheep's id moves, and before the enabled
+    // dogs below, so each of those finds its entry at rest.
+    crate::dogs::register_dogs_at_rest(&options.known_dogs, &options.dogs, &paths, &supervisor)
+        .await;
+
     crate::dogs::spawn_enabled_dogs(&rest, &paths, &supervisor, &events).await;
 
     // Starts empty and is not carried across a handover: a successor has
@@ -362,6 +409,18 @@ pub async fn boot<R: ProcessRunner>(
         events.clone(),
     );
 
+    // Ends on `shutdown`, so teardown holds no handle for it. A successor
+    // starts its own and sets its own baseline, so a handover wakes no dog.
+    drop(crate::secrets_watch::spawn_secrets_watch(
+        crate::secrets_watch::Watcher::new(
+            paths.secrets.clone(),
+            paths.dogs_config.clone(),
+            host_environment.clone(),
+        ),
+        events.clone(),
+        shutdown.subscribe(),
+    ));
+
     let writer = spawn_snapshot_writer(
         paths.snapshot.clone(),
         supervisor.clone(),
@@ -375,7 +434,7 @@ pub async fn boot<R: ProcessRunner>(
         registry,
         snapshot_path: paths.snapshot.clone(),
         dogs_config: paths.dogs_config.clone(),
-        known_dogs: crate::rpc::KnownDogs::new(options.known_dogs.iter().cloned().collect()),
+        known_dogs: crate::rpc::KnownDogs::new(known_dog_names(&options)),
         dog_names,
         boot_first_dogs: options.boot_first_dogs.clone(),
         paths: paths.clone(),
@@ -390,6 +449,7 @@ pub async fn boot<R: ProcessRunner>(
         // the machine whether the flock is empty or not.
         host: crate::host::HostState::real(),
         provider_secrets,
+        host_environment,
     };
 
     // 5. A failure is a `warn!` and the boot continues: only systemd's view
@@ -429,6 +489,16 @@ pub async fn boot<R: ProcessRunner>(
         pidfile_lock,
         delete_flock_on_shutdown,
     })
+}
+
+/// Every dog name `options` makes known: the known list plus the enabled one.
+fn known_dog_names(options: &BootOptions) -> std::collections::BTreeSet<String> {
+    options
+        .known_dogs
+        .iter()
+        .chain(&options.dogs)
+        .map(|spec| spec.name.clone())
+        .collect()
 }
 
 /// The cron sleep bound this boot runs with: [`BootOptions::max_cron_sleep`],
@@ -481,6 +551,19 @@ async fn restore_flock(
     )
     .await?;
     Ok(())
+}
+
+/// [`boot`] over a sweep that finds no lambs.
+///
+/// Every boot test here drives a `ScriptedRunner`, whose pids can name real
+/// processes on the host. The real sweep would end their children.
+#[cfg(all(test, unix))]
+pub(crate) async fn boot_with_idle_sweep<R: ProcessRunner>(
+    runner: R,
+    paths: ShepPaths,
+    options: BootOptions,
+) -> Result<RunningDaemon, BootError> {
+    boot_with_sweep(runner, paths, options, Some(crate::fake::idle_sweep())).await
 }
 
 /// Serializes every test in this module tree whose `boot()` call succeeds

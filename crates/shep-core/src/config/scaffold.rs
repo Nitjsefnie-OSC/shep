@@ -78,7 +78,8 @@ pub const CURATED: &[&str] = &["name", "script", "autorestart", "cwd"];
 
 /// Group order for [`Depth::All`], coarsest concern first: what it is,
 /// where it writes, what it receives, then the shapes of keeping it alive
-/// (restart, readiness, shutdown, watch), then when.
+/// (restart, readiness, shutdown, watch), then when, then what else
+/// supervises it.
 ///
 /// Fields carrying no `group` sort after all of these. Every field the
 /// schema exports carries one, so the fallback is for a future field.
@@ -91,6 +92,7 @@ pub const GROUP_ORDER: &[&str] = &[
     "shutdown",
     "watch",
     "cron",
+    "dogs",
 ];
 
 /// One line of a scaffold, before any comment marker is applied.

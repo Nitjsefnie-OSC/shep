@@ -1,12 +1,11 @@
 ---
 source: crates/shep-cli/src/lookout/frames/mod.rs
-assertion_line: 3699
 expression: render_text(&buffer)
 ---
 shep lookout   /home/ada/.shep                                              6 in the flock
                                                                                           
  ██ api  (sheep config)  2 edits                                                          
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab nex…
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     …
   ────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                                       
 >  err_file                   (unset) -… FOCUSED  err_file  text                          

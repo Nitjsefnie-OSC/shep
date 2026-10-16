@@ -1,8 +1,8 @@
 use super::*;
 use futures_util::{SinkExt, StreamExt};
 use shep_core::protocol::{
-    Envelope, Hello, HelloAck, HelloReply, ProcessInfo, Request, Response, RpcError, codec,
-    decode_frame, encode_frame,
+    BusEvent, Envelope, Hello, HelloAck, HelloReply, ProcessInfo, Request, Response, RpcError,
+    codec, decode_frame, encode_frame,
 };
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -48,6 +48,8 @@ pub struct Handovers {
     armed_list: Arc<Mutex<Vec<ProcessInfo>>>,
     armed_dog_section: Arc<Mutex<String>>,
     armed_subscribe_err: Arc<Mutex<Option<RpcError>>>,
+    armed_resolved_refusal: Arc<Mutex<Option<RpcError>>>,
+    events: mpsc::Sender<BusEvent>,
     task: JoinHandle<()>,
 }
 
@@ -76,6 +78,8 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
     let armed_list: Arc<Mutex<Vec<ProcessInfo>>> = Arc::new(Mutex::new(Vec::new()));
     let armed_dog_section: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let armed_subscribe_err: Arc<Mutex<Option<RpcError>>> = Arc::new(Mutex::new(None));
+    let armed_resolved_refusal: Arc<Mutex<Option<RpcError>>> = Arc::new(Mutex::new(None));
+    let (events_tx, mut events_rx) = mpsc::channel(SCRIPT_CHANNEL_CAPACITY);
 
     let task = tokio::spawn({
         let cut_on_next_request = Arc::clone(&cut_on_next_request);
@@ -85,6 +89,7 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
         let armed_list = Arc::clone(&armed_list);
         let armed_dog_section = Arc::clone(&armed_dog_section);
         let armed_subscribe_err = Arc::clone(&armed_subscribe_err);
+        let armed_resolved_refusal = Arc::clone(&armed_resolved_refusal);
         async move {
             let mut generation: u32 = 0;
             while let Ok(stream) = listener.accept().await {
@@ -113,6 +118,13 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
                         hellos.lock().unwrap().push(hello);
                     }
                 }
+                // A pushed event queues until this generation has answered
+                // a `Subscribe`: the client's `broadcast::Receiver` does not
+                // exist before it, so an earlier frame is simply lost.
+                let mut subscribed = false;
+                let mut pending_events: Vec<BusEvent> = Vec::new();
+                // Whether the test still holds the `Handovers` that can push.
+                let mut events_open = true;
                 loop {
                     tokio::select! {
                         frame = frames.next() => {
@@ -134,6 +146,13 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
                             } else {
                                 None
                             };
+                            let refusal = refusal.or_else(|| {
+                                if matches!(body, Request::DogConfigResolved { .. }) {
+                                    armed_resolved_refusal.lock().unwrap().clone()
+                                } else {
+                                    None
+                                }
+                            });
                             if let Some(refusal) = refusal {
                                 write_err(&mut frames, id, refusal.code, refusal.message).await;
                                 continue;
@@ -142,15 +161,37 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
                                 Request::ListFlock => {
                                     Response::Flock(armed_list.lock().unwrap().clone())
                                 }
-                                Request::Subscribe { .. } => Response::Subscribed,
+                                Request::Subscribe { .. } => {
+                                    subscribed = true;
+                                    Response::Subscribed
+                                },
                                 // A dog refuses to run on a reply it can't
                                 // parse, and this is its first request.
-                                Request::DogConfig { .. } => Response::DogSection {
+                                Request::DogConfig { .. } | Request::DogConfigResolved { .. } => Response::DogSection {
                                     toml: armed_dog_section.lock().unwrap().clone().into(),
                                 },
                                 _ => Response::Pong,
                             };
                             write_reply(&mut frames, id, response).await;
+                            if subscribed {
+                                for event in pending_events.drain(..) {
+                                    write_event(&mut frames, event).await;
+                                }
+                            }
+                        }
+                        event = events_rx.recv(), if events_open => {
+                            let Some(event) = event else {
+                                // The test dropped its `Handovers`. Keep
+                                // serving this connection, which is what this
+                                // helper did before it could take events.
+                                events_open = false;
+                                continue;
+                            };
+                            if subscribed {
+                                write_event(&mut frames, event).await;
+                            } else {
+                                pending_events.push(event);
+                            }
                         }
                         _ = cut_rx.recv() => break,
                     }
@@ -168,6 +209,8 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
         armed_list,
         armed_dog_section,
         armed_subscribe_err,
+        armed_resolved_refusal,
+        events: events_tx,
         task,
     }
 }
@@ -218,13 +261,23 @@ impl Handovers {
     }
 
     /// Arms the `[<name>]` section every generation answers
-    /// `Request::DogConfig` with. Empty until set, matching a home with no
+    /// `Request::DogConfig` and `Request::DogConfigResolved` with. Empty until set, matching a home with no
     /// dog configured.
     ///
     /// Not consumed, like [`Self::reply_to_list`]: a dog asks again after a
     /// handover.
     pub fn reply_to_dog_config(&self, section: &str) {
         *self.armed_dog_section.lock().unwrap() = section.to_owned();
+    }
+
+    /// Arms every `Request::DogConfigResolved` to be refused with `refusal`,
+    /// as a shepherd that has never heard of it does. `Request::DogConfig`
+    /// is still answered with the armed section.
+    ///
+    /// Held rather than taken, like [`Self::reply_to_list`]: a dog asks
+    /// again after a handover.
+    pub fn refuse_dog_config_resolved(&self, refusal: RpcError) {
+        *self.armed_resolved_refusal.lock().unwrap() = Some(refusal);
     }
 
     /// Arms the next `Request::Subscribe` to be answered with `refusal`
@@ -237,5 +290,18 @@ impl Handovers {
     /// not see it.
     pub fn refuse_next_subscribe(&self, refusal: RpcError) {
         *self.armed_subscribe_err.lock().unwrap() = Some(refusal);
+    }
+
+    /// Queues `event` for the generation being served now.
+    ///
+    /// Buffered in arrival order until that generation answers a
+    /// `Request::Subscribe`, then written straight to the wire, matching what
+    /// a real daemon does for a subscriber. An event queued for a generation
+    /// that never subscribes is dropped with it, which is the gap a handover
+    /// leaves.
+    ///
+    /// Silently does nothing once the background task is gone.
+    pub async fn push(&self, event: BusEvent) {
+        let _ = self.events.send(event).await;
     }
 }

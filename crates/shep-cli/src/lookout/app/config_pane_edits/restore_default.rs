@@ -5,7 +5,9 @@ impl App {
     /// operator's value for the field under the cursor, so the stored
     /// default shows through once sent: the same verb the list sub-screen's
     /// `d` performs on an element, which is why both carry
-    /// [`KeyPress::Remove`].
+    /// [`KeyPress::Remove`]. On the row of an entry of an array or map of
+    /// tables it files the entry's removal instead, behind the same write
+    /// gate; nothing is sent until the pane closes.
     ///
     /// Same lock-then-control order as [`Self::cycle_field`] and
     /// [`Self::confirm_field`]: the lock names the more specific reason and
@@ -13,15 +15,15 @@ impl App {
     /// on `+ add a key`, or with no row at all: [`ConfigPane::cursor_kind`]
     /// is `None` for exactly those, and there is no field to restore.
     pub(in crate::lookout::app) fn restore_default(&mut self) -> Effect {
-        if let Some((key, lock)) = self
-            .config_pane()
-            .and_then(ConfigPane::cursor_lock)
-            .map(|(key, lock)| (key.to_owned(), lock))
-        {
-            self.notice = Some(Notice {
-                text: Self::lock_refusal(&key, lock),
-                grave: true,
-            });
+        if self.refuse_if_locked() {
+            return Effect::None;
+        }
+        if self.config_pane().is_some_and(ConfigPane::cursor_on_entry) {
+            if self.authorize_write().is_some()
+                && let Some(pane) = self.config_pane_mut()
+            {
+                pane.file_entry_removal();
+            }
             return Effect::None;
         }
         if self
@@ -34,6 +36,10 @@ impl App {
         if self.authorize_write().is_none() {
             return Effect::None;
         }
+        if let Some(text) = self.config_pane().and_then(ConfigPane::cursor_refusal) {
+            self.notice = Some(Notice::grave(text));
+            return Effect::None;
+        }
         if let Some(pane) = self.config_pane_mut() {
             pane.file_default();
         }
@@ -43,7 +49,6 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::*;
     use super::*;
     use crate::lookout::app::testing::*;
 

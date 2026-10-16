@@ -45,7 +45,7 @@ const DEV_HOME_VAR: &str = "%SHEP_DEV_HOME%";
 /// and [`crate::home::HOME_KNOB`] carries the other one.
 fn home_ignored_aside() -> String {
     format!(
-        "shep dev ignores {}; isolation is the whole feature — set {DEV_HOME_VAR} instead",
+        "shep dev ignores {}; isolation is the whole feature. Set {DEV_HOME_VAR} instead",
         crate::home::HOME_KNOB
     )
 }
@@ -219,7 +219,7 @@ pub async fn dev(
     streams.aside(
         "watch_forced",
         &format!(
-            "shep dev: forcing watch on {names} — each app's own `watch` setting is ignored here"
+            "shep dev: forcing watch on {names}. Each app's own `watch` setting is ignored here"
         ),
     );
 
@@ -401,7 +401,7 @@ mod tests {
     fn the_ignored_home_aside_names_both_knobs_the_unix_way() {
         assert_eq!(
             home_ignored_aside(),
-            "shep dev ignores --home/$SHEP_HOME; isolation is the whole feature — set \
+            "shep dev ignores --home/$SHEP_HOME; isolation is the whole feature. Set \
              $SHEP_DEV_HOME instead"
         );
     }
@@ -413,7 +413,7 @@ mod tests {
     fn the_ignored_home_aside_names_both_knobs_the_windows_way() {
         assert_eq!(
             home_ignored_aside(),
-            "shep dev ignores --home/%SHEP_HOME%; isolation is the whole feature \u{2014} set \
+            "shep dev ignores --home/%SHEP_HOME%; isolation is the whole feature. Set \
              %SHEP_DEV_HOME% instead"
         );
     }

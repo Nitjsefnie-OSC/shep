@@ -12,6 +12,7 @@ use commands::import;
 use commands::kv;
 use commands::lifecycle;
 use commands::lifecycle::Load;
+use commands::lifecycle::toggle::{Toggle, toggle};
 use commands::logs;
 use commands::muster;
 use commands::query;
@@ -371,10 +372,9 @@ pub(crate) async fn run(
             Ok(client) => lifecycle::reload(&client, &mut streams, args).await,
             Err(code) => code,
         },
-        Commands::Delete(ref args) => match connect_client(&mut streams, &paths, guard).await {
-            Ok(client) => lifecycle::delete(&client, &mut streams, args).await,
-            Err(code) => code,
-        },
+        // Not `connect_client` at this arm: `delete` removes a dog from
+        // `shep.toml` too, and that half works with no shepherd running.
+        Commands::Delete(ref args) => lifecycle::delete(&mut streams, &paths, guard, args).await,
         Commands::Stock(ref args) => match connect_client(&mut streams, &paths, guard).await {
             Ok(client) => lifecycle::stock(&client, &mut streams, args).await,
             Err(code) => code,
@@ -419,9 +419,11 @@ pub(crate) async fn run(
                 )
                 .await
             }
-            None => dogs::enable(&mut streams, &paths, &args.name).await,
+            None => toggle(&mut streams, &paths, Toggle::Enable, &args.name).await,
         },
-        Commands::Disable(ref args) => dogs::disable(&mut streams, &paths, &args.name).await,
+        Commands::Disable(ref args) => {
+            toggle(&mut streams, &paths, Toggle::Disable, &args.name).await
+        }
         Commands::Adopt(ref args) => dogs::adopt(&mut streams, &paths, args).await,
         Commands::Rehome(ref args) => dogs::rehome(&mut streams, &paths, &args.name).await,
         Commands::Describe(ref args) => match connect_client(&mut streams, &paths, guard).await {
@@ -472,6 +474,12 @@ pub(crate) async fn run(
         // Same rule, same file-first reason: `shep secret set` before a
         // first `shep start` is the ordinary first-run order.
         Commands::Secret(ref args) => secret::secret(&mut streams, &paths, args),
+        // Reads two sheep's configs and writes one, so it needs the shepherd:
+        // the copy is of what the running flock holds, not of a file.
+        Commands::Copy(ref args) => match connect_client(&mut streams, &paths, guard).await {
+            Ok(client) => commands::copy::copy(&client, &mut streams, args).await,
+            Err(code) => code,
+        },
         // Does its own connecting: `connect_client` reports and gives up,
         // which would leave an operator with a live daemon nothing can stop.
         Commands::Kill => admin::kill(&paths, &mut streams).await,

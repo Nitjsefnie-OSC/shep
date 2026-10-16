@@ -320,6 +320,25 @@ mod tests {
         );
     }
 
+    /// A `shep.toml` written before the key existed has to keep loading.
+    #[test]
+    fn channel_dogs_parses_and_defaults_empty() {
+        let src = r#"
+    [daemon]
+    enabled_dogs = ["otel"]
+    channel_dogs = ["otel"]
+
+    [daemon.adopted_dogs]
+    otel = "/usr/local/bin/shep-otel"
+    "#;
+        let cfg = DaemonConfig::load(Some(src), &no_env).expect("channel_dogs is a known key");
+        assert_eq!(cfg.daemon.channel_dogs, vec!["otel".to_string()]);
+
+        let older = DaemonConfig::load(Some("[daemon]\nenabled_dogs = [\"otel\"]\n"), &no_env)
+            .expect("a file without the key loads");
+        assert!(older.daemon.channel_dogs.is_empty());
+    }
+
     // fails if the key is unknown, which deny_unknown_fields turns into a
     // startup error, or if it is not defaulted
     #[test]

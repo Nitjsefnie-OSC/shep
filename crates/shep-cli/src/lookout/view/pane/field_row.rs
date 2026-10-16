@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use shep_core::config::ApplyGroup;
 
 use super::super::super::field::{Field, FieldKind, ValueKind};
-use super::super::super::pane::{ConfigPane, Lock, PaneRow};
+use super::super::super::pane::{ConfigPane, Lock, PaneRow, TreeRow};
 use super::super::super::theme::Palette;
 use super::super::flock::{fit, mark};
 use super::layout::{BLURB_WRAP, body_width, cost_label, mask_secret, panel_width, widths, wrap};
@@ -48,6 +48,21 @@ pub(super) fn field_line(
     let Some(field) = pane.fields().fields().get(index) else {
         return Line::default();
     };
+    let key = key_cell(pane, index, field);
+    leaf_line(pane, field, &key, selected, width, palette, show_lands)
+}
+
+/// A row that holds a value: a config field, or a field inside an entry.
+/// `key` is what the KEY cell draws after the flag.
+pub(super) fn leaf_line(
+    pane: &ConfigPane,
+    field: &Field,
+    key: &str,
+    selected: bool,
+    width: u16,
+    palette: Palette,
+    show_lands: bool,
+) -> Line<'static> {
     let (key_w, value_w, cost_w) = widths(body_width(width), show_lands);
     let flag = match (pane.is_pending(&field.key), pane.is_overridden(&field.key)) {
         (true, _) => '!',
@@ -69,8 +84,12 @@ pub(super) fn field_line(
         .filter(|typing| typing.key == field.key)
         .map(|typing| &typing.buffer);
     let value = match typing {
-        Some(buffer) => format!("{buffer}\u{258f}"),
-        None => mask_secret(field.secret, raw),
+        Some(buffer) => buffer.drawn(value_w),
+        // An entries row reads as a count, which holds nothing to mask.
+        None => mask_secret(
+            field.secret && !matches!(field.kind, FieldKind::Entries(_)),
+            raw,
+        ),
     };
 
     let lock = match pane.lock(&field.key) {
@@ -84,7 +103,7 @@ pub(super) fn field_line(
         None => ' ',
     };
     let mut rest = String::from(lock);
-    rest.push_str(&fit(&format!("{flag}{}", field.key), key_w));
+    rest.push_str(&fit(&format!("{flag}{key}"), key_w));
     let cost_cell = (cost_w > 0).then(|| fit(pane.cost(&field.key).map_or("", cost_label), cost_w));
 
     // The selected row's own paint: a paper-2 ground the full width of the
@@ -125,7 +144,7 @@ pub(super) fn field_line(
         // Muting reinforces the glyph but carries no fact alone: a `plain`
         // palette renders muted as nothing, so style could not tell a
         // locked row from an editable one on its own.
-        let rest_style = if field.editable {
+        let rest_style = if field.editable && pane.lock(&field.key).is_none() {
             Style::default()
         } else {
             palette.muted()
@@ -150,6 +169,97 @@ pub(super) fn field_line(
     }
     Line::from(spans)
 }
+
+/// What a leaf's KEY cell draws after its flag: the full key, except on a
+/// dog's pane, where the tables above it are rows of their own and it is the
+/// key's last segment, indented two columns per table. An entries row opens
+/// and closes, so it leads with the same glyph a table does.
+fn key_cell(pane: &ConfigPane, index: usize, field: &Field) -> String {
+    match pane.tree_row(PaneRow::Field(index)) {
+        Some(tree) => {
+            let indent = "  ".repeat(tree.depth);
+            match tree.open {
+                Some(open) => format!("{indent}{} {}", open_glyph(open), tree.label),
+                None => format!("{indent}{}", tree.label),
+            }
+        }
+        None => field.key.clone(),
+    }
+}
+
+/// The glyph in front of a row that opens and closes.
+fn open_glyph(open: bool) -> char {
+    if open { '\u{25be}' } else { '\u{25b8}' }
+}
+
+/// One nested table's row on a dog's pane: the selection mark, the open or
+/// closed glyph and the key's last segment, indented to its depth. The value
+/// cell is empty, and the cost cell, which a dog's pane leaves empty on a
+/// leaf, names the row's type.
+///
+/// Muted when it is not the selected row, as a locked leaf is: a table holds
+/// no value to edit, and the glyph carries the fact in a `plain` palette.
+pub(super) fn table_line(
+    pane: &ConfigPane,
+    index: usize,
+    selected: bool,
+    width: u16,
+    palette: Palette,
+    show_lands: bool,
+) -> Line<'static> {
+    let Some(tree) = pane.tree_row(PaneRow::Table(index)) else {
+        return Line::default();
+    };
+    node_line(&tree, TABLE_LABEL, selected, width, palette, show_lands)
+}
+
+/// A row that opens and closes and holds no value, drawn for `tree`, with
+/// `type_label` in the cost cell.
+pub(super) fn node_line(
+    tree: &TreeRow,
+    type_label: &str,
+    selected: bool,
+    width: u16,
+    palette: Palette,
+    show_lands: bool,
+) -> Line<'static> {
+    let (key_w, value_w, cost_w) = widths(body_width(width), show_lands);
+    let mut text = String::from(" ");
+    text.push_str(&fit(
+        &format!(
+            " {}{} {}",
+            "  ".repeat(tree.depth),
+            open_glyph(tree.open == Some(true)),
+            tree.label
+        ),
+        key_w,
+    ));
+    if value_w > 0 {
+        text.push_str("  ");
+        text.push_str(&fit("", value_w));
+    }
+    if cost_w > 0 {
+        text.push_str("  ");
+        text.push_str(&fit(type_label, cost_w));
+    }
+    let ground = if selected {
+        palette.ground()
+    } else {
+        Style::default()
+    };
+    let mark_style = if selected {
+        palette.attention().patch(ground)
+    } else {
+        Style::default()
+    };
+    Line::from(vec![
+        Span::styled(mark(selected), mark_style),
+        Span::styled(text, palette.muted().patch(ground)),
+    ])
+}
+
+/// The type label of a nested table's row, beside [`type_label`]'s own.
+pub(super) const TABLE_LABEL: &str = "table";
 
 /// The rows the field list reserves under its title: the selected field's
 /// own help text, wrapped, at widths where the explanation panel cannot
@@ -182,10 +292,7 @@ pub(super) fn top_lines(pane: &ConfigPane, palette: Palette, width: u16) -> Vec<
     if panel_width(width).is_some() {
         return Vec::new();
     }
-    let Some(PaneRow::Field(index)) = pane.cursor() else {
-        return Vec::new();
-    };
-    let Some(field) = pane.fields().fields().get(index) else {
+    let Some(field) = pane.cursor_field() else {
         return Vec::new();
     };
     // Two columns for the indent this row draws with, the same budget
@@ -215,10 +322,13 @@ pub(super) fn type_label(field: &Field) -> &'static str {
     match &field.kind {
         FieldKind::Bool => "bool",
         FieldKind::Integer => "integer",
+        FieldKind::Number => "number",
         FieldKind::Text | FieldKind::Suggested(_) => "text",
         FieldKind::Choice(_) => "choice",
         FieldKind::Map => "map",
         FieldKind::List(_) => "list",
+        FieldKind::Entries(_) => "entries",
+        FieldKind::Union(_) => "union",
         FieldKind::Opaque => "opaque",
     }
 }
@@ -258,7 +368,8 @@ pub(super) fn impact_tag(group: ApplyGroup) -> (char, &'static str, &'static str
 #[cfg(test)]
 mod tests {
     use super::super::fixtures::{
-        nested_secret_dog_pane, secret_dog_pane_with_an_edit, text_of, web_pane,
+        nested_secret_dog_pane, opaque_secret_dog_pane, secret_dog_pane_with_an_edit, text_of,
+        web_pane,
     };
     use super::super::pane_lines;
     use super::*;
@@ -302,7 +413,7 @@ mod tests {
         );
     }
 
-    /// Every field row over all eight groups, walked with `next_group`,
+    /// Every field row over all nine groups, walked with `next_group`,
     /// styled by `palette`. What a test that used to find any field at
     /// one width in one shot now needs, since the active group is the
     /// only one a single render draws.
@@ -504,21 +615,44 @@ mod tests {
         );
     }
 
-    /// A table row is drawn whole as JSON, so a secret one level inside it
-    /// masks the row, and the panel's `now` line with it (#630).
+    /// An array of tables that holds a secret draws as a count and never as
+    /// JSON, so neither the row nor the panel's `now` line can carry it
+    /// (#630).
     #[test]
-    fn a_table_holding_a_secret_draws_masked_in_the_row_and_the_panel() {
+    fn an_array_of_tables_holding_a_secret_draws_a_count_and_never_the_secret() {
+        let pane = opaque_secret_dog_pane();
+        let text = text_of(&pane_lines(&pane, fixtures::plain(), 160, 0));
+        let row = text
+            .iter()
+            .find(|line| line.contains(" hosts"))
+            .expect("hosts is drawn at 160 columns");
+        assert!(row.contains("1 entry"), "{row:?}");
+        assert!(
+            !text.join("\n").contains("ab12cd34"),
+            "the password leaked: {text:?}"
+        );
+    }
+
+    /// A nested table is a node with rows under it, so a secret inside one
+    /// masks its own row, and the plain field beside it still draws its value.
+    #[test]
+    fn a_secret_under_a_nested_table_masks_its_own_row_and_its_siblings_do_not() {
         let pane = nested_secret_dog_pane();
         let text = text_of(&pane_lines(&pane, fixtures::plain(), 160, 0));
         let row = text
             .iter()
-            .find(|line| line.contains(" db "))
-            .expect("db is drawn at 160 columns");
+            .find(|line| line.starts_with(">") && line.contains(" password"))
+            .expect("the cursor is on the secret row");
         assert!(row.contains("<set>"), "{row:?}");
         assert!(
             text.iter()
                 .any(|line| line.contains("now") && line.contains("<set>")),
             "the panel's now line: {text:?}"
+        );
+        assert!(
+            text.iter()
+                .any(|line| line.contains(" host") && line.contains("pg.internal")),
+            "the sibling row still shows its value: {text:?}"
         );
         assert!(
             !text.join("\n").contains("ab12cd34"),

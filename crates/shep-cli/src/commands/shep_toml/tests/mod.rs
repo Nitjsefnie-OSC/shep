@@ -137,7 +137,7 @@ fn config_race_child() {
         let name = format!("{tag}-{i}");
         ShepToml::edit(&path, |doc| {
             if tag == ADOPTING_TAG {
-                doc.adopt_dog(&name, Path::new("/usr/local/bin/shep-otel"))
+                doc.adopt_dog(&name, Path::new("/usr/local/bin/shep-otel"), false)
                     .unwrap();
             } else {
                 doc.enable_dog(&name).unwrap();

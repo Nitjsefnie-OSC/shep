@@ -293,11 +293,14 @@ of that exposure, so the socket would buy a round trip for nothing.
 
 - **Shepherd channel** (extra pipe fd, newline JSON, language-agnostic):
   child→daemon `{"kind":"ready"}`, `{"kind":"metric",...}`,
-  `{"kind":"action-reply",...}`, `{"kind":"lamb-label",...}`; daemon→child
+  `{"kind":"action-reply",...}`, `{"kind":"lamb-label",...}`,
+  `{"kind":"note",...}`; daemon→child
   `{"kind":"shutdown"}`, `{"kind":"action",...}`. Fd number exported as
   `SHEP_CHANNEL_FD`, wire version as `SHEP_CHANNEL_VERSION` (`1`). A
   `lamb-label` names one of the app's own lambs for `describe`; it is
-  additive, and an older daemon drops it as malformed. An `action` carries
+  additive, and an older daemon drops it as malformed. A `note` is a name
+  and a number for a dog, published as `channel.note` rather than read as a
+  metric sample; it is additive the same way. An `action` carries
   `name` and `id`, and `params` when the operator supplied any — the `params`
   key is absent otherwise, which is what keeps it additive (§9). `id` is the
   dispatch's correlation token; an app that echoes it back on its
@@ -336,7 +339,8 @@ removes. Config: `[dog.<name>]` in shep.toml, read by the dog over the
 Unix socket rather than through its environment. Third-party dog = any
 binary speaking the protocol, registered with `shep adopt <name> <path>`
 (`shep enable --exec <path> <name>` is a hidden alias, kept for pm2 muscle
-memory); `shep rehome <name>` forgets the registration.
+memory); `shep delete <name>` forgets the registration, and the hidden `shep
+rehome <name>` runs the same removal.
 
 **metrics dog (v1):** serves Prometheus exposition on 127.0.0.1:9615
 (configurable): per-sheep cpu/mem/restart_total/status/uptime, daemon self
@@ -356,7 +360,7 @@ Third-party extensions are treated as dogs once enabled: any binary
 speaking the client wire protocol, registered via `shep adopt <name>
 <path>`.
 
-**This section carried three departures from what shipped, each decided
+**This section carried four departures from what shipped, each decided
 against the spec as written rather than found as an oversight in it — the
 same posture §9's `trigger` amendment and §13's item 4 correction take,
 recorded here for the same reason: what a later reader needs is the
@@ -374,7 +378,7 @@ at least one is registered, and `shep dogs` prints that table alone; a
 flock with none still renders exactly as it did before this section
 existed.
 
-`enable --exec` is a hidden alias, and `adopt`/`rehome` are the verbs.
+`enable --exec` is a hidden alias, and `adopt`/`delete` are the verbs.
 The spec as written had one lifecycle for a built-in dog and folded a
 third-party one into `enable`'s own flag. Registering a third-party
 binary needed to do more than a built-in dog's `enable` ever did — a
@@ -382,8 +386,16 @@ path to vet, refuse, and remember beyond the boolean question of whether
 the dog is on — and `disable` needed a counterpart that answers "forget
 this dog existed" rather than just "stop it for now." `enable --exec`
 survives only because it is pm2's own spelling and muscle memory
-transfers; `adopt`/`rehome` are what an operator reading `--help` is
+transfers; `adopt`/`delete` are what an operator reading `--help` is
 pointed at.
+
+The removal half of that pair moved again under #754: `delete`, the verb an
+operator already reaches for a sheep, absorbs `rehome`. `rehome` stays
+reachable and keeps its own `"command": "rehome"` reply for the scripts
+written against it, and is hidden from `--help`. Three removal verbs with
+different effects is the confusion the parent spec set out to remove. The
+built-in refusal sits in the shepherd rather than the CLI, because `cargo
+install shep` replaces the binary and not the running shepherd.
 
 A dog's configuration reaches it over the socket, not the environment.
 The spec as written left this unstated, reading like an ordinary
@@ -398,7 +410,8 @@ is true of a value the dog only ever asks the daemon for directly.
 ## 9. CLI surface (sheep-native)
 
 Core verbs: `start` (script | Flockfile | `-` stdin JSON), `stop`, `restart`,
-`reload`, `delete`, `scale`, `flock` (list; `list`/`ls` aliases), `describe`,
+`reload`, `delete` (a dog's name takes it too, and it is the one way to
+remove a dog), `scale`, `flock` (list; `list`/`ls` aliases), `describe`,
 `bleats` (logs; `logs` alias), `flush`, `reopen` (reopen log files for
 rotation; also SIGUSR2 to the daemon), `muster` (save + resurrect pair:
 `shep save` / `shep muster` restores; `resurrect` hidden alias),

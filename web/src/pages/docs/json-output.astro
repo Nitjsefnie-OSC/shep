@@ -269,6 +269,12 @@ import CodeBlock from "../../components/docs/CodeBlock.astro";
         Table format shows this row as <code>silent</code>.
       </li>
       <li>
+        <code>disabled</code> is <code>true</code> on a stopped sheep or dog
+        whose app <code>shep disable</code> parked, and the key is absent on
+        every other row. <code>status</code> stays <code>stopped</code>; table
+        format reads <code>disabled</code> in STATUS instead.
+      </li>
+      <li>
         <code>dog_stale</code> is the other half of that and is{" "}
         <code>null</code> for every sheep. <code>true</code> means the
         shepherd has given up: it restarted the dog once for never answering,

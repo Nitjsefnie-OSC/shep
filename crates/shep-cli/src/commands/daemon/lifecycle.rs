@@ -222,12 +222,14 @@ pub fn daemon_overrides(args: &DaemonArgs) -> DaemonOverrides {
 /// `[daemon] enabled_dogs` names each dog to start, in the order an operator
 /// wrote it; `[daemon] adopted_dogs` says which of those names is a
 /// third-party binary, and a name absent from it is [`DogSource::BuiltIn`].
+/// `[daemon] channel_dogs` says which adopted ones asked for the channel.
 #[must_use]
 pub fn boot_options(
     config: &DaemonConfig,
     args: &DaemonArgs,
     notify_socket: Option<&OsStr>,
 ) -> BootOptions {
+    let mut seen = std::collections::BTreeSet::new();
     BootOptions {
         socket: config.daemon.socket.clone(),
         ready_fd: None,
@@ -241,33 +243,24 @@ pub fn boot_options(
             .daemon
             .enabled_dogs
             .iter()
-            .map(|name| {
-                let source = match config.daemon.adopted_dogs.get(name) {
-                    Some(path) => DogSource::Adopted {
-                        path: path.display().to_string(),
-                    },
-                    None => DogSource::BuiltIn,
-                };
-                DogSpec {
-                    name: name.clone(),
-                    source,
-                }
-            })
+            .map(|name| dog_spec(config, name))
             .collect(),
         // Every dog that EXISTS, which is not the list above: that one is
-        // the spawn order and holds only what an operator switched on.
-        // `Request::SetDogConfig` is guarded on this one, because the dog
-        // most in need of configuring is the one that is disabled or has
-        // never started. The same two sources `fail_enable_unknown_dog`
-        // calls valid names, plus `enabled_dogs` itself, so a name a
-        // hand-edited `shep.toml` enables without adopting is still a dog
-        // this shepherd tries to spawn and still one it may hold a section
-        // for.
+        // the spawn order and holds only what an operator switched on. The
+        // shepherd lists each at rest, and `Request::SetDogConfig` is
+        // guarded on this one, because the dog most in need of configuring
+        // is the one that is disabled or has never started. The same two
+        // sources `fail_enable_unknown_dog` calls valid names, plus
+        // `enabled_dogs` itself, so a name a hand-edited `shep.toml`
+        // enables without adopting is still a dog this shepherd tries to
+        // spawn and still one it may hold a section for.
         known_dogs: crate::dog::BUILT_IN_DOGS
             .iter()
             .map(|built_in| (*built_in).to_string())
             .chain(config.daemon.adopted_dogs.keys().cloned())
             .chain(config.daemon.enabled_dogs.iter().cloned())
+            .filter(|name| seen.insert(name.clone()))
+            .map(|name| dog_spec(config, &name))
             .collect(),
         boot_first_dogs: config.daemon.boot_first_dogs.clone(),
         // Overwritten by `boot_supervisor`, the only caller that ever wants
@@ -276,6 +269,21 @@ pub fn boot_options(
         // This process is the shep binary, which is what the field asserts, so
         // an init system's SIGHUP reaches the handover `shep daemon reload` does.
         handover: true,
+    }
+}
+
+/// The dog `name` is: adopted from the path `shep.toml` records, or built in.
+fn dog_spec(config: &DaemonConfig, name: &str) -> DogSpec {
+    let source = match config.daemon.adopted_dogs.get(name) {
+        Some(path) => DogSource::Adopted {
+            path: path.display().to_string(),
+            channel: config.daemon.channel_dogs.iter().any(|dog| dog == name),
+        },
+        None => DogSource::BuiltIn,
+    };
+    DogSpec {
+        name: name.to_string(),
+        source,
     }
 }
 
@@ -382,14 +390,18 @@ mod tests {
         assert!(opts.restore, "the default is to restore the muster roll");
     }
 
+    /// `metrics` in `channel_dogs` is a hand edit: a built-in never takes
+    /// the channel, whatever the file says.
     #[test]
     fn boot_options_carry_every_enabled_dog_with_the_source_the_file_names() {
         let src = r#"
 [daemon]
-enabled_dogs = ["metrics", "otel"]
+enabled_dogs = ["metrics", "otel", "jobs"]
+channel_dogs = ["jobs", "metrics"]
 
 [daemon.adopted_dogs]
 otel = "/usr/local/bin/shep-otel"
+jobs = "/usr/local/bin/shep-jobs"
 "#;
         let config = DaemonConfig::load(Some(src), &|_| None).unwrap();
         let opts = boot_options(
@@ -415,7 +427,15 @@ otel = "/usr/local/bin/shep-otel"
                 DogSpec {
                     name: "otel".into(),
                     source: DogSource::Adopted {
-                        path: "/usr/local/bin/shep-otel".into()
+                        path: "/usr/local/bin/shep-otel".into(),
+                        channel: false,
+                    }
+                },
+                DogSpec {
+                    name: "jobs".into(),
+                    source: DogSource::Adopted {
+                        path: "/usr/local/bin/shep-jobs".into(),
+                        channel: true,
                     }
                 },
             ]
@@ -472,11 +492,25 @@ otel = "/usr/local/bin/shep-otel"
             None,
         );
 
-        let known: std::collections::BTreeSet<&str> =
-            opts.known_dogs.iter().map(String::as_str).collect();
         assert_eq!(
-            known,
-            ["bark", "metrics", "otel"].into_iter().collect(),
+            opts.known_dogs,
+            vec![
+                DogSpec {
+                    name: "metrics".into(),
+                    source: DogSource::BuiltIn
+                },
+                DogSpec {
+                    name: "bark".into(),
+                    source: DogSource::BuiltIn
+                },
+                DogSpec {
+                    name: "otel".into(),
+                    source: DogSource::Adopted {
+                        path: "/usr/local/bin/shep-otel".into(),
+                        channel: false,
+                    }
+                },
+            ],
             "adopted-and-disabled is the case this field exists for"
         );
     }

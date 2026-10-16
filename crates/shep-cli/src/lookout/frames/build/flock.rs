@@ -245,6 +245,7 @@ pub(super) fn build_flock(app: &mut App, which: Scene, t0: Instant) -> Vec<Proce
                     "log-rotate",
                     DogSource::Adopted {
                         path: "/usr/local/bin/shep-log-rotate".to_string(),
+                        channel: false,
                     },
                     Some(false),
                 ),

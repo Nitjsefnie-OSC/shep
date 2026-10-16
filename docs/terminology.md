@@ -15,7 +15,7 @@ Free on crates.io (verified 2026-08-07): `shep`, `shepd`, plus reserves `bleat`,
 | the daemon | daemon/supervisor | **the shepherd** — ONLY the shepherd; "dog" now means plugins (collision removed 2026-08-07) | docs, log messages, TUI header |
 | managed processes (plural/list) | process list | **the flock** — ALWAYS the plural term; never bare plural "sheep" in docs/CLI (kills sg/pl ambiguity; ruled 2026-08-07) | `shep flock` (list), `Flock` type, docs |
 | one managed process (singular) | process/app | **a sheep** (singular ONLY) / process (precise) | docs may say sheep; API types stay `Process`-clear. RESERVED for managed processes |
-| plugin process (first-party in-binary, or third-party speaking the client protocol) | plugin/module | **dog** (pl. dogs) | `shep enable metrics` (built-in); `shep adopt <name> <path>` (third-party — `enable --exec` is a hidden pm2-spelled alias); `shep dogs` (list), hidden `shep dog <name>` runs one; `dog`-tagged in flock listing. Decided 2026-08-07 |
+| plugin process (first-party: published by shep-pm, built into the binary or from its own `shep-pm` repo; or third-party, speaking the client protocol) | plugin/module | **dog** (pl. dogs) | `shep enable metrics` (built-in); `shep adopt <name> <path>` (third-party — `enable --exec` is a hidden pm2-spelled alias); `shep dogs` (list), hidden `shep dog <name>` runs one; `dog`-tagged in flock listing. Decided 2026-08-07 |
 | child process of a sheep (process-tree member) | child process | **lamb** (pl. lambs) | `shep describe` tree view ("the sheep and her lambs"), tree-kill docs. Decided 2026-08-07 |
 | one of an app's N running copies (`instances` > 1) | instance/worker | **instance**, plain, not themed, and not a lamb. A lamb is a child process of one sheep; an instance is a sibling copy of a sheep, spawned by the daemon rather than forked by its parent. `web:2` selects instance 2 of `web`; `ProcessInfo.instance` carries the slot on the wire | `shep flock`'s `web ×3` group row, `name:slot` selector, `SHEP_INSTANCE`/`{{instance}}` |
 | namespace / group | namespace | **fold** (also: paddock) | `shep fold <name>`, `Fold` type |
@@ -26,7 +26,8 @@ Free on crates.io (verified 2026-08-07): `shep`, `shepd`, plus reserves `bleat`,
 | graceful shutdown | stop | **`shep thatlldo [target]`** | easter-egg alias for graceful stop — real herding command for "work's done" |
 | freeze the running list | save | **save** | `shep save` writes the muster roll |
 | register a third-party plugin | install | **adopt** | `shep adopt <name> <path>`; `enable --exec` is a hidden alias |
-| drop a third-party plugin | uninstall | **rehome** | `shep rehome <name>` — unlike `disable`, it forgets the registration |
+| drop a third-party plugin for good | uninstall | **delete** | `shep delete <name>` — unlike `disable`, it forgets the registration; the hidden `shep rehome <name>` runs the same removal |
+| refuse a sheep or turn a dog on or off | disable/enable | **disable** / **enable**, general verbs for a sheep or a dog | `shep disable api` stops a sheep and refuses to start it until `shep enable api`; `shep enable metrics` turns a dog on. Straight verbs, not themed |
 | resurrect saved state | resurrect | **muster** | `shep muster` assembles the flock from the roll |
 | TUI dashboard | monit/dash | **lookout** | `shep lookout`; `shep dash` alias |
 | host machine | host | **the heft** (sheep bound to their hill) | subtle: docs + host-metrics naming |
@@ -36,8 +37,12 @@ Free on crates.io (verified 2026-08-07): `shep`, `shepd`, plus reserves `bleat`,
 | send a signal to one process | signal | **signal** — stays plain, deliberately: `shep signal web SIGKILL` is a loaded gun, and rule 2 below keeps destructive/precise operations free of whimsy, the same reason `kill` stayed `kill` | `shep signal <selector> <signal>` |
 | write to a process's stdin | sendline | **whisper** — completes the pair `bleats` already started: bleats is what the sheep says to you, whisper is what you say to the sheep, down a channel nobody else hears; `shep sendline` stays as an alias | `shep whisper <selector> <line>` |
 | ad-hoc key/value store | kv store | **set** / **get** / **unset** — plain names, not themed | `shep set`, `shep get`, `shep unset` |
+| move one sheep's setting, or one dog's table for it, onto another sheep | none | **copy** (plain, not themed), and not the same verb as `set`: `shep set` writes a key in the KV store, `shep copy` writes a sheep's own config through the shepherd | `shep copy <from>.<path> <to>.<path>`, such as `shep copy web.dogs.kelpie api.dogs.kelpie` |
 | the store of credential values a config refers to | secrets manager | **secrets store** (plain, not themed): `$SHEP_HOME/secrets.json` | `shep secret set/get/unset/list`, `{{secret:NAME}}` |
 | a provider dog's own slice of the secrets store | none | **namespace** (plain, not themed, and a different concept from fold: a namespace keeps one provider dog's pushed values apart from another's, a fold groups sheep) | `{{secret:namespace/NAME}}`, `Request::PutSecrets` |
+| what a dog declares about itself before it runs: its settings, verbs, dependencies and the permissions it wants | none | **manifest** (plain) | the dog's probe answer, cached per binary |
+| one named thing a dog may do through the shepherd | capability | **permission** (plain, since it appears in refusals); a dog **declares** the permissions it wants in its manifest | "log-rotate declares `logs.read`, which you haven't granted" |
+| the permissions the operator has approved for one dog | allowlist | **grants** (plain); the operator **grants** a permission | a request outside a dog's grants is refused |
 | a marker a dog attaches to a sheep | deploy tag | **smit** (a farmer's paint mark on a sheep) | `ProcessInfo.smit`, the SMIT column in `shep flock`/lookout; shep stores and paints the string verbatim and never parses it |
 
 ## Usage rules (readability > theme)

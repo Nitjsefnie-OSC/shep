@@ -65,30 +65,13 @@ impl App {
                 // belongs to a screen that never asked for it.
                 None | Some(ConfigFor::Editor) => self.open_or_refresh_config_pane(*view),
             },
-            Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{name}: the shepherd answered something this lookout does not understand"
-                    ),
-                    grave: true,
-                });
-            }
             // Prefixed, like every other reply handler in this file: the
             // shepherd's refusals mostly name their own subject, but
             // `EngineStopped` renders as `the supervisor engine has
             // stopped`, naming neither the sheep nor the screen it came
             // from.
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {}", err.message),
-                    grave: true,
-                });
-            }
-            Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {other}"),
-                    grave: true,
-                });
+            other => {
+                self.notice = Some(Notice::grave(format!("{name}: {}", failed_reply(other))));
             }
         }
         Effect::None
@@ -160,7 +143,7 @@ impl App {
             && let Some(source) = row.info.dog.as_ref()
         {
             let adopted_path = match source {
-                DogSource::Adopted { path } => Some(PathBuf::from(path)),
+                DogSource::Adopted { path, .. } => Some(PathBuf::from(path)),
                 _ => None,
             };
             return Effect::LoadDogPane {
@@ -238,6 +221,10 @@ impl App {
             // One press, not two: the field's help draws unconditionally
             // now, so nothing waits behind a second `esc` for it.
             KeyPress::Escape => {
+                if let Some(text) = self.config_pane().and_then(ConfigPane::incomplete_union) {
+                    self.notice = Some(Notice::grave(text));
+                    return Effect::None;
+                }
                 if let Some(dialog) = self.close_offer() {
                     self.close_dialog = Some(dialog);
                     return Effect::None;
@@ -270,10 +257,28 @@ impl App {
             // `Self::on_sheep_config`.
             KeyPress::Refresh => return self.reread_pane(),
             KeyPress::Cycle => return self.cycle_field(),
+            KeyPress::Confirm => return self.confirm_field(),
             // `e` does exactly what `Enter` does here: an operator who
             // opened the pane with `e` should not have to learn a second
-            // key to use it.
-            KeyPress::Confirm | KeyPress::Edit => return self.confirm_field(),
+            // key to use it. Except on a table, which `Enter` opens and
+            // closes and which holds nothing for `e` to edit.
+            KeyPress::Edit => {
+                if self.config_pane().is_some_and(|pane| !pane.cursor_on_table()) {
+                    return self.confirm_field();
+                }
+            }
+            // On a dog's pane `←` and `→` close and open the table under the
+            // cursor; a sheep pane has no tables and they do nothing.
+            KeyPress::TabPrev => {
+                if let Some(pane) = self.config_pane_mut() {
+                    pane.close_table();
+                }
+            }
+            KeyPress::TabNext => {
+                if let Some(pane) = self.config_pane_mut() {
+                    pane.open_table();
+                }
+            }
             KeyPress::Help => {
                 self.open_keymap();
             }
@@ -287,6 +292,7 @@ impl App {
             | KeyPress::FilterStart
             | KeyPress::TextChar(_)
             | KeyPress::TextBackspace
+            | KeyPress::TextEdit(_)
             | KeyPress::TextApply
             | KeyPress::TextAbandon
             | KeyPress::StepUp
@@ -295,8 +301,6 @@ impl App {
             | KeyPress::Secrets
             | KeyPress::Reveal
             | KeyPress::Copy
-            | KeyPress::TabPrev
-            | KeyPress::TabNext
             | KeyPress::SecretDelete
             | KeyPress::Collapse
             // Bound only in the close dialog; with none up, `c` is a stray
@@ -320,12 +324,18 @@ impl App {
                     pane.undo_edit();
                 }
             }
-            // `tab` walks the groups; a digit jumps straight to one. Both
-            // reset the cursor to the group's first field, so `j`/`k` never
-            // start on a row the new tab does not draw.
+            // `tab` and `shift-tab` walk the groups; a digit jumps straight
+            // to one. All reset the cursor to the group's first field, so
+            // `j`/`k` never start on a row the new tab does not draw.
             KeyPress::NextGroup => {
                 if let Some(pane) = self.config_pane_mut() {
                     pane.next_group();
+                    pane.move_to_first();
+                }
+            }
+            KeyPress::PrevGroup => {
+                if let Some(pane) = self.config_pane_mut() {
+                    pane.prev_group();
                     pane.move_to_first();
                 }
             }
@@ -437,59 +447,30 @@ impl App {
         }
     }
 
-    /// The config pane's own text keymap, in force for as long as one of
-    /// its two editors owns [`InputMode::Text`].
+    /// Refuse the row under the cursor when it is locked: raise the grave
+    /// notice in that row's own words, and report whether it did.
     ///
-    /// Does not trim the buffer, for the reason
-    /// [`Self::on_settings_text_key`]'s own doc gives: this repository does
-    /// not widen an accepted input grammar without a basis in the spec.
-    ///
-    /// Both editors file on `TextApply`, and neither sends: the pane's own
-    /// `Escape` writes the whole set.
-    pub(super) fn on_pane_text_key(&mut self, key: KeyPress) -> Effect {
-        if key == KeyPress::Quit {
-            return Effect::Quit;
-        }
-        if self.config_pane().is_some_and(|pane| pane.list().is_some()) {
-            return self.on_list_text_key(key);
-        }
-        if self
+    /// [`Self::cycle_field`] and [`Self::restore_default`] gate on it as
+    /// `if self.refuse_if_locked() { return Effect::None; }`.
+    pub(super) fn refuse_if_locked(&mut self) -> bool {
+        let Some((key, lock)) = self
             .config_pane()
-            .is_some_and(|pane| pane.env_typing().is_some())
-        {
-            return self.on_env_text_key(key);
-        }
-        let Some(pane) = self.config_pane_mut() else {
-            return Effect::None;
+            .and_then(ConfigPane::cursor_lock)
+            .map(|(key, lock)| (key.to_owned(), lock))
+        else {
+            return false;
         };
-        match key {
-            KeyPress::TextChar(typed) => pane.type_char(typed),
-            KeyPress::TextBackspace => pane.type_backspace(),
-            KeyPress::TextApply => {
-                let refused = pane.apply_typing();
-                // `apply_typing` keeps the editor open on a buffer the
-                // field's own schema refuses, so the mode follows what the
-                // pane actually did rather than what the key asked for.
-                if pane.typing().is_none() {
-                    self.mode = InputMode::Normal;
-                }
-                // The sentence is the whole point of refusing here: a dog's
-                // section is written unread, so an operator who is not told
-                // now finds out from the dog's own log, or never.
-                if let Some(refused) = refused {
-                    self.notice = Some(Notice {
-                        text: refused.text,
-                        grave: true,
-                    });
-                }
-            }
-            KeyPress::TextAbandon => {
-                pane.abandon_typing();
-                self.mode = InputMode::Normal;
-            }
-            _ => {}
-        }
-        Effect::None
+        self.refuse_locked(&key, lock);
+        true
+    }
+
+    /// Raise the grave notice for a locked row, in that row's own words.
+    ///
+    /// For a caller that already holds the cursor's lock for another gate:
+    /// [`Self::confirm_field`] needs it before its opens gate, so it keeps
+    /// that computation and hands the pair here.
+    pub(super) fn refuse_locked(&mut self, key: &str, lock: Lock) {
+        self.notice = Some(Notice::grave(Self::lock_refusal(key, lock)));
     }
 
     /// The [`WriteAuthority`] every settings write path has to hold, or
@@ -500,38 +481,26 @@ impl App {
     pub(super) fn authorize_write(&mut self) -> Option<WriteAuthority> {
         let authority = WriteAuthority::granted(self);
         if authority.is_none() {
-            self.notice = Some(Notice {
-                text: READ_ONLY_REFUSAL.to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(READ_ONLY_REFUSAL.to_string()));
         }
         authority
     }
 
-    /// The open config pane, or `None` while nothing is being edited.
+    /// The open config pane, or `None` while nothing is being edited:
+    /// [`Body::config_pane`] over this app's body.
     #[must_use]
     pub fn config_pane(&self) -> Option<&ConfigPane> {
-        match &self.body {
-            Body::ConfigPane(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }
+        self.body.config_pane()
     }
 
     /// [`Self::config_pane`]'s mutable twin, for the pane keymap and the
     /// handlers that settle a write or adopt a re-read in place.
+    ///
+    /// A caller that still needs another `App` field while it holds the pane
+    /// calls [`Body::config_pane_mut`] on `self.body` instead, which borrows
+    /// no more than the body.
     pub(super) fn config_pane_mut(&mut self) -> Option<&mut ConfigPane> {
-        match &mut self.body {
-            Body::ConfigPane(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }
+        self.body.config_pane_mut()
     }
 }
 
@@ -940,6 +909,29 @@ mod tests {
         let said = app.notice().map(ToString::to_string).unwrap_or_default();
         assert!(said.contains("web"), "got {said:?}");
         assert!(app.notice().unwrap().is_grave());
+    }
+
+    /// `space`, `Enter` and `d` each refuse a locked row, and all three
+    /// refusals are one sentence: one fact, one wording, three doors.
+    #[test]
+    fn a_locked_row_refuses_cycle_confirm_and_restore_with_the_same_sentence() {
+        for key in ["instances", "liveness_probe"] {
+            let mut app = fixtures::app_in_sheep_pane_with_control();
+            pane_to(&mut app, key);
+            let _ = app.update(Msg::Key(KeyPress::Cycle));
+            let cycled = app.notice().map(ToString::to_string);
+            let _ = app.update(Msg::Key(KeyPress::Confirm));
+            let confirmed = app.notice().map(ToString::to_string);
+            let _ = app.update(Msg::Key(KeyPress::Remove));
+            let restored = app.notice().map(ToString::to_string);
+            assert_eq!(cycled, confirmed, "{key}");
+            assert_eq!(confirmed, restored, "{key}");
+            assert!(
+                cycled.as_deref().is_some_and(|text| text.contains(key)),
+                "{key}: {cycled:?}"
+            );
+            assert!(app.config_pane().unwrap().edits().is_empty(), "{key}");
+        }
     }
 
     /// It spends its first line on a title naming the sheep, so a viewport

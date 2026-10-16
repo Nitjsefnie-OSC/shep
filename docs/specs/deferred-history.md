@@ -205,6 +205,84 @@ deliberate and unchanged. Only the operator knows whether the app actually
 calls `reusePort: true`, and asserting it on their behalf would buy back the
 overlap that produces `EADDRINUSE` — see `from-pm2.astro`.
 
+### A readiness probe cannot verify a reload's replacement -- FIXED, 2026-08-28
+
+Found on 2026-08-28 by deploying real repositories with shep-deploy against a
+real shepherd, not by reading code. Two experiments, same broken release, same
+app, differing only in whether the old instance was answering:
+
+| old instance answering the probe | outcome |
+|---|---|
+| yes | the broken release was verified, recorded as deployed, exit 0, app down |
+| no | the broken release was correctly refused and rolled back, exit 12 |
+
+The second row is the machinery working. The first is the defect, and the
+mechanism is exact. `spawn_replacement` derives `ReadinessSource::of(config)`,
+which is `Probe` for an app with a `readiness_probe`. `await_ready`'s `Probe`
+arm probes immediately, and says why in its own comment: "the first probe must
+land at t=0, not after one `interval`". At t=0 the drainee is still listening
+on the address the probe names, because draining is what `reload_ready_result`
+does AFTER readiness resolves. So the old instance answers, the replacement is
+declared `Ready`, the old is drained, and the address goes dead.
+
+Timed, with a `listen_timeout` of ten seconds:
+
+```text
+t+0.0s  probe answers YES  status=online  pid=7349   the old release
+t+1.0s  probe answers no   status=online  pid=7745   the new one, already Online
+t+25.8s probe answers no   status=online  pid=7745
+```
+
+**This is not a bug in one line, it is a property of the arrangement.** An
+address probe cannot say which of two processes answered it, and an overlapping
+reload exists precisely to have two. `SO_REUSEPORT`, which is what makes the
+overlap zero-downtime in the first place, makes it worse rather than better:
+the kernel balances across both sockets, so even a probe that arrives late may
+be answered by the instance on its way out.
+
+What it costs downstream: `shep-deploy`'s `verify = "probed"` watches for a new
+process reaching `Online`. The replacement gets there on the drainee's answer,
+so it is marked `Ready` and then `Online` while never having served anything
+itself, and the deploy that was waiting on exactly that signal records success.
+The release is left in place, serving nothing. That crate's README now says
+what its verification actually checks.
+
+**The workaround available then was `wait_ready = true`.** It selects
+`ReadinessSource::Channel`, and the channel is per instance: `spawn_readiness_task`
+creates a fresh `oneshot` per spawned id, so the drainee has no way to answer
+the replacement's. An app that can write `{"kind":"ready"}` on its shepherd
+channel therefore gets a reload gate that means what it says, today, with none
+of the work below. An app that cannot is the case this entry is about.
+
+#### The options, none of them free
+
+1. **Probe after the drain, not before.** Keeps the overlap, adds a second
+   readiness check once the drainee is gone, and reports the reload failed if
+   it does not pass. Does not restore the old instance, which is already gone
+   by then, but it tells the truth, and a deploy dog with the previous release
+   still on disk can act on it. The most honest of the three and the most work.
+2. **Prefer the channel for a gated reload.** `wait_ready` is per process and
+   cannot be answered by the drainee. This means telling operators that a probe
+   does not gate a reload and `wait_ready` is what does, which is a real
+   demotion of the feature most apps can actually use.
+3. **Serialise: drain, then start, then probe.** Correct verification, no
+   overlap, no zero-downtime reload. Not worth it.
+
+Recommendation is 1, with the doc change from 2 alongside it, because even
+after 1 the pre-drain probe pass remains meaningless and should stop being
+described as verification.
+
+**What shipped, the same day.** Both 1 and 3, split by what the app
+claims about its own socket. A probed app with no `reuse_port` reloads
+SERIALLY (`ReloadMode::Serial` in `supervisor/reload.rs`): drain, reap, spawn
+into the empty slot, probe there, where the only process left that can answer
+is the replacement. An app that opts into the overlap with `reuse_port` keeps
+its pre-drain probe and gains `Actor::post_drain_probe` (in
+`supervisor/actor_reload.rs`) once the drainee is reaped, which is 1. The doc
+demotion from 2 went with it: `docs/whistle/tools.md` now calls the overlap an
+overlap and names the serial path. What the fix leaves open is recorded under
+"What the reload-readiness fix does NOT cover" in [deferred.md](deferred.md).
+
 ### `bind_socket` surfaces an over-length `$SHEP_HOME` as a raw `ENAMETOOLONG` -- FIXED, Phase 17
 
 Noticed while correcting the `sun_path` comments in the same task. `boot.rs`'s
@@ -878,8 +956,8 @@ own dog-restart-budget record write to. Operator-facing contract:
 `docs/dogs.md`. `[daemon] enabled_dogs` and `[dog.<name>]`
 (`DaemonSection`, `crates/shep-core/src/config/daemon.rs`) have a reader
 now: boot starts every enabled dog from the first, and a dog asks for the
-second over the socket. What §8 still promises beyond this — OTLP export
-— is separate work and remains open, above.
+second over the socket. What §8 promised beyond this — OTLP export — shipped
+2026-10-13, its channel samples on 2026-10-14, both below.
 
 `shep trigger` (custom actions over the shepherd channel, spec §7/§9)
 **shipped**: the fd-3 wire (`ShepherdMessage::Action`/
@@ -1007,7 +1085,8 @@ What each of those does NOT do, recorded so it is not rediscovered as drift:
   populates it; `ListFlock` deliberately does not walk.
 - `channel.*` carries child→shepherd traffic only. The shepherd's own
   `shutdown` and `action` writes are already reported by `process.stop` and by
-  `Response::Triggered`; adding them stays additive if that changes.
+  `Response::Triggered`; a new event kind there is dropped by a client that
+  cannot decode it, not fatal to the connection.
 
 **`.js` Flockfile** (spec §5) **shipped**, Phase 14, with a ruling narrower
 than the spec's own phrasing suggests: explicit only, never by directory
@@ -1135,6 +1214,37 @@ used to name:
   race, with a startup notice and, in the default mode on refusal, a
   per-request stderr line naming the path so the choice and its cost are
   never silent.
+
+**OTLP export (metrics dog)** (spec §8) **shipped**, 2026-10-13: the `otel`
+cargo feature (`crates/shep-cli/src/dog/metrics/otlp/`) POSTs OTLP/JSON to
+`{otlp_endpoint}/v1/metrics` on `otlp_interval`, over the same hand-rolled
+HTTP/1.1 `crate::fetch` bark delivers webhooks with, so export adds no
+dependency. There is no retry and no queue: one failed export is one line in
+the dog's log, a 2xx naming a `partialSuccess` counts as one, and the next
+tick sends current values anyway. `shep_sheep_restart_total` is a monotonic
+cumulative sum started at the exporter's own start, and the only one: every
+other series is a gauge. The channel samples `/metrics` serves were not in
+the payload at all. 64-bit values are decimal strings. `otlp_headers`
+is a secret: redacted in `Debug`, marked in the schema, never printed. The
+drift guard `the_payload_names_every_series_the_exposition_names` shipped with
+it, comparing names, kinds, descriptions and point counts between the two
+renderers. Operator contract: `docs/dogs.md`.
+
+**The samples half of that item shipped 2026-10-14** (#736, closing #347's
+queue entry). What a sheep sends on its shepherd channel reached `/metrics`
+first, and an exporter that skipped it left those numbers on one path only.
+They are on both paths now: a sample the sender reported as a gauge is a
+gauge, one reported as a counter a monotonic cumulative `sum` started when its
+sender started (the listing's `uptime_ms`, floored to a second, so a restart
+moves the start and a collector reads the drop as the reset it is), a sample's
+help text is its metric's `description`, its labels are string attributes in
+the order the store built them, and a value OTLP/JSON has no number for is
+dropped rather than encoded.
+`shep_channel_samples_refused_total` goes out as `asInt`, the spelling the
+built-in counters use for a count. The guard covers that path too now, over a
+reading that carries samples as well as a flock, and compares every series'
+own labels beside the names, kinds, descriptions and point counts it already
+compared.
 
 ### Rendering each dog's README as its own docs-site page — rejected
 

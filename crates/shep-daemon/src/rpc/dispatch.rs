@@ -7,13 +7,12 @@
 use core::future::Future;
 use core::time::Duration;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use shep_core::config::{NormalizeError, ResolvedApp, normalize_all};
 use shep_core::protocol::{
     Envelope, PROTOCOL_VERSION, Reply, Request, Response, RpcError, RpcErrorCode, SheepApplied,
 };
-use shep_core::selector::ProcessSelector;
 
 use crate::bus::TopicFilter;
 use crate::dogs::DogSpec;
@@ -21,6 +20,7 @@ use crate::supervisor::{BatchPolicy, ConnId};
 
 use super::batch::{duplicate_name, persists, staged_plan};
 use super::context::{Outcome, RpcContext, budget};
+use super::dog_secrets::resolved_section;
 use super::enrichment::{
     dog_staleness, handover_refusal, with_dog_contact, with_lambs, with_live_stats,
 };
@@ -167,7 +167,11 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 Err(err) => reply(Err(err)),
                 Ok(_) => {
                     ctx.registry.record(&resolved);
-                    match ctx.supervisor.register_at_rest(resolved).await {
+                    match ctx
+                        .supervisor
+                        .register_at_rest(resolved, BTreeSet::new())
+                        .await
+                    {
                         Ok(infos) => reply(Ok(Response::Added(infos))),
                         Err(err) => reply(Err(rpc_error(&err))),
                     }
@@ -191,6 +195,31 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         },
         Request::Stop { selector } => {
             selector_call(id, selector, |s| ctx.supervisor.stop(s), Response::Stopped).await
+        }
+        Request::Disable { selector } => {
+            let outcome = selector_call(
+                id,
+                selector,
+                |s| ctx.supervisor.disable(s),
+                Response::Disabled,
+            )
+            .await;
+            // The mark is part of the roll and moves no process on an app
+            // that is already stopped, so the bus cannot be what wakes the
+            // writer.
+            ctx.registry.touch();
+            outcome
+        }
+        Request::Enable { selector } => {
+            let outcome = selector_call(
+                id,
+                selector,
+                |s| ctx.supervisor.enable(s),
+                Response::Enabled,
+            )
+            .await;
+            ctx.registry.touch();
+            outcome
         }
         // Forward, dependencies first, when the selector matches more than
         // one sheep. Not reverse-stop then forward-start: the rolling version
@@ -362,6 +391,10 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 daemon_version: None,
             })),
         },
+        Request::DogConfigResolved { name } => match resolved_section(ctx, &name) {
+            Ok(toml) => reply(Ok(Response::DogSection { toml })),
+            Err(err) => reply(Err(err)),
+        },
         Request::EnableDog { name, source } => {
             let spec = DogSpec { name, source };
             match crate::dogs::dog_app(&spec, &ctx.paths) {
@@ -376,10 +409,11 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                     // asking which file the spawn resolved to.
                     let script = app.config().script.clone();
                     match ctx.supervisor.start_dog(app, spec.source).await {
-                        // `start_dog` is idempotent by name, so what comes
-                        // back is whatever already holds it. An unmarked entry
-                        // means a sheep holds it: nothing was spawned, so the
-                        // refusal has nothing to undo.
+                        // `start_dog` is idempotent by name for anything
+                        // not at rest, so what comes back is whatever
+                        // already holds it. An unmarked entry means a sheep
+                        // holds it: nothing was spawned, so the refusal has
+                        // nothing to undo.
                         Ok(info) if info.dog.is_none() => reply(Err(RpcError {
                             code: RpcErrorCode::InvalidConfig,
                             message: format!(
@@ -400,8 +434,8 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                             ctx.known_dogs.insert(&info.name);
                             // Wording is about the binary this shepherd
                             // resolved, not about a spawn having happened:
-                            // `start_dog` is idempotent by name, so this may
-                            // be a dog that was already running.
+                            // `start_dog` is idempotent by name for a dog that
+                            // is running, so this may be one that already was.
                             crate::dogs::narrate(
                                 &ctx.events,
                                 &info,
@@ -417,15 +451,13 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 }
             }
         }
-        // Through `delete` with an exact `Name` selector: disabling a dog
-        // reuses the stop-then-deregister path every sheep takes rather than
-        // opening a second way to end a supervised process.
-        Request::DisableDog { name } => {
-            match ctx.supervisor.delete(ProcessSelector::Name(name)).await {
-                Ok(ids) => reply(Ok(Response::Deleted(ids))),
-                Err(err) => reply(Err(rpc_error(&err))),
-            }
-        }
+        // Stops the dog and leaves it registered, marked disabled, so the
+        // flock still lists it. Answers `Deleted` all the same: it is the
+        // only reply an older CLI accepts for this request.
+        Request::DisableDog { name } => match ctx.supervisor.disable_dog(name).await {
+            Ok(ids) => reply(Ok(Response::Deleted(ids))),
+            Err(err) => reply(Err(rpc_error(&err))),
+        },
         Request::Subscribe { topics } => match TopicFilter::new(&topics) {
             Ok(filter) => Outcome::Subscribe {
                 reply: Reply {
@@ -729,12 +761,30 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 .into_iter()
                 .map(|(key, value)| (key, value.into_string()))
                 .collect();
-            match ctx.provider_secrets.put(
+            // Asked before the push so a namespace nobody names costs one
+            // file read and nothing else.
+            let named = crate::dogs::dogs_referencing(&ctx.dogs_config, Some(&namespace));
+            let pushed = ctx.provider_secrets.put(
+                &ctx.host_environment,
                 &namespace,
                 &environment,
                 values,
                 persists(&ctx.dogs_config, &namespace),
-            ) {
+            );
+            let (changed, cache) = match pushed {
+                Ok(pushed) => (pushed.changed, Ok(pushed.accepted)),
+                Err(failed) => (failed.changed, Err(failed.source)),
+            };
+            // Before the cache result is looked at: the values are live in
+            // memory either way, and a dog told nothing keeps the secret
+            // that was just rotated away.
+            let affected: Vec<String> = named
+                .into_iter()
+                .filter(|(_, keys)| !keys.is_disjoint(&changed))
+                .map(|(dog, _)| dog)
+                .collect();
+            crate::bus::publish_dog_config_changed(&ctx.events, &affected);
+            match cache {
                 Ok(accepted) => reply(Ok(Response::SecretsPut { accepted })),
                 // The values are already in memory and already resolvable;
                 // what failed is only their surviving a restart. Reported

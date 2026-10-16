@@ -7,10 +7,10 @@
 //! are alias and visibility pins rather than grammar ones.
 
 use super::{
-    AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, DaemonArgs, DevArgs, DogArgs, DogsArgs,
-    EnableArgs, FlockArgs, FlushArgs, FoldArgs, ImportArgs, InitArgs, KvGetArgs, KvSetArgs,
-    KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs, SelectorArgs, ServeArgs,
-    SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs, TriggerArgs, WhisperArgs,
+    AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DisableArgs,
+    DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, ImportArgs, InitArgs, KvGetArgs,
+    KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs, SelectorArgs,
+    ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs, TriggerArgs, WhisperArgs,
 };
 
 /// Every verb the binary understands.
@@ -146,7 +146,23 @@ pub enum Commands {
     /// The swaps themselves are reported on the bus either way, under
     /// process.reload, process.reloaded and process.reload_abandoned.
     Reload(SelectorArgs),
-    /// Delete one or more sheep from the flock.
+    /// Delete one or more sheep, or one or more dogs, from the flock, for
+    /// good.
+    ///
+    /// A dog's name takes the dog's path: it is stopped, deregistered, and
+    /// struck from `[daemon] enabled_dogs`, `[daemon] adopted_dogs` and
+    /// `[daemon] channel_dogs` in `shep.toml`, so the next boot does not
+    /// bring it back. Its `[<name>]` table in `dogs.toml` stays, as it does
+    /// through `shep disable`, and the verb says so. A built-in dog is
+    /// refused, by the shepherd: `shep disable metrics` is the verb that
+    /// exists for one. A sweep (`all`, a fold, a `/regex/`) is the flock, and
+    /// a dog is not in it.
+    ///
+    /// A name is judged against `shep.toml`, so a `shep.toml` that exists and
+    /// cannot be read or parsed refuses a name selector instead of guessing at
+    /// it: the shepherd would delete the live entry while the adoption survived
+    /// in the file the next boot reads. A sweep needs no such judgement and
+    /// runs regardless.
     Delete(SelectorArgs),
     /// Set how many instances one app runs — the stocking rate.
     ///
@@ -173,23 +189,43 @@ pub enum Commands {
     /// index of dogs you could adopt instead of the ones this shepherd is
     /// running.
     Dogs(DogsArgs),
-    /// Turn on a registered dog: writes `[daemon] enabled_dogs` in
-    /// `shep.toml`, and starts it now if a shepherd is running.
+    /// Turn a sheep or a dog back on. A sheep named here has its disabled
+    /// mark cleared and is started; a dog is written into `[daemon]
+    /// enabled_dogs` in `shep.toml` and started now if a shepherd is running.
     ///
-    /// Writes the config either way and exits 0 even with no shepherd
-    /// running — the dog comes up with the next one. `shep muster` is the
-    /// only verb that autostarts a shepherd; this is not it.
+    /// A sheep needs a running shepherd, and takes a name, a `fold:`, a
+    /// `/regex/` or `all`. A sweep reaches only disabled sheep and never a
+    /// dog, so `shep enable all` undoes a batch of disables. An id or
+    /// `name:slot` is refused, since the mark belongs to the whole app. A
+    /// sheep that is not disabled is left alone and the verb says so. A dog
+    /// is named, and writes the config either way and exits 0 with no
+    /// shepherd running -- it comes up with the next one. `shep muster` is
+    /// the only verb that autostarts a shepherd; this is not it. A name that
+    /// is neither a sheep nor a dog exits 3 and lists the dogs, or 5 with no
+    /// shepherd running.
     Enable(EnableArgs),
-    /// Turn off a registered dog: removes it from `[daemon] enabled_dogs`,
-    /// and stops it now if a shepherd is running.
+    /// Stop a sheep and refuse to start it again until `shep enable`, or turn
+    /// a dog off. A dog is removed from `[daemon] enabled_dogs` and stopped
+    /// now if a shepherd is running, and `shep flock` still lists it,
+    /// disabled.
     ///
-    /// Leaves `[<name>]` in `dogs.toml` in place: the dog's own
-    /// configuration survives a disable/enable cycle. `shep rehome` leaves
-    /// it too, and forgets the adoption as well.
-    Disable(DogArgs),
+    /// A sheep needs a running shepherd, and takes a name, a `fold:`, a
+    /// `/regex/` or `all`; a sweep never reaches a dog. An id or `name:slot`
+    /// is refused, since the mark belongs to the whole app. While it is set,
+    /// `start`, `restart` and `stock` refuse the sheep by name and exit 2
+    /// naming `shep enable`, and `all`, a fold or a regex pass it by. Naming
+    /// it still reaches `stop`, `delete`, `describe` and `signal`. A dog's
+    /// own configuration in `dogs.toml` survives a disable/enable cycle;
+    /// `shep delete` forgets the adoption as well.
+    Disable(DisableArgs),
     /// Vet a binary shep has never seen and register it as a dog: writes
     /// `[daemon] adopted_dogs` and `[daemon] enabled_dogs` in `shep.toml`,
     /// and starts it now if a shepherd is running.
+    ///
+    /// A binary whose `--version` answer carries `shep-channel: true` is
+    /// also written to `[daemon] channel_dogs`, and runs with the shepherd
+    /// channel: `shep trigger` reaches it, and a stop is a message rather
+    /// than a signal. The dog asks; there is no flag for it.
     ///
     /// The path can be given as-is, with a leading `~/`, or as a bare name
     /// already on `$PATH` (`cargo install` puts one there). Refuses, before
@@ -202,15 +238,13 @@ pub enum Commands {
     /// passing `args` through untouched — a second invocation mode from
     /// the one the shepherd itself uses to supervise it.
     Adopt(AdoptArgs),
-    /// Forget where an adopted dog's binary lived: stops it if a shepherd
-    /// is running, and removes it from `[daemon] enabled_dogs` and
-    /// `[daemon] adopted_dogs`.
+    /// Hidden: `shep delete <name>` is the verb that removes a dog.
     ///
-    /// Its `[<name>]` table in `dogs.toml` stays, as it does through a
-    /// `shep disable`: those settings are the operator's, so adopting the
-    /// same dog again finds them waiting. Delete that table by hand to be
-    /// rid of them. Only the adoption differs from `disable`, so recovery
-    /// is a fresh `shep adopt <path>` rather than an `enable`.
+    /// `shep rehome <name>` runs that same removal and keeps its own
+    /// `"command": "rehome"` reply, so a script written against it keeps
+    /// working. It is absent from `--help`, and there is no `uninstall`
+    /// alias for it.
+    #[command(hide = true)]
     Rehome(DogArgs),
     /// Describe one sheep in detail.
     ///
@@ -348,6 +382,45 @@ pub enum Commands {
     /// `$SHEP_HOME/shep.toml`. `secret list` needs nothing: it names keys and
     /// the environments each has a value for, never a value.
     Secret(SecretArgs),
+    /// Copy one setting, or one dog's table, from one sheep onto another.
+    ///
+    /// Each side is an address: a sheep name, then a path in its config.
+    ///
+    /// `shep copy web.restart_delay api.restart_delay` copies one field.
+    /// `shep copy web.dogs.kelpie api.dogs.kelpie` copies a dog's whole table.
+    /// `shep copy web.dogs.kelpie.rulings api.dogs.kelpie.rulings` copies one
+    /// key or sub-table inside it.
+    ///
+    /// A dog name and a key inside a table may each contain a dot, and each is
+    /// read as the longest name the copy's tables actually hold: `web.dogs.foo.bar`
+    /// is the dog `foo.bar` when a side has a table under that name, and the dog
+    /// `foo` with the key `bar` when neither does, even in a flock that runs a
+    /// dog named `foo.bar` with no table for it.
+    ///
+    /// The path is the same on both sides: a copy moves values, and
+    /// `web.restart_delay` onto `api.kill_timeout` is two different settings.
+    ///
+    /// A dog table merges by default. Keys the source has overwrite the
+    /// target's, and keys only the target has stay. `--replace` makes the
+    /// target exactly the source at that path. `--except <key>` leaves one key
+    /// out, named under the path you are copying: a dog's `git.checkout` names
+    /// one project's repo, and shep cannot tell which of a dog's keys belong
+    /// to a sheep. A copy refuses when one side holds something that is not a
+    /// table where the copy has to write through one.
+    ///
+    /// `env` and secrets are not copied: a client is never sent a sheep's env
+    /// values, so there is nothing to read. `shep import env` writes a `.env`
+    /// into a sheep's env, and `shep secret` holds the values a Flockfile
+    /// refers to. `name`, `instances` and the whole `dogs` map are refused for
+    /// the same reason the shepherd refuses them.
+    ///
+    /// Nothing is written until you confirm. The change list prints first,
+    /// naming every key added, changed or removed with its old and new value.
+    /// With `--format json` that list prints on stderr, so stdout stays the one
+    /// envelope the run writes after the answer. `--yes` skips the question,
+    /// `--dry-run` prints the list and writes nothing, and with no terminal to
+    /// ask on the run refuses instead of writing.
+    Copy(CopyArgs),
     /// Check whether the shepherd answers.
     Ping,
     /// Shut the shepherd down.
@@ -540,7 +613,7 @@ mod tests {
         let lookout = cmd.find_subcommand("lookout").unwrap();
         assert_eq!(lookout.get_visible_aliases().collect::<Vec<_>>(), ["dash"]);
 
-        for hidden in ["thatlldo", "daemon", "dog"] {
+        for hidden in ["thatlldo", "daemon", "dog", "rehome"] {
             assert!(
                 cmd.find_subcommand(hidden).unwrap().is_hide_set(),
                 "{hidden} must stay hidden from --help"
@@ -561,7 +634,6 @@ mod tests {
             "enable",
             "disable",
             "adopt",
-            "rehome",
             "ping",
             "kill",
             "save",

@@ -10,6 +10,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-16
+
+### Fixed
+
+- Drop the em dashes from the stale dog verdict
+- Drop every em dash from a non-test string literal
+
+
+## [0.15.0] - 2026-10-15
+
+### Added
+
+- A stamps-off sheep says so on its listing row
+- Let a sheep send a dog a note that is not a metric sample **(BREAKING)**
+- An accept backoff that waits out an accept error that will not clear
+
+### Changed
+
+- One plain_entry fixture behind the supervisor tests' entry literals
+- Testing.rs hands its doubles and its loopback fake to submodules
+- Leave the loopback fake at crate::testing_http
+- Open every shutdown test through started_apps
+- One pid guard behind both unix signal paths
+
+### Fixed
+
+- The accept loop waits out a failing accept and a shutdown wins the wait
+- The accept loop backs off when accept keeps failing
+- Bleats keeps an app's own timestamp in the file tail of a stamps-off sheep
+
+
+## [0.14.0] - 2026-10-14
+
+### Added
+
+- Disabling a dog stops it and keeps it listed
+- Refuse to delete a built-in dog, in the shepherd
+- A wildcard passes a disabled sheep by and enable sweeps only disabled ones
+- Enable and disable take a fold, a regex or all, and CLI sweeps pass a disabled sheep by
+- List every known dog at rest **(BREAKING)**
+- Re-fire config.dog.<name> when secrets.json changes a value a dog names
+- Wildcards pass a disabled sheep by, and enable and disable take any selector
+- A handover leaves a disabled dog behind
+- Delete removes a dog for good
+- A handover leaves a parked dog behind
+
+### Fixed
+
+- Enabling a dog mid-stop cancels the disable
+- Refuse a new sheep named after a dog
+- A saved sheep keeps its name against a dog at boot
+- A handover carries every dog that holds a process
+- A repeated disable sweep succeeds and the log verbs still reach a disabled sheep
+- Leave a dog that ran and stopped stopped on a second start
+- Read the secret store again after a failed read, and stamp its inode and change time
+- Dog names hold across an upgrade
+
+
+## [0.13.0] - 2026-10-13
+
+### Added
+
+- A channel metric can carry a type, labels and help text **(BREAKING)**
+- Resolve secret references in a dog's section
+- Serve DogConfigResolved
+- Re-fire config.dog.<name> when a provider's push changes a secret a dog names
+- The roll keeps a sheep's disabled mark across a restart **(BREAKING)**
+
+### Fixed
+
+- Keep the serde_json error behind a corrupt muster roll
+- Carry the disabled mark through a handover and wake the roll writer on disable
+- Name the sink's item type at the write loop's flush
+
+
+## [0.12.5] - 2026-10-07
+
+### Fixed
+
+- Cap the write loop's drain at CONN_QUEUE frames per flush
+- Release the line scratch before the pump waits for log room
+
+### Performance
+
+- Flush a connection's queued frames once, not per frame
+- Read log lines into a scratch buffer the pump keeps
+- Shrink the line scratch buffer after a very long line
+- Count running instances in one pass in FlockRegistry::roll
+
+
+## [0.12.4] - 2026-10-06
+
+### Added
+
+- Add a lamb sweep that outlives the process group
+- Sweep a sheep's lambs before reporting its exit
+- Wait for a killed lamb to stop before the sweep returns
+- Drop a sheep's lamb snapshot when it is unwatched
+- Never trust a lamb start time from before boot
+- Sweep what a lamb starts while the sweep waits
+
+### Changed
+
+- Share the targeted process-table read
+
+### Fixed
+
+- Date lamb pids to the clock tick on Linux
+- Never sweep the lambs of a leader that still runs
+- Drop a sweep walk whose root exited mid-walk
+
+
+## [0.12.3] - 2026-10-02
+
+
+## [0.12.2] - 2026-10-02
+
+
+## [0.12.1] - 2026-10-02
+
+### Fixed
+
+- Panic loudly when arm_reload_deadline has no job
+
+
+## [0.12.0] - 2026-09-30
+
+### Added
+
+- Record on an adopted DogSource whether it asked for the channel **(BREAKING)**
+- Start an adopted dog that asked with the shepherd channel
+- Name a dog's missing channel in its own trigger outcome
+
+### Fixed
+
+- Restart a reload-abandoned replacement left Starting
+
+
 ## [0.11.0] - 2026-09-29
 
 ### Performance

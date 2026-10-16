@@ -3,7 +3,9 @@
 //! [`run`] reads `[bark]`, subscribes, and hands over to [`run_loop`],
 //! which reads the shepherd's bus and polls the flock. [`rules`] decides
 //! which events and poll snapshots become a [`rules::Firing`], and
-//! [`sinks`] renders and posts each one. [`source`] holds the traits the
+//! [`sinks`] renders and posts each one. [`clock`] stamps every one, and
+//! keeps the stamp moving while the wall clock reads before the epoch.
+//! [`source`] holds the traits the
 //! loop reads the shepherd through, and their implementations over a real
 //! client.
 //!
@@ -13,6 +15,7 @@
 //! per-subject debounce is what lets an `Errored` seen by both routes fire
 //! once.
 
+mod clock;
 mod config;
 mod delivery;
 mod event_loop;
@@ -33,6 +36,17 @@ use shep_client::dogs::Stop;
 use super::DogRuntime;
 use crate::exit::ExitCode;
 
+/// The topics bark subscribes to: `process.*`, its own config topic, and the
+/// log topics its rules read, if any.
+///
+/// Never `log.*`: a `log_match` rule on `err` alone must not make the
+/// shepherd forward every stdout line of every sheep.
+fn subscription_topics(dog: &str, rules: &rules::Rules) -> Vec<String> {
+    let mut topics = vec!["process.*".to_owned(), format!("config.dog.{dog}")];
+    topics.extend(rules.log_topics());
+    topics
+}
+
 /// Runs the bark dog until it is signalled.
 ///
 /// Parses `[dog.bark]`, builds [`rules::Rules`] (or
@@ -40,6 +54,8 @@ use crate::exit::ExitCode;
 /// none), subscribes to the shepherd's bus on `process.*` and
 /// `config.dog.bark`, and hands both to [`run_loop`] alongside a
 /// [`ClientShepherd`](source::ClientShepherd) wrapping this same connection.
+/// `log.out` and `log.err` join the subscription only while a `log_match`
+/// rule reads them.
 ///
 /// A refused config or a rule set `Rules::new` rejects are both
 /// [`ExitCode::InvalidConfig`].
@@ -65,7 +81,7 @@ pub async fn run(runtime: DogRuntime) -> ExitCode {
     let dog = runtime.identity().section().to_owned();
     // Named once, because `ClientEvents` asks for the same list again on
     // every handover and a second literal could drift from this one.
-    let topics = vec!["process.*".to_owned(), format!("config.dog.{dog}")];
+    let topics = subscription_topics(&dog, &rules);
     let barks_path = runtime.paths().barks.clone();
     let (events, shepherd) = match source::subscribe(runtime.into_client(), dog, topics).await {
         Ok(subscribed) => subscribed,
@@ -96,20 +112,18 @@ mod tests {
     use crate::dog::run_dog;
     use crate::dog::tests::test_paths;
 
+    /// What bark's opening `Subscribe` asks for, given `section` as its
+    /// `[bark]` config.
+    ///
     /// A handover fixture rather than `serve_one_request`: that one closes
     /// after its single reply, so the `Subscribe` that follows a dog's
     /// `DogConfig` is never read off the wire. This one keeps the
     /// connection open and records every envelope.
-    #[tokio::test]
-    async fn bark_subscribes_to_its_own_config_topic() {
+    async fn subscribed_topics(section: &str) -> Vec<String> {
         let dir = tempfile::tempdir().unwrap();
         let socket = shep_client::testing::control_address(dir.path());
         let daemon = fake_daemon_across_handovers(&socket, vec![Handshake::Accept(sample_ack())]);
-        // A real sink: bark refuses to run without one. Port 1 is never
-        // dialled; no bark fires in this test.
-        daemon.reply_to_dog_config(
-            "[sinks.ops]\nkind = \"json\"\nurl = \"http://127.0.0.1:1/hook\"\n",
-        );
+        daemon.reply_to_dog_config(section);
         let paths = test_paths(dir.path(), socket);
 
         let task = tokio::spawn(run_dog("bark", paths));
@@ -135,6 +149,17 @@ mod tests {
             })
             .await
             .expect("bark must subscribe once its config parses");
+        task.abort();
+        topics
+    }
+
+    /// A real sink: bark refuses to run without one. Port 1 is never
+    /// dialled; no bark fires in these tests.
+    const SINK: &str = "[sinks.ops]\nkind = \"json\"\nurl = \"http://127.0.0.1:1/hook\"\n";
+
+    #[tokio::test]
+    async fn bark_subscribes_to_its_own_config_topic() {
+        let topics = subscribed_topics(SINK).await;
 
         assert!(
             topics.iter().any(|topic| topic == "config.dog.bark"),
@@ -144,7 +169,50 @@ mod tests {
             topics.iter().any(|topic| topic == "process.*"),
             "the lifecycle topics every rule reads must survive: {topics:?}"
         );
+        assert_eq!(
+            topics,
+            ["process.*", "config.dog.bark"],
+            "with no log rule, nothing else"
+        );
+    }
 
-        task.abort();
+    #[tokio::test]
+    async fn a_stderr_log_rule_subscribes_to_log_err_alone() {
+        let section = format!(
+            "{SINK}[[rules]]\non = \"log_match\"\npattern = \"FATAL\"\nstream = \"err\"\nsinks = [\"ops\"]\n"
+        );
+        let topics = subscribed_topics(&section).await;
+
+        assert!(topics.iter().any(|topic| topic == "log.err"), "{topics:?}");
+        assert!(!topics.iter().any(|topic| topic == "log.out"), "{topics:?}");
+        assert!(!topics.iter().any(|topic| topic == "log.*"), "{topics:?}");
+    }
+
+    fn rules_from(toml_rules: &str) -> super::rules::Rules {
+        let config: super::BarkConfig = toml::from_str(&format!("{SINK}{toml_rules}")).unwrap();
+        super::rules_for(&config).unwrap()
+    }
+
+    #[test]
+    fn the_topics_name_a_log_stream_only_while_a_rule_reads_it() {
+        let rule = |stream: &str| {
+            format!(
+                "[[rules]]\non = \"log_match\"\npattern = \"x\"\nstream = \"{stream}\"\nsinks = [\"ops\"]\n"
+            )
+        };
+        let base = ["process.*", "config.dog.bark"];
+        assert_eq!(super::subscription_topics("bark", &rules_from("")), base);
+        assert_eq!(
+            super::subscription_topics("bark", &rules_from(&rule("err"))),
+            [base[0], base[1], "log.err"]
+        );
+        assert_eq!(
+            super::subscription_topics("bark", &rules_from(&rule("out"))),
+            [base[0], base[1], "log.out"]
+        );
+        assert_eq!(
+            super::subscription_topics("bark", &rules_from(&rule("both"))),
+            [base[0], base[1], "log.out", "log.err"]
+        );
     }
 }

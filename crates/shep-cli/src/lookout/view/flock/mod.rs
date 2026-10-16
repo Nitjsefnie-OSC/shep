@@ -28,7 +28,13 @@ pub(super) use columns::cfg_tier_width;
 pub use columns::{columns_for, fold_columns_for, fold_columns_header_line, header_line};
 pub use facts::FrameFacts;
 pub use fold::fold_key_line;
-pub use layout::{GUTTER, MIN_HEIGHT, MIN_WIDTH, fit, fit_owned, gutter, mark, scroll_offset};
+/// Shared with the pane's rows and the host strip, which truncate their own
+/// way: `pub(in crate::lookout::view)` rather than `pub`, since nothing
+/// outside the view lays out columns.
+pub(in crate::lookout::view) use layout::take_columns;
+pub use layout::{
+    GUTTER, MIN_HEIGHT, MIN_WIDTH, fit, fit_owned, gutter, mark, pad_ground, scroll_offset,
+};
 pub use row::key_line;
 #[cfg(test)]
 pub use row::row_line;

@@ -313,7 +313,7 @@ pub(crate) fn openbsd_rc_script(spec: &UnitSpec) -> String {
          # OpenBSD's rc.subr has no post-start hook: rc_pre runs before the daemon\n\
          # starts and rc_post runs after it stops. So this script reports the service\n\
          # started as soon as the shepherd process is spawned, which is BEFORE the\n\
-         # muster restore has finished — the flock may still be coming back. There is\n\
+         # muster restore has finished: the flock may still be coming back. There is\n\
          # no readiness protocol here and this script does not pretend to one. Check\n\
          # with: shep --home {home_display} flock\n\
          \n\
@@ -328,7 +328,7 @@ pub(crate) fn openbsd_rc_script(spec: &UnitSpec) -> String {
          rc_reload=NO\n\
          \n\
          # su(1)'s -l flag, which rc_exec always passes, discards the environment\n\
-         # rc.subr itself ran in — so exporting SHEP_HOME/PATH above would never reach\n\
+         # rc.subr itself ran in, so exporting SHEP_HOME/PATH above would never reach\n\
          # the daemon. Prefixing them onto the string rc_exec hands to su is the only\n\
          # way they survive. Single-quoted for the shell that evaluates that string,\n\
          # then escaped again for the double-quoted context here.\n\
@@ -773,7 +773,7 @@ mod tests {
              # OpenBSD's rc.subr has no post-start hook: rc_pre runs before the daemon\n\
              # starts and rc_post runs after it stops. So this script reports the service\n\
              # started as soon as the shepherd process is spawned, which is BEFORE the\n\
-             # muster restore has finished — the flock may still be coming back. There is\n\
+             # muster restore has finished: the flock may still be coming back. There is\n\
              # no readiness protocol here and this script does not pretend to one. Check\n\
              # with: shep --home /home/deploy/.shep flock\n\
              \n\
@@ -788,7 +788,7 @@ mod tests {
              rc_reload=NO\n\
              \n\
              # su(1)'s -l flag, which rc_exec always passes, discards the environment\n\
-             # rc.subr itself ran in — so exporting SHEP_HOME/PATH above would never reach\n\
+             # rc.subr itself ran in, so exporting SHEP_HOME/PATH above would never reach\n\
              # the daemon. Prefixing them onto the string rc_exec hands to su is the only\n\
              # way they survive. Single-quoted for the shell that evaluates that string,\n\
              # then escaped again for the double-quoted context here.\n\

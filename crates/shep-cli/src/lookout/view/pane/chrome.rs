@@ -86,7 +86,9 @@ pub(super) fn title_band_line(pane: &ConfigPane, palette: Palette, width: u16) -
 
 /// The tab row: every group in [`GROUP_ORDER`], the active one drawn as a
 /// paper-2 chip in ink and the rest in ink-3, then the two keys that move
-/// between them.
+/// between them. The wording is the help overlay's own row for the same two
+/// keys (`lookout/keymap.rs`), so the pane and the overlay say the same
+/// thing about `tab` and `shift-tab`.
 pub(super) fn tab_row_line(pane: &ConfigPane, palette: Palette, width: u16) -> Line<'static> {
     let active = pane.group();
     let chip = |group: &str| format!(" {group} ");
@@ -95,7 +97,7 @@ pub(super) fn tab_row_line(pane: &ConfigPane, palette: Palette, width: u16) -> L
         .map(|group| chip(group))
         .collect::<Vec<_>>()
         .join(" ");
-    let full = format!("{chips}    tab next group   1\u{2026}8 jump");
+    let full = format!("{chips}    tab/S-tab next / prev group   1\u{2026}9 jump");
     let text = fit(&full, body_width(width));
     let marker = chip(active);
     let mut spans = vec![Span::raw("  ")];
@@ -248,7 +250,7 @@ mod tests {
         assert!(text.contains("<set> -> <set>"), "{text}");
     }
 
-    /// Eight groups, in `GROUP_ORDER`, and every one of them reachable.
+    /// Nine groups, in `GROUP_ORDER`, and every one of them reachable.
     /// This is the test that would have caught a filter axis nothing
     /// could set.
     ///
@@ -277,7 +279,7 @@ mod tests {
         assert_eq!(seen, GROUP_ORDER.to_vec());
     }
 
-    /// All eight group names are listed every render, so the only thing
+    /// All nine group names are listed every render, so the only thing
     /// that changes as `next_group` walks is which one carries the
     /// paper-2 ground: the chip. Checked in colour, since [`fixtures::plain`]
     /// makes [`super::super::super::theme::Palette::ground`] a no-op and
@@ -313,7 +315,37 @@ mod tests {
         assert_eq!(app.config_pane().unwrap().group(), GROUP_ORDER[0]);
     }
 
-    /// The digits reach the same eight groups `tab` does. A key that
+    #[test]
+    fn shift_tab_wraps_from_the_first_group_to_the_last() {
+        let mut app = fixtures::app_in_sheep_pane();
+        app.update(Msg::Key(KeyPress::PrevGroup));
+        assert_eq!(
+            app.config_pane().unwrap().group(),
+            GROUP_ORDER[GROUP_ORDER.len() - 1]
+        );
+    }
+
+    #[test]
+    fn shift_tab_walks_the_groups_tab_walked_in_reverse() {
+        let mut app = fixtures::app_in_sheep_pane();
+        app.update(Msg::Key(KeyPress::NextGroup));
+        app.update(Msg::Key(KeyPress::NextGroup));
+        app.update(Msg::Key(KeyPress::PrevGroup));
+        assert_eq!(app.config_pane().unwrap().group(), GROUP_ORDER[1]);
+    }
+
+    #[test]
+    fn shift_tab_puts_the_cursor_on_the_new_groups_first_row() {
+        let mut app = fixtures::app_in_sheep_pane();
+        app.update(Msg::Key(KeyPress::NextGroup));
+        app.update(Msg::Key(KeyPress::SelectDown));
+        app.update(Msg::Key(KeyPress::PrevGroup));
+        let pane = app.config_pane().unwrap();
+        assert_eq!(pane.cursor(), pane.rows().first().copied());
+        assert_ne!(pane.cursor(), None, "the first group has a row to land on");
+    }
+
+    /// The digits reach the same nine groups `tab` does. A key that
     /// reaches nothing is exactly the shape this plan exists to avoid.
     #[test]
     fn the_digits_reach_the_same_groups_tab_does() {

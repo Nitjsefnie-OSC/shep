@@ -18,7 +18,7 @@ use crate::commands::lifecycle::configure::{
 use crate::commands::lifecycle::resolve::{
     TargetError, resolve_target_declared, split_assignments,
 };
-use crate::commands::lifecycle::respawn::{already_registered, resume_all};
+use crate::commands::lifecycle::respawn::{already_registered, leave_disabled, resume_all};
 use crate::commands::lifecycle::selectors::{
     fail_target, flock_matches, flock_now, is_reachable_as_a_name, render_outcome, request_each,
     selector_miss,
@@ -217,6 +217,71 @@ async fn set_assignments(
     Ok(())
 }
 
+/// Writes `--no-log-timestamps` onto each sheep the flock already has
+///
+/// The flag is a value the operator typed, so it travels as an operator
+/// override, not as a declared key: `merge_declared` at
+/// [`ResetDepth::None`] takes a declared key only when nobody has
+/// established it. Being
+/// [`ApplyGroup::NeedsRespawn`](shep_core::config::ApplyGroup::NeedsRespawn),
+/// it parks: the shepherd's `pending` answer is reported, and a refused
+/// write stops the caller.
+async fn set_log_timestamps_off(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    mode: Load,
+    names: &[&str],
+) -> ExitCode {
+    for name in names {
+        let body = Request::SetSheepField {
+            name: name.to_string(),
+            key: "log_timestamps".to_string(),
+            value: serde_json::Value::Bool(false),
+        };
+        match client.request(body).await {
+            // A write that landed and a write that landed parked are not the
+            // same run, and only the shepherd knows which it answered. The
+            // clause is the one `apply_declared` prints for a parked field.
+            Ok(Response::SheepFieldSet {
+                pending, warning, ..
+            }) => {
+                if let Some(warning) = warning {
+                    streams.aside("warning", &warning);
+                }
+                if pending {
+                    streams.aside(
+                        mode.verb(),
+                        &format!(
+                            "{name}: log_timestamps waiting on the next spawn \
+                             (`shep reload {name}` promotes them)"
+                        ),
+                    );
+                }
+            }
+            // `Response` is `#[non_exhaustive]`, so an answer this client
+            // does not recognise is a daemon-side fault rather than a bad
+            // value.
+            Ok(_other) => {
+                let message = format!(
+                    "{name}: the shepherd answered log_timestamps with a response this client \
+                     does not understand, so the stamp stays on"
+                );
+                return streams.fail(ExitCode::Internal, &message);
+            }
+            // A refusal keeps the code its own `RpcErrorCode` maps to, the
+            // way a refused field in an `ApplyConfig` report does.
+            Err(err) => {
+                let message = format!(
+                    "{name}: log_timestamps could not be turned off ({err}), so the stamp stays \
+                     on"
+                );
+                return streams.fail(ExitCode::from(&err), &message);
+            }
+        }
+    }
+    ExitCode::Success
+}
+
 /// One target's worth of [`load`]
 ///
 /// `interpreters` is read once by the caller rather than per target.
@@ -280,6 +345,22 @@ async fn load_one(
                         if let Err(reason) = set_assignments(client, name, assignments).await {
                             return streams.fail(ExitCode::Failure, &reason);
                         }
+                    }
+                }
+                // The flag reaches a sheep the token named the way it reaches
+                // one a file resolved: written before the resume below, which
+                // is the spawn that promotes a parked field. Names rather
+                // than rows: instances of one name are one sheep.
+                if args.no_log_timestamps {
+                    let names: Vec<&str> = matched
+                        .iter()
+                        .map(|info| info.name.as_str())
+                        .collect::<BTreeSet<&str>>()
+                        .into_iter()
+                        .collect();
+                    let stamp = set_log_timestamps_off(client, streams, mode, &names).await;
+                    if stamp != ExitCode::Success {
+                        return stamp;
                     }
                 }
                 return match mode {
@@ -408,6 +489,20 @@ async fn load_one(
     // coming back up. The merge runs under `add` too, only the resume does not.
     let declared: Vec<DeclaredApp> = resumed.iter().map(|(app, _)| app.clone()).collect();
     let applied = apply_declared(client, streams, &declared, reset_depth(args), mode).await;
+    // The flag is not in `declared`, so `apply_declared` cannot carry it.
+    // It is written before the resume for the reason the resume follows the
+    // merge: a parked field is promoted by the next spawn, and that spawn is
+    // this one. `add` runs the write too; only the resume is `start`'s.
+    if args.no_log_timestamps {
+        let names: Vec<&str> = resumed
+            .iter()
+            .map(|(app, _)| app.config.name.as_str())
+            .collect();
+        let stamp = set_log_timestamps_off(client, streams, mode, &names).await;
+        if stamp != ExitCode::Success {
+            return first_failure(applied, stamp);
+        }
+    }
     if !resumed.is_empty() && mode == Load::Start {
         // `None`, not the operator's token: this arm reached the flock
         // through a Flockfile or a path, so there is no selector to quote.
@@ -415,6 +510,7 @@ async fn load_one(
             .iter()
             .flat_map(|(_, rows)| rows.iter().cloned())
             .collect();
+        let existing = leave_disabled(streams, existing);
         let code = resume_all(client, streams, None, &existing, started).await;
         if code != ExitCode::Success {
             return first_failure(applied, code);

@@ -199,11 +199,78 @@ async fn a_childs_metric_reaches_a_channel_subscriber_over_the_socket() {
     .expect("no channel.* frame within the timeout");
 
     match frame {
-        ChildMessage::Metric { name, value } => {
+        ChildMessage::Metric { name, value, .. } => {
             assert_eq!(name, "rps");
             assert!((value - 42.0).abs() < f64::EPSILON, "{value}");
         }
         other => panic!("subscribed to channel.*, received {other:?}"),
+    }
+
+    fixture.shutdown().await;
+}
+
+/// The child sends its note before its metric. So a `channel.metric`
+/// subscriber whose first frame is the metric was never handed the note.
+// `cfg(unix)` because its fixture is a `/bin/sh` script.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_childs_note_reaches_a_note_subscriber_and_not_a_metric_one() {
+    let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
+    let mut notes = fixture.connect().await;
+    let mut metrics = fixture.connect().await;
+
+    // Subscribe before starting: the bus delivers from the moment you join.
+    for (client, topic) in [
+        (&mut notes, "channel.note"),
+        (&mut metrics, "channel.metric"),
+    ] {
+        let subscribed = client
+            .request(Request::Subscribe {
+                topics: vec![topic.to_string()],
+            })
+            .await;
+        assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    }
+
+    let mut app = AppConfig::minimal("leaser", "/bin/sh");
+    app.interpreter = Some("none".to_string());
+    app.channel = true;
+    // Sleeps after both lines: the sheep must outlive the assertions.
+    app.args = vec![
+        "-c".to_string(),
+        concat!(
+            r#"printf '{"kind":"note","name":"lease.web.want.1760500000","value":1}\n' >&3; "#,
+            r#"printf '{"kind":"metric","name":"rps","value":42}\n' >&3; sleep 30"#,
+        )
+        .to_string(),
+    ];
+    notes.request(Request::Start { apps: vec![app] }).await;
+
+    for (client, topic) in [
+        (&mut notes, "channel.note"),
+        (&mut metrics, "channel.metric"),
+    ] {
+        // Bounded: a subscriber that never receives must fail, not hang.
+        let message = tokio::time::timeout(RECV_TIMEOUT, async {
+            loop {
+                if let ServerFrame::Event(BusEvent::Channel { message, .. }) =
+                    client.next_frame().await
+                {
+                    break message;
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("no {topic} frame within the timeout"));
+
+        match (topic, message) {
+            ("channel.note", ChildMessage::Note { name, value }) => {
+                assert_eq!(name, "lease.web.want.1760500000");
+                assert!((value - 1.0).abs() < f64::EPSILON, "{value}");
+            }
+            ("channel.metric", ChildMessage::Metric { name, .. }) => assert_eq!(name, "rps"),
+            (topic, other) => panic!("subscribed to {topic}, received {other:?}"),
+        }
     }
 
     fixture.shutdown().await;

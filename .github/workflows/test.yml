@@ -187,8 +187,14 @@ jobs:
         # `ubuntu-24.04-arm` catches linux/arm64-only breaks (shep-client's
         # handshake-close test was red there for phases) at the standard
         # Linux runner price, not the macOS/Windows multiplier.
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        # macOS runs after merge, not on pull requests: the org gets five
+        # macOS runners at once and pull requests queued behind them.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","ubuntu-24.04-arm","windows-latest"]' || '["ubuntu-latest","ubuntu-24.04-arm","macos-latest","windows-latest"]') }}
         toolchain: [stable, "1.88"]
+        # The other legs check the MSRV, so macOS runs stable only.
+        exclude:
+          - os: macos-latest
+            toolchain: "1.88"
     runs-on: ${{ matrix.os }}
     # `timeout-minutes` applies per matrix leg, so it is sized from the
     # slowest one: `windows-latest` / stable, 355s on the last green run.
@@ -272,17 +278,60 @@ jobs:
   # cannot run on Linux either way, so this stays `check` rather than
   # `test`. `test`'s own `windows-latest` legs already exercise the MSVC
   # target with a real `cargo test`.
+  #
+  # The cross toolchain comes from Azure's Ubuntu mirror, which has served it
+  # at 120 kB/s: the `mingw-w64` metapackage, 277 MB of i686 and x86_64 gcc
+  # and g++, then outlasted the ten-minute timeout. This installs only
+  # the x86_64 C compiler `ring` calls, 65 MB, and caches its .debs so
+  # a warm run never downloads from the mirror. The mirror is slow in
+  # bursts: one run fetched these packages at 12 MB/s and, six seconds
+  # later, the same files at 80 kB/s.
   windows-gnu:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
-    # 39s on the last green run; the floor is doing all the work.
-    timeout-minutes: 10
+    # Sized for a cache miss, not a warm run: 65 MB from the mirror at its
+    # worst measured 80 kB/s is about 14 minutes before `cargo check` starts.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install stable --profile minimal --target x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: sudo apt-get update && sudo apt-get install -y mingw-w64
+      # Keyed on the Ubuntu release: the .debs depend on the image's own
+      # libraries (libisl23, libmpc3), so a new release starts a new cache.
+      # The key never changes within a release, so a bad cache stays until
+      # `gh cache delete` removes it.
+      - id: ubuntu
+        run: echo "release=$(. /etc/os-release && echo "$VERSION_ID")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: mingw
+        with:
+          path: ~/mingw-debs
+          key: mingw-debs-${{ runner.arch }}-ubuntu-${{ steps.ubuntu.outputs.release }}
+      # Downloads into a scratch archive dir and copies out only the .debs:
+      # apt leaves a root-owned `lock` beside them that the cache cannot read.
+      - if: steps.mingw.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/apt/partial" ~/mingw-debs
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends --download-only -o Dir::Cache::Archives="$RUNNER_TEMP/apt" gcc-mingw-w64-x86-64-win32
+          cp "$RUNNER_TEMP"/apt/*.deb ~/mingw-debs/
+      # `dpkg -i`, not `apt-get install ./*.deb`: apt fetches a local file's
+      # version from the mirror again whenever its lists carry the same one.
+      # dpkg never touches the network and still runs each postinst, which is
+      # what creates the unversioned `x86_64-w64-mingw32-gcc` that `cc` looks
+      # for. `--version` fails here, rather than a warm rust-cache with `ring`
+      # already built hiding a missing compiler until the cache next rotates.
+      - run: |
+          sudo dpkg -i ~/mingw-debs/*.deb
+          x86_64-w64-mingw32-gcc --version
+      # Saved as soon as the install works, so a failing `cargo check` below
+      # does not throw the download away.
+      - if: steps.mingw.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/mingw-debs
+          key: ${{ steps.mingw.outputs.cache-primary-key }}
       - run: cargo check --workspace --all-targets --all-features --locked --target x86_64-pc-windows-gnu
   features:
     needs: changes
@@ -323,6 +372,12 @@ jobs:
       # so the opt-out needs its own leg. `cargo test`, not `check`: the
       # doctest broke under this feature set too, and only a test run reads it.
       - run: cargo test -p shep-client --locked --no-default-features
+        if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.result != 'success' || github.event_name == 'workflow_dispatch' }}
+      # `otel`, the metrics dog's OTLP exporter, is off by default and every
+      # other leg here passes `--all-features`. This is the only run of the
+      # build an operator installs, and the only place its refusal of an
+      # `otlp_endpoint` it cannot serve is tested.
+      - run: cargo test -p shep --lib --locked
         if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.result != 'success' || github.event_name == 'workflow_dispatch' }}
       # The other half of that pair, and the only leg where `schema` reaches
       # `shep-core/schema` on its own: every `--workspace` step turns that
@@ -369,7 +424,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # macOS runs after merge, not on pull requests: the org gets five
+        # macOS runners at once and pull requests queued behind them.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     # 143s on `windows-latest`, but every test here waits on a real clock and
     # runs single-threaded, so this one gets more headroom than 3x.
@@ -427,6 +484,12 @@ jobs:
   # versions and sources. On the `rust` filter, which includes Cargo.lock
   # and deny.toml, so a Dependabot bump gets it too. Ten minutes is a
   # ceiling; the check runs in under one.
+  #
+  # A prebuilt binary, not EmbarkStudios/cargo-deny-action: that action
+  # builds a Docker image on every run, then its container downloads the
+  # whole toolchain `rust-toolchain.toml` names, about 45s around a 5s
+  # check. `+stable` is the runner's preinstalled toolchain, which bypasses
+  # that file, and `cargo metadata` is all cargo-deny needs from it.
   deny:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success' || github.event_name == 'workflow_dispatch') }}
@@ -434,13 +497,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          command: check
-          # `[graph] all-features = true` in deny.toml already covers the
-          # feature set; this is the action's own default, stated so it
-          # cannot drift from the file.
-          arguments: --all-features
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with: { tool: cargo-deny }
+      # `[graph] all-features = true` in deny.toml already covers the
+      # feature set; `--all-features` is stated so it cannot drift from the
+      # file.
+      - run: cargo +stable deny --log-level warn --all-features check
   bench:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.bench == 'true' || needs.changes.result != 'success' || github.event_name == 'workflow_dispatch') }}
@@ -482,15 +544,19 @@ jobs:
   privileged:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success' || github.event_name == 'workflow_dispatch') }}
-    # `real_runner.rs`'s privilege-drop case needs a real uid change and a
+    # `real_runner/identity.rs`'s privilege-drop case needs a real uid change and a
     # real supplementary-group clear, both root-only.
+    #
+    # `log_path_security`'s two ownership cases are here for a different
+    # reason: only root can `chown` or `lchown` a fixture to another uid, so
+    # only a root run takes their root branch.
     #
     # A container, not `sudo` on the runner: the daemon has to actually
     # start as root to prove it can drop to `nobody` and that std cleared
     # root's supplementary groups on the way.
     runs-on: ubuntu-latest
-    # One test, but the container has to build shep-daemon's test tier to get
-    # to it.
+    # A few tests, but the container has to build shep-daemon's test tier to
+    # get to them.
     timeout-minutes: 20
     container:
       image: rust:1.88
@@ -500,7 +566,27 @@ jobs:
       # `--exact` on this one test, not a bare `--ignored`: the workspace's
       # other two `#[ignore]`s are child halves of cross-process race tests,
       # re-exec'd by their own parents, and assert nothing on their own.
-      - run: >
-          cargo test -p shep-daemon --test real_runner --locked --all-features
-          -- --ignored --exact a_dropped_child_runs_as_the_requested_user
+      #
+      # The name is the module-qualified one, `identity::` and all: the case
+      # lives in `tests/real_runner/identity.rs` now, and a bare name matches
+      # nothing under `--exact`. The grep is the floor, the same one the step
+      # below carries: a filter that matches nothing exits 0 at "0 passed",
+      # which would leave this job verifying nothing at all.
+      - shell: bash
+        run: |
+          cargo test -p shep-daemon --test real_runner --locked --all-features \
+            -- --ignored --exact identity::a_dropped_child_runs_as_the_requested_user \
+            | tee dropped-child.out
+          grep -q 'test result: ok. 1 passed' dropped-child.out
+      # Not `#[ignore]`d: they run in the main tiers as an ordinary user and
+      # take their root branch only here, where `uid 0` is real. Libtest exits
+      # 0 when a filter matches nothing, so the grep is the floor: a rename
+      # leaves it at "0 passed" and fails the step.
+      - shell: bash
+        run: |
+          cargo test -p shep-daemon --lib --locked --all-features -- --exact \
+            runner::log_path_security::tests::an_ancestor_owned_by_another_user_is_loose_however_tight_its_mode \
+            runner::log_path_security::tests::a_symlinked_component_is_judged_as_the_link_not_as_its_target \
+            | tee log-path-security.out
+          grep -q 'test result: ok. 2 passed' log-path-security.out
 

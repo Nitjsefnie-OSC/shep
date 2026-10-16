@@ -52,28 +52,141 @@ export const BUDGETS: Record<string, number> = {
   // schema": probe_with_sheep is the write side of that same feature, and
   // it needed its own section rather than a sentence borrowed from
   // somebody else's.
-  "writing-a-dog": 4340, // 4325
+  //
+  // Raised from 4340 on 2026-09-30 for "Asking for the shepherd channel":
+  // `shep-channel: true` is a new line a dog author has to be told about,
+  // and the page had 15 words of headroom.
+  //
+  // Raised from 4450 on 2026-10-13 for `DogConfigResolved`: a dog author
+  // has to be told which request resolves a `{{secret:...}}` and which
+  // one still gives the text as written.
+  //
+  // Raised from 4470 for the config pane's bounds sentence: the pane now
+  // holds an integer to `exclusiveMinimum`/`exclusiveMaximum` too, and a
+  // range that admits nothing is said once, which is what a dog author
+  // publishing those keywords gets told about the editor.
+  "writing-a-dog": 4490, // 4484
   overrides: 3380, // 3250
   // Raised from 3240 on 2026-09-27 for "A sheep's dogs row": the sub-screen
   // and the per-sheep table pane are new operator-facing surface, not
   // prose to trim back out.
-  "lookout-config": 3290, // 3261
+  //
+  // Raised from 3290 on 2026-10-01 for the dogs tab: a ninth group with its
+  // own key is new operator-facing surface, not prose to trim back out.
+  //
+  // Raised from 3310 on 2026-10-12 for the tree of tables: `←`, `→` and
+  // `Enter` open and close a dog's nested tables, which is new
+  // operator-facing surface, not prose to trim back out.
+  //
+  // Raised again for the list sub-screen refusing an element: an item
+  // schema's minLength, pattern, enum and integer bounds are checked before
+  // the element is filed, and the page has to name those four rather than
+  // say the editor refuses whatever the item schema rejects, which is what
+  // it said and is not true of maxLength.
+  //
+  // Raised again for the dog config pane's arrays and maps of tables, which
+  // read as a count and open onto entries: a new row shape the page has to
+  // name, with how its entries are labelled and that they are read-only.
+  //
+  // Raised from 3465 for editing a field inside an entry: the page said
+  // everything under one was read-only, and now has to say what edits, what
+  // stays read-only, and that Esc writes the section once.
+  // Raised from 3530 on 2026-10-13 for `d` on a dog pane's entry row: it
+  // removes an operator's data from dogs.toml, so the page has to say when
+  // it writes, what `u` does and where the cursor goes. The page had 9
+  // words of headroom.
+  // Raised from 3785 on 2026-10-13 for a dog setting that is a tagged union:
+  // it reads as its tag, opens to that tag's fields and is picked with space,
+  // which is new operator-facing surface. The page had no headroom.
+  //
+  // Raised from 3880 for editing a decimal field: the page has to name the
+  // kind that now edits, say a whole number typed into one is filed as a
+  // float, and say a list of numbers is still read-only, which the old text
+  // left implied by silence.
+  "lookout-config": 3920, // 3906
   // Raised from 2930 on 2026-09-14 for the host line, which `shep flock`
   // began printing on a one-shot listing and not only under `--follow`. It
   // shows above every table on this page, so four transcripts gained a line
   // and the page gained a section saying what the four figures are and why
   // a rate can read `-`.
-  output: 3130, // 3111
-  dogs: 2980, // 2834
+  // Raised from 3130 on 2026-10-15 for "Following logs" saying which stream
+  // colour a plain line gets, that a line carrying its own colour is left
+  // alone, and that `--format json` stays raw. Required content for #846.
+  output: 3190, // 3185
+  // Raised from 2980 on 2026-10-13 for the `log_match` rule: a new `on`
+  // value, its `stream` key, and the loss and secrets caveats are
+  // operator-facing surface, not prose to trim back out.
+  // Raised from 3100 on 2026-10-13 for the `secrets.json` rotation: a
+  // `shep secret set` now reaches a running dog, which the live-updates
+  // passage has to list.
+  // Raised from 3130 on 2026-10-13 for dog names: a sheep cannot take a
+  // dog's name, and one that already holds a built-in's keeps it.
+  //
+  // Raised from 3200 for `shep delete` on a dog: one verb now carries both
+  // removals, and the page has to say what survives it and that a built-in
+  // is refused. Required content, not prose to trim back out.
+  //
+  // Raised from 3254 on 2026-10-14 for what `shep daemon reload` does with a
+  // dog: which ones cross, which one the successor registers afresh, and which
+  // one it stops. An operator has to know a hand-edited `enabled_dogs` reaches
+  // a running dog through the reload and nowhere else. Raised again the same
+  // day for the review's correction to that rule: what a successor leaves
+  // behind is a parked dog, and a marked one still holding a process crosses.
+  //
+  // Raised again for the metrics dog's OTLP export: four config keys an
+  // operator has to be told the defaults of, the `--features otel` install
+  // line, what a build without the feature does with `otlp_endpoint`, and
+  // the measured binary size #292 asked for. All of it is operator-facing
+  // surface for a shipped feature, not prose to trim back out.
+  //
+  // no headroom to pay for it.
+  //
+  // Raised from 3960 on 2026-10-14 for the `shep copy` sentence: a per-sheep
+  // dog table is operator-facing config, and #830 is the verb that moves one
+  // onto another sheep.
+  dogs: 3990, // 3947
   lookout: 2770, // 2629
   "first-flockfile": 2360, // 2245
-  secrets: 2080, // 1977
-  lifecycle: 2020, // 1919
-  logs: 1900, // 1805
+  // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
+  // push now reaches a running dog, which an operator rotating a secret has
+  // to be told. The page had drifted to 2067 against a recorded 1977.
+  // Raised again from 2150 on 2026-10-13 for the store poll: a `shep secret
+  // set` reaches a running dog, and the page says how soon and which keys.
+  secrets: 2200, // 2184
+  // Raised from 2020 on 2026-10-13 for `disable` and `enable`: two verbs
+  // with a refusal an operator has to be told about (an id or `name:slot`
+  // exits 2, and `start`, `restart` and `stock` refuse a disabled app) are
+  // operator-facing surface, not prose to trim back out.
+  //
+  // Raised from 2190 on 2026-10-13 for the handover half of the same pair of
+  // verbs: the mark now survives `shep daemon reload`, and the recorded `2088`
+  // was 95 words stale before that sentence went in.
+  //
+  // Raised from 2200 for `shep delete` reaching a dog: the verb an operator
+  // already reads on this page now has a second path, and the page has to say
+  // which names take it. The dog's own detail stays on the dogs page.
+  //
+  // Raised again for the same verb refusing a name it cannot judge, which is
+  // an exit an operator hits. Paid for by tightening the sentence above it.
+  lifecycle: 2245, // 2235
+  // Cut from 1900 for the stamps-off tail sentence: the page has to say a
+  // sheep with `log_timestamps = false` carries no stamp for `bleats` to
+  // strip, and it paid for that line by tightening the sentences around it
+  // instead of raising the ceiling. Measured 1914 against 1900 before the cut.
+  // Raised from 1895 on 2026-10-15 for the same #846 rule on this page:
+  // which lines are coloured, the fallback for a line that already has its
+  // own colour, and what a table strips out of a line.
+  logs: 1995, // 1988
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim
   // back out.
-  "shepherd-channel": 1890, // 1804
+  // Raised from 1890 for the "Metrics" section, which says where a `metric`
+  // line turns up and what the dog refuses. New content rather than a
+  // correction.
+  // Raised from 2060 for "Notes for a dog": `note` is a new message an app
+  // author has to be told about, and the section is already cut to the
+  // topic, the grammar and the drop.
+  "shepherd-channel": 2165, // 2158
   "from-pm2": 1720, // 1659
   "boot-order": 1670, // 1586
   "talking-to-a-sheep": 1620, // 1534
@@ -81,14 +194,32 @@ export const BUDGETS: Record<string, number> = {
   // fourth key beside `data`, and its three spellings are three different
   // answers a script has to tell apart: an object, `null`, and no key at
   // all.
-  "json-output": 1410, // 1362
+  //
+  // Raised from 1410 on 2026-10-13 for `disabled`: a key that is absent
+  // unless true, beside a `status` that still reads `stopped`, is a shape
+  // a script has to be told about.
+  "json-output": 1470, // 1413
   startup: 1250, // 1192
   examples: 1200, // 1156
   "not-built": 1080, // 1020
   folds: 900, // 852
   whistle: 710, // 675
   containers: 560, // 526
-  upgrading: 560, // 526
+  // Raised from 560 on 2026-10-13 for dog names: an upgrade must say a sheep
+  // named after a built-in keeps its name.
+  //
+  // Raised from 610 on 2026-10-13 for "Going back to an older version": an
+  // operator has to be told a downgrade loses the disable marks and that
+  // `shep disable` is what to re-run. Nothing on the page was cut for it.
+  //
+  // Raised again the same day, to 675, when review named the wrong downgrade
+  // behaviour in that section. A parked sheep stays down and loses its refusals
+  // rather than coming straight back up, and saying that correctly costs 28
+  // more words than saying it wrongly.
+  // Raised from 675 on 2026-10-14 for the `enabled_dogs` half of the reload
+  // the page already describes: a successor stops a dog the new file dropped
+  // and registers a parked one at rest. Required content, not prose.
+  upgrading: 710, // 704
   kv: 550, // 519
   // Raised from 440 on 2026-09-21 for the prebuilt-binary download list,
   // which is new content rather than a correction. The page was sitting at

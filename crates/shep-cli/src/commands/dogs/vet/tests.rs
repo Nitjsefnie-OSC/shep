@@ -62,6 +62,36 @@ fn a_binary_shep_has_never_seen_is_vetted_before_anything_is_written() {
     ));
 }
 
+/// A directory the operator cannot search hides the file without it being
+/// absent: "no file exists" would send them looking for a path that is there.
+#[test]
+fn a_path_behind_an_unsearchable_directory_is_not_reported_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let sealed = dir.path().join("sealed");
+    std::fs::create_dir(&sealed).unwrap();
+    let bin = sealed.join("dog");
+    std::fs::write(&bin, "#!/bin/sh\nexit 0\n").unwrap();
+    chmod(&bin, 0o755);
+    chmod(&sealed, 0o000);
+
+    // A process that bypasses mode bits (root) is not hidden from the file.
+    let hidden = std::fs::metadata(&bin).is_err();
+    let refusal = vet_binary_within(&bin, dir.path(), "probe", TEST_BUDGET);
+    // Restored before any assert so the tempdir can be removed.
+    chmod(&sealed, 0o700);
+    if !hidden {
+        return;
+    }
+
+    assert!(
+        matches!(
+            &refusal,
+            Err(AdoptRefusal::Inaccessible { reason }) if !reason.is_empty()
+        ),
+        "a lookup failure that is not absence must name its cause, got {refusal:?}"
+    );
+}
+
 #[test]
 fn a_binary_any_user_can_rewrite_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -306,6 +336,7 @@ async fn a_dog_whose_version_is_nothing_like_sheps_is_still_adopted() {
         Some(DogVersion {
             version: "9.9.9-rc1".to_string(),
             protocol: Some(PROTOCOL_VERSION),
+            channel: false,
         })
     );
 
@@ -371,6 +402,7 @@ async fn a_dog_that_names_no_protocol_is_adopted_with_the_version_it_gave() {
         Some(DogVersion {
             version: "0.1.3".to_string(),
             protocol: None,
+            channel: false,
         })
     );
 
@@ -518,6 +550,7 @@ fn output_that_answers_nothing_shep_asked_is_not_a_refusal() {
         Some(DogVersion {
             version: "--version".to_string(),
             protocol: None,
+            channel: false,
         }),
         "the last field of line 1 is taken as the version, whatever it is"
     );
@@ -538,6 +571,7 @@ fn a_future_shep_key_is_ignored_rather_than_breaking_the_parser() {
         Some(DogVersion {
             version: "0.4.0".to_string(),
             protocol: Some(2),
+            channel: false,
         })
     );
 
@@ -547,6 +581,7 @@ fn a_future_shep_key_is_ignored_rather_than_breaking_the_parser() {
         Some(DogVersion {
             version: "0.1.3".to_string(),
             protocol: None,
+            channel: false,
         }),
         "a protocol that is not a decimal is unknown, not a refusal"
     );

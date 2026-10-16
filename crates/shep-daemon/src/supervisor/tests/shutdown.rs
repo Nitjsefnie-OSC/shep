@@ -3,18 +3,25 @@
 //! Shutdown has to end every sheep and then the engine, whatever else is in
 //! flight: a pending restart timer, a readiness wait, a kill ladder part way
 //! up. The races here are the ones where two commands could each claim an exit.
+//!
+//! Every case here opens through [`started_apps`], which takes the bus
+//! capacity rather than fixing one: these cases read a whole run off one
+//! receiver through [`drain_kinds`], which stops at the first `Lagged`.
 
 use super::*;
 
 #[tokio::test(start_paused = true)]
 async fn shutdown_kills_all_and_stops_the_engine() {
-    let (events, _rx) = crate::bus::test_bus(64);
-    let runner = ScriptedRunner::new(vec![ProcScript::never_exits(), ProcScript::never_exits()]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let mut app = AppConfig::minimal("web", "./srv");
     app.instances = 2;
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
+    let (handle, _runner, _rx) = started_apps(
+        &dir,
+        vec![app],
+        vec![ProcScript::never_exits(), ProcScript::never_exits()],
+        64,
+    )
+    .await;
     handle.shutdown().await; // kill ladder on every online sheep, then stop
     assert!(handle.list_checked().await.is_err());
 }
@@ -35,21 +42,21 @@ async fn drain_kinds(
 // that child is outside the shutdown's `online` snapshot, so never killed.
 #[tokio::test(start_paused = true)]
 async fn shutdown_ignores_a_pending_restart_timer() {
-    let (events, mut rx) = crate::bus::test_bus(1024);
-    let runner = ScriptedRunner::new(vec![
-        ProcScript::const_exit(1),     // crash: instant exit -> waiting-restart
-        ProcScript::ignores_signals(), // web: full 1600ms kill ladder
-        ProcScript::never_exits(),     // catches a pending timer respawning during shutdown
-    ]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let mut crash = AppConfig::minimal("crash", "./boom");
     crash.exp_backoff_restart_delay = Some("500".parse().unwrap());
     let web = AppConfig::minimal("web", "./srv");
-    handle
-        .start(vec![normalize(crash).unwrap(), normalize(web).unwrap()])
-        .await
-        .unwrap();
+    let (handle, _runner, mut rx) = started_apps(
+        &dir,
+        vec![crash, web],
+        vec![
+            ProcScript::const_exit(1),     // crash: instant exit -> waiting-restart
+            ProcScript::ignores_signals(), // web: full 1600ms kill ladder
+            ProcScript::never_exits(),     // catches a pending timer respawning during shutdown
+        ],
+        1024,
+    )
+    .await;
     // id 0 is now waiting-restart with a 500ms timer pending.
     await_event(&mut rx, 0, ProcessEventKind::Exit).await;
 
@@ -71,14 +78,12 @@ async fn shutdown_ignores_a_pending_restart_timer() {
 // was armed under, and its 1000ms deadline lands inside the kill ladder.
 #[tokio::test(start_paused = true)]
 async fn shutdown_ignores_a_pending_readiness_wait() {
-    let (events, mut rx) = crate::bus::test_bus(1024);
-    let runner = ScriptedRunner::new(vec![ProcScript::ignores_signals()]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let mut app = AppConfig::minimal("gated", "./g");
     app.wait_ready = true; // nobody ever signals ready
     app.listen_timeout = UpDuration::from_millis(1_000);
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
+    let (handle, _runner, mut rx) =
+        started_apps(&dir, vec![app], vec![ProcScript::ignores_signals()], 1024).await;
     assert_eq!(
         handle.list().await[0].status,
         ProcStatus::Starting,
@@ -104,15 +109,18 @@ async fn shutdown_ignores_a_pending_readiness_wait() {
 // the Start lands first and Shutdown's `online` snapshot catches it.
 #[tokio::test(start_paused = true)]
 async fn late_start_racing_shutdown_never_orphans() {
-    let (events, mut rx) = crate::bus::test_bus(1024);
-    let runner = ScriptedRunner::new(vec![
-        ProcScript::ignores_signals(), // web: 1600ms ladder
-        ProcScript::never_exits(),     // the late Start, if it lands before Shutdown
-    ]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let web = AppConfig::minimal("web", "./srv");
-    handle.start(vec![normalize(web).unwrap()]).await.unwrap();
+    let (handle, _runner, mut rx) = started_apps(
+        &dir,
+        vec![web],
+        vec![
+            ProcScript::ignores_signals(), // web: 1600ms ladder
+            ProcScript::never_exits(),     // the late Start, if it lands before Shutdown
+        ],
+        1024,
+    )
+    .await;
 
     let h2 = handle.clone();
     let late = tokio::spawn(async move {
@@ -142,19 +150,22 @@ async fn late_start_racing_shutdown_never_orphans() {
 // the manual respawn's own exit schedules.
 #[tokio::test(start_paused = true)]
 async fn stale_restart_timer_never_short_circuits_a_newer_backoff() {
-    let (events, mut rx) = crate::bus::test_bus(1024);
-    let runner = ScriptedRunner::new(vec![
-        ProcScript::const_exit(1),             // t=0 exit -> T1 @ 2000
-        ProcScript::stable_then_exit(1500, 1), // manual respawn, dies @1500 -> T2 @ 3500
-        ProcScript::never_exits(),             // whoever respawns first takes this
-        ProcScript::never_exits(),
-    ]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let mut app = AppConfig::minimal("crash", "./boom");
     app.exp_backoff_restart_delay = Some("2000".parse().unwrap());
     app.min_uptime = "5000".parse().unwrap(); // 1500ms uptime counts as unstable
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
+    let (handle, _runner, mut rx) = started_apps(
+        &dir,
+        vec![app],
+        vec![
+            ProcScript::const_exit(1),             // t=0 exit -> T1 @ 2000
+            ProcScript::stable_then_exit(1500, 1), // manual respawn, dies @1500 -> T2 @ 3500
+            ProcScript::never_exits(),             // whoever respawns first takes this
+            ProcScript::never_exits(),
+        ],
+        1024,
+    )
+    .await;
     await_event(&mut rx, 0, ProcessEventKind::Exit).await; // waiting-restart, T1 @ 2000
 
     let out = handle.restart(ProcessSelector::All).await.unwrap();
@@ -185,15 +196,18 @@ async fn stale_restart_timer_never_short_circuits_a_newer_backoff() {
 // neither may displace the other.
 #[tokio::test(start_paused = true)]
 async fn overlapping_stop_and_restart_agree_on_one_outcome() {
-    let (events, _rx) = crate::bus::test_bus(1024);
-    let runner = ScriptedRunner::new(vec![
-        ProcScript::ignores_signals(), // 1600ms ladder: a wide race window
-        ProcScript::never_exits(),
-    ]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let app = AppConfig::minimal("svc", "./svc");
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
+    let (handle, _runner, _rx) = started_apps(
+        &dir,
+        vec![app],
+        vec![
+            ProcScript::ignores_signals(), // 1600ms ladder: a wide race window
+            ProcScript::never_exits(),
+        ],
+        1024,
+    )
+    .await;
 
     let h2 = handle.clone();
     let stopper = tokio::spawn(async move { h2.stop(ProcessSelector::All).await });
@@ -221,20 +235,20 @@ async fn overlapping_stop_and_restart_agree_on_one_outcome() {
 // processing an unrelated sheep's exit.
 #[tokio::test(start_paused = true)]
 async fn actor_never_blocks_behind_a_busy_kill_ladder() {
-    let (events, mut rx) = crate::bus::test_bus(1024);
-    let runner = ScriptedRunner::new(vec![
-        ProcScript::ignores_signals(),        // sheep a: 1600ms ladder
-        ProcScript::stable_then_exit(800, 0), // sheep b: exits at t=800
-    ]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let a = AppConfig::minimal("a", "./a");
     let mut b = AppConfig::minimal("b", "./b");
     b.autorestart = false;
-    handle
-        .start(vec![normalize(a).unwrap(), normalize(b).unwrap()])
-        .await
-        .unwrap();
+    let (handle, _runner, mut rx) = started_apps(
+        &dir,
+        vec![a, b],
+        vec![
+            ProcScript::ignores_signals(),        // sheep a: 1600ms ladder
+            ProcScript::stable_then_exit(800, 0), // sheep b: exits at t=800
+        ],
+        1024,
+    )
+    .await;
 
     let t0 = tokio::time::Instant::now();
     let mut tasks = Vec::new();
@@ -261,12 +275,10 @@ async fn actor_never_blocks_behind_a_busy_kill_ladder() {
 // while the sheep task parks in `actor_tx.send()` with the mailbox full.
 #[tokio::test(start_paused = true)]
 async fn mailbox_flood_during_a_kill_never_deadlocks() {
-    let (events, mut rx) = crate::bus::test_bus(4096);
-    let runner = ScriptedRunner::new(vec![ProcScript::ignores_signals()]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let a = AppConfig::minimal("a", "./a");
-    handle.start(vec![normalize(a).unwrap()]).await.unwrap();
+    let (handle, _runner, mut rx) =
+        started_apps(&dir, vec![a], vec![ProcScript::ignores_signals()], 4096).await;
 
     for _ in 0..8 {
         let h = handle.clone();
@@ -306,21 +318,25 @@ async fn mailbox_flood_during_a_kill_never_deadlocks() {
 // not happen. The decoy outlives the target, keeping the actor alive.
 #[tokio::test(start_paused = true)]
 async fn delete_racing_shutdown_still_deregisters_the_sheep() {
-    let (events, _rx) = crate::bus::test_bus(1024);
-    let runner = ScriptedRunner::new(vec![
-        ProcScript::ignores_signals(), // target: default 1600ms kill_timeout ladder
-        ProcScript::ignores_signals(), // decoy: kept alive far longer
-    ]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let target = AppConfig::minimal("svc", "./svc");
     let mut decoy = AppConfig::minimal("decoy", "./decoy");
     decoy.kill_timeout = "600000".parse().unwrap(); // outlives the target's ladder by far
-    let started = handle
-        .start(vec![normalize(target).unwrap(), normalize(decoy).unwrap()])
+    let (handle, _runner, _rx) = started_apps(
+        &dir,
+        vec![target, decoy],
+        vec![
+            ProcScript::ignores_signals(), // target: default 1600ms kill_timeout ladder
+            ProcScript::ignores_signals(), // decoy: kept alive far longer
+        ],
+        1024,
+    )
+    .await;
+    // The id off a `list` rather than off the `Start` reply: the helper
+    // starts the apps, and its reply stays inside the helper.
+    let id = handle
+        .list()
         .await
-        .unwrap();
-    let id = started
         .iter()
         .find(|info| info.name == "svc")
         .expect("target sheep registered")
@@ -351,18 +367,22 @@ async fn delete_racing_shutdown_still_deregisters_the_sheep() {
 // sets that field without touching `manual`.
 #[tokio::test(start_paused = true)]
 async fn delete_racing_restart_still_deregisters_the_sheep() {
-    let (events, _rx) = crate::bus::test_bus(1024);
-    let runner = ScriptedRunner::new(vec![
-        ProcScript::ignores_signals(), // wide kill-ladder window
-        // A second script, so a broken run's respawn succeeds into a live
-        // process rather than landing in `Errored`.
-        ProcScript::never_exits(),
-    ]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let app = AppConfig::minimal("svc", "./svc");
-    let started = handle.start(vec![normalize(app).unwrap()]).await.unwrap();
-    let id = started[0].id;
+    let (handle, _runner, _rx) = started_apps(
+        &dir,
+        vec![app],
+        vec![
+            ProcScript::ignores_signals(), // wide kill-ladder window
+            // A second script, so a broken run's respawn succeeds into a live
+            // process rather than landing in `Errored`.
+            ProcScript::never_exits(),
+        ],
+        1024,
+    )
+    .await;
+    // The id off a `list` rather than off the `Start` reply, as above.
+    let id = handle.list().await.remove(0).id;
 
     let h2 = handle.clone();
     let restarter = tokio::spawn(async move { h2.restart(ProcessSelector::All).await });
@@ -396,16 +416,19 @@ async fn delete_racing_restart_still_deregisters_the_sheep() {
 // can still be in flight when the next command arrives.
 #[tokio::test(start_paused = true)]
 async fn an_operators_stop_beats_an_automatic_restart_mid_ladder() {
-    let (events, _rx) = crate::bus::test_bus(1024);
-    // Two: the sheep, plus the respawn a broken implementation performs.
-    let runner = ScriptedRunner::new(vec![
-        ProcScript::ignores_signals(), // 1600ms ladder: a wide race window
-        ProcScript::never_exits(),     // the respawn a broken implementation performs
-    ]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let app = AppConfig::minimal("svc", "./svc");
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
+    // Two scripts: the sheep, plus the respawn a broken implementation performs.
+    let (handle, _runner, _rx) = started_apps(
+        &dir,
+        vec![app],
+        vec![
+            ProcScript::ignores_signals(), // 1600ms ladder: a wide race window
+            ProcScript::never_exits(),     // the respawn a broken implementation performs
+        ],
+        1024,
+    )
+    .await;
     let running = handle.list().await.remove(0);
     let pid = running.pid.expect("an online sheep has a pid");
 
@@ -434,16 +457,16 @@ async fn an_operators_stop_beats_an_automatic_restart_mid_ladder() {
 // `pending_delete` each produce this outcome, so it takes disabling both.
 #[tokio::test(start_paused = true)]
 async fn an_operators_delete_beats_an_automatic_restart_mid_ladder() {
-    let (events, _rx) = crate::bus::test_bus(1024);
-    // Two: the sheep, plus the respawn a broken run performs.
-    let runner = ScriptedRunner::new(vec![
-        ProcScript::ignores_signals(),
-        ProcScript::never_exits(),
-    ]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let app = AppConfig::minimal("svc", "./svc");
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
+    // Two scripts: the sheep, plus the respawn a broken run performs.
+    let (handle, _runner, _rx) = started_apps(
+        &dir,
+        vec![app],
+        vec![ProcScript::ignores_signals(), ProcScript::never_exits()],
+        1024,
+    )
+    .await;
     let running = handle.list().await.remove(0);
     let pid = running.pid.expect("an online sheep has a pid");
 
@@ -465,12 +488,10 @@ async fn an_operators_delete_beats_an_automatic_restart_mid_ladder() {
 /// `SIGTERM` rather than `kill_tree`'s `SIGKILL`: the number pinned is 15.
 #[tokio::test(start_paused = true)]
 async fn an_operators_stop_still_shows_its_signal_as_the_last_exit() {
-    let (events, _rx) = crate::bus::test_bus(64);
-    let runner = ScriptedRunner::new(vec![ProcScript::never_exits()]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let app = AppConfig::minimal("svc", "./svc");
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
+    let (handle, _runner, _rx) =
+        started_apps(&dir, vec![app], vec![ProcScript::never_exits()], 64).await;
 
     let stopped = handle.stop(ProcessSelector::All).await.unwrap();
     assert_eq!(stopped.len(), 1);
@@ -492,12 +513,10 @@ async fn an_operators_stop_still_shows_its_signal_as_the_last_exit() {
 /// code, then a respawn that fails to spawn.
 #[tokio::test(start_paused = true)]
 async fn a_respawn_that_fails_to_spawn_clears_the_previous_exit_code() {
-    let (events, _rx) = crate::bus::test_bus(64);
-    let runner = ScriptedRunner::new(vec![ProcScript::const_exit(1)]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
     let app = AppConfig::minimal("svc", "./svc");
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
+    let (handle, _runner, _rx) =
+        started_apps(&dir, vec![app], vec![ProcScript::const_exit(1)], 64).await;
 
     // Let the exit, the restart decision and the failed respawn all land.
     tokio::time::sleep(Duration::from_secs(30)).await;

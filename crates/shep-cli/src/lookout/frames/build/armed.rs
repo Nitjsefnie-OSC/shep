@@ -15,12 +15,14 @@ use crate::commands::shep_toml::ShepToml;
 use crate::lookout::app::{ActionVerb, App, Effect, KeyPress, Msg, RevealedValue, RowKey, Sent};
 use crate::lookout::frames::fixtures::{
     close_dialog_config_view, dogs_probe, edit_pane_config_view, flock_without_api,
-    move_settings_cursor_to, restarted_api, settings_snapshot_for_gallery,
-    settings_snapshot_with_dog_drift, sheep_dogs_config_view,
+    kelpie_config_view, kelpie_probe, move_settings_cursor_to, restarted_api,
+    settings_snapshot_for_gallery, settings_snapshot_with_dog_drift, sheep_dogs_config_view,
 };
 use crate::lookout::frames::scene::Scene;
 use crate::lookout::secrets::{SecretRow, SecretsModel, Source};
-use crate::lookout::view::fixtures::select_field;
+use crate::lookout::view::fixtures::{
+    entries_dog_schema, entries_dog_section, select_field, select_node,
+};
 use crate::secret_readers::Reader;
 use crate::style::{StyleLevel, StyleSource};
 
@@ -274,9 +276,87 @@ pub(super) fn apply_post_tick_scene(app: &mut App, which: Scene) {
                     }
                     Scene::SheepDogTable => {
                         app.update(Msg::Key(KeyPress::Confirm));
+                        // `models.worker` starts closed, so walk down to
+                        // the secret the way an operator opens the table.
+                        select_field(app, "models.worker.token");
                     }
                     _ => {}
                 }
+            }
+        }
+        Scene::SheepDogUnion => {
+            // The `kelpie` table, opened the way `SheepDogTable` opens
+            // `jobs`, then `implement` opened onto its rows and the cursor
+            // walked onto its `path`.
+            app.update(Msg::Key(KeyPress::Edit));
+            app.update(Msg::Replied {
+                sent: Sent::SheepConfig {
+                    name: "api".to_string(),
+                },
+                result: Ok(Response::SheepConfig(Box::new(kelpie_config_view()))),
+            });
+            select_field(app, "dogs");
+            let Effect::LoadSheepDogs { ask, .. } = app.update(Msg::Key(KeyPress::Confirm)) else {
+                panic!("Enter on the dogs row probes");
+            };
+            app.update(Msg::SheepDogs {
+                sheep: "api".to_string(),
+                ask,
+                dogs: kelpie_probe(),
+            });
+            app.update(Msg::Key(KeyPress::Confirm));
+            select_field(app, "skills.implement");
+            app.update(Msg::Key(KeyPress::Confirm));
+            app.update(Msg::Key(KeyPress::SelectDown));
+            app.update(Msg::Key(KeyPress::SelectDown));
+        }
+        Scene::DogEntries
+        | Scene::DogEntriesNarrow
+        | Scene::DogEntryTyping
+        | Scene::DogEntriesNew => {
+            // The schema probe, then the shepherd's section, the way the
+            // event loop opens a dog's pane. `clients` and its first entry
+            // are opened with `→` the way an operator would, and the
+            // cursor is left on the entry's credential.
+            app.update(Msg::DogPane {
+                name: "paddock".to_string(),
+                adopted_path: None,
+                result: Ok(entries_dog_schema()),
+            });
+            app.update(Msg::Replied {
+                sent: Sent::DogSection {
+                    name: "paddock".to_string(),
+                },
+                result: Ok(Response::DogSection {
+                    toml: entries_dog_section().into(),
+                }),
+            });
+            let opened = match which {
+                Scene::DogEntryTyping => vec!["clients", "clients[1]"],
+                Scene::DogEntriesNew => vec!["models"],
+                _ => vec!["clients", "clients[0]"],
+            };
+            for key in opened {
+                select_node(app, key);
+                app.update(Msg::Key(KeyPress::TabNext));
+            }
+            if which == Scene::DogEntriesNew {
+                // `Enter` on `+ new` under a map asks for the key.
+                select_node(app, "models[+]");
+                app.update(Msg::Key(KeyPress::Confirm));
+                for character in "gpt-5".chars() {
+                    app.update(Msg::Key(KeyPress::TextChar(character)));
+                }
+            } else if which == Scene::DogEntryTyping {
+                // `b-2` has no `name` yet; the editor opens empty on it.
+                select_node(app, "clients[1].name");
+                app.update(Msg::Key(KeyPress::Confirm));
+                for character in "beta".chars() {
+                    app.update(Msg::Key(KeyPress::TextChar(character)));
+                }
+            } else {
+                app.update(Msg::Key(KeyPress::SelectDown));
+                app.update(Msg::Key(KeyPress::SelectDown));
             }
         }
         Scene::CloseDialog
@@ -644,25 +724,134 @@ mod tests {
         assert!(!remove.contains(TOKEN), "{remove:?}");
         assert!(!remove.contains(LEGACY_CREDENTIAL), "{remove:?}");
 
-        // SheepDogTable: every leaf `jobs_schema` declares is its own
-        // dotted row, and the one it marks secret draws `<set>` alone.
+        // SheepDogTable: a tree, the first level open, with the table two
+        // levels down opened onto the one leaf `jobs_schema` marks secret,
+        // which draws `<set>` alone.
         let table = render_text(&scene(Scene::SheepDogTable).1);
-        for dotted in [
-            "hours.end",
-            "hours.start",
+        for drawn in [
+            "\u{25be} hours",
+            "end",
+            "start",
             "merge",
-            "models.worker.model",
-            "models.worker.token",
+            "\u{25be} models",
+            "\u{25be} worker",
+            "model",
+            "token",
         ] {
-            assert!(table.contains(dotted), "{dotted} is its own row: {table:?}");
+            assert!(table.contains(drawn), "{drawn} is its own row: {table:?}");
         }
         let token_row = table
             .lines()
-            .find(|line| line.contains("models.worker.token"))
-            .expect("the secret's own row");
-        assert!(token_row.contains("<set>"), "{token_row:?}");
+            .find(|line| line.starts_with('>'))
+            .expect("the cursor is on the secret's own row");
+        assert!(
+            token_row.contains("token") && token_row.contains("<set>"),
+            "{token_row:?}"
+        );
         assert!(!table.contains(TOKEN), "{table:?}");
         assert!(!table.contains(LEGACY_CREDENTIAL), "{table:?}");
+    }
+
+    /// The union scene reads each step as its tag, opens one onto its tag
+    /// row and the fields of that arm, and leaves the unset one unset.
+    #[test]
+    #[cfg(unix)] // inherited, not measured per test: see the `build` module's docs
+    fn the_sheep_dog_union_scene_opens_one_union_onto_its_arm() {
+        let text = render_text(&scene(Scene::SheepDogUnion).1);
+        for drawn in [
+            "\u{25be} implement",
+            "kind = path",
+            "\u{25b8} review",
+            "kind = plugin",
+            "\u{25b8} retro",
+            "(unset)",
+            "skills/mine",
+            "A skill kept in the repo.",
+        ] {
+            assert!(text.contains(drawn), "{drawn} is drawn: {text:?}");
+        }
+        let cursor_row = text
+            .lines()
+            .find(|line| line.starts_with('>'))
+            .expect("the cursor is on a row");
+        assert!(
+            cursor_row.contains("path") && cursor_row.contains("skills/mine"),
+            "{cursor_row:?}"
+        );
+        assert!(!text.contains('\u{1f}'), "no edit key reaches the screen");
+    }
+
+    /// The entries scenes read an array and a map of tables as counts,
+    /// open `clients` onto its entries and draw no credential, at either
+    /// width.
+    #[test]
+    #[cfg(unix)] // inherited, not measured per test: see the `build` module's docs
+    fn the_dog_entries_scenes_count_name_and_mask() {
+        for which in [Scene::DogEntries, Scene::DogEntriesNarrow] {
+            let text = render_text(&scene(which).1);
+            for drawn in [
+                "3 entries",
+                "2 entries",
+                "\u{25be} clients",
+                "\u{25b8} models",
+                "alpha",
+                "b-2",
+                "#2",
+            ] {
+                assert!(text.contains(drawn), "{which:?} lacks {drawn}: {text:?}");
+            }
+            let key_row = text
+                .lines()
+                .find(|line| line.starts_with('>'))
+                .expect("the cursor is on the credential's own row");
+            assert!(
+                key_row.contains("key") && key_row.contains("<set>"),
+                "{which:?}: {key_row:?}"
+            );
+            for credential in ["hunter2", "hunter3", "hunter4"] {
+                assert!(!text.contains(credential), "{which:?} drew {credential}");
+            }
+        }
+    }
+
+    /// The typing scene shows the half-typed name in the second client's
+    /// value cell, the panel on `name`, and the credentials still unseen.
+    #[test]
+    #[cfg(unix)] // inherited, not measured per test: see the `build` module's docs
+    fn the_dog_entry_typing_scene_draws_the_text_being_typed() {
+        let text = render_text(&scene(Scene::DogEntryTyping).1);
+        let name_row = text
+            .lines()
+            .find(|line| line.starts_with('>'))
+            .expect("the cursor is on the name row");
+        assert!(
+            name_row.contains("name") && name_row.contains("beta\u{258f}"),
+            "{name_row:?}"
+        );
+        assert!(text.contains("FOCUSED  clients[1].name"), "{text}");
+        for credential in ["hunter2", "hunter3", "hunter4"] {
+            assert!(!text.contains(credential), "drew {credential}");
+        }
+    }
+
+    /// The key-editor scene shows `models` open onto `+ new`, the editor
+    /// labelled with the map it adds to and holding the typed key, and no
+    /// edit counted yet.
+    #[test]
+    #[cfg(unix)] // inherited, not measured per test: see the `build` module's docs
+    fn the_dog_entries_new_scene_draws_the_key_editor_on_the_plus_new_row() {
+        let text = render_text(&scene(Scene::DogEntriesNew).1);
+        let new_row = text
+            .lines()
+            .find(|line| line.starts_with('>'))
+            .expect("the cursor is on the + new row");
+        assert!(new_row.contains("+ new"), "{new_row:?}");
+        assert!(text.contains("new models key"), "{text}");
+        assert!(text.contains("gpt-5\u{258f}"), "{text}");
+        assert!(!text.contains("[1 edit"), "{text}");
+        for credential in ["hunter2", "hunter3", "hunter4"] {
+            assert!(!text.contains(credential), "drew {credential}");
+        }
     }
 
     /// Each close-dialog scene draws the border its width allows, and the

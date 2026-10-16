@@ -5,6 +5,7 @@
 //! stop or restart is in flight against a set of ids, so the exits it causes
 //! are read as that command finishing rather than as fresh crashes.
 
+use super::actor_disable::Sweep;
 use super::*;
 
 impl<R: ProcessRunner> Actor<R> {
@@ -87,6 +88,29 @@ impl<R: ProcessRunner> Actor<R> {
     /// `Restart`, `false` for the crash loop and every restart the daemon
     /// raised itself. Callers pass `origin == CommandOrigin::Operator`.
     pub(super) fn respawn(&mut self, id: u32, manually: bool) -> ProcessInfo {
+        // The last word on the mark, under every door that reaches a respawn:
+        // the crash ladder's timer, an extra's report, a manual restart's
+        // exit. The doors that can tell an operator from the daemon answer
+        // before this (`restart_unless_disabled`), so what arrives here is
+        // dropped whoever asked, and left stopped.
+        if self.is_disabled_id(id) {
+            let slot = self.sheep.get(&id).expect("respawn: unknown id");
+            tracing::info!(
+                id,
+                sheep = %slot.entry.spec.config().name,
+                manually,
+                "respawn dropped: the app is disabled"
+            );
+            // A ladder timer that fires for it leaves nothing waiting behind.
+            if slot.entry.status == ProcStatus::WaitingRestart
+                && let Some(info) =
+                    self.apply_immediate(id, ManualKind::Stop, CommandOrigin::Automatic)
+            {
+                return info;
+            }
+            let slot = self.sheep.get(&id).expect("respawn: unknown id");
+            return to_info(&slot.entry, &self.smits);
+        }
         // Before the identity below is read, since a promoted `user` or `group`
         // is what clears it. Here rather than in the `Restart` arms: every door
         // a replacement child comes through passes through this one.
@@ -137,6 +161,7 @@ impl<R: ProcessRunner> Actor<R> {
                     app,
                     self.events.clone(),
                     self.tx.clone(),
+                    self.lamb_sweep(),
                 );
                 let ready_tx = if gated {
                     Some(spawn_readiness_task(
@@ -224,6 +249,9 @@ impl<R: ProcessRunner> Actor<R> {
         // code would show a sheep that once crashed with 1 as still crashing
         // with 1 while it is failing to start at all.
         slot.entry.last_exit = None;
+        // `log_ctl` is the one handle here left in place, for the reason on
+        // `SheepSlot::log_ctl`: a send to a pump that ended already fails, so
+        // clearing it would record that fact twice.
         slot.ctl = None;
         // Already `None` on every route into a respawn, written anyway so that
         // "these two go together" is visible at each site.
@@ -286,6 +314,8 @@ impl<R: ProcessRunner> Actor<R> {
         // a crash this sheep is still repeating; `respawn_failed` clears it
         // for the same reason.
         slot.entry.last_exit = None;
+        // `log_ctl` is left in place as in `respawn_failed`, for the reason on
+        // `SheepSlot::log_ctl`.
         slot.ctl = None;
         slot.to_child = None;
         slot.signals = None;
@@ -348,16 +378,26 @@ impl<R: ProcessRunner> Actor<R> {
 
     /// Every registered id `selector` names, in id order.
     ///
-    /// The one place selection happens. A dog is included only for a selector
-    /// that named it ([`ProcessSelector::is_exact`]), so `stop all`, `reload
-    /// all`, `delete all` and a `/regex/` sweep pass every dog by while `shep
-    /// restart bark` still reaches one.
+    /// The one place selection happens. A wildcard reaches a sheep that is
+    /// neither a dog nor disabled, so `stop all`, `reload all`, `delete all`
+    /// and a `/regex/` sweep pass every dog and every parked app by, while
+    /// `shep restart bark` and `shep stop api` still reach one that was named
+    /// ([`ProcessSelector::is_exact`]).
     pub(super) fn matching_ids(&self, selector: &ProcessSelector) -> Vec<u32> {
+        self.reached_ids(selector, Sweep::Enabled)
+    }
+
+    /// [`Self::matching_ids`] with the sweep's side of the disabled mark
+    /// chosen: `enable` is the one verb whose wildcard wants the parked apps
+    /// and nothing else, and the log verbs want both kinds.
+    pub(super) fn reached_ids(&self, selector: &ProcessSelector, sweep: Sweep) -> Vec<u32> {
         let exact = selector.is_exact();
         let mut ids: Vec<u32> = self
             .sheep
             .iter()
-            .filter(|(_, slot)| exact || slot.entry.dog.is_none())
+            .filter(|(id, slot)| {
+                exact || (slot.entry.dog.is_none() && sweep.reaches(self.is_disabled_id(**id)))
+            })
             .filter_map(|(id, slot)| {
                 let config = slot.entry.spec.config();
                 selector
@@ -380,6 +420,11 @@ impl<R: ProcessRunner> Actor<R> {
     /// Immediate results are collected up front and folded into the same
     /// `PendingReply` as the deferred ids, so a mixed selector's reply carries
     /// every match and fires once the last running one goes terminal.
+    ///
+    /// A `Delete` that reaches a built-in dog is refused whole, before any id
+    /// is claimed: the dog has no registration to forget, and a command that
+    /// took the sheep beside it and refused the dog would leave the operator
+    /// reading a listing rather than a refusal.
     pub(super) fn begin_manual(
         &mut self,
         selector: ProcessSelector,
@@ -394,7 +439,30 @@ impl<R: ProcessRunner> Actor<R> {
             return;
         }
 
+        if kind == ManualKind::Delete
+            && let Some(name) = matched.iter().find_map(|id| self.built_in_dog_name(*id))
+        {
+            send_reply(
+                reply,
+                Err(SupervisorError::IsADog(crate::dogs::built_in_dog_refusal(
+                    &name,
+                ))),
+            );
+            return;
+        }
+
         self.begin_manual_ids(matched, kind, origin, reply);
+    }
+
+    /// `id`'s name, when the entry behind it is a built-in dog, and `None`
+    /// for a sheep or an adopted dog.
+    ///
+    /// Read off the entry's own [`DogSource`], not off the name: a saved
+    /// sheep that kept the name `metrics` on an upgrade is deletable, and a
+    /// name is the only thing the two have in common.
+    fn built_in_dog_name(&self, id: u32) -> Option<String> {
+        let slot = self.sheep.get(&id)?;
+        (slot.entry.dog == Some(DogSource::BuiltIn)).then(|| slot.entry.spec.config().name.clone())
     }
 
     /// [`Self::begin_manual`]'s per-id aggregation, taking the matched ids

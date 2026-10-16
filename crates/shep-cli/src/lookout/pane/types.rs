@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use shep_core::protocol::EnvValue;
+use shep_core::protocol::{DogSectionToml, EnvValue};
 
 // Link-only (IR-32): every type here is read and written by `ConfigPane`,
 // and its docs name it.
@@ -92,9 +92,9 @@ pub enum Lock {
 
 /// One row of the pane.
 ///
-/// Three variants, not one: the env sub-screen is gone, and its keys now
+/// Seven variants, not one: the env sub-screen is gone, and its keys now
 /// walk the same cursor as every field, so this enum has to name a row in
-/// either territory. Named rather than left as a bare index anyway, a
+/// either territory. A dog's nested table is a row of its own too. Named rather than left as a bare index anyway, a
 /// `usize` travelling between [`ConfigPane::rows`], the viewport and the
 /// renderer says nothing about what it indexes, and this one says.
 ///
@@ -103,10 +103,52 @@ pub enum Lock {
 pub enum PaneRow {
     /// Index into [`ConfigPane::fields`].
     Field(usize),
+    /// A nested table on a dog's pane, by its index among the tables the
+    /// pane's outline holds. It opens and closes; it holds no value.
+    Table(usize),
+    /// A row under an array or map of tables on a dog's pane: an entry, a
+    /// table in one, or one of its fields. An index into the pane's entry
+    /// rows. Read-only.
+    Entry(usize),
+    /// A name in the checklist a list of choices opens to, on a dog's pane:
+    /// `item` counts the names in the set, then any element outside it.
+    /// Toggles; holds no value of its own.
+    Choice {
+        /// Index into [`ConfigPane::fields`], of the list.
+        field: usize,
+        /// Which row of its checklist.
+        item: usize,
+    },
+    /// A row under a tagged union on a dog's table on a sheep: `item` 0 is
+    /// its tag, a choice that `space` cycles, then the fields of the arm the
+    /// tag names. They file the whole union, never a part of it.
+    Arm {
+        /// Index into [`ConfigPane::fields`], of the union.
+        field: usize,
+        /// Which row under it.
+        item: usize,
+    },
     /// Index into [`ConfigPane::env_key_names`].
     Env(usize),
     /// The row that adds a new env key.
     AddEnv,
+}
+
+/// One step from a dog section's root to a field inside an entry of an array
+/// or map of tables.
+///
+/// A property is a [`Self::Key`], an entry of an array of tables is its
+/// [`Self::Index`], and an entry of a map is the [`Self::Key`] it is stored
+/// under. A key is a real key, never a dotted one: `"a.b"` is one step.
+///
+/// `Debug` is derived (IR-41): property names, map keys and an index, none of
+/// them a value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::lookout) enum PathStep {
+    /// A property of a table.
+    Key(String),
+    /// The nth entry of an array of tables.
+    Index(usize),
 }
 
 /// One config field's new value, on its way out of the pane.
@@ -212,9 +254,48 @@ pub enum PaneEdit {
     },
 }
 
+/// What a dog's section write produced, from
+/// [`ConfigPane::edited_section_with`].
+///
+/// Three answers rather than two, because the caller treats two of them as a
+/// finished close and one as a refusal it has to explain. They cannot share a
+/// result: a pane carries its filed edits across a re-read, so an edit can
+/// become one the file already carries between the keystroke that filed it and
+/// the keystroke that writes it. Calling that a broken `dogs.toml` tells the
+/// operator their file is wrong when it already says what they asked for.
+///
+/// `Debug` is derived, safe because [`DogSectionToml`] prints a byte count and
+/// never the section body: a dog's section routinely holds the credential the
+/// pane itself refuses to draw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SectionWrite {
+    /// The section text to send, every landed edit applied.
+    Written(DogSectionToml),
+    /// Nothing to send and nothing wrong: no section to edit, no field edit
+    /// filed, or every edit one the section already carries.
+    Nothing,
+    /// An entry this writer cannot land, so it wrote nothing anywhere.
+    Refused,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// IR-41. `Written` carries the section text, which is the payload
+    /// [`ConfigPane`]'s own redacted `Debug` withholds, so this pins that the
+    /// redaction comes from [`DogSectionToml`] and not from a derive here.
+    #[test]
+    fn a_section_write_debug_names_no_section() {
+        let write = SectionWrite::Written("token = \"sk-live-51Hx9Qa\"\n".to_string().into());
+        assert_eq!(
+            format!("{write:?}"),
+            "Written(DogSectionToml(<26 bytes>))",
+            "{write:?}"
+        );
+        assert_eq!(format!("{:?}", SectionWrite::Nothing), "Nothing");
+        assert_eq!(format!("{:?}", SectionWrite::Refused), "Refused");
+    }
 
     /// `cwd` and `script` routinely hold a home directory and `args`
     /// holds a token, which is why `ConfigPane`'s own `Debug` withholds

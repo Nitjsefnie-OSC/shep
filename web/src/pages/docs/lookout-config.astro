@@ -102,19 +102,19 @@ esc/S close   ←/→ tab   z collapse   v reveal for 10s   ↵ set a value   D 
 const sheepDogsRow = `shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
 
  ██ api  (sheep config)
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab next group   1…8 jump
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS
-   args                       ["--port","8080"]                               respawn    FOCUSED  dogs  opaque
-   channel                    false                                           respawn     Settings for one dog on this sheep alone, opaque to shep
->› dogs                       jobs, legacy                                    now
-   environment                (unset)                                         respawn     now     jobs, legacy
-   stdin                      false                                           respawn     default {}
-                                                                                          example (none)
+>› dogs                       jobs, legacy                                    now        FOCUSED  dogs  opaque
+                                                                                          Settings for one dog on this sheep alone, opaque to shep
   env
-   DATABASE_URL               (set)                                                       ● now  the running sheep picks it up without stopping
-   NODE_ENV                   (set)                                                                                      pick the timing when you close the pane
-   + add a key
+   DATABASE_URL               (set)                                                       now     jobs, legacy
+   NODE_ENV                   (set)                                                       default {}
+   + add a key                                                                            example (none)
+
+                                                                                          ● now  the running sheep picks it up without stopping
+                                                                                                                         pick the timing when you close the pane
+
                                                                                           ──────────────────────────────────────────────────────────────────────
                                                                                           VALIDATION
                                                                                           █ a table of dog name to a table of settings
@@ -138,16 +138,15 @@ esc back   j/k select   g/G first/last   r refresh   enter open   d remove   q q
 const sheepDogTable = `shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
 
   api › jobs  (dog table)
->  concurrency                2                                                          FOCUSED  concurrency  integer
-   hours.end                  17:00                                                       concurrency
-   hours.start                09:00
-   merge                      ask                                                         now     2
-   models.worker.model        small                                                       default (none)
-   models.worker.token        <set>                                                       example (none)
-
-                                                                                          ──────────────────────────────────────────────────────────────────────
-                                                                                          VALIDATION
-                                                                                          █ a whole number
+   concurrency                2                                                          FOCUSED  models.worker.token  text
+   ▾ hours                                                                    table       token
+     end                      17:00
+     start                    09:00                                                       now     <set>
+   merge                      ask                                                         default (none)
+   ▾ models                                                                   table       example (none)
+     ▾ worker                                                                 table
+       model                  small
+>      token                  <set>
   shep publishes the change; jobs decides what to reload
 
 esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit   control enabled`;
@@ -302,8 +301,7 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
     <ul>
       <li><code>S</code> opens the pane, and closes it again</li>
       <li>
-        <code>&larr;</code>/<code>&rarr;</code>, or <code>Tab</code>/{" "}
-        <code>Shift-Tab</code>, move the environment tab
+        <code>&larr;</code>/<code>&rarr;</code> move the environment tab
       </li>
       <li><code>j</code>/<code>k</code>, <code>g</code>/<code>G</code> move the cursor</li>
       <li><code>z</code> collapses the group under the cursor, hiding its members</li>
@@ -355,8 +353,8 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
     <p>
       <code>e</code> on a selected sheep opens its config over the dashboard:
       every Flockfile field, the value in force, and what changing it would
-      cost. Fields sit under eight groups: process, logging, inputs,
-      restart, readiness, shutdown, watch, cron. It writes as well, behind
+      cost. Fields sit under nine groups: process, logging, inputs,
+      restart, readiness, shutdown, watch, cron, dogs. It writes as well, behind
       the same gate. Under{" "}
       <code>--read-only</code> the first key that would file an edit refuses
       the same way <code>x</code> does; the pane stays open and unchanged. A
@@ -454,10 +452,11 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       of it.
     </p>
     <p>
-      A tab row above the fields names all eight groups. <code>Tab</code>{" "}
-      walks to the next one, and <code>1</code> through <code>8</code> jump
-      straight to a group by its position in that row. Either resets the
-      cursor to the group's first field.
+      A tab row above the fields names all nine groups, <code>dogs</code>{" "}
+      last. <code>Tab</code> walks to the next one, <code>Shift-Tab</code>{" "}
+      walks back to the previous one, and both wrap. <code>1</code>{" "}
+      through <code>9</code> jump straight to a group by its position in
+      that row. Each resets the cursor to the group's first field.
     </p>
     <p>
       A panel to the right of a wide enough pane explains whichever field
@@ -487,8 +486,8 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
         <code>e</code> still types anything else.
       </li>
       <li>
-        <code>e</code> or <code>Enter</code> opens the editor on a text or
-        number field; a second <code>e</code>/<code>Enter</code> files what
+        <code>e</code> or <code>Enter</code> opens the editor on a text, integer
+        or decimal field; a second <code>e</code>/<code>Enter</code> files what
         was typed, or says why the field won't take it and leaves the editor
         open on it. Two keystrokes to change a field, never one.
         Inside the pane the two keys do exactly the same thing, so learning
@@ -500,11 +499,13 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
         <code>K</code>/<code>J</code> move it, and <code>e</code>/
         <code>Enter</code> edits it, or adds one from the{" "}
         <code>+ new</code> row. Each of those files the whole array on the
-        spot; there's no second key to send it. They build on each other,
-        and the rows show what you have filed rather than what the shepherd
-        sent, so you can remove two elements or add several before leaving.
+        spot; there's no second key to send it. The rows show what you have
+        filed rather than what the shepherd sent, so you can remove two
+        elements or add several before leaving.
         <code>u</code> in here drops the array's whole entry and puts the
-        shepherd's own back.
+        shepherd's own back. An element its item schema rejects is refused,
+        the rule named, and the editor stays open: <code>minLength</code>,
+        <code>pattern</code>, <code>enum</code>, or an integer's range.
       </li>
       <li>
         <code>d</code> on the field list restores the selected field to its
@@ -572,9 +573,10 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
 
     <h2 id="a-sheeps-dogs-row">A sheep's dogs row</h2>
     <p>
-      <code>dogs</code> names its dogs, <code>jobs, legacy</code>, or{" "}
-      <code>none</code>, never a value. Enter or <code>e</code> probes
-      every adopted dog and opens a sub-screen.
+      <code>dogs</code> has a tab of its own, last in the row, reached with{" "}
+      <code>9</code>, <code>Tab</code> or <code>Shift-Tab</code>. It names its dogs,{" "}
+      <code>jobs, legacy</code>, or <code>none</code>, never a value. Enter
+      or <code>e</code> probes every adopted dog and opens a sub-screen.
     </p>
     <CodeBlock label="160×48, cursor on the dogs row">{sheepDogsRow}</CodeBlock>
     <p>
@@ -587,18 +589,33 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
     <p>
       Enter or <code>e</code> on a set or unset row opens that dog's table
       over the sheep. It refuses while the sheep pane holds unwritten
-      edits: <code>Esc</code> goes back to the sheep pane, where{" "}
+      edits: <code>Esc</code> goes back to the pane, where{" "}
       <code>u</code> undoes them one at a time and a second{" "}
       <code>Esc</code> writes them.
     </p>
     <p>
-      A nested struct in the schema becomes dotted rows here,{" "}
-      <code>models.worker.model</code> for a <code>models</code> field
-      holding a <code>worker</code> holding a <code>model</code>. A secret
-      reads <code>&lt;set&gt;</code>. <code>Esc</code> writes the whole
+      A nested struct in the schema is a table row with its keys indented
+      under it. The first level starts open. <code>→</code> opens a table,{" "}
+      <code>←</code> closes it or, on a key or a closed table, moves to its parent, and{" "}
+      <code>Enter</code> toggles it. A secret
+      reads <code>&lt;set&gt;</code>. A list of strings or integers opens
+      the sheep pane's list sub-screen. A list of choices opens to a checklist
+      under its row, and <code>Space</code> or <code>Enter</code> toggles a
+      name. <code>Esc</code> writes the whole
       table and lands on the dashboard, not back on the sub-screen. If the
       table changed since the pane opened, nothing is written: the pane
       reloads it under your edits, and <code>Esc</code> again writes.
+    </p>
+    <p>
+      A setting that is one of several shapes, a tagged union, reads as its
+      tag, such as <code>kind = path</code>, or <code>(unset)</code>. It opens
+      to its tag and that tag's fields; <code>Space</code> on the tag row picks
+      the next tag, with that tag's fields at their defaults. A required field
+      cannot be left empty: <code>Esc</code> waits until each has a value, and
+      <code>d</code> on the union's row clears it. A
+      tag no shape names reads as stored and marked <code>(unknown)</code>;
+      only picking a tag changes it. The dog config pane leaves a union
+      read-only.
     </p>
     <CodeBlock label="jobs's table on api">{sheepDogTable}</CodeBlock>
 
@@ -606,7 +623,7 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
     <p>
       <code>e</code> on a dog row opens its config, over that dog's{" "}
       <code>[&lt;name&gt;]</code> section in <code>dogs.toml</code>. It
-      works the same whether the row sits in the dashboard's own{" "}
+      works the same from the dashboard's{" "}
       <code>Dogs</code> section or the settings screen's dogs table. Inside
       the pane,{" "}
       <code>e</code> is the field list's own edit key, the same as on a
@@ -626,33 +643,81 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       with <code>--schema</code>, waits a second for an answer, then kills
       it. That is a third party's code executing because you pressed a key,
       and it is worth knowing before you browse the config of a dog you did
-      not write. A built-in dog is shep's own binary and is never spawned.
+      not write.
     </Callout>
     <p>
-      The pane is flat, with no section headers: a dog's schema carries no
-      groups, and inventing some would be shep deciding how somebody else's
-      config reads. The cost column is empty on every row, because shep does
+      The pane has no section headers: a dog's schema carries no groups, and
+      inventing some would be shep deciding how somebody else's config
+      reads. The cost column is empty on every row, because shep does
       not know what a dog's field costs. The foot of the pane says so once,
       naming the dog:
     </p>
     <CodeBlock>{`shep publishes the change; bark decides what to reload`}</CodeBlock>
     <p>
-      A field the dog marks as a credential reads <code>&lt;set&gt;</code>{" "}
-      and never its value, and the editor on it opens empty. Typing a new one
-      replaces it; nothing here can show you what it replaced. A table or a
-      list gets <code>~</code>, the same glyph a sheep's{" "}
-      <code>args</code> gets and for the same reason.
+      A nested table is a row marked <code>▸</code> closed or{" "}
+      <code>▾</code> open, typed <code>table</code>, with its keys indented
+      under it. The first level starts open, and <code>r</code> keeps what
+      you opened. A credential reads{" "}
+      <code>&lt;set&gt;</code> at any depth and never its value, and its editor
+      opens empty. A list of strings or integers opens the list sub-screen. A
+      map and a secret list get <code>~</code> and stay read-only. A decimal
+      field edits like an integer one and files a float, so <code>10</code>
+      lands as <code>10.0</code>. A list of numbers gets <code>~</code> and
+      stays read-only.
+    </p>
+    <p>
+      An array or map of tables reads as a count, such as{" "}
+      <code>3 entries</code>, <code>1 entry</code> or{" "}
+      <code>(unset)</code>, and never as JSON, so a credential inside one
+      cannot show. <code>→</code> opens it onto one closed row per entry. A
+      map's entries are named by key. An array's are named by{" "}
+      <code>name</code>, else <code>id</code>, else{" "}
+      <code>#&lt;index&gt;</code>, never by a secret. <code>r</code> keeps an
+      entry open by its key or its position.
+    </p>
+    <p>
+      A scalar field inside an entry edits like any other row, with the same
+      editors, validation and <code>d</code>. Applying one files it, and{" "}
+      <code>Esc</code> writes the section once for every entry you edited. A
+      list, a map or a nested array of tables inside an entry stays
+      read-only. A refresh that finds an array's entry moved drops the edits
+      filed under it, and says so.
+    </p>
+    <p>
+      <code>d</code> on an entry's row removes it, filed like any edit: the
+      entries row reads <code>3 entries -&gt; 2 entries</code>,{" "}
+      <code>u</code> puts the entry back along with the edits that folded in, and <code>Esc</code> deletes its
+      table from <code>dogs.toml</code>, leaving the other entries' comments
+      where they are. Edits filed under the array fold into the removal. The
+      cursor moves to the next entry, the previous one after the last, or the
+      entries row when none are left. Two identical tables in an array lose
+      the later one.
+    </p>
+    <p>
+      The last row under an open array or map of tables is{" "}
+      <code>+ new</code>, and <code>Enter</code> on it adds an entry. An array
+      appends one at once. A map asks for the key in a text editor: an empty
+      key gives up, a key the map already holds is refused by name with the
+      editor still open, and a key with a dot or a space is written quoted,
+      such as <code>[models."a.b"]</code>. The new entry holds each property
+      whose schema declares a default, and nothing else. Its row opens and the
+      cursor lands on its first field. Required fields are the dog's to check:
+      shep only checks that the section is TOML, so an entry missing one is
+      written as it stands. An add files like a removal, as one change to the
+      whole array or map, so <code>u</code> takes it back and adding then
+      removing the same entry writes nothing. <code>Esc</code> appends the new
+      table after the last existing one and leaves every comment where it is.
     </p>
     <p>
       Edits file into the same change set a sheep's pane uses, and{" "}
       <code>u</code> undoes them the same way; nothing reaches the dog's
       section until <code>Esc</code> closes the pane. A section edited
       meanwhile is reloaded under your edits, not overwritten. However many
-      fields
-      changed, the write sends the section whole, in one request, so the
+      fields changed, the write sends the section whole, in one request, so the
       comments and key order in <code>dogs.toml</code> survive it. Applying
       an empty value removes the key, which puts the dog back on its own
-      default. Neither <code>*</code> nor <code>!</code> appears: a dog has
+      default. A write that cannot land is refused whole. Neither
+      <code>*</code> nor <code>!</code> appears: a dog has
       no Flockfile to differ from, and <code>dogs.toml</code> is the one
       copy of its settings.
     </p>

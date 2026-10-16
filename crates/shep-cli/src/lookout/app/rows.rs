@@ -43,6 +43,9 @@ impl Row {
     /// silent by a stray `handshook`.
     #[must_use]
     pub(crate) fn reported(&self) -> Reported {
+        if self.info.disabled == Some(true) && self.info.status == ProcStatus::Stopped {
+            return Reported::Disabled;
+        }
         if self.info.dog.is_none() {
             return Reported::Live(self.info.status);
         }
@@ -100,7 +103,7 @@ pub enum Sent {
     Dog {
         /// The dog's name.
         name: String,
-        /// `true` to start it, `false` to stop and deregister it.
+        /// `true` to start it, `false` to stop it and keep it listed as disabled.
         enable: bool,
         /// Where the binary comes from, exactly as the config write
         /// answered.
@@ -400,8 +403,8 @@ pub enum LambWalk {
     /// The reply carried no walk at all, which for a `Describe` means this
     /// sheep has no pid to walk from.
     NotWalked,
-    /// The request did not come back, or came back as something this binary
-    /// does not understand.
+    /// The request did not come back, or came back as something this lookout
+    /// has no shape for.
     Failed,
 }
 
@@ -428,6 +431,25 @@ pub struct LambReading {
     pub(super) walk: LambWalk,
 }
 
+/// The sentence for a reply this lookout has never heard of, shared so one
+/// failed request reads the same wherever it lands.
+pub(super) const UNRECOGNISED_REPLY: &str =
+    "the shepherd answered something this lookout does not understand";
+
+/// Why a reply is not the one the asking screen expected, in words an operator
+/// can read.
+///
+/// A daemon-side refusal contributes its own message rather than
+/// [`RequestError`]'s `Display` for it, which renders the code as a Rust
+/// identifier.
+pub(super) fn failed_reply(result: Result<Response, RequestError>) -> String {
+    match result {
+        Ok(_) => UNRECOGNISED_REPLY.to_owned(),
+        Err(RequestError::Rpc(err)) => err.message,
+        Err(other) => other.to_string(),
+    }
+}
+
 /// A short line the status bar shows instead of the key hints, cleared by the
 /// next keypress.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -439,6 +461,26 @@ pub struct Notice {
 }
 
 impl Notice {
+    /// A refusal or a damage report: the status bar paints it in
+    /// [`Palette::refusal`].
+    #[must_use]
+    pub(super) fn grave(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            grave: true,
+        }
+    }
+
+    /// An informational line: the status bar paints it in
+    /// [`Palette::attention`].
+    #[must_use]
+    pub(super) fn info(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            grave: false,
+        }
+    }
+
     /// Whether this notice is a refusal or a damage report rather than an
     /// informational one.
     #[must_use]
@@ -450,5 +492,41 @@ impl Notice {
 impl fmt::Display for Notice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shep_core::protocol::{RpcError, RpcErrorCode};
+
+    #[test]
+    fn notice_grave_and_info_set_the_flag_and_keep_the_text() {
+        let grave = Notice::grave("refused: the control gate is closed");
+        assert!(grave.is_grave());
+        assert_eq!(grave.text, "refused: the control gate is closed");
+        assert_eq!(grave.to_string(), "refused: the control gate is closed");
+
+        let info = Notice::info("restart scheduled for api");
+        assert!(!info.is_grave());
+        assert_eq!(info.text, "restart scheduled for api");
+        assert_eq!(info.to_string(), "restart scheduled for api");
+    }
+
+    #[test]
+    fn failed_reply_names_each_of_its_three_cases_apart() {
+        let unrecognised = failed_reply(Ok(Response::Pong));
+        let daemon = failed_reply(Err(RequestError::Rpc(RpcError {
+            code: RpcErrorCode::NotFound,
+            message: "no sheep named web".into(),
+            daemon_version: None,
+        })));
+        let transport = failed_reply(Err(RequestError::Timeout {
+            after: Duration::from_secs(3),
+        }));
+
+        assert_eq!(unrecognised, UNRECOGNISED_REPLY);
+        assert_eq!(daemon, "no sheep named web");
+        assert_eq!(transport, "no reply within 3s");
     }
 }

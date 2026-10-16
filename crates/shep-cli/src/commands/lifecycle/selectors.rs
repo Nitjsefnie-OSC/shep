@@ -12,7 +12,7 @@ use shep_core::selector::ProcessSelector;
 
 use crate::cli::Format;
 use crate::commands::lifecycle::resolve::{TargetError, target_exit_code};
-use crate::commands::rpc::{client_error, unexpected_response};
+use crate::commands::rpc::{client_error, deadline_for, unexpected_response};
 use crate::commands::selector::parse_selector_spec;
 use crate::exit::ExitCode;
 use crate::output::{Render, Streams, emit, emit_flock, write_outcome};
@@ -37,6 +37,8 @@ pub(crate) fn parse_selectors(
 /// Not atomic: `shep stop a b c` where `b` matches nothing still stops `a`
 /// and `c`. Every selector is attempted, errors are rendered as they
 /// happen, and the returned code is the first failure.
+///
+/// A `None` deadline takes the verb's own budget from [`deadline_for`].
 pub(crate) async fn request_each<I, B, F>(
     client: &Client,
     streams: &mut Streams<'_>,
@@ -56,10 +58,9 @@ where
     let mut failure: Option<ExitCode> = None;
 
     for selector in selectors {
-        match client
-            .request_with_deadline(body(selector.clone()), deadline)
-            .await
-        {
+        let request = body(selector.clone());
+        let deadline = deadline.or_else(|| deadline_for(&request));
+        match client.request_with_deadline(request, deadline).await {
             Ok(response) => match extract(response) {
                 Some(mut rows) => collected.append(&mut rows),
                 None => failure = failure.or(Some(unexpected_response(streams))),
@@ -75,14 +76,15 @@ where
 /// A `Name` token is tried as an exact sheep name first and as a fold name
 /// second, so `shep start backed` reaches a fold called `backed`.
 ///
-/// A wildcard passes a dog by and an exact selector reaches it, keyed off
-/// [`ProcessSelector::is_exact`] so a form like `name:slot` cannot land on
-/// the wrong side. The fold fallback counts as a wildcard.
+/// A wildcard passes a dog and a disabled sheep by and an exact selector
+/// reaches either, keyed off [`ProcessSelector::is_exact`] so a form like
+/// `name:slot` cannot land on the wrong side. The fold fallback counts as a
+/// wildcard.
 pub(crate) fn flock_matches(selector: &ProcessSelector, flock: &[ProcessInfo]) -> Vec<ProcessInfo> {
     let sheep_only = |flock: &[ProcessInfo], keep: &dyn Fn(&ProcessInfo) -> bool| {
         flock
             .iter()
-            .filter(|info| info.dog.is_none())
+            .filter(|info| info.dog.is_none() && info.disabled != Some(true))
             .filter(|info| keep(info))
             .cloned()
             .collect::<Vec<ProcessInfo>>()
@@ -124,6 +126,9 @@ pub(crate) fn selector_miss(
     match selector {
         // Phrased off the sheep count, not `flock.is_empty()`: a wildcard
         // passes dogs by, so `all` matching nothing means no sheep.
+        ProcessSelector::All if flock.iter().any(|info| info.disabled == Some(true)) => Some(
+            "every sheep in the flock is disabled; `shep enable all` brings them back".to_string(),
+        ),
         ProcessSelector::All if flock.iter().any(|info| info.dog.is_some()) => Some(
             "no sheep in the flock; there is nothing to start. The dogs listed \
              by `shep dogs` are not sheep and `all` never reaches them"

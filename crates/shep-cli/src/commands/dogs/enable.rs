@@ -10,9 +10,11 @@ use shep_core::protocol::{DogSource, Request, Response};
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::shep_toml::{ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
-use crate::output::{DogActionRow, Streams, emit, write_outcome};
+use crate::output::Streams;
 
-use super::{NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, fail_config};
+use super::{
+    NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, emit_dog_action, fail_config,
+};
 
 /// [`enable`]'s own failure, so its `try_edit` closure can refuse from
 /// inside the lock: either the config layer's error, or a name that answers
@@ -107,7 +109,7 @@ fn fail_enable_unknown_dog(streams: &mut Streams<'_>, name: &str, adopted: &[Str
 /// Joins `items` as an English list: `a`, `a and b`, `a, b, and c`.
 ///
 /// The empty slice answers with the empty string, and no caller reaches it.
-fn join_with_and(items: &[String]) -> String {
+pub(crate) fn join_with_and(items: &[String]) -> String {
     match items {
         [] => String::new(),
         [only] => only.clone(),
@@ -130,14 +132,14 @@ async fn enable_after_config(
     client: Option<&Client>,
 ) -> ExitCode {
     let Some(client) = client else {
-        let row = DogActionRow::new(name, source.clone(), NO_SHEPHERD_ENABLE_STATUS, false);
-        return write_outcome(emit(
-            &mut *streams.out,
-            streams.fmt,
+        return emit_dog_action(
+            streams,
             "enable",
-            row,
-            streams.style,
-        ));
+            name,
+            source.clone(),
+            NO_SHEPHERD_ENABLE_STATUS,
+            false,
+        );
     };
     // A name a sheep already holds comes back as
     // `RpcErrorCode::InvalidConfig`; the `Err` arm surfaces it verbatim.
@@ -147,14 +149,7 @@ async fn enable_after_config(
     };
     match client.request(request).await {
         Ok(Response::DogStarted(info)) => {
-            let row = DogActionRow::new(name, source.clone(), info.status, true);
-            write_outcome(emit(
-                &mut *streams.out,
-                streams.fmt,
-                "enable",
-                row,
-                streams.style,
-            ))
+            emit_dog_action(streams, "enable", name, source.clone(), info.status, true)
         }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
@@ -171,17 +166,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Format;
-
-    /// A dog verb's streams under `--format table`; a test reading a
-    /// JSON field sets `fmt` itself.
-    fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        }
-    }
+    use crate::commands::dogs::test_support::streams;
 
     /// Exact strings, not a "contains no secret" probe: the output is half
     /// the derive and half [`ShepTomlError`]'s manual impl, and either alone
@@ -317,46 +302,52 @@ mod tests {
     /// End to end through `enable`, since the lookup lives in the config
     /// half: [`serve_one_request`] only binds the socket, so `enable` does
     /// its own `Client::connect`.
+    ///
+    /// Run with the channel ask recorded and without: a re-enable that
+    /// dropped it would start a dog that asked for the channel without one.
     #[tokio::test]
-    async fn enable_of_an_adopted_dog_sends_the_path_the_config_recorded() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = ShepPaths::resolve(&|_| None, dir.path());
-        std::fs::create_dir_all(&paths.run).unwrap();
-        ShepToml::edit(&paths.daemon_config, |seed| {
-            seed.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"))
-                .unwrap();
-        })
-        .unwrap();
-        let handle = serve_one_request(
-            &paths.socket,
-            sample_ack(),
-            Response::DogStarted(sample_info()),
-        )
-        .await;
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = enable(&mut streams(&mut out, &mut err), &paths, "otel").await;
-
-        assert_eq!(code, ExitCode::Success);
-        let envelope = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
-            .await
-            .expect("enable must reach the wire; it hung instead of connecting")
+    async fn enable_of_an_adopted_dog_sends_its_recorded_path_and_channel_ask() {
+        for channel in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = ShepPaths::resolve(&|_| None, dir.path());
+            std::fs::create_dir_all(&paths.run).unwrap();
+            ShepToml::edit(&paths.daemon_config, |seed| {
+                seed.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"), channel)
+                    .unwrap();
+            })
             .unwrap();
-        assert_eq!(
-            envelope.body,
-            Request::EnableDog {
-                name: "otel".to_string(),
-                source: DogSource::Adopted {
-                    path: "/usr/local/bin/shep-otel".to_string(),
-                },
-            }
-        );
-        let text = String::from_utf8(out).unwrap();
-        assert!(
-            text.contains("adopted"),
-            "the row must render an adopted dog as adopted: {text}"
-        );
+            let handle = serve_one_request(
+                &paths.socket,
+                sample_ack(),
+                Response::DogStarted(sample_info()),
+            )
+            .await;
+
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            let code = enable(&mut streams(&mut out, &mut err), &paths, "otel").await;
+
+            assert_eq!(code, ExitCode::Success);
+            let envelope = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+                .await
+                .expect("enable must reach the wire; it hung instead of connecting")
+                .unwrap();
+            assert_eq!(
+                envelope.body,
+                Request::EnableDog {
+                    name: "otel".to_string(),
+                    source: DogSource::Adopted {
+                        path: "/usr/local/bin/shep-otel".to_string(),
+                        channel,
+                    },
+                }
+            );
+            let text = String::from_utf8(out).unwrap();
+            assert!(
+                text.contains("adopted"),
+                "the row must render an adopted dog as adopted: {text}"
+            );
+        }
     }
 
     /// A name holding values in both `shep.toml` and `dogs.toml` makes the
@@ -466,7 +457,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = ShepPaths::resolve(&|_| None, dir.path());
         ShepToml::edit(&paths.daemon_config, |cfg| {
-            cfg.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"))
+            cfg.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"), false)
                 .unwrap();
         })
         .unwrap();
@@ -490,7 +481,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = ShepPaths::resolve(&|_| None, dir.path());
         ShepToml::edit(&paths.daemon_config, |cfg| {
-            cfg.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"))
+            cfg.adopt_dog("otel", Path::new("/usr/local/bin/shep-otel"), false)
                 .unwrap();
         })
         .unwrap();

@@ -1,5 +1,5 @@
 //! Stdin delivery, channel shuttling, spawn fd-reporting, preflight
-//! classification and the zero-pid guard.
+//! classification and the signallable-pid guard.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -24,6 +24,8 @@ use tokio::time::timeout;
 #[cfg(unix)]
 use crate::channel::{ChildMessage, ShepherdMessage};
 #[cfg(unix)]
+use crate::runner::RunnerError;
+#[cfg(unix)]
 use crate::runner::{AdoptSpec, LogCtl, ProcessRunner, RunningProcess};
 use crate::runner::{Preflight, SpawnSpec, StdinWrite};
 
@@ -35,6 +37,8 @@ use super::super::log_file::{LogSink, PipeFds};
 #[cfg(unix)]
 use super::super::pump::spawn_log_pump;
 use super::super::pump::spawn_stdin_pump;
+#[cfg(unix)]
+use super::super::runner::signallable_pid;
 use super::super::runner::{PATH_LIST_SEPARATOR, summarise_path, what_exec_will_find};
 #[cfg(unix)]
 use super::super::signal_group;
@@ -751,7 +755,7 @@ fn a_long_path_is_summarised_and_a_startup_units_own_path_is_not() {
 }
 
 // Everything else in this module needs a real OS child and lives in
-// `tests/real_runner.rs`; this one case needs no process at all.
+// `tests/real_runner/`; the pid cases below need no process at all.
 /// `cfg(unix)` alongside `signal_group`, the function it guards. There
 /// is no negative-pid primitive on Windows and so no zero-pid hazard:
 /// `kill_tree` addresses a job handle, which cannot accidentally name
@@ -767,4 +771,27 @@ fn a_zero_pid_is_refused_before_it_can_reach_the_daemons_own_group() {
         err.to_string(),
         "signal delivery failed: pid 0 is not a signallable process id"
     );
+}
+
+/// The refusal has to come from the conversion: `Pid::from_raw` is an `i32`,
+/// so a pid past `i32::MAX` has no `kill(2)` form to hand a syscall at all.
+#[cfg(unix)]
+#[test]
+fn a_pid_above_i32_max_is_refused_as_not_signallable() {
+    let err = signallable_pid(u32::MAX).unwrap_err();
+    assert_eq!(
+        err,
+        RunnerError::SignalFailed("pid 4294967295 is not a signallable process id".to_string())
+    );
+    assert_eq!(
+        err.to_string(),
+        "signal delivery failed: pid 4294967295 is not a signallable process id"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_signallable_pid_converts_unchanged() {
+    assert_eq!(signallable_pid(1), Ok(1));
+    assert_eq!(signallable_pid(i32::MAX as u32), Ok(i32::MAX));
 }

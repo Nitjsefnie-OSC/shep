@@ -75,6 +75,9 @@ pub(super) fn to_info(entry: &ProcessEntry, smits: &Smits) -> ProcessInfo {
         // Cloned per row rather than fetched on demand: a client classifies
         // every line it draws, and an empty list costs the wire nothing.
         .level_rules(entry.spec.config().level_rules.clone())
+        // `Some(false)` only for an app that turned the stamp off. A dog's
+        // config always stamps, so its row is `None` the way `handshook`'s is.
+        .log_timestamps((!entry.spec.config().log_timestamps).then_some(false))
         .build()
 }
 

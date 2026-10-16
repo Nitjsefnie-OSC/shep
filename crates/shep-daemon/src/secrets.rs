@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize};
-use shep_core::secrets::{NamespaceValues, PROVIDER_CACHE_VERSION, ProviderCache, PushedPairs};
+use shep_core::secrets::{
+    ALL_ENVIRONMENTS, NamespaceValues, PROVIDER_CACHE_VERSION, ProviderCache, PushedPairs,
+};
 
 /// The cache file's shape.
 ///
@@ -54,6 +56,42 @@ struct State {
     /// [`write_cache`] writes, so a namespace an operator set
     /// `persist = false` for is never carried along by a neighbour's write.
     persisted: BTreeSet<String>,
+}
+
+/// What a push stored.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Pushed {
+    /// How many entries are stored for the pushed `(namespace, environment)`
+    pub accepted: u32,
+    /// The keys whose value in the host environment moved: missing to found,
+    /// found to missing, or one value to another
+    ///
+    /// Key names only, never a value (IR-41).
+    pub changed: BTreeSet<String>,
+}
+
+/// The push landed in memory and the cache file could not be rewritten.
+///
+/// Carries what [`Pushed`] would have, because the values are resolvable
+/// either way and a rotation in them has happened.
+#[derive(Debug)]
+pub struct CacheWriteFailed {
+    /// Why the staging file, the `fsync` or the `rename` failed
+    pub source: std::io::Error,
+    /// As [`Pushed::changed`]
+    pub changed: BTreeSet<String>,
+}
+
+impl fmt::Display for CacheWriteFailed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.source, f)
+    }
+}
+
+impl core::error::Error for CacheWriteFailed {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        Some(&self.source)
+    }
 }
 
 /// Every provider dog's pushed values, and the cache file the persisting
@@ -103,7 +141,8 @@ impl ProviderSecrets {
     }
 
     /// Replaces `namespace`'s values for `environment` with `entries`,
-    /// returning how many are stored for that pair.
+    /// returning how many are stored for that pair and which keys now
+    /// resolve to something else in `host_environment`.
     ///
     /// Replaces rather than merges: a key the provider has deleted is
     /// absent from the push, and must be absent here too. Other
@@ -115,18 +154,24 @@ impl ProviderSecrets {
     /// still registers the namespace, because "the dog has nothing" and "no
     /// dog has pushed" send an operator to different places.
     ///
+    /// A key resolves as [`shep_core::secrets::SecretView::resolve`] does it:
+    /// the exact slot for `host_environment`, then [`ALL_ENVIRONMENTS`]. The
+    /// before and after are taken under the `state` lock that applies the
+    /// push, so two pushes cannot each miss the other's change.
+    ///
     /// # Errors
-    /// [`std::io::Error`] if the cache had to be rewritten and the staging
+    /// [`CacheWriteFailed`] if the cache had to be rewritten and the staging
     /// file, the `fsync` or the `rename` failed. The in-memory values are
     /// already updated in that case: a spawn resolves against them, and
-    /// only a restart loses them.
+    /// only a restart loses them. It reports the changed keys all the same.
     pub fn put(
         &self,
+        host_environment: &str,
         namespace: &str,
         environment: &str,
         entries: BTreeMap<String, String>,
         persist: bool,
-    ) -> std::io::Result<u32> {
+    ) -> Result<Pushed, CacheWriteFailed> {
         // Saturating rather than fallible: `MAX_FRAME_BYTES` caps a request
         // long before a push can carry four billion entries.
         let accepted = u32::try_from(entries.len()).unwrap_or(u32::MAX);
@@ -137,8 +182,14 @@ impl ProviderSecrets {
         // disk.
         let _writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
 
-        let pending = {
+        let (pending, changed) = {
             let mut state = self.state();
+            let changed = changed_keys(
+                state.namespaces.get(namespace),
+                host_environment,
+                environment,
+                &entries,
+            );
             let table = state.namespaces.entry(namespace.to_owned()).or_default();
             table.retain(|_, by_environment| {
                 by_environment.remove(environment);
@@ -163,13 +214,16 @@ impl ProviderSecrets {
             } else {
                 state.persisted.remove(namespace)
             };
-            rewrite.then(|| persisted_view(&state))
+            (rewrite.then(|| persisted_view(&state)), changed)
         };
 
         if let Some(file) = pending {
-            write_cache(&self.cache, &file)?;
+            write_cache(&self.cache, &file).map_err(|source| CacheWriteFailed {
+                source,
+                changed: changed.clone(),
+            })?;
         }
-        Ok(accepted)
+        Ok(Pushed { accepted, changed })
     }
 
     /// Every namespace's values and every pair pushed for them, in the
@@ -197,6 +251,45 @@ impl ProviderSecrets {
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// The keys of `table` and `entries` that resolve to something else in
+/// `host_environment` once `entries` replaces `environment`'s slots.
+///
+/// Worked out from the slots rather than by applying the push to a copy, so
+/// the hot path clones nothing. A push to an environment the host cannot
+/// see moves no resolution.
+fn changed_keys(
+    table: Option<&BTreeMap<String, BTreeMap<String, String>>>,
+    host_environment: &str,
+    environment: &str,
+    entries: &BTreeMap<String, String>,
+) -> BTreeSet<String> {
+    let visible = environment == host_environment || environment == ALL_ENVIRONMENTS;
+    if !visible {
+        return BTreeSet::new();
+    }
+    let replaced = table
+        .into_iter()
+        .flatten()
+        .filter(|(_, slots)| slots.contains_key(environment))
+        .map(|(key, _)| key);
+    replaced
+        .chain(entries.keys())
+        .filter(|key| {
+            let slots = table.and_then(|table| table.get(*key));
+            let slot = |name: &str| slots.and_then(|slots| slots.get(name)).map(String::as_str);
+            let before = slot(host_environment).or_else(|| slot(ALL_ENVIRONMENTS));
+            let pushed = entries.get(*key).map(String::as_str);
+            let after = if environment == host_environment {
+                pushed.or_else(|| slot(ALL_ENVIRONMENTS))
+            } else {
+                slot(host_environment).or(pushed)
+            };
+            before != after
+        })
+        .cloned()
+        .collect()
 }
 
 /// The cache file `state` should hold: its persisting namespaces and no
@@ -255,6 +348,8 @@ fn write_cache(path: &Path, file: &CacheFile) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    const HOST: &str = "production";
+
     #[test]
     fn a_push_replaces_that_namespace_and_environment_rather_than_merging() {
         let dir = tempfile::tempdir().unwrap();
@@ -263,6 +358,7 @@ mod tests {
 
         store
             .put(
+                HOST,
                 "vercel",
                 "production",
                 BTreeMap::from([("A".into(), "1".into()), ("B".into(), "2".into())]),
@@ -272,6 +368,7 @@ mod tests {
         // B is gone at the provider, so it must be gone here too.
         store
             .put(
+                HOST,
                 "vercel",
                 "production",
                 BTreeMap::from([("A".into(), "9".into())]),
@@ -294,6 +391,7 @@ mod tests {
         let store = ProviderSecrets::load(&dir.path().join("secrets-cache.json"));
         store
             .put(
+                HOST,
                 "v",
                 "production",
                 BTreeMap::from([("A".into(), "p".into())]),
@@ -302,6 +400,7 @@ mod tests {
             .unwrap();
         store
             .put(
+                HOST,
                 "v",
                 "staging",
                 BTreeMap::from([("A".into(), "s".into())]),
@@ -327,6 +426,7 @@ mod tests {
         let first = ProviderSecrets::load(&cache);
         first
             .put(
+                HOST,
                 "kept",
                 "production",
                 BTreeMap::from([("A".into(), "1".into())]),
@@ -335,6 +435,7 @@ mod tests {
             .unwrap();
         first
             .put(
+                HOST,
                 "gone",
                 "production",
                 BTreeMap::from([("B".into(), "2".into())]),
@@ -359,6 +460,7 @@ mod tests {
         let first = ProviderSecrets::load(&cache);
         first
             .put(
+                HOST,
                 "unpersisted",
                 "production",
                 BTreeMap::from([("A".into(), "1".into())]),
@@ -367,6 +469,7 @@ mod tests {
             .unwrap();
         first
             .put(
+                HOST,
                 "persisted",
                 "production",
                 BTreeMap::from([("B".into(), "2".into())]),
@@ -397,6 +500,7 @@ mod tests {
         let first = ProviderSecrets::load(&cache);
         first
             .put(
+                HOST,
                 "v",
                 "production",
                 BTreeMap::from([("A".into(), "1".into())]),
@@ -405,6 +509,7 @@ mod tests {
             .unwrap();
         first
             .put(
+                HOST,
                 "v",
                 "production",
                 BTreeMap::from([("A".into(), "2".into())]),
@@ -422,7 +527,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ProviderSecrets::load(&dir.path().join("secrets-cache.json"));
         store
-            .put("v", "production", BTreeMap::new(), false)
+            .put(HOST, "v", "production", BTreeMap::new(), false)
             .unwrap();
         assert!(store.pushed()["v"].contains("production"));
     }
@@ -435,6 +540,7 @@ mod tests {
         let cache = dir.path().join("secrets-cache.json");
         ProviderSecrets::load(&cache)
             .put(
+                HOST,
                 "v",
                 "production",
                 BTreeMap::from([("A".into(), "1".into())]),
@@ -467,6 +573,7 @@ mod tests {
         let store = ProviderSecrets::load(&dir.path().join("secrets-cache.json"));
         store
             .put(
+                HOST,
                 "vercel",
                 "production",
                 BTreeMap::from([("A".into(), "1".into())]),
@@ -492,6 +599,7 @@ mod tests {
         let first = ProviderSecrets::load(&cache);
         first
             .put(
+                HOST,
                 "vercel",
                 "production",
                 BTreeMap::from([("A".into(), "1".into())]),
@@ -499,7 +607,7 @@ mod tests {
             )
             .unwrap();
         first
-            .put("vercel", "staging", BTreeMap::new(), true)
+            .put(HOST, "vercel", "staging", BTreeMap::new(), true)
             .unwrap();
 
         let second = ProviderSecrets::load(&cache);
@@ -520,6 +628,7 @@ mod tests {
         let first = ProviderSecrets::load(&cache);
         first
             .put(
+                HOST,
                 "unpersisted",
                 "production",
                 BTreeMap::from([("A".into(), "1".into())]),
@@ -528,6 +637,7 @@ mod tests {
             .unwrap();
         first
             .put(
+                HOST,
                 "persisted",
                 "production",
                 BTreeMap::from([("B".into(), "2".into())]),
@@ -577,6 +687,7 @@ mod tests {
         let store = ProviderSecrets::load(&dir.path().join("secrets-cache.json"));
         store
             .put(
+                HOST,
                 "v",
                 "production",
                 BTreeMap::from([("A".into(), "hunter2".into())]),
@@ -585,5 +696,73 @@ mod tests {
             .unwrap();
         let rendered = format!("{store:?}");
         assert_eq!(rendered, "ProviderSecrets { namespaces: 1 }");
+    }
+
+    /// Only what a key resolves to in the host environment counts: the exact
+    /// slot, then `all`. A push the host cannot see, or a value an exact
+    /// slot shadows, moves nothing.
+    #[test]
+    fn a_push_reports_only_the_keys_whose_resolved_value_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProviderSecrets::load(&dir.path().join("secrets-cache.json"));
+        let pairs = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+                .collect()
+        };
+        let changed = |keys: &[&str]| -> BTreeSet<String> {
+            keys.iter().map(|key| (*key).to_string()).collect()
+        };
+        let put = |environment: &str, entries: &[(&str, &str)]| {
+            store
+                .put("production", "v", environment, pairs(entries), false)
+                .unwrap()
+                .changed
+        };
+        // Missing to found.
+        assert_eq!(
+            put(
+                "production",
+                &[("SAME", "1"), ("MOVED", "1"), ("DROPPED", "1")]
+            ),
+            changed(&["SAME", "MOVED", "DROPPED"]),
+            "a key the host could not resolve before and can now"
+        );
+        // Unchanged, value to value, found to missing, missing to found.
+        assert_eq!(
+            put(
+                "production",
+                &[("SAME", "1"), ("MOVED", "2"), ("ADDED", "1")]
+            ),
+            changed(&["MOVED", "DROPPED", "ADDED"]),
+        );
+        assert_eq!(
+            put(
+                "production",
+                &[("SAME", "1"), ("MOVED", "2"), ("ADDED", "1")]
+            ),
+            changed(&[])
+        );
+        // Another environment is invisible to the host.
+        assert_eq!(
+            put("staging", &[("SAME", "9"), ("OTHER", "9")]),
+            changed(&[])
+        );
+        // `all` is the fallback: it moves what the host has no exact slot
+        // for, and nothing an exact slot shadows.
+        assert_eq!(
+            put("all", &[("SAME", "9"), ("MOVED", "9"), ("FALLBACK", "9")]),
+            changed(&["FALLBACK"]),
+            "SAME and MOVED keep their production value"
+        );
+        // Dropping the exact slot uncovers the `all` value beneath it.
+        assert_eq!(
+            put("production", &[("SAME", "1"), ("ADDED", "1")]),
+            changed(&["MOVED"]),
+            "MOVED falls back to its `all` slot, which is a different value"
+        );
+        // A key with no `all` slot under it just goes missing.
+        assert_eq!(put("production", &[("SAME", "1")]), changed(&["ADDED"]));
     }
 }

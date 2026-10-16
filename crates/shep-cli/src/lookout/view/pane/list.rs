@@ -42,7 +42,7 @@ pub(super) fn list_lines(
     if body_budget == 0 {
         return lines;
     }
-    let secret = pane.fields().by_key(list.key()).is_some_and(|f| f.secret);
+    let secret = list.is_secret();
     let rows = list.rows();
     let cursor_row = list.view().cursor().min(rows.len().saturating_sub(1));
     lines.extend(scroll::to_cursor(
@@ -89,11 +89,11 @@ pub(super) fn list_line(
                         .unwrap_or_else(|| "(unset)".to_owned());
                     mask_secret(secret, raw)
                 },
-                |buffer| format!("{buffer}\u{258f}"),
+                |buffer| buffer.drawn(value_w),
             ),
         ),
         Some(ListRow::New) => match typed {
-            Some(buffer) => (String::new(), format!("{buffer}\u{258f}")),
+            Some(buffer) => (String::new(), buffer.drawn(value_w)),
             None => (String::new(), "+ new".to_owned()),
         },
         None => return Line::default(),
@@ -166,7 +166,7 @@ pub(super) fn list_body_from(
 #[cfg(test)]
 mod tests {
     use super::super::fixtures::{
-        marked, pane_to, screen_at, secret_list_dog_pane, text_of, web_pane, web_with_args,
+        marked, pane_to, screen_at, secret_array_dog_pane, text_of, web_pane, web_with_args,
     };
     use super::super::pane_lines;
     use super::*;
@@ -226,17 +226,15 @@ mod tests {
         );
     }
 
-    /// No Flockfile field is secret today, but a dog's schema can mark one,
-    /// and the list sub-screen has to mask it the same way the field list
-    /// and the confirm sentence already do.
+    /// No Flockfile field is secret today, and a dog's pane has no widget
+    /// for an array at all, so a secret array is one masked row everywhere
+    /// this screen could otherwise open.
     #[test]
-    fn the_list_screen_masks_a_secret_arrays_elements() {
-        let text = text_of(&pane_lines(
-            &secret_list_dog_pane(),
-            fixtures::plain(),
-            120,
-            0,
-        ));
+    fn a_dogs_secret_array_opens_no_list_screen_and_never_draws_its_elements() {
+        let mut pane = secret_array_dog_pane();
+        pane.open_list();
+        assert!(pane.list().is_none(), "a locked row opens no sub-screen");
+        let text = text_of(&pane_lines(&pane, fixtures::plain(), 120, 0));
         assert!(
             !text
                 .iter()
@@ -244,8 +242,8 @@ mod tests {
             "a secret element is never rendered: {text:?}"
         );
         assert!(
-            text.iter().filter(|line| line.contains("<set>")).count() == 2,
-            "both elements mask to <set>: {text:?}"
+            text.iter().any(|line| line.contains("<set>")),
+            "the row says there is one: {text:?}"
         );
     }
 
@@ -270,7 +268,7 @@ mod tests {
         ]));
         pane.move_to_key("args");
         pane.open_list();
-        pane.file_list_removal();
+        pane.file_list_removal().expect("filed");
         for height in 1..=20u16 {
             pane.list_mut().unwrap().move_to_first();
             let total = pane.list().unwrap().rows().len();

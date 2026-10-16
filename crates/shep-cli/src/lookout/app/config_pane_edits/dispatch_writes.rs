@@ -4,9 +4,11 @@ impl App {
     /// Everything the open pane has filed, as the requests that carry it,
     /// leaving the pane holding nothing.
     ///
-    /// Empty for no pane, for an empty set, and for a dog whose section
-    /// stopped parsing between the read and the keystroke, which is
-    /// reported rather than sent as an empty table.
+    /// Empty for no pane, for an empty set, and for a dog whose every filed
+    /// edit is one its section already carries, which needs no request and no
+    /// notice. Reported, not sent, for a dog whose section stopped parsing
+    /// between the read and the keystroke, or whose text holds something other
+    /// than the shape the row edits.
     ///
     /// A sheep's set is one request per entry and a dog's is one request
     /// for the lot: [`Sent::SetDogSection`] and [`Sent::SetSheepDogTable`]
@@ -22,18 +24,7 @@ impl App {
         let Some(authority) = WriteAuthority::granted(self) else {
             return Vec::new();
         };
-        // A direct field match, not `Self::config_pane_mut`: that helper
-        // borrows the whole struct for as long as `pane` lives, and this
-        // function still needs `self.next_write_ticket` while it is in
-        // scope.
-        let Some(pane) = (match &mut self.body {
-            Body::ConfigPane(pane) => Some(pane),
-            Body::FlockTable
-            | Body::Settings(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }) else {
+        let Some(pane) = self.body.config_pane_mut() else {
             return Vec::new();
         };
         let edits = pane.close();
@@ -43,21 +34,25 @@ impl App {
         let mut ticket = self.next_write_ticket;
         let sent = match pane.target().clone() {
             PaneTarget::Dog { name, .. } => match pane.edited_section_with(&edits) {
-                Some(toml) => {
+                SectionWrite::Written(toml) => {
                     let section = vec![Sent::SetDogSection {
                         name,
                         ticket,
-                        toml: toml.into(),
+                        toml,
                         authority,
                     }];
                     ticket += 1;
                     section
                 }
-                None => {
-                    self.notice = Some(Notice {
-                        text: format!("{name}: its section in dogs.toml does not parse"),
-                        grave: true,
-                    });
+                // The section already says what every filed edit asked for, so
+                // the close is finished and has nothing to send. Not a
+                // refusal, and nothing to report: the edit reached this arm
+                // through a re-read that landed it under the operator's hand.
+                SectionWrite::Nothing => Vec::new(),
+                SectionWrite::Refused => {
+                    self.notice = Some(Notice::grave(format!(
+                        "{name}: its section in dogs.toml does not parse, or is not shaped for the edit"
+                    )));
                     return Vec::new();
                 }
             },
@@ -117,7 +112,6 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::*;
     use super::*;
     use crate::lookout::app::testing::*;
 
@@ -407,5 +401,201 @@ mod tests {
             first[0], second[0],
             "a second close does not reuse the first's tickets"
         );
+    }
+
+    /// A dog pane's rows are dotted for a nested table, and the write walks
+    /// that path into the section: the text that comes back differs from the
+    /// text that went in in the one line the operator typed.
+    #[test]
+    fn a_dotted_dog_row_changes_one_line_of_its_section() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        pane_to(&mut app, "models.worker.model");
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        for _ in 0..64 {
+            let _ = app.update(Msg::Key(KeyPress::TextBackspace));
+        }
+        for typed in "large".chars() {
+            let _ = app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        let _ = app.update(Msg::Key(KeyPress::TextApply));
+        // `esc` reads the section again before writing it, the same door a
+        // sheep's batch closes through.
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Escape)) else {
+            panic!("a dog close reads its section first");
+        };
+        let effect = app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: fixtures::nested_dog_section().into(),
+            }),
+        });
+        let mut batch = wire_batch(effect);
+        let Sent::SetDogSection { name, toml, .. } = batch.remove(0) else {
+            panic!("closing the pane sends the section: {batch:?}");
+        };
+        assert_eq!(name, "jobs");
+        let before = fixtures::nested_dog_section();
+        let sent = toml.as_str();
+        let changed: Vec<(usize, &str, &str)> = sent
+            .lines()
+            .zip(before.lines())
+            .enumerate()
+            .filter(|(_, pair)| pair.0 != pair.1)
+            .map(|(line, pair)| (line, pair.0, pair.1))
+            .collect();
+        assert_eq!(
+            changed,
+            vec![(6, "model = \"large\"", "model = \"gpt\"")],
+            "{sent}",
+        );
+    }
+
+    /// The trigger: an unset filed on a key that someone else removes from
+    /// `dogs.toml` while the pane is open. The close re-reads, sees the section
+    /// moved, and holds the pane under the same edit. The second close finds
+    /// the key already gone, which is the edit already done, not a broken file.
+    #[test]
+    fn a_dog_unset_the_section_already_carries_closes_without_a_notice() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        pane_to(&mut app, "models.worker.model");
+        let _ = app.update(Msg::Key(KeyPress::Remove));
+        assert_eq!(
+            app.config_pane().expect("the pane is open").edits().len(),
+            1,
+            "d on a dog row files the removal"
+        );
+        let removed = fixtures::nested_dog_section().replace("model = \"gpt\"\n", "");
+
+        // First close: the section moved under the edit, so nothing is written
+        // and the pane stays up with it.
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Escape)) else {
+            panic!("a dog close reads its section first");
+        };
+        let effect = app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: removed.clone().into(),
+            }),
+        });
+        assert!(matches!(effect, Effect::None), "{effect:?}");
+        assert!(
+            app.config_pane().is_some(),
+            "a moved section holds the pane"
+        );
+
+        // Second close: the section is the one the pane holds now, and the one
+        // edit it carries is the removal the file already made.
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Escape)) else {
+            panic!("the second close reads again");
+        };
+        let effect = app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: removed.into(),
+            }),
+        });
+        assert!(matches!(effect, Effect::None), "{effect:?}");
+        assert!(
+            app.config_pane().is_none(),
+            "the close finishes: nothing to send is not a refusal"
+        );
+        assert_eq!(
+            app.notice().map(ToString::to_string),
+            None,
+            "the file parses and already says what the operator asked for"
+        );
+    }
+
+    /// `Enter` opens the sub-screen over a dog's list, an element added
+    /// there is filed whole, and the close writes the section back with that
+    /// one line changed: the comment above the list stays where it was.
+    #[test]
+    fn an_element_added_to_a_dogs_list_changes_one_line_of_its_section() {
+        let mut app = fixtures::app_in_dog_pane_with_lists();
+        pane_to(&mut app, "hosts");
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        let _ = app.update(Msg::Key(KeyPress::SelectLast));
+        let _ = app.update(Msg::Key(KeyPress::Edit));
+        for typed in "c.example".chars() {
+            let _ = app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        let _ = app.update(Msg::Key(KeyPress::TextApply));
+        assert_eq!(
+            filed_value(&app, "hosts"),
+            serde_json::json!(["a.example", "b.example", "c.example"])
+        );
+        let _ = app.update(Msg::Key(KeyPress::Escape));
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Escape)) else {
+            panic!("a dog close reads its section first");
+        };
+        let effect = app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: fixtures::list_dog_section().into(),
+            }),
+        });
+        let mut batch = wire_batch(effect);
+        let Sent::SetDogSection { name, toml, .. } = batch.remove(0) else {
+            panic!("closing the pane sends the section: {batch:?}");
+        };
+        assert_eq!(name, "watch");
+        let before = fixtures::list_dog_section();
+        let sent = toml.as_str();
+        let changed: Vec<(usize, &str, &str)> = sent
+            .lines()
+            .zip(before.lines())
+            .enumerate()
+            .filter(|(_, pair)| pair.0 != pair.1)
+            .map(|(line, pair)| (line, pair.0, pair.1))
+            .collect();
+        assert_eq!(
+            changed,
+            vec![(
+                1,
+                "hosts = [\"a.example\", \"b.example\", \"c.example\"]",
+                "hosts = [\"a.example\", \"b.example\"]"
+            )],
+            "{sent}",
+        );
+        assert_eq!(sent.lines().count(), before.lines().count(), "{sent}");
+    }
+
+    /// The item schema's rules are the sub-screen's, not the sheep pane's:
+    /// `hosts` items need three characters, and a shorter one files nothing.
+    #[test]
+    fn an_element_a_dogs_item_schema_refuses_files_nothing() {
+        let mut app = fixtures::app_in_dog_pane_with_lists();
+        pane_to(&mut app, "hosts");
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        let _ = app.update(Msg::Key(KeyPress::SelectLast));
+        let _ = app.update(Msg::Key(KeyPress::Edit));
+        let _ = app.update(Msg::Key(KeyPress::TextChar('x')));
+        assert_eq!(app.update(Msg::Key(KeyPress::TextApply)), Effect::None);
+        assert_eq!(app.mode(), InputMode::Text, "the editor stays open");
+        let notice = app.notice().expect("a refusal answers");
+        assert!(notice.is_grave(), "{notice}");
+        assert!(notice.to_string().starts_with("hosts is \"x\""), "{notice}");
+        assert!(
+            app.config_pane()
+                .expect("the pane is open")
+                .edits()
+                .is_empty(),
+            "nothing was filed"
+        );
+    }
+
+    /// `Enter` on a secret list or a map raises the no-editor refusal and
+    /// opens nothing: the sub-screen would draw a secret's elements bare.
+    #[test]
+    fn enter_on_a_dogs_secret_list_or_map_opens_no_sub_screen() {
+        for key in ["keys", "labels"] {
+            let mut app = fixtures::app_in_dog_pane_with_lists();
+            pane_to(&mut app, key);
+            let _ = app.update(Msg::Key(KeyPress::Confirm));
+            let pane = app.config_pane().expect("the pane is open");
+            assert!(pane.list().is_none(), "{key}");
+            let notice = app.notice().expect("a locked row answers").to_string();
+            assert!(notice.contains("no editor in this pane"), "{key}: {notice}");
+        }
     }
 }

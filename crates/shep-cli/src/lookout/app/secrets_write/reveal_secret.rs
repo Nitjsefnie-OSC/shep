@@ -35,10 +35,9 @@ impl App {
     /// open gives.
     pub(in crate::lookout::app) fn reveal_selected(&mut self) -> Effect {
         if !self.reveal_gate_open() {
-            self.notice = Some(Notice {
-                text: crate::commands::secret::HOW_TO_ALLOW_READ.to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(
+                crate::commands::secret::HOW_TO_ALLOW_READ.to_string(),
+            ));
             return Effect::None;
         }
         let Some(pane) = self.secrets_pane_mut() else {
@@ -81,10 +80,9 @@ impl App {
     /// selection.
     pub(in crate::lookout::app) fn copy_revealed(&mut self) -> Effect {
         if !self.reveal_gate_open() {
-            self.notice = Some(Notice {
-                text: crate::commands::secret::HOW_TO_ALLOW_READ.to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(
+                crate::commands::secret::HOW_TO_ALLOW_READ.to_string(),
+            ));
             return Effect::None;
         }
         let Some(value) = self
@@ -94,10 +92,7 @@ impl App {
         else {
             return Effect::None;
         };
-        self.notice = Some(Notice {
-            text: COPY_SENT_NOTICE.to_string(),
-            grave: false,
-        });
+        self.notice = Some(Notice::info(COPY_SENT_NOTICE.to_string()));
         Effect::CopyToClipboard(ClipboardValue(value))
     }
 
@@ -136,7 +131,6 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::*;
     use super::super::testing::*;
     use super::*;
     use crate::lookout::secrets::SecretRow;

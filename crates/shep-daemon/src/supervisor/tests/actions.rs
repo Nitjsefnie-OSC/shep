@@ -111,6 +111,9 @@ async fn a_metric_on_the_channel_reaches_the_bus_with_its_name_and_value() {
         .send(ChildMessage::Metric {
             name: "rps".to_string(),
             value: 42.0,
+            metric_type: None,
+            labels: std::collections::BTreeMap::new(),
+            help: None,
         })
         .await
         .unwrap();
@@ -132,9 +135,41 @@ async fn a_metric_on_the_channel_reaches_the_bus_with_its_name_and_value() {
             ChildMessage::Metric {
                 name: "rps".to_string(),
                 value: 42.0,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
             }
         )
     );
+}
+
+/// fails if a note is acted on or dropped instead of reaching the bus.
+#[tokio::test(start_paused = true)]
+async fn a_note_on_the_channel_reaches_the_bus_as_it_was_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = AppConfig::minimal("web", "./srv");
+    app.channel = true;
+    let (_handle, runner, mut events) = started(&dir, app, vec![ProcScript::never_exits()]).await;
+    let io = runner.io_handles(0);
+    let note = ChildMessage::Note {
+        name: "lease.web.want.1760500000".to_string(),
+        value: 1.0,
+    };
+
+    io.from_child_tx.send(note.clone()).await.unwrap();
+
+    let seen = tokio::time::timeout(ACTION_WINDOW, async {
+        loop {
+            let event = events.recv().await.unwrap().to_event();
+            if let BusEvent::Channel { id, message } = &event {
+                break (*id, message.clone(), event.topic().into_owned());
+            }
+        }
+    })
+    .await
+    .expect("no channel event within the window");
+
+    assert_eq!(seen, (0, note, "channel.note".to_string()));
 }
 
 /// fails if an `action-reply` nobody is waiting for is dropped before the
@@ -485,6 +520,7 @@ async fn a_lamb_label_on_the_channel_reaches_the_describe_walk() {
             .extras(Extras {
                 clock: Arc::new(SystemClock),
                 enforcer: Arc::new(RecordingEnforcer::default()),
+                lamb_sweep: idle_sweep(),
                 max_cron_sleep: DEFAULT_MAX_CRON_SLEEP,
                 reports: ExtrasReports { breaches, liveness },
                 stats: Arc::clone(&stats),

@@ -200,6 +200,7 @@ impl BusEvent {
                 ChildMessage::Metric { .. } => "channel.metric",
                 ChildMessage::ActionReply { .. } => "channel.action_reply",
                 ChildMessage::LambLabel { .. } => "channel.lamb_label",
+                ChildMessage::Note { .. } => "channel.note",
             },
             Self::Dropped { .. } => "daemon.dropped",
             Self::DaemonShutdown => "daemon.shutdown",
@@ -222,8 +223,8 @@ impl BusEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::LambLabel;
     use crate::protocol::request::{ExitInfo, ProcessInfo};
+    use crate::protocol::{LambLabel, MetricType};
     use crate::status::ProcStatus;
 
     /// The comment above this enum said a new variant is not free because
@@ -305,6 +306,8 @@ mod tests {
                     max_memory: None,
                     level_rules: Vec::new(),
                     reload_deadline_ms: None,
+                    disabled: None,
+                    log_timestamps: None,
                 },
                 manually: false,
                 at_ms: 1_700_000_000_000,
@@ -373,6 +376,9 @@ mod tests {
                 message: ChildMessage::Metric {
                     name: "rps".to_string(),
                     value: 42.0,
+                    metric_type: None,
+                    labels: std::collections::BTreeMap::new(),
+                    help: None,
                 },
             },
             BusEvent::Channel {
@@ -466,6 +472,9 @@ mod tests {
                 ChildMessage::Metric {
                     name: "rps".to_string(),
                     value: 42.0,
+                    metric_type: None,
+                    labels: std::collections::BTreeMap::new(),
+                    help: None,
                 },
                 "channel.metric",
             ),
@@ -483,6 +492,13 @@ mod tests {
                     label: LambLabel::new("worker 1").unwrap(),
                 },
                 "channel.lamb_label",
+            ),
+            (
+                ChildMessage::Note {
+                    name: "lease.web.want.1".to_string(),
+                    value: 1.0,
+                },
+                "channel.note",
             ),
         ] {
             let event = BusEvent::Channel {
@@ -502,6 +518,9 @@ mod tests {
             ChildMessage::Metric {
                 name: "rps".to_string(),
                 value: 1.0,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
             },
             ChildMessage::ActionReply {
                 action: "gc".to_string(),
@@ -511,6 +530,10 @@ mod tests {
             ChildMessage::LambLabel {
                 pid: 1,
                 label: LambLabel::new("").unwrap(),
+            },
+            ChildMessage::Note {
+                name: String::new(),
+                value: 0.0,
             },
         ] {
             let topic = BusEvent::Channel { id: 1, message }.topic();
@@ -534,6 +557,25 @@ mod tests {
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("freed 12MB"), "{json}");
+        assert_eq!(serde_json::from_str::<BusEvent>(&json).unwrap(), event);
+    }
+
+    /// The bus carries the whole message, new optional fields included.
+    #[test]
+    fn a_bus_event_carries_a_labelled_metric_through_the_wire() {
+        let event = BusEvent::Channel {
+            id: 3,
+            message: ChildMessage::Metric {
+                name: "queue_depth".to_string(),
+                value: 3.0,
+                metric_type: Some(MetricType::Counter),
+                labels: [("model".to_string(), "qwen".to_string())].into(),
+                help: Some("Requests waiting for the lease.".to_string()),
+            },
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"counter""#), "{json}");
+        assert!(json.contains(r#""labels":{"model":"qwen"}"#), "{json}");
         assert_eq!(serde_json::from_str::<BusEvent>(&json).unwrap(), event);
     }
 

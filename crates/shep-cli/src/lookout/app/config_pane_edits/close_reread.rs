@@ -6,6 +6,7 @@
 //! unchanged table is written and the pane closes. A moved one stays on
 //! screen under the operator's edits.
 
+use super::super::dog_pane::moved_entries;
 use super::super::*;
 
 impl App {
@@ -56,25 +57,23 @@ impl App {
                     return self.write_and_close();
                 }
                 self.refresh_sheep_dog_pane(&view);
-                return self.hold(format!("{sheep}: its {dog} table"));
+                return self.hold(format!("{sheep}: its {dog} table"), 0);
             }
             (Ok(Response::DogSection { toml }), PaneTarget::Dog { .. }) => {
                 if pane.holds_section(toml.as_str()) {
                     return self.write_and_close();
                 }
-                let _ = self.on_dog_section(name, Ok(Response::DogSection { toml }));
-                return self.hold(format!("{name}: its section in dogs.toml"));
+                let dropped = match self.dog_target.clone() {
+                    Some(probe) => self.rebuild_dog_pane(probe, toml.as_str()),
+                    None => 0,
+                };
+                return self.hold(format!("{name}: its section in dogs.toml"), dropped);
             }
-            (Ok(_unrecognised), _) => {
-                "the shepherd answered something this lookout does not understand".to_owned()
-            }
-            (Err(RequestError::Rpc(err)), _) => err.message,
-            (Err(other), _) => other.to_string(),
+            (other, _) => failed_reply(other),
         };
-        self.notice = Some(Notice {
-            text: format!("{name}: {why}, so nothing was written"),
-            grave: true,
-        });
+        self.notice = Some(Notice::grave(format!(
+            "{name}: {why}, so nothing was written"
+        )));
         Effect::None
     }
 
@@ -88,8 +87,14 @@ impl App {
         }
     }
 
-    /// Sends everything the pane has filed and closes it.
+    /// Sends everything the pane has filed and closes it, unless a filed
+    /// union lacks a field its arm requires: a key pressed while the read
+    /// was out can have picked a tag after `Escape` checked.
     fn write_and_close(&mut self) -> Effect {
+        if let Some(text) = self.config_pane().and_then(ConfigPane::incomplete_union) {
+            self.notice = Some(Notice::grave(text));
+            return Effect::None;
+        }
         let writes = self.take_pane_writes();
         self.close_pane();
         if writes.is_empty() {
@@ -100,15 +105,18 @@ impl App {
     }
 
     /// Says why a pane that took a moved table is still up. `subject`
-    /// names the table and never a value in it.
-    fn hold(&mut self, subject: String) -> Effect {
-        self.notice = Some(Notice {
-            text: format!(
-                "{subject} changed while this pane was open, so nothing was written; \
-                 esc writes your edits over the new values"
-            ),
-            grave: true,
-        });
+    /// names the table and never a value in it. `dropped` is how many edits
+    /// the new table took no further.
+    fn hold(&mut self, subject: String, dropped: usize) -> Effect {
+        let lost = if dropped > 0 {
+            format!("; {}", moved_entries(dropped))
+        } else {
+            String::new()
+        };
+        self.notice = Some(Notice::grave(format!(
+            "{subject} changed while this pane was open, so nothing was written; \
+             esc writes your edits over the new values{lost}"
+        )));
         Effect::None
     }
 }

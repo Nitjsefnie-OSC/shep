@@ -273,7 +273,7 @@ Dogs
     </p>
     <p>
       <code>enable</code>, <code>disable</code>, <code>adopt</code> and{" "}
-      <code>rehome</code> print a one-row confirmation with the same
+      <code>delete</code> on a dog print a one-row confirmation with the same
       treatment. Their <code>STATUS</code> holds either a status or a
       sentence saying why no shepherd answered, and only a status is
       coloured; a sentence is left plain, because a colour repeating the
@@ -604,6 +604,14 @@ web:2 | listening`}</CodeBlock>
       the file itself says which instance wrote a line. Lines read live after
       that come from the daemon's own per-sheep events and carry their slot
       as normal.
+    </p>
+    <p>
+      A line with no colour of its own arrives in the colour of its stream:
+      green for stdout, red for stderr, and the <code>name |</code> label
+      stays plain. A line that already colours itself keeps its own.
+      <code>NO_COLOR</code> and a pipe add none. Table output drops the
+      escapes that could move the cursor or redraw the row;{" "}
+      <code>--format json</code> carries the raw bytes.
     </p>
   </article>
 </DocsLayout>

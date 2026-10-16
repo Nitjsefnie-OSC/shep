@@ -10,6 +10,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-16
+
+
+## [0.15.0] - 2026-10-15
+
+### Added
+
+- Let a sheep send a dog a note that is not a metric sample **(BREAKING)**
+
+### Fixed
+
+- --no-log-timestamps reaches a sheep the flock already has
+
+
+## [0.14.0] - 2026-10-14
+
+### Added
+
+- The metrics dog serves the samples a sheep sends on its channel
+
+
+## [0.13.0] - 2026-10-13
+
+### Added
+
+- Ask for the resolved section in dog_config
+
+### Fixed
+
+- Read a reference through the shared tokenizer on the fallback path
+
+
+## [0.12.5] - 2026-10-07
+
+
+## [0.12.4] - 2026-10-06
+
+### Added
+
+- Add STOP_DEADLINE and a slow-daemon test fake
+
+
+## [0.12.3] - 2026-10-02
+
+
+## [0.12.2] - 2026-10-02
+
+
+## [0.12.1] - 2026-10-02
+
+
+## [0.12.0] - 2026-09-30
+
+### Added
+
+- Let a dog ask for the shepherd channel through dogs::Probe
+
+
 ## [0.11.0] - 2026-09-29
 
 ### Added

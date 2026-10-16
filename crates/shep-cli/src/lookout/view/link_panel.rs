@@ -15,7 +15,7 @@ use super::super::link::{RECONNECT_ATTEMPTS, RECONNECT_FIRST_WAIT, RECONNECT_MAX
 use super::detail::chip_text;
 use super::flock::fit;
 use crate::output::human_duration;
-use crate::output::width::char_columns;
+use crate::output::width::text_columns;
 use crate::vocabulary::Role;
 
 /// The panel's rows: one rule and five lines.
@@ -120,7 +120,7 @@ pub fn panel_lines(app: &App, width: u16) -> Vec<Line<'static>> {
 /// `"  <name>"` padded to [`LABEL_WIDTH`].
 fn label(name: &str) -> String {
     let text = format!("  {name}");
-    let used: usize = text.chars().map(char_columns).sum();
+    let used: usize = text_columns(&text);
     format!("{text}{}", " ".repeat(LABEL_WIDTH.saturating_sub(used)))
 }
 
@@ -177,7 +177,7 @@ fn clamp(line: Line<'static>, width: u16) -> Line<'static> {
         if budget == 0 {
             break;
         }
-        let used: usize = span.content.chars().map(char_columns).sum();
+        let used: usize = text_columns(&span.content);
         if used <= budget {
             budget -= used;
             spans.push(span);
@@ -195,7 +195,7 @@ mod tests {
     use super::super::super::app::Msg;
     use super::super::fixtures;
     use super::*;
-    use crate::output::width::visible_width;
+    use crate::output::width::{char_columns, visible_width};
 
     fn frozen() -> App {
         let mut app = fixtures::full_app();

@@ -6,12 +6,15 @@
 //! touched, the schema's or not, goes back exactly as it came.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
 use super::super::edits::{EditKey, Edits};
 use super::super::field::{Flattened, flatten_values, flattened};
 use super::super::viewport::Viewport;
+use super::entries::EntryRows;
+use super::union::arm_fields;
 use super::{ConfigPane, PaneEdit, PaneTarget};
 
 /// The table a [`ConfigPane::sheep_dog`] pane edits, and where each of its
@@ -23,7 +26,7 @@ use super::{ConfigPane, PaneEdit, PaneTarget};
 pub(in crate::lookout) struct SheepDogTable {
     /// Dotted row key to the real key path. A row key is never split on its
     /// dots, since a property can be named `a.b`.
-    paths: BTreeMap<String, Vec<String>>,
+    pub(super) paths: BTreeMap<String, Vec<String>>,
     /// The table as the shepherd holds it, keys the schema does not name
     /// included.
     table: Map<String, Value>,
@@ -45,7 +48,8 @@ impl ConfigPane {
     ///
     /// `schema` is the dog's `x-shep-sheep` answer with the root's `$defs`
     /// attached; `table` is what the sheep carries for it, empty for none.
-    /// Flat, in key order, with no group headers, like [`Self::dog`].
+    /// In key order, with no group headers, a tree of tables like
+    /// [`Self::dog`].
     #[must_use]
     pub fn sheep_dog(
         sheep: String,
@@ -53,8 +57,15 @@ impl ConfigPane {
         schema: &Value,
         table: Map<String, Value>,
     ) -> Self {
-        let Flattened { fields, paths } = flattened(schema);
+        let Flattened {
+            fields,
+            paths,
+            outline,
+            shapes,
+        } = flattened(schema);
         let values = flatten_values(&table, &paths);
+        let entries = EntryRows::build(&fields, &paths, &values, shapes);
+        let arms = Arc::new(arm_fields(&fields));
         Self {
             target: PaneTarget::SheepDog { sheep, dog },
             fields,
@@ -71,6 +82,12 @@ impl ConfigPane {
             dogs: None,
             section: None,
             dog_table: Some(Box::new(SheepDogTable { paths, table })),
+            reshapes: Arc::default(),
+            arms,
+            section_paths: Arc::default(),
+            open: outline.top_level_paths(),
+            outline: Arc::new(outline),
+            entries: Arc::new(entries),
         }
     }
 
@@ -109,14 +126,23 @@ impl ConfigPane {
 
     /// Replaces the table under an open pane with the shepherd's current
     /// one, keeping the cursor and the filed edits. An open editor is
-    /// dropped, for the reason [`Self::adopt_edits`] gives.
+    /// dropped, for the reason [`Self::adopt_edits`] gives. An open list
+    /// sub-screen is reseeded from the filed elements, at its cursor.
     pub(in crate::lookout) fn adopt_table(&mut self, table: Map<String, Value>) {
         let Some(state) = self.dog_table.as_mut() else {
             return;
         };
         self.values = flatten_values(&table, &state.paths);
         state.table = table;
+        self.entries = Arc::new(
+            self.entries
+                .rebuilt(&self.fields, &state.paths, &self.values),
+        );
+        self.retain_known_open();
         self.typing = None;
+        if let Some(list) = self.list.take() {
+            self.adopt_list_view(list.key(), list.view().clone());
+        }
     }
 }
 
@@ -156,6 +182,7 @@ fn write_at(table: &mut Map<String, Value>, path: &[String], value: &Value) {
 mod tests {
     use serde_json::json;
 
+    use super::super::Lock;
     use super::super::fixtures::field;
     use super::*;
     use crate::lookout::view::fixtures::{plain, render_all};
@@ -255,12 +282,13 @@ mod tests {
 
     #[test]
     fn a_secret_draws_set_and_its_value_reaches_no_row() {
-        let pane = jobs_pane();
+        let mut pane = jobs_pane();
+        pane.move_to_key("models.worker.token");
         let text = render_all(&pane_lines(&pane, plain(), 160, 0));
         assert!(!text.contains("sk-live-51Hx9Qa"), "{text}");
         let token_row = text
             .lines()
-            .find(|line| line.contains("models.worker.token"))
+            .find(|line| line.starts_with('>'))
             .expect("the secret has a row");
         assert!(token_row.contains("<set>"), "{token_row}");
     }
@@ -333,6 +361,154 @@ mod tests {
         );
     }
 
+    /// `worker.allowed_domains` as a dog's own schema writes it: a list
+    /// whose items are a `$ref`, one table down, beside an array of
+    /// tables the pane has no editor for.
+    fn worker_schema() -> Value {
+        json!({
+            "$ref": "#/$defs/Settings",
+            "$defs": {
+                "Settings": {
+                    "type": "object",
+                    "properties": {
+                        "worker": { "$ref": "#/$defs/Worker" },
+                        "hosts": { "type": "array", "items": { "$ref": "#/$defs/Host" } },
+                    },
+                },
+                "Worker": {
+                    "type": "object",
+                    "properties": {
+                        "allowed_domains": {
+                            "type": "array",
+                            "items": { "$ref": "#/$defs/NonBlank" },
+                        },
+                    },
+                },
+                "Host": {
+                    "type": "object",
+                    "properties": { "name": { "type": "string" } },
+                },
+                "NonBlank": { "type": "string" },
+            },
+        })
+    }
+
+    #[test]
+    fn a_nested_list_opens_the_list_sub_screen_and_writes_at_its_path() {
+        let stored = json!({
+            "worker": { "allowed_domains": ["a.example"], "kept": 1 },
+            "hosts": [{ "name": "h" }],
+        });
+        let mut pane = ConfigPane::sheep_dog(
+            "web".into(),
+            "jobs".into(),
+            &worker_schema(),
+            stored.as_object().cloned().expect("a table"),
+        );
+        pane.move_to_key("worker.allowed_domains");
+        pane.open_list();
+        let list = pane.list_mut().expect("the list sub-screen opens");
+        assert_eq!(list.key(), "worker.allowed_domains");
+        assert_eq!(list.elements(), ["a.example"]);
+        list.move_to_last();
+        pane.file_list_element("b.example".into()).expect("filed");
+
+        let table = pane.edited_table_with(pane.edits());
+        assert_eq!(
+            table["worker"],
+            json!({ "allowed_domains": ["a.example", "b.example"], "kept": 1 })
+        );
+        assert_eq!(table["hosts"], json!([{ "name": "h" }]));
+    }
+
+    /// A refresh replaces the shepherd's table under an open sub-screen,
+    /// and the next keystroke rebuilds the whole array from the
+    /// sub-screen's own elements: left on the old array, it would write
+    /// that one over what the shepherd now holds.
+    #[test]
+    fn a_refresh_under_an_open_list_shows_the_shepherds_new_array() {
+        let stored = json!({ "worker": { "allowed_domains": ["a.example"] } });
+        let mut pane = ConfigPane::sheep_dog(
+            "web".into(),
+            "jobs".into(),
+            &worker_schema(),
+            stored.as_object().cloned().expect("a table"),
+        );
+        pane.move_to_key("worker.allowed_domains");
+        pane.open_list();
+
+        let fresh = json!({ "worker": { "allowed_domains": ["a.example", "c.example"] } });
+        pane.adopt_table(fresh.as_object().cloned().expect("a table"));
+        let list = pane.list_mut().expect("the sub-screen stays open");
+        assert_eq!(list.elements(), ["a.example", "c.example"]);
+
+        list.move_to_last();
+        pane.file_list_element("b.example".into()).expect("filed");
+        let table = pane.edited_table_with(pane.edits());
+        assert_eq!(
+            table["worker"]["allowed_domains"],
+            json!(["a.example", "c.example", "b.example"])
+        );
+    }
+
+    #[test]
+    fn an_array_of_tables_opens_no_list_sub_screen() {
+        let mut pane =
+            ConfigPane::sheep_dog("web".into(), "jobs".into(), &worker_schema(), Map::new());
+        pane.move_to_key("hosts");
+        pane.open_list();
+        assert!(pane.list().is_none());
+        assert!(pane.lock("hosts").is_some());
+    }
+
+    /// A list of `Option<String>` is one read-only row, so an edit
+    /// elsewhere cannot turn its stored `null` into `"null"`.
+    #[test]
+    fn a_list_with_a_null_item_is_read_only_and_keeps_its_null() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "aliases": { "type": "array", "items": { "type": ["string", "null"] } },
+            },
+        });
+        let stored = json!({ "aliases": ["a", null] });
+        let table = stored.as_object().cloned().expect("a table");
+        let pane = ConfigPane::sheep_dog("web".into(), "jobs".into(), &schema, table.clone());
+        assert_eq!(pane.lock("aliases"), Some(Lock::NoWidget));
+        assert_eq!(pane.edited_table_with(&Edits::default()), table);
+    }
+
+    /// A dog whose array item is an alias back to the array. The row opens
+    /// rather than taking the process down with it: the schema is a third
+    /// party's, and `bounds_of` ends its item walk at a schema already on
+    /// the path, an alias included.
+    #[test]
+    fn a_dog_whose_item_aliases_back_to_its_array_still_opens_its_pane() {
+        let schema = json!({
+            "$ref": "#/$defs/Tree",
+            "$defs": {
+                "Tree": {
+                    "type": "object",
+                    "properties": { "branches": { "$ref": "#/$defs/Branches" } },
+                },
+                "Branches": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/Branch" },
+                    "minLength": 1,
+                },
+                "Branch": { "$ref": "#/$defs/Branches" },
+            },
+        });
+        let pane = ConfigPane::sheep_dog("web".into(), "jobs".into(), &schema, Map::new());
+        let bounds = &pane
+            .fields()
+            .by_key("branches")
+            .expect("the row is there")
+            .bounds;
+        assert_eq!(bounds.min_length, Some(1));
+        assert!(bounds.items.is_some(), "the item bounds are read");
+    }
+
     #[test]
     fn no_edit_gives_back_the_table_as_it_came() {
         assert_eq!(
@@ -362,5 +538,22 @@ mod tests {
         );
         let state = pane.dog_table.as_ref().expect("a table pane");
         assert_eq!(format!("{state:?}"), "SheepDogTable { rows: 6, keys: 5 }");
+    }
+
+    /// A re-read replaces the table under the pane, and the tables the
+    /// operator opened stay open under the cursor they were opened with.
+    #[test]
+    fn a_refresh_keeps_the_open_tables_and_the_cursor() {
+        let mut pane = jobs_pane();
+        pane.move_to_key("models.worker.model");
+        let cursor = pane.cursor();
+        assert!(pane.open_tables().contains("models.worker"));
+
+        let fresh = json!({ "models": { "worker": { "model": "large" } } });
+        pane.adopt_table(fresh.as_object().cloned().expect("a table"));
+        assert!(pane.open_tables().contains("models.worker"));
+        assert!(pane.open_tables().contains("models"));
+        assert_eq!(pane.cursor(), cursor);
+        assert_eq!(pane.value("models.worker.model"), "large");
     }
 }

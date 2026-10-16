@@ -128,14 +128,25 @@ async fn sheep_config_view(
 }
 
 mod apply_config;
+mod disable_enable;
+mod disable_roll;
+mod disabled_reload;
+mod disabled_restarts;
+mod disabled_wildcards;
+mod dog_at_rest;
+mod dog_delete;
+mod dog_disable;
 mod dog_env;
 mod dog_fields;
 mod dog_lifecycle;
+mod dog_secrets;
+mod dog_secrets_rotation;
 mod dog_table_events;
 mod dog_tables;
 mod lambs_staleness;
 mod misc_verbs;
 mod push;
+mod sheep_dog_names;
 mod start_add;
 mod stats;
 mod trigger_signal;

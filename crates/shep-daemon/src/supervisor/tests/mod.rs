@@ -12,12 +12,12 @@ use shep_core::values::{MemSize, UpDuration};
 use super::*;
 use crate::cron::{DEFAULT_MAX_CRON_SLEEP, SystemClock};
 use crate::extras::{ExtrasReports, spawn_extras_reporter};
-use crate::fake::{ProcScript, ScriptedRunner};
+use crate::fake::{ProcScript, ScriptedRunner, idle_sweep};
 use crate::limits::LimitEnforcer;
 use crate::testing::capture_logs;
 use crate::testing::{
     Harness, RecordingEnforcer, ScriptedProber, SharedRunner, app_with, armed_entry, harness,
-    idle_stats, probe_config, test_paths,
+    idle_stats, plain_entry, probe_config, test_paths,
 };
 #[cfg(unix)]
 use crate::tokio_runner::TokioRunner;
@@ -39,12 +39,16 @@ mod config_rearm;
 mod config_report;
 mod config_reset;
 mod credentials;
+mod disable_in_flight;
+mod disabled_respawn;
 mod dogs;
+mod dogs_at_rest;
 mod env_batch;
 mod flush;
 #[cfg(unix)]
 mod handover;
 mod interleaving;
+mod lamb_sweep;
 mod readiness;
 mod reload_bus;
 mod reload_drain;
@@ -143,12 +147,9 @@ fn test_actor(
         registry: ExtrasRegistry::default(),
         reloads: HashMap::new(),
         smits: Smits::new(),
+        disabled: BTreeSet::new(),
     }
 }
-
-// --- The readiness gate ---
-
-// --- Concurrency regression guards ---
 
 // --- `Stopping`: the drainee, against the guards it must never pass ---
 //
@@ -224,24 +225,46 @@ async fn expect_event(
     );
 }
 
-/// One started app, the runner behind it and a bus subscriber.
-///
-/// The runner is shared rather than moved so a case can read
-/// `kill_counts().len()`, the number of spawns that succeeded.
-async fn started(
-    dir: &tempfile::TempDir,
-    app: AppConfig,
-    scripts: Vec<ProcScript>,
-) -> (
+/// What [`started`] and [`started_apps`] hand back: the handle, the runner
+/// behind it, one bus subscriber.
+type Started = (
     SupervisorHandle,
     Arc<ScriptedRunner>,
     tokio::sync::broadcast::Receiver<SharedEvent>,
-) {
-    let (events, rx) = crate::bus::test_bus(256);
+);
+
+/// The apps in `apps`, all started through one `Start`, their runner and a
+/// bus subscriber.
+///
+/// `bus_capacity` is a parameter, not one size for every case: the cases
+/// that read a whole run off one receiver, `shutdown.rs`'s `drain_kinds`,
+/// stop at the first `Lagged`, so a bus narrower than the run's event count
+/// drops events the case asserts on. A case that only waits for named events
+/// can hold a narrow one, and `started` does.
+///
+/// The runner is shared rather than moved so a case can read
+/// `kill_counts().len()`, the number of spawns that succeeded.
+async fn started_apps(
+    dir: &tempfile::TempDir,
+    apps: Vec<AppConfig>,
+    scripts: Vec<ProcScript>,
+    bus_capacity: usize,
+) -> Started {
+    let (events, rx) = crate::bus::test_bus(bus_capacity);
     let runner = Arc::new(ScriptedRunner::new(scripts));
     let handle = spawn_supervisor(SharedRunner(Arc::clone(&runner)), test_paths(dir), events);
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
+    let apps = apps
+        .into_iter()
+        .map(|app| normalize(app).unwrap())
+        .collect::<Vec<_>>();
+    handle.start(apps).await.unwrap();
     (handle, runner, rx)
+}
+
+/// One started app: [`started_apps`] on one app, at the bus size no
+/// single-app case has outgrown.
+async fn started(dir: &tempfile::TempDir, app: AppConfig, scripts: Vec<ProcScript>) -> Started {
+    started_apps(dir, vec![app], scripts, 256).await
 }
 
 /// A bare actor holding one `Online` sheep, for the cases that drive a
@@ -764,19 +787,21 @@ impl RunningProcess for StandInProc {
 fn stand_in_io() -> ProcIo {
     let (_logs_tx, logs) = mpsc::channel(1);
     let (_from_child_tx, from_child) = mpsc::channel(1);
-    let (to_child, to_child_rx) = mpsc::channel(1);
-    drop(to_child_rx);
-    let (log_ctl, log_ctl_rx) = mpsc::channel(1);
-    drop(log_ctl_rx);
-    let (to_stdin, to_stdin_rx) = mpsc::channel(1);
-    drop(to_stdin_rx);
     ProcIo {
         logs,
         from_child,
-        to_child,
-        log_ctl,
-        to_stdin,
+        to_child: closed_tx(),
+        log_ctl: closed_tx(),
+        to_stdin: closed_tx(),
     }
+}
+
+/// A sender with nothing on the far end of it, so every send fails at once.
+#[cfg(unix)]
+fn closed_tx<T>() -> mpsc::Sender<T> {
+    let (tx, rx) = mpsc::channel(1);
+    drop(rx);
+    tx
 }
 
 #[cfg(unix)]
@@ -834,28 +859,12 @@ fn carried_marked(
     ready_failed: bool,
     mutate: impl FnOnce(&mut ProcessEntry),
 ) -> CarriedSheep {
-    let mut app = AppConfig::minimal(name, "./srv");
     // Nothing here wants a respawn: an automatic restart would spawn a
     // second process behind the assertions.
-    app.autorestart = false;
+    let spec = app_with(name, |app| app.autorestart = false);
     let mut entry = ProcessEntry {
-        id,
-        spec: normalize(app).unwrap(),
-        pending: None,
-        pending_reidentifies: false,
-        overridden: Vec::new(),
-        instance: 0,
-        status: ProcStatus::Online,
         pid,
-        restarts: 0,
-        started_at: None,
-        budget: RestartBudget::default(),
-        reload: ReloadState::None,
-        credentials: SpawnIdentity::Resolved(None),
-        out_file: PathBuf::new(),
-        err_file: PathBuf::new(),
-        dog: None,
-        last_exit: None,
+        ..plain_entry(id, spec)
     };
     mutate(&mut entry);
     CarriedSheep::from_entry(
@@ -881,26 +890,11 @@ fn carried_owed_a_restart(
     delay: shep_core::values::UpDuration,
     due: Option<SystemTime>,
 ) -> CarriedSheep {
-    let mut app = AppConfig::minimal(name, "./srv");
-    app.restart_delay = Some(delay);
+    let spec = app_with(name, |app| app.restart_delay = Some(delay));
     let entry = ProcessEntry {
-        id,
-        spec: normalize(app).unwrap(),
-        pending: None,
-        pending_reidentifies: false,
-        overridden: Vec::new(),
-        instance: 0,
         status: ProcStatus::WaitingRestart,
-        pid: None,
         restarts: 1,
-        started_at: None,
-        budget: RestartBudget::default(),
-        reload: ReloadState::None,
-        credentials: SpawnIdentity::Resolved(None),
-        out_file: PathBuf::new(),
-        err_file: PathBuf::new(),
-        dog: None,
-        last_exit: None,
+        ..plain_entry(id, spec)
     };
     CarriedSheep::from_entry(&entry, 0, CarriedFds::none(), false, None, false, due)
 }
@@ -962,12 +956,13 @@ fn adoptable_child(script: &str) -> u32 {
 #[cfg(unix)]
 fn respawnable(mutate: impl FnOnce(&mut AppConfig)) -> impl FnOnce(&mut ProcessEntry) {
     move |entry: &mut ProcessEntry| {
-        let mut app = AppConfig::minimal("web", "/bin/sh");
-        // Real: one case lets the successor respawn the sheep and asserts
-        // on the pid it comes back with. `./srv` would land in `Errored`.
-        app.args = vec!["-c".to_owned(), "sleep 30".to_owned()];
-        mutate(&mut app);
-        entry.spec = normalize(app).unwrap();
+        entry.spec = app_with("web", |app| {
+            // Real: one case lets the successor respawn the sheep and asserts
+            // on the pid it comes back with. `./srv` would land in `Errored`.
+            app.script = "/bin/sh".to_owned();
+            app.args = vec!["-c".to_owned(), "sleep 30".to_owned()];
+            mutate(app);
+        });
     }
 }
 
@@ -1042,6 +1037,7 @@ fn actor_over(
     let extras = Extras {
         clock: Arc::new(SystemClock),
         enforcer: Arc::clone(&enforcer) as Arc<dyn LimitEnforcer>,
+        lamb_sweep: idle_sweep(),
         max_cron_sleep: DEFAULT_MAX_CRON_SLEEP,
         reports: ExtrasReports {
             breaches: breach_tx,

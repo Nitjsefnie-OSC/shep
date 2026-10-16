@@ -95,7 +95,7 @@ pub fn emit_described(
                 }
                 writeln!(
                     out,
-                    "\nLambs of {} (id {}) — parent-pid descendants of {}, which is not exactly \
+                    "\nLambs of {} (id {}): parent-pid descendants of {}, which is not exactly \
                      the set a stop kills",
                     sheep.name,
                     sheep.id,

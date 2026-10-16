@@ -48,7 +48,7 @@ pub(super) enum Pending {
         /// Which scalar.
         field: SettingField,
         /// What the operator has typed so far.
-        buffer: String,
+        buffer: TextBox,
     },
     /// Armed: waiting for the operator's `Enter`. Nothing has gone out yet.
     Armed {
@@ -147,9 +147,9 @@ impl Settings {
 
     /// The field and buffer of an in-flight free-text edit, or `None`.
     #[must_use]
-    pub fn typing(&self) -> Option<(&SettingField, &str)> {
+    pub fn typing(&self) -> Option<(&SettingField, &TextBox)> {
         match &self.pending {
-            Some(Pending::Typing { field, buffer }) => Some((field, buffer.as_str())),
+            Some(Pending::Typing { field, buffer }) => Some((field, buffer)),
             _ => None,
         }
     }
@@ -442,45 +442,35 @@ pub(super) fn confirm_text_for_edit(edit: &SettingEdit) -> String {
 /// What `Msg::SettingWritten`'s `Err` arm reopens [`Pending::Typing`] with: the
 /// field and the text the operator typed. `None` for the four cycled fields,
 /// which have no editor to reopen.
-pub(super) fn typed_text_of(edit: &SettingEdit) -> Option<(SettingField, String)> {
+pub(super) fn typed_text_of(edit: &SettingEdit) -> Option<(SettingField, TextBox)> {
     match edit {
         SettingEdit::Set {
             field: field @ (SettingField::Socket | SettingField::MaxCronSleep),
             value,
-        } => Some((*field, value.clone())),
+        } => Some((*field, TextBox::from(value.as_str()))),
         SettingEdit::Unset {
             field: field @ (SettingField::Socket | SettingField::MaxCronSleep),
-        } => Some((*field, String::new())),
+        } => Some((*field, TextBox::new())),
         _ => None,
     }
 }
 
 impl App {
     /// The settings screen's own state, or `None` while the dashboard is
-    /// showing.
+    /// showing: [`Body::settings`] over this app's body.
     #[must_use]
     pub fn settings(&self) -> Option<&Settings> {
-        match &self.body {
-            Body::Settings(settings) => Some(settings),
-            Body::FlockTable
-            | Body::ConfigPane(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }
+        self.body.settings()
     }
 
     /// [`Self::settings`]'s mutable twin, for the settings keymap and the
     /// handlers that update a field or a pending edit in place.
+    ///
+    /// A caller that still needs another `App` field while it holds the
+    /// screen calls [`Body::settings_mut`] on `self.body` instead, which
+    /// borrows no more than the body.
     pub(super) fn settings_mut(&mut self) -> Option<&mut Settings> {
-        match &mut self.body {
-            Body::Settings(settings) => Some(settings),
-            Body::FlockTable
-            | Body::ConfigPane(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }
+        self.body.settings_mut()
     }
 
     /// The resolved style level and which layer chose it, which the STYLE LEVEL

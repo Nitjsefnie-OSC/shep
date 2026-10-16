@@ -29,6 +29,33 @@ fn register_sheep(
     id
 }
 
+/// Registers `name` as an adopted dog with no live channel, spawned with
+/// `channel` as its own ask said.
+fn register_dog(
+    actor: &mut Actor<ScriptedRunner>,
+    dir: &tempfile::TempDir,
+    name: &str,
+    channel: bool,
+) -> u32 {
+    let id = actor.next_id;
+    actor.next_id += 1;
+    let mut config = AppConfig::minimal(name, "./dog");
+    config.channel = channel;
+    let mut entry = armed_entry(
+        id,
+        0,
+        2000 + id,
+        normalize(config).unwrap(),
+        &test_paths(dir),
+    );
+    entry.dog = Some(DogSource::Adopted {
+        path: "./dog".to_string(),
+        channel,
+    });
+    actor.sheep.insert(id, SheepSlot::new(entry));
+    id
+}
+
 /// Puts one action on every sheep matching `selector` and hands back the
 /// receiver the whole answer will arrive on.
 fn trigger_flock(
@@ -291,4 +318,26 @@ async fn a_sheep_exiting_answers_every_action_waiting_on_it() {
         "a debt owed by a process that has exited outlived it, and would \
          have swallowed a reply from whatever runs under this id next"
     );
+}
+
+/// Fails if a dog spawned without a channel gets the sheep's refusal, whose
+/// advice names Flockfile keys a dog does not have. A dog that asked, with
+/// its channel down, is an ordinary `NoChannel`.
+#[tokio::test(start_paused = true)]
+async fn a_dog_that_never_asked_for_the_channel_is_refused_as_a_dog() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut actor, _mailbox) = actor_with_one_online_sheep(&dir, vec![]);
+    let quiet = register_dog(&mut actor, &dir, "otel", false);
+    let asked = register_dog(&mut actor, &dir, "rotate", true);
+
+    for (id, name, expected) in [
+        (quiet, "otel", ActionOutcome::DogNoChannel),
+        (asked, "rotate", ActionOutcome::NoChannel),
+    ] {
+        let selector = ProcessSelector::Name(name.to_string());
+        assert_eq!(
+            triggered(trigger_flock(&mut actor, selector, "gc")).await,
+            Ok(vec![row(id, name, expected)]),
+        );
+    }
 }

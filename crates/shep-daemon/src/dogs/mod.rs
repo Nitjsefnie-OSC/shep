@@ -8,8 +8,11 @@
 
 mod config;
 mod contacts;
+mod held;
 mod narrate;
 mod refusals;
+mod rotation;
+mod secrets;
 mod silent;
 mod spec;
 #[cfg(test)]
@@ -19,8 +22,11 @@ mod watch;
 
 pub use config::{dog_section, set_dog_section};
 pub use contacts::{Contact, PeerContacts};
+pub(crate) use held::{leave_held_names, saved_sheep_names};
 pub(crate) use narrate::{narrate, narrate_by_name};
 pub use refusals::{DogRefusals, Refusal, record_refused_dog};
+pub use rotation::dogs_referencing;
+pub use secrets::{StoreFault, resolve_section, section_references, store_unreadable};
 pub(crate) use silent::silent_dogs;
 pub use silent::{DOG_SILENCE_BUDGET, spawn_silent_dog_watch};
 // Only server.rs's handshake test names these, and it is `#[cfg(unix)]`
@@ -28,5 +34,7 @@ pub use silent::{DOG_SILENCE_BUDGET, spawn_silent_dog_watch};
 // non-test build and in every Windows build.
 #[cfg_attr(any(not(test), not(unix)), allow(unused_imports))]
 pub(crate) use silent::{SilentDogs, check_silent_dogs};
-pub use spec::{DogError, DogSpec, dog_app, spawn_enabled_dogs};
+pub use spec::{
+    DogError, DogSpec, built_in_dog_refusal, dog_app, register_dogs_at_rest, spawn_enabled_dogs,
+};
 pub use watch::spawn_dog_watch;

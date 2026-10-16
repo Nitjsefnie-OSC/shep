@@ -1,0 +1,12 @@
+---
+source: crates/shep-cli/src/lookout/view/pane/draw.rs
+expression: "text.join(\"\\n\")"
+---
+  jobs  (dog config)                                                                                                    
+   ▾ models                                                        FOCUSED  models.worker.token  text
+     ▾ worker                                                       token
+       model                  gpt                                 
+>      token                  <set>                                 now     <set>
+   name                       small                                 default (none)
+                                                                    example (none)
+  shep publishes the change; jobs decides what to reload

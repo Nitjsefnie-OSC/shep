@@ -33,7 +33,23 @@ pub(crate) enum Command {
     RegisterAtRest {
         /// Already-validated app specs to register, one entry each.
         apps: Vec<ResolvedApp>,
+        /// The names in `apps` to mark disabled as they register.
+        disabled: BTreeSet<String>,
         /// Answers with every entry now registered, in the order given.
+        reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
+    },
+    /// Registers each dog as a flock member without spawning it, marked with
+    /// where it came from.
+    ///
+    /// The dog twin of [`Self::RegisterAtRest`], for the boot that lists every
+    /// dog it knows about. Answered during a shutdown, as that one is.
+    RegisterDogsAtRest {
+        /// Each dog's already-validated app spec and its source.
+        dogs: Vec<(ResolvedApp, DogSource)>,
+        /// The names in `dogs` to mark disabled as they register. A dog that
+        /// was already registered keeps the mark it has.
+        disabled: BTreeSet<String>,
+        /// Answers with one entry per dog now registered, in the order given.
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     },
     /// Reports which of `apps` name a sheep registered under a different
@@ -49,7 +65,9 @@ pub(crate) enum Command {
     /// Registers + spawns one dog, marked with where it came from.
     ///
     /// Separate from [`Self::Start`] only for the marker and for being
-    /// idempotent by name. A dog is supervised exactly as a sheep is.
+    /// idempotent by name. A dog is supervised exactly as a sheep is. A dog
+    /// registered at rest is spawned in its own entry, from this command's
+    /// source.
     StartDog {
         /// The dog's already-validated app spec, built by the daemon rather
         /// than read from a Flockfile.
@@ -66,6 +84,31 @@ pub(crate) enum Command {
         /// Which sheep.
         selector: ProcessSelector,
         /// Answers once every matched sheep is terminal.
+        reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
+    },
+    /// Marks the app of every sheep matching `selector` disabled and stops
+    /// it.
+    Disable {
+        /// Which sheep; widened to each match's whole app.
+        selector: ProcessSelector,
+        /// Answers once every instance of each app is terminal.
+        reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
+    },
+    /// Marks the dog registered as `name` disabled and stops it, leaving it
+    /// registered.
+    DisableDog {
+        /// The dog's name; a name only a sheep holds is not found.
+        name: String,
+        /// Answers once the dog is terminal, with its id.
+        reply: oneshot::Sender<Result<Vec<u32>, SupervisorError>>,
+    },
+    /// Clears the disabled mark on the app of every sheep matching
+    /// `selector` and starts it.
+    Enable {
+        /// Which sheep; widened to each match's whole app.
+        selector: ProcessSelector,
+        /// Answers with the instances it started, empty when no matched app
+        /// was disabled.
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     },
     /// Restarts every sheep matching `selector`.
@@ -161,7 +204,7 @@ pub(crate) enum Command {
         /// reason.
         value: Option<EnvValue>,
         /// Answers the config now parked for the sheep's next spawn, which
-        /// `rpc.rs` hands to the registry, or `None` when no sheep has that
+        /// `rpc/dispatch.rs` hands to the registry, or `None` when no sheep has that
         /// name. An error only when the request is refused or the override
         /// store itself could not be read or written.
         reply: oneshot::Sender<Result<Option<ResolvedApp>, SupervisorError>>,

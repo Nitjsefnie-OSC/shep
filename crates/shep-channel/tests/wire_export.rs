@@ -7,11 +7,12 @@
 //! Regenerate with
 //! `SHEP_CHANNEL_BLESS=1 cargo test -p shep-channel --test wire_export`.
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use shep_channel::{CHANNEL_VERSION, ChildMessage, LambLabel, ShepherdMessage};
+use shep_channel::{CHANNEL_VERSION, ChildMessage, LambLabel, MetricType, ShepherdMessage};
 
 mod common;
 
@@ -57,6 +58,11 @@ fn child_kind(message: &ChildMessage) -> Kind {
             doc: "KindLambLabel names one of the app's own child processes.",
             wire: "lamb-label",
         },
+        ChildMessage::Note { .. } => Kind {
+            ident: "KindNote",
+            doc: "KindNote is a name and a number for a dog, not a metric sample.",
+            wire: "note",
+        },
     }
 }
 
@@ -87,6 +93,9 @@ fn child_samples() -> Vec<ChildMessage> {
         ChildMessage::Metric {
             name: "rps".into(),
             value: 42.0,
+            metric_type: Some(MetricType::Counter),
+            labels: [("model".to_string(), "qwen".to_string())].into(),
+            help: Some("Requests per second.".into()),
         },
         ChildMessage::ActionReply {
             action: "gc".into(),
@@ -96,6 +105,10 @@ fn child_samples() -> Vec<ChildMessage> {
         ChildMessage::LambLabel {
             pid: 4312,
             label: LambLabel::new("worker 1").expect("a valid label"),
+        },
+        ChildMessage::Note {
+            name: "lease.web.want.1760500000".into(),
+            value: 1.0,
         },
     ]
 }
@@ -116,9 +129,12 @@ fn shepherd_samples() -> Vec<ShepherdMessage> {
 /// metric of zero and an id of zero.
 #[rustfmt::skip]
 const CHILD_FIELDS: &[Field] = &[
-    Field { ident: "Kind",   ty: "string",   tag: "kind",             kinds: &["ready", "metric", "action-reply", "lamb-label"] },
-    Field { ident: "Name",   ty: "*string",  tag: "name,omitempty",   kinds: &["metric"] },
-    Field { ident: "Value",  ty: "*float64", tag: "value,omitempty",  kinds: &["metric"] },
+    Field { ident: "Kind",   ty: "string",   tag: "kind",             kinds: &["ready", "metric", "action-reply", "lamb-label", "note"] },
+    Field { ident: "Name",   ty: "*string",  tag: "name,omitempty",   kinds: &["metric", "note"] },
+    Field { ident: "Value",  ty: "*float64", tag: "value,omitempty",  kinds: &["metric", "note"] },
+    Field { ident: "Type",   ty: "*string",  tag: "type,omitempty",   kinds: &["metric"] },
+    Field { ident: "Labels", ty: "map[string]string", tag: "labels,omitempty", kinds: &["metric"] },
+    Field { ident: "Help",   ty: "*string",  tag: "help,omitempty",   kinds: &["metric"] },
     Field { ident: "Action", ty: "*string",  tag: "action,omitempty", kinds: &["action-reply"] },
     Field { ident: "Body",   ty: "*string",  tag: "body,omitempty",   kinds: &["action-reply"] },
     Field { ident: "ID",     ty: "*uint64",  tag: "id,omitempty",     kinds: &["action-reply"] },
@@ -142,6 +158,9 @@ const CHILD_DOC: &str = "\
 // Kind selects which other fields carry meaning. Each of those is a
 // pointer. Dropping a zero would lose a metric of 0 or an empty label,
 // which clears one.
+//
+// Labels is a plain map, not a pointer: an empty one and an absent one
+// are the same message, so omitempty on it loses nothing.
 ";
 
 const SHEPHERD_DOC: &str = "\
@@ -231,6 +250,7 @@ fn declared_json_kind(ty: &str) -> &'static str {
     match ty {
         "string" | "*string" => "string",
         "*float64" | "*uint64" | "*uint32" => "number",
+        "map[string]string" => "object",
         other => panic!("no JSON kind is declared for the Go type {other}"),
     }
 }
@@ -381,6 +401,35 @@ fn an_absent_params_and_an_empty_one_encode_differently() {
     assert_eq!(
         params_field.ty, "*string",
         "a plain string would collapse the two encodings above into one Go value"
+    );
+}
+
+#[test]
+fn an_empty_labels_map_encodes_like_an_absent_one() {
+    let encoded = serde_json::to_string(&ChildMessage::Metric {
+        name: "rps".into(),
+        value: 1.0,
+        metric_type: None,
+        labels: BTreeMap::new(),
+        help: None,
+    })
+    .expect("encode");
+    assert!(
+        !encoded.contains(r#""labels""#),
+        "an empty labels map was still on the wire: {encoded}"
+    );
+    let decoded: ChildMessage = serde_json::from_str(&encoded).expect("decode");
+    let ChildMessage::Metric { labels, .. } = decoded else {
+        panic!("{encoded} decoded as another kind");
+    };
+    assert!(labels.is_empty(), "{encoded} decoded with labels");
+    let labels_field = CHILD_FIELDS
+        .iter()
+        .find(|field| field.ident == "Labels")
+        .expect("Labels is declared");
+    assert_eq!(
+        labels_field.ty, "map[string]string",
+        "a pointer map would read an absent labels key as a distinct message"
     );
 }
 

@@ -32,6 +32,21 @@ pub(super) fn render_json(value: &Value) -> String {
     }
 }
 
+/// How many entries an array or map of tables holds, the whole of what its
+/// row says: `3 entries`, `1 entry`, `0 entries`, or `(unset)` for an absent
+/// or `null` value, or one that is neither an array nor an object.
+pub(super) fn entries_text(value: Option<&Value>) -> String {
+    let count = match value {
+        Some(Value::Array(items)) => items.len(),
+        Some(Value::Object(map)) => map.len(),
+        _ => return render_json(&Value::Null),
+    };
+    match count {
+        1 => "1 entry".to_owned(),
+        count => format!("{count} entries"),
+    }
+}
+
 /// The field set and the value map a sheep's config renders as.
 ///
 /// Shared by [`ConfigPane::sheep`] and the sheep pane's read-only listing,
@@ -101,10 +116,16 @@ pub(crate) fn sheep_fields(config: &AppConfig) -> (FieldSet, Map<String, Value>)
 /// operator's spelling and survives as written, so a `60s` on disk is never
 /// redrawn as the `1m` its own `Display` would canonicalize it to.
 pub(crate) fn resolved_display(fields: &FieldSet, key: &str, raw: &str) -> String {
+    resolved_by_kind(fields.by_key(key).and_then(|field| field.value_kind), raw)
+}
+
+/// [`resolved_display`] for a field whose [`ValueKind`] the caller already
+/// holds.
+pub(super) fn resolved_by_kind(kind: Option<ValueKind>, raw: &str) -> String {
     if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
         return raw.to_owned();
     }
-    match fields.by_key(key).and_then(|field| field.value_kind) {
+    match kind {
         Some(ValueKind::MemSize) => raw
             .parse::<MemSize>()
             .map_or_else(|_| raw.to_owned(), |_| format!("{raw} B")),

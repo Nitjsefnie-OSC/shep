@@ -222,20 +222,31 @@ impl ShepToml {
     /// holds `daemon` or `enabled_dogs` as something other than a table and
     /// an array.
     pub fn enable_dog(&mut self, name: &str) -> Result<(), ShepTomlError> {
+        self.push_daemon_name("enabled_dogs", name)
+    }
+
+    /// Adds `name` to the `[daemon]` array under `key`, idempotently,
+    /// creating the array when this document has none.
+    ///
+    /// # Errors
+    ///
+    /// [`ShepTomlError::WrongShape`] when `daemon` is not a table or `key`
+    /// is not an array.
+    fn push_daemon_name(&mut self, key: &'static str, name: &str) -> Result<(), ShepTomlError> {
         let path = self.path.clone();
         let item = self
             .daemon_table_mut()?
-            .entry("enabled_dogs")
+            .entry(key)
             .or_insert_with(|| Item::Value(Value::Array(Array::new())));
         let found = item.type_name();
-        let enabled_dogs = item.as_array_mut().ok_or(ShepTomlError::WrongShape {
+        let names = item.as_array_mut().ok_or(ShepTomlError::WrongShape {
             path,
-            key: "enabled_dogs",
+            key,
             expected: "an array",
             found,
         })?;
-        if !enabled_dogs.iter().any(|v| v.as_str() == Some(name)) {
-            enabled_dogs.push(name);
+        if !names.iter().any(|v| v.as_str() == Some(name)) {
+            names.push(name);
         }
         Ok(())
     }
@@ -261,15 +272,22 @@ impl ShepToml {
 
     /// Records `name`'s binary in `[daemon] adopted_dogs` and enables it.
     ///
-    /// Does no vetting of `exec` itself: `commands::dogs::adopt` has already
-    /// run `vet_binary`.
+    /// `channel` is what the binary's own `--version` answer asked for, and
+    /// puts `name` in or takes it out of `[daemon] channel_dogs`, so a
+    /// re-adopt follows the binary as it is now. Does no vetting of `exec`
+    /// itself: `commands::dogs::adopt` has already run `vet_binary`.
     ///
     /// # Errors
     ///
     /// [`ShepTomlError::WrongShape`] when the file an operator hand-edited
-    /// holds `daemon`, `adopted_dogs` or `enabled_dogs` as something other
-    /// than the shape shep writes.
-    pub fn adopt_dog(&mut self, name: &str, exec: &Path) -> Result<(), ShepTomlError> {
+    /// holds `daemon`, `adopted_dogs`, `channel_dogs` or `enabled_dogs` as
+    /// something other than the shape shep writes.
+    pub fn adopt_dog(
+        &mut self,
+        name: &str,
+        exec: &Path,
+        channel: bool,
+    ) -> Result<(), ShepTomlError> {
         let path = self.path.clone();
         let item = self
             .daemon_table_mut()?
@@ -286,7 +304,37 @@ impl ShepToml {
             name,
             Item::Value(exec.to_string_lossy().into_owned().into()),
         );
+        if channel {
+            self.push_daemon_name("channel_dogs", name)?;
+        } else {
+            self.forget_channel_dog(name);
+        }
         self.enable_dog(name)
+    }
+
+    /// Takes `name` out of `[daemon] channel_dogs`, and the key with it once
+    /// empty: an older shep refuses a `shep.toml` holding a key it predates.
+    fn forget_channel_dog(&mut self, name: &str) {
+        let Some(daemon) = self.doc.get_mut("daemon").and_then(Item::as_table_mut) else {
+            return;
+        };
+        let Some(channel_dogs) = daemon.get_mut("channel_dogs").and_then(Item::as_array_mut) else {
+            return;
+        };
+        channel_dogs.retain(|v| v.as_str() != Some(name));
+        if channel_dogs.is_empty() {
+            daemon.remove("channel_dogs");
+        }
+    }
+
+    /// Whether `name` is in `[daemon] channel_dogs`: an adopted dog whose
+    /// `--version` answer asked for the shepherd channel.
+    #[must_use]
+    pub fn asked_for_channel(&self, name: &str) -> bool {
+        self.table("daemon")
+            .and_then(|daemon| daemon.get("channel_dogs"))
+            .and_then(Item::as_array)
+            .is_some_and(|names| names.iter().any(|v| v.as_str() == Some(name)))
     }
 
     /// Removes the whole `[dog]` table and hands back what was under it,
@@ -375,13 +423,14 @@ impl ShepToml {
         Ok(Self::open(path)?.adopted_dog_path(name))
     }
 
-    /// Forgets `name`'s adoption in this file: out of `enabled_dogs` and
-    /// out of `adopted_dogs`.
+    /// Forgets `name`'s adoption in this file: out of `enabled_dogs`,
+    /// `adopted_dogs` and `channel_dogs`.
     ///
-    /// The whole of a rehome's config half. A `[dog.<name>]` an un-migrated
+    /// The whole of a removal's config half, run by `shep delete <name>` and
+    /// by the hidden `shep rehome <name>`. A `[dog.<name>]` an un-migrated
     /// `shep.toml` still carries stays, as the `[<name>]` in `dogs.toml`
-    /// does: the settings an operator wrote are theirs, and `rehome`
-    /// forgets only where the binary lived. The difference from
+    /// does: the settings an operator wrote are theirs, and a removal forgets
+    /// only where the binary lived. The difference from
     /// [`Self::disable_dog`] is `adopted_dogs`, so recovery needs a fresh
     /// `shep adopt <path>` rather than an `enable`.
     pub fn rehome_dog(&mut self, name: &str) {
@@ -395,6 +444,7 @@ impl ShepToml {
         {
             adopted_dogs.remove(name);
         }
+        self.forget_channel_dog(name);
     }
 
     /// Writes `[style] level = "<level>"`, creating the `[style]` table when

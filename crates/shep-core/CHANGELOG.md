@@ -10,6 +10,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-16
+
+### Fixed
+
+- Name both group keys on the config pane's tab row
+
+
+## [0.15.0] - 2026-10-15
+
+### Added
+
+- Let a sheep send a dog a note that is not a metric sample **(BREAKING)**
+- ProcessInfo carries whether a sheep's app turns the log stamp off
+
+### Changed
+
+- Apply table rows carry their reaches-running answer
+
+### Fixed
+
+- Trim tcp probe targets the way http ones are trimmed
+- Refuse a null or a datetime where a Flockfile key needs a table
+- Bleats keeps an app's own timestamp in the file tail of a stamps-off sheep
+
+
+## [0.14.0] - 2026-10-14
+
+
+## [0.13.0] - 2026-10-13
+
+### Added
+
+- A channel metric can carry a type, labels and help text **(BREAKING)**
+- Add enable and disable requests, a Disabled error code and ProcessInfo.disabled
+
+
+## [0.12.5] - 2026-10-07
+
+### Fixed
+
+- Refuse a frame that leads with an event key and carries a reply key
+
+### Performance
+
+- Decode a server frame without buffering it first
+
+
+## [0.12.4] - 2026-10-06
+
+
+## [0.12.3] - 2026-10-02
+
+
+## [0.12.2] - 2026-10-02
+
+
+## [0.12.1] - 2026-10-02
+
+### Added
+
+- Give a sheep's dogs row its own tab
+
+### Fixed
+
+- Refuse dog: null and pin DeclaredApp's redacted Debug
+
+
+## [0.12.0] - 2026-09-30
+
+### Added
+
+- Derive Default for MemSize and UpDuration
+- Let a dog's --version answer ask for the shepherd channel **(BREAKING)**
+- Record on an adopted DogSource whether it asked for the channel **(BREAKING)**
+- Name a dog's missing channel in its own trigger outcome
+- Add [daemon] channel_dogs to shep.toml **(BREAKING)**
+
+### Changed
+
+- Unify borrowed-to-owned name conversion in graph.rs
+
+### Performance
+
+- Compile glob-to-regex selectors once, not twice
+
+
 ## [0.11.0] - 2026-09-29
 
 ### Fixed

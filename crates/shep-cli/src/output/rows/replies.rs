@@ -136,17 +136,24 @@ pub(crate) fn describe_outcome(outcome: &ActionOutcome) -> (&'static str, String
         // Names the config field: an operator learns it here or in `--help`.
         ActionOutcome::NoChannel => (
             "no_channel",
-            "no shepherd channel — set channel = true, or wait_ready / \
+            "no shepherd channel: set channel = true, or wait_ready / \
              shutdown_with_message, which imply it"
                 .to_string(),
         ),
         ActionOutcome::Skipped => (
             "skipped",
-            "mid-reload — a fresh instance is replacing this one".to_string(),
+            "mid-reload: a fresh instance is replacing this one".to_string(),
         ),
         ActionOutcome::TimedOut => (
             "timed_out",
             "no reply within the app's own action_timeout".to_string(),
+        ),
+        // No Flockfile key to name: the fix is in the dog, then a re-adopt.
+        ActionOutcome::DogNoChannel => (
+            "dog_no_channel",
+            "this dog did not ask for the shepherd channel: a dog asks in its \
+             --version answer, which shep adopt reads"
+                .to_string(),
         ),
         other => ("unknown", format!("{other:?}")),
     }
@@ -279,7 +286,7 @@ fn describe_line_outcome(outcome: &LineOutcome) -> (&'static str, String) {
     match outcome {
         LineOutcome::Sent => ("sent", String::new()),
         // Names the config field, as `describe_outcome`'s `NoChannel` does.
-        LineOutcome::NoStdin => ("no_stdin", "no stdin pipe — set stdin = true".to_string()),
+        LineOutcome::NoStdin => ("no_stdin", "no stdin pipe: set stdin = true".to_string()),
         LineOutcome::NotWritten { reason } => ("not_written", reason.clone()),
         other => ("unknown", format!("{other:?}")),
     }
@@ -437,6 +444,17 @@ mod tests {
             detail.contains("wait_ready") && detail.contains("shutdown_with_message"),
             "and the two fields that imply it: {detail}"
         );
+    }
+
+    /// A dog has no Flockfile, so the sheep row's advice would send an
+    /// operator looking for a key that does not exist.
+    #[test]
+    fn a_dog_no_channel_detail_points_at_the_dog_not_a_flockfile_key() {
+        let (kind, detail) = describe_outcome(&ActionOutcome::DogNoChannel);
+        assert_eq!(kind, "dog_no_channel");
+        assert!(detail.contains("--version"), "{detail}");
+        assert!(detail.contains("shep adopt"), "{detail}");
+        assert!(!detail.contains("channel = true"), "{detail}");
     }
 
     #[test]

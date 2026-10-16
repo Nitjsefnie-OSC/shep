@@ -110,6 +110,7 @@ impl App {
             | KeyPress::FilterStart
             | KeyPress::TextChar(_)
             | KeyPress::TextBackspace
+            | KeyPress::TextEdit(_)
             | KeyPress::TextApply
             | KeyPress::TextAbandon
             | KeyPress::StepUp
@@ -125,6 +126,7 @@ impl App {
             | KeyPress::Continue
             | KeyPress::Undo
             | KeyPress::NextGroup
+            | KeyPress::PrevGroup
             | KeyPress::Group(_) => {}
             KeyPress::StreamCycle
             | KeyPress::LevelCycle
@@ -156,19 +158,15 @@ impl App {
         };
         let dog = row.name().to_owned();
         let Some(schema) = row.entry().schema.clone() else {
-            self.notice = Some(Notice {
-                text: format!("{dog} publishes no sheep schema, so its table is not edited here"),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(format!(
+                "{dog} publishes no sheep schema, so its table is not edited here"
+            )));
             return Effect::None;
         };
         if !pane.edits().is_empty() {
-            self.notice = Some(Notice {
-                text: format!(
-                    "{sheep} has unwritten edits: esc back to its pane to write or undo them before {dog} opens"
-                ),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(format!(
+                "{sheep} has unwritten edits: esc back to its pane to write or undo them before {dog} opens"
+            )));
             return Effect::None;
         }
         let opened =
@@ -225,8 +223,8 @@ impl App {
     }
 
     /// A sheep's re-read landing under one of its dogs' table panes: the
-    /// pane takes that table's current value in place, cursor and edits
-    /// kept. `false`, and nothing touched, when no such pane is up.
+    /// pane takes that table's current value in place, cursor, open tables
+    /// and edits kept. `false`, and nothing touched, when no such pane is up.
     pub(super) fn refresh_sheep_dog_pane(&mut self, view: &SheepConfigView) -> bool {
         let Some(pane) = self.config_pane_mut() else {
             return false;
@@ -270,33 +268,24 @@ impl App {
         let why = match result {
             Ok(Response::SheepDogSettingsSet { .. }) => {
                 let verb = if removed { "removed" } else { "written" };
-                self.notice = Some(Notice {
-                    text: format!("{name}: its {dog} table is {verb}, and {dog} is told"),
-                    grave: false,
-                });
+                self.notice = Some(Notice::info(format!(
+                    "{name}: its {dog} table is {verb}, and {dog} is told"
+                )));
                 return Effect::Send(Sent::SheepConfig {
                     name: name.to_owned(),
                 });
             }
-            Ok(_unrecognised) => {
-                "the shepherd answered something this lookout does not understand".to_owned()
-            }
-            Err(RequestError::Rpc(err)) => err.message,
-            Err(other) => other.to_string(),
+            other => failed_reply(other),
         };
-        self.notice = Some(Notice {
-            text: format!("{name}: {dog}: {why}"),
-            grave: true,
-        });
+        self.notice = Some(Notice::grave(format!("{name}: {dog}: {why}")));
         Effect::None
     }
 
     /// A table write the link task never took.
     pub(super) fn on_table_unsent(&mut self, name: &str, dog: &str) -> Effect {
-        self.notice = Some(Notice {
-            text: format!("{name}: its {dog} table was not sent"),
-            grave: true,
-        });
+        self.notice = Some(Notice::grave(format!(
+            "{name}: its {dog} table was not sent"
+        )));
         Effect::None
     }
 }

@@ -1,21 +1,16 @@
-use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
-use crate::dispatch::{Dispatch, Outcome, run};
+use crate::dispatch::Dispatch;
+use crate::loops::{reader_loop, writer_loop};
+use crate::metric::MetricOptions;
 use crate::outbox::{DEFAULT_CAPACITY, Drain, Outbox};
-use crate::{
-    CHANNEL_VERSION, Channel, ChannelError, ChildMessage, LambLabel, VERSION_VAR, session,
-};
+use crate::{CHANNEL_VERSION, Channel, ChannelError, ChildMessage, LambLabel, VERSION_VAR};
 
 /// What to tell an author running under shep with no channel.
 const NO_CHANNEL_ADVICE: &str = "no channel on this process. Set `channel = true` \
      (or `wait_ready` / `shutdown_with_message`) on this app in the Flockfile to open one.";
-
-/// What to tell an author whose app was asked to stop and registered nothing.
-const UNHANDLED_SHUTDOWN_ADVICE: &str = "the shepherd sent shutdown and no on_shutdown handler is registered. This \
-     process will be killed when kill_timeout expires. Register one to stop gracefully.";
 
 /// Writes one line of advice to stderr, prefixed so it is attributable.
 ///
@@ -93,8 +88,8 @@ impl Shepherd {
         self.0.version.as_deref()
     }
 
-    /// How many metrics have been dropped because the shepherd was not
-    /// keeping up. Always 0 without a channel.
+    /// How many metric samples and notes have been dropped because the
+    /// shepherd was not keeping up. Always 0 without a channel.
     #[must_use]
     pub fn dropped_metrics(&self) -> u64 {
         self.0.outbox.as_ref().map_or(0, |outbox| outbox.dropped())
@@ -214,6 +209,54 @@ impl Shepherd {
             outbox.push_lossy(ChildMessage::Metric {
                 name: name.into(),
                 value,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
+            });
+        }
+    }
+
+    /// Records one metric sample with a kind, labels or help text.
+    ///
+    /// Never blocks and never fails, like [`Shepherd::metric`]: a sample
+    /// may be dropped under backpressure; see [`Shepherd::dropped_metrics`].
+    ///
+    /// ```
+    /// use shep_channel::{MetricOptions, MetricType};
+    ///
+    /// let shepherd = shep_channel::serve();
+    /// shepherd.metric_with(
+    ///     "queue_depth",
+    ///     3.0,
+    ///     MetricOptions::new()
+    ///         .kind(MetricType::Counter)
+    ///         .label("model", "qwen")
+    ///         .help("Requests waiting for the lease."),
+    /// );
+    /// ```
+    pub fn metric_with(&self, name: impl Into<String>, value: f64, options: MetricOptions) {
+        if let Some(outbox) = &self.0.outbox {
+            outbox.push_lossy(ChildMessage::Metric {
+                name: name.into(),
+                value,
+                metric_type: options.kind,
+                labels: options.labels,
+                help: options.help,
+            });
+        }
+    }
+
+    /// Sends a dog a name and a number that is not a metric sample.
+    ///
+    /// The shepherd publishes it as `channel.note`, which the metrics dog
+    /// does not subscribe to, so `name` needs no metric grammar. Never
+    /// blocks and never fails, like [`Shepherd::metric`]: a note may be
+    /// dropped under backpressure and counts in [`Shepherd::dropped_metrics`].
+    pub fn note(&self, name: impl Into<String>, value: f64) {
+        if let Some(outbox) = &self.0.outbox {
+            outbox.push_lossy(ChildMessage::Note {
+                name: name.into(),
+                value,
             });
         }
     }
@@ -268,69 +311,6 @@ pub fn serve() -> Shepherd {
         );
     }
     shepherd.clone()
-}
-
-/// Drives the writer side: drains `outbox` and writes each message.
-/// Stops once the transport fails or the outbox closes.
-///
-/// A free function over `BufRead`/`Write`, not an inline closure. A test
-/// can drive it over a `Vec<u8>`, with no thread or socket.
-pub(crate) fn writer_loop<W: Write>(writer: &mut W, outbox: &Outbox) {
-    while let Some(message) = outbox.pop() {
-        if session::write_message(writer, &message).is_err() {
-            break;
-        }
-        outbox.wrote();
-    }
-    // `stop`, not `close`: a failed write leaves its message unwritten,
-    // and a `flush` waiting on it has to hear that rather than time out.
-    outbox.stop();
-}
-
-/// Drives the reader side: reads one message, resolves it against
-/// `dispatch`, and runs the result. The registry's lock is dropped before
-/// that run, per `dispatch`'s own module doc.
-///
-/// `warn` is injected so a test can assert what was said and how
-/// often. This pins the once-per-loop malformed-frame latch.
-pub(crate) fn reader_loop<R: BufRead>(
-    reader: &mut R,
-    outbox: &Outbox,
-    dispatch: &RwLock<Dispatch>,
-    warn: &dyn Fn(&str),
-) {
-    let mut warned_malformed = false;
-    loop {
-        match session::read_message(reader) {
-            Ok(Some(message)) => {
-                let resolved = dispatch
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .resolve(message);
-                let outcome = run(resolved);
-                match outcome {
-                    Outcome::Reply(reply) => {
-                        if outbox.push_blocking(reply).is_err() {
-                            break;
-                        }
-                    }
-                    Outcome::Handled => {}
-                    Outcome::UnhandledShutdown => warn(UNHANDLED_SHUTDOWN_ADVICE),
-                    Outcome::ShutdownFailed(message) => {
-                        warn(&format!("shutdown handler panicked: {message}"));
-                    }
-                }
-            }
-            Err(ChannelError::Malformed(message)) => {
-                if !warned_malformed {
-                    warned_malformed = true;
-                    warn(&format!("malformed frame from the shepherd: {message}"));
-                }
-            }
-            Ok(None) | Err(_) => break,
-        }
-    }
-    outbox.close();
 }
 
 fn start() -> Shepherd {
@@ -411,11 +391,12 @@ fn start() -> Shepherd {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::io::{Cursor, Write};
     use std::sync::{PoisonError, mpsc};
     use std::time::Duration;
 
     use super::*;
+    use crate::MetricType;
 
     /// Bounds the one test below that could hang forever on a real
     /// regression. A working reader answers in microseconds. This is slack
@@ -458,6 +439,8 @@ mod tests {
         shepherd.on_action("gc", |_, _| "ok".to_string());
         shepherd.on_shutdown(|| {});
         shepherd.metric("rps", 42.0);
+        shepherd.metric_with("rps", 42.0, MetricOptions::new());
+        shepherd.note("lease.web.want.1", 1.0);
         shepherd.ready().expect("an inert ready is not an error");
         shepherd
             .flush(Duration::ZERO)
@@ -481,6 +464,50 @@ mod tests {
         );
     }
 
+    /// Reads what `metric_with` left in the outbox, serialized: the
+    /// exact bytes the writer will hand the transport.
+    #[test]
+    fn metric_with_puts_labels_type_and_help_on_the_wire() {
+        let outbox = Arc::new(Outbox::new(4));
+        let shepherd = shepherd_over(&outbox);
+        shepherd.metric_with(
+            "queue_depth",
+            3.0,
+            MetricOptions::new()
+                .kind(MetricType::Counter)
+                .label("model", "qwen")
+                .help("Requests waiting for the lease."),
+        );
+
+        let taken = outbox.take();
+        let [ChildMessage::Metric { .. }] = taken.as_slice() else {
+            panic!("expected one metric sample in the outbox, got {taken:?}");
+        };
+        assert_eq!(
+            serde_json::to_string(&taken[0]).expect("encode"),
+            concat!(
+                r#"{"kind":"metric","name":"queue_depth","value":3.0,"type":"counter","#,
+                r#""labels":{"model":"qwen"},"help":"Requests waiting for the lease."}"#,
+            )
+        );
+    }
+
+    /// The lossy push, like a sample: a full queue drops and counts.
+    #[test]
+    fn a_note_goes_on_the_wire_and_drops_like_a_sample() {
+        let outbox = Arc::new(Outbox::new(1));
+        let shepherd = shepherd_over(&outbox);
+        shepherd.note("lease.web.want.1", 1.0);
+        shepherd.note("lease.web.want.2", 2.0);
+
+        assert_eq!(shepherd.dropped_metrics(), 1);
+        let taken = outbox.take();
+        assert_eq!(
+            serde_json::to_string(&taken).expect("encode"),
+            r#"[{"kind":"note","name":"lease.web.want.2","value":2.0}]"#
+        );
+    }
+
     /// IR-41: pins the exact string, and separately that no queued payload
     /// appears. Either check alone would catch a regression.
     #[test]
@@ -494,6 +521,9 @@ mod tests {
         outbox.push_lossy(ChildMessage::Metric {
             name: "SECRET-METRIC-NAME".into(),
             value: 1.0,
+            metric_type: None,
+            labels: std::collections::BTreeMap::new(),
+            help: None,
         });
         let shepherd = Shepherd(Arc::new(Inner {
             outbox: Some(Arc::clone(&outbox)),
@@ -524,98 +554,6 @@ mod tests {
         }
     }
 
-    /// This warning is the only thing standing between a missing handler
-    /// and a `kill_timeout` kill.
-    #[test]
-    fn the_unhandled_shutdown_warning_names_the_method_to_call() {
-        assert!(UNHANDLED_SHUTDOWN_ADVICE.contains("on_shutdown"));
-        assert!(UNHANDLED_SHUTDOWN_ADVICE.contains("kill_timeout"));
-    }
-
-    #[test]
-    fn two_malformed_lines_warn_once_and_the_loop_keeps_going() {
-        let mut reader =
-            Cursor::new(b"not json\nalso not json\n{\"kind\":\"shutdown\"}\n".to_vec());
-        let outbox = Outbox::new(4);
-        let dispatch = RwLock::new(Dispatch::default());
-        let shutdown_hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let counter = Arc::clone(&shutdown_hits);
-        dispatch
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .register_shutdown(Box::new(move || {
-                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            }));
-
-        let warnings: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-        let warn = |message: &str| warnings.lock().unwrap().push(message.to_string());
-
-        reader_loop(&mut reader, &outbox, &dispatch, &warn);
-
-        let collected = warnings.into_inner().unwrap();
-        assert_eq!(
-            collected.len(),
-            1,
-            "expected exactly one warning for two malformed lines, got {collected:?}"
-        );
-        assert_eq!(
-            shutdown_hits.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "the well-formed shutdown after the two bad lines was never reached"
-        );
-    }
-
-    /// fails if end of stream leaves the outbox open, parking the writer
-    /// thread in `pop()` forever.
-    #[test]
-    fn end_of_stream_breaks_the_loop_and_closes_the_outbox() {
-        let mut reader = Cursor::new(Vec::new());
-        let outbox = Outbox::new(4);
-        let dispatch = RwLock::new(Dispatch::default());
-        let warn = |_: &str| {};
-
-        reader_loop(&mut reader, &outbox, &dispatch, &warn);
-
-        // Non-blocking probe: `push_blocking` on a closed outbox returns
-        // `Err(Closed)` at once rather than waiting.
-        // A dropped `close()` in `reader_loop` fails here in microseconds.
-        // Otherwise this test hangs on an open, unbounded queue.
-        assert!(
-            outbox.push_blocking(ChildMessage::Ready).is_err(),
-            "reader_loop returned without closing the outbox"
-        );
-        assert_eq!(
-            outbox.pop(),
-            None,
-            "outbox should read as closed-and-empty after EOF, not park a waiter"
-        );
-    }
-
-    /// fails if a reply never reaches the outbox, or drops its id. The
-    /// daemon needs that id to match a reply to its trigger.
-    #[test]
-    fn an_actions_reply_reaches_the_outbox_carrying_its_id() {
-        let mut reader = Cursor::new(b"{\"kind\":\"action\",\"name\":\"gc\",\"id\":7}\n".to_vec());
-        let outbox = Outbox::new(4);
-        let dispatch = RwLock::new(Dispatch::default());
-        dispatch
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .register_action("gc".to_string(), Box::new(|_, _| "ok".to_string()));
-        let warn = |_: &str| {};
-
-        reader_loop(&mut reader, &outbox, &dispatch, &warn);
-
-        match outbox.pop() {
-            Some(ChildMessage::ActionReply { action, body, id }) => {
-                assert_eq!(action, "gc");
-                assert_eq!(body, "ok");
-                assert_eq!(id, Some(7));
-            }
-            other => panic!("expected an action reply, got {other:?}"),
-        }
-    }
-
     /// Only the blocking push reports a refusal. A lossy one would count a
     /// dropped message and return nothing.
     #[test]
@@ -628,47 +566,17 @@ mod tests {
             .label_lamb(4312, label.clone())
             .expect("room for the label");
         assert_eq!(
-            outbox.pop(),
-            Some(ChildMessage::LambLabel {
+            outbox.take(),
+            vec![ChildMessage::LambLabel {
                 pid: 4312,
                 label: label.clone()
-            })
+            }]
         );
         outbox.close();
         assert!(matches!(
             shepherd.label_lamb(4312, label),
             Err(ChannelError::Closed)
         ));
-    }
-
-    /// A shutdown reply queued right before the shepherd leaves must still
-    /// reach the wire.
-    #[test]
-    fn the_writer_drains_what_is_already_queued_after_close() {
-        let outbox = Outbox::new(4);
-        outbox
-            .push_blocking(ChildMessage::Ready)
-            .expect("room for the first message");
-        outbox
-            .push_blocking(ChildMessage::Metric {
-                name: "rps".to_string(),
-                value: 1.0,
-            })
-            .expect("room for the second message");
-        outbox.close();
-
-        let mut written = Vec::new();
-        writer_loop(&mut written, &outbox);
-
-        let text = String::from_utf8(written).expect("valid utf8");
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(
-            lines.len(),
-            2,
-            "expected both already-queued messages to be written, got {lines:?}"
-        );
-        assert!(lines[0].contains("\"kind\":\"ready\""));
-        assert!(lines[1].contains("\"kind\":\"metric\""));
     }
 
     /// The issue this API exists for. The sink is held shut until the
@@ -844,12 +752,9 @@ mod tests {
         rx.recv_timeout(DEADLINE)
             .expect("reader_loop deadlocked: a handler that registers a handler hung the reader");
 
-        let first = outbox.pop().expect("the reload reply");
-        let second = outbox
-            .pop()
-            .expect("the late reply, registered inside the reload handler");
-        match (first, second) {
-            (
+        // The second is the late reply, registered inside the reload handler.
+        match outbox.take().as_slice() {
+            [
                 ChildMessage::ActionReply {
                     action: action1,
                     body: body1,
@@ -860,13 +765,13 @@ mod tests {
                     body: body2,
                     id: id2,
                 },
-            ) => {
+            ] => {
                 assert_eq!(action1, "reload");
                 assert_eq!(body1, "reloaded");
-                assert_eq!(id1, Some(1));
+                assert_eq!(*id1, Some(1));
                 assert_eq!(action2, "late");
                 assert_eq!(body2, "late ok");
-                assert_eq!(id2, Some(2));
+                assert_eq!(*id2, Some(2));
             }
             other => panic!("expected two action replies, got {other:?}"),
         }

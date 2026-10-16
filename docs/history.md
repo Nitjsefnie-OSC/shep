@@ -134,14 +134,28 @@ One thing it deliberately does not do, argued at its call site: a
 DAEMON-initiated restart gets no warning, since the check is CLI-side, so a
 crash or an autorestart respawn still walks into G12 row 5 unannounced.
 
+**A sheep's lambs are swept after it exits, on unix (#688).** A stop
+used to reach the sheep's process group and nothing else, so a lamb that
+called `setsid`, every lamb under `shutdown_with_message`, and any lamb
+that outlived the leader kept running, reparented to init. A crash
+touched none of them. `sweep/` now signals the pids a walk of the sheep's
+ppid tree saw, after the leader is reaped and before `Msg::Exited` is
+sent: SIGTERM, up to `kill_timeout`, then SIGKILL, walking from the
+survivors on every look so what they start meanwhile goes too. A stop walks fresh
+before the first rung and merges the last 15-second stats tick's walk; a
+crash has only the tick's. Each pid is dated by the walk that saw it and
+signalled only if its process started no later, which is what keeps a
+recycled pid safe without storing start times. shep-kelpie motivated it:
+a runner SIGKILLed or panicking left its Claude Code sessions working.
+
 **A probe's descendants are contained on unix now.** This paragraph used to
 say `Child::kill` does not reach them and that closing it needed a process
 group rather than a patch, which was right about the mechanism. `ask` in
 `crates/shep-cli/src/commands/dogs.rs` spawns with `process_group(0)` and
 `kill_probe_tree` sweeps `-pid`, the same shape `probes/os.rs` already used
 for the exec prober. Two holes stay open and are documented rather than
-closed. A descendant that calls `setsid` leaves the group, as `kill.rs`
-records for a sheep. And Windows has no process group, so the probe there
+closed. A descendant that calls `setsid` leaves the group, and a probe
+has no lamb sweep to catch it the way a sheep now does (#688). And Windows has no process group, so the probe there
 still kills only the binary it spawned; containment would mean reaching the
 `pub(crate)` job object in `sys_windows.rs`.
 
@@ -346,8 +360,10 @@ What that means for anyone editing this workspace:
   platform gate at all. Adding one back is a design decision, not a shrug.
 - **A per-sheep job object replaces the process group.** `sys_windows.rs` is
   the crate's only unsafe on that platform, mirroring `sys.rs`'s rule. It is
-  stronger than the unix design: `kill.rs` documents an escaped-`setsid`
-  hole that a job simply does not have.
+  stronger than the unix design on a stop: a `setsid` lamb escapes the
+  unix process group and is left to the lamb sweep, while a job member
+  cannot leave its job. The sweep is unix only, so a crash on Windows
+  still leaves the job's other processes running.
 - **Three refusals are permanent and deliberate**, each argued at its own
   call site: no graceful signal outside the shepherd channel, no
   `shep startup` (that is Tier B — an SCM service), and no `user`/`group`.
@@ -453,6 +469,83 @@ for its `[app.dogs.<name>]` table with `probe_with_sheep`, under the
 or read-only, and Enter on a set or unset one opens a pane over it, a
 nested table flattened into dotted rows and a secret drawn `<set>`. No
 wire change: `PROTOCOL_VERSION` stays at 10.
+
+**The dog's own pane flattens the same way.** `e` on a dog row now shows a
+nested table in its `dogs.toml` section as dotted rows, `models.worker.model`
+and its like, each editable by its own type, and a credential inside one drawn
+`<set>` with its editor opening empty. The write walks that path into the
+section, so a `[models.worker]` header, dotted keys and an inline table each
+take the set where they are, comments and key order intact. A list or a map is
+still a `~` row, and a value TOML cannot hold (an array, a map, a whole number
+past `i64::MAX`), or a scalar sitting where the schema has a table, refuses the
+whole write instead of landing as text or replacing what the operator wrote. No
+wire change.
+
+**A dog can ask for the shepherd channel.** A `shep-channel: true` line in
+a dog's `--version` answer, or `dogs::Probe::ask_for_channel` in a dog
+built on `shep-client`, is recorded by `shep adopt` in `[daemon]
+channel_dogs`. The dog is then started with `channel` and
+`shutdown_with_message`, answers `shep trigger`, and is stopped by the
+shutdown message. A dog that did not ask answers a trigger with
+`dog_no_channel`. `PROTOCOL_VERSION` stays at 11: the new `DogSource` key
+and outcome are additive.
+
+**The metrics dog can push its series to an OTLP endpoint.** The `otel`
+cargo feature, off by default and carrying no new dependency, adds
+`otlp_endpoint`, `otlp_interval`, `otlp_timeout` and `otlp_headers` to
+`[dog.metrics]`. The dog POSTs OTLP/JSON to `{endpoint}/v1/metrics` on an
+interval, with the same series and the same labels `/metrics` serves;
+`shep_sheep_restart_total` is the one monotonic cumulative sum, started at
+the dog's own start. A 2xx naming a `partialSuccess` is a
+failed export, not a clean one. A build without the feature refuses
+`otlp_endpoint` at startup rather than running a dog that exports nothing. `otlp_headers` is a
+secret: redacted in `Debug`, marked in the schema, and never printed. No
+wire change. **Off stopped meaning "absent from what most operators get"**
+on 2026-10-14 (#737): every prebuilt release archive and the `.deb` is now
+built with `features: otel`, so `otlp_endpoint` works out of the box in a
+downloaded binary; `cargo install shep` and the Homebrew formula stay
+featureless and take `--features otel`.
+
+**The samples a sheep sends on its channel ride the same export** (2026-10-14,
+the half of spec §8's OTLP item that was still open). They land after the
+built-in groups, named as `/metrics` names them: a gauge sample is a gauge, a
+counter sample a monotonic cumulative sum started when its sender started, so
+`shep_sheep_restart_total` is no longer the only sum in the payload and a
+sender that restarts moves its counter's start, which is how OTLP means a
+reset. A sample's help text is its `description`, omitted when the sender
+wrote none, and `shep_channel_samples_refused_total` goes out as `asInt`. A
+value the text exposition can spell (`NaN`, `+Inf`) has no OTLP/JSON number
+and is dropped from the export. The drift guard
+`the_payload_names_every_series_the_exposition_names` runs over a reading that
+carries samples as well as a flock, and compares every series' own labels and
+not only its name, type and point count. No wire change.
+
+**A setting, or a whole dog table, copies from one sheep onto another.**
+`shep copy <from>.<path> <to>.<path>` takes three address forms: a field
+(`web.restart_delay`), a dog's table (`web.dogs.kelpie`), and a key or
+sub-table inside one (`web.dogs.kelpie.rulings`). A dog name and a key inside
+a table may each contain a dot, so each step past the sheep name is the
+longest name the copy's tables actually hold: `web.dogs.foo.bar` is the dog
+`foo.bar` when a side has a table under that name, and the dog `foo` with the
+key `bar` when neither does, even in a flock that runs a dog named `foo.bar`
+with no table for it. The path is the same on
+both sides. A dog table merges by default, so a key only the target has
+survives, `--replace` makes the target exactly the source at that path, and
+`--except <key>` leaves one key out because shep cannot tell that a dog's
+`git.checkout` names one project's repo. A copy refuses when one side holds
+something that is not a table where the copy has to write through one, rather
+than turning that value into a table on the way to the key it was asked to
+write. `env`, `name`, `instances` and the
+whole `dogs` map are refused, the first because a client is never sent a
+sheep's env values and the rest because the shepherd refuses them too. The
+change list prints before anything is written, and the run asks before it
+writes: `--yes` skips the question, `--dry-run` writes nothing, and with no
+terminal to ask on the run refuses rather than guessing. The list prints where
+the operator is reading it, on stdout for the table form and on stderr for
+`--format json`, whose stdout is the one envelope written after the answer. No
+wire change: the
+write is `Request::SetSheepField` for a field and
+`Request::SetSheepDogSettings` for a table.
 
 Project memory (cross-session state) tracks decisions; docs above are the
 source of truth.

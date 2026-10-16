@@ -1,5 +1,5 @@
-//! The probe contract between shep and a dog: the flag names, the
-//! `shep-protocol:` line's grammar, and the schema's secret marker key.
+//! The probe contract between shep and a dog: the flag names, the grammar
+//! of the `shep-` key lines, and the schema's secret marker key.
 //!
 //! Shared by `shep-cli`'s `adopt` (the asker) and `shep_client::dogs::probe`
 //! (the answerer), so the two agree by construction rather than by copying
@@ -15,11 +15,19 @@ pub const VERSION_FLAG: &str = "--version";
 /// [`VERSION_FLAG`]: a dog that answers nothing is refused nothing.
 pub const SCHEMA_FLAG: &str = "--schema";
 
-/// The one key [`parse_version_answer`] reads in a `--version` answer.
-/// Every other `shep-` key is reserved for a number this shep has not
-/// heard of, and is ignored rather than refused, so a dog written against a
-/// later contract stays adoptable by this one.
+/// The key a `--version` answer states its protocol under.
+///
+/// Every `shep-` key besides this one and [`SHEP_CHANNEL_KEY`] is reserved,
+/// and ignored rather than refused, so a dog written against a later
+/// contract stays adoptable by this one.
 pub const SHEP_PROTOCOL_KEY: &str = "shep-protocol";
+
+/// The key a `--version` answer asks for the shepherd channel under.
+///
+/// Only the value `true` asks. A dog that asks is started with `channel`
+/// and `shutdown_with_message` set, so it can answer `shep trigger` and be
+/// stopped by a message rather than a signal.
+pub const SHEP_CHANNEL_KEY: &str = "shep-channel";
 
 /// The variable the shepherd names a dog in: the `[<name>]` section it
 /// reads, and the name it announces at the handshake.
@@ -59,6 +67,9 @@ pub struct DogVersion {
     /// no such line or carried one that is not a decimal number. Answering
     /// is optional, so `None` is an unknown protocol rather than a fault.
     pub protocol: Option<u32>,
+    /// Whether the answer carried [`SHEP_CHANNEL_KEY`] set to `true`. Any
+    /// other value, or no such line, is a dog that did not ask.
+    pub channel: bool,
 }
 
 /// Parses the format `docs/dogs.md` publishes: `<name> <version>` on line
@@ -66,20 +77,29 @@ pub struct DogVersion {
 ///
 /// `None` when there is no line 1. Unknown keys, blank lines, key order and
 /// a non-numeric `shep-protocol` are all tolerated rather than refused;
-/// only an exact [`SHEP_PROTOCOL_KEY`] carrying a decimal is believed.
+/// only an exact [`SHEP_PROTOCOL_KEY`] carrying a decimal is believed, and
+/// only an exact [`SHEP_CHANNEL_KEY`] carrying `true` asks.
 #[must_use]
 pub fn parse_version_answer(text: &str) -> Option<DogVersion> {
     let mut lines = text.lines();
     let version = lines.next()?.split_whitespace().next_back()?.to_string();
     let mut protocol = None;
+    let mut channel = false;
     for line in lines {
-        if let Some((key, value)) = line.split_once(':')
-            && key.trim() == SHEP_PROTOCOL_KEY
-        {
-            protocol = value.trim().parse().ok();
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        match key.trim() {
+            SHEP_PROTOCOL_KEY => protocol = value.trim().parse().ok(),
+            SHEP_CHANNEL_KEY => channel = value.trim() == "true",
+            _ => {}
         }
     }
-    Some(DogVersion { version, protocol })
+    Some(DogVersion {
+        version,
+        protocol,
+        channel,
+    })
 }
 
 #[cfg(test)]
@@ -98,6 +118,38 @@ mod tests {
             Some(DogVersion {
                 version: "0.1.3".to_string(),
                 protocol: None,
+                channel: false,
+            })
+        );
+    }
+
+    #[test]
+    fn a_dog_asks_for_the_channel_with_true_and_nothing_else() {
+        let asks = |line: &str| {
+            parse_version_answer(&format!("shep-otel 0.1.3\n{line}\n"))
+                .unwrap()
+                .channel
+        };
+        assert!(asks("shep-channel: true"));
+        assert!(
+            asks("shep-channel:true"),
+            "the space is optional, as it is for the protocol"
+        );
+        assert!(!asks("shep-channel: false"));
+        assert!(!asks("shep-channel: yes"), "only `true` asks");
+        assert!(!asks("shep-channel: TRUE"), "the value is case-sensitive");
+        assert!(!asks("x-shep-channel: true"), "the key is exact");
+        assert!(!asks("shep-protocol: 11"), "no line is no ask");
+    }
+
+    #[test]
+    fn a_channel_ask_does_not_need_a_stated_protocol() {
+        assert_eq!(
+            parse_version_answer("shep-otel 0.1.3\nshep-channel: true\n"),
+            Some(DogVersion {
+                version: "0.1.3".to_string(),
+                protocol: None,
+                channel: true,
             })
         );
     }

@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use super::super::edits::{EditKey, Edits};
 use super::super::field::{Field, FieldKind};
+use super::super::textbox::{TextBox, TextEdit};
 use super::super::validation::{self, Refusal};
 use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
 
@@ -40,7 +41,17 @@ pub struct PaneTyping {
     /// this exists.
     pub key: String,
     /// What has been typed so far.
-    pub buffer: String,
+    pub buffer: TextBox,
+}
+
+/// Whether `value` is `null` or an empty array or table.
+fn holds_nothing(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Array(items) => items.is_empty(),
+        Value::Object(map) => map.is_empty(),
+        _ => false,
+    }
 }
 
 /// Prints the key and never the buffer. See the type doc for why.
@@ -51,69 +62,12 @@ impl core::fmt::Debug for PaneTyping {
             f,
             "PaneTyping {{ key: {:?}, buffer: <{} chars> }}",
             self.key,
-            self.buffer.chars().count()
+            self.buffer.char_count()
         )
     }
 }
 
 impl ConfigPane {
-    /// The section with every field edit in `edits` applied, in key order,
-    /// comments and key order intact, ready for `Request::SetDogConfig`.
-    ///
-    /// `toml_edit` rather than a re-render of [`Self::values`], and that is
-    /// the whole reason this method exists: the request replaces the section
-    /// wholesale, so a re-render would delete every comment in it on the
-    /// operator's own keystroke.
-    ///
-    /// This is what a close actually sends: the request replaces the table,
-    /// so a batch of edits to one dog is one write, not one per entry. Each
-    /// is applied to the document the previous one produced, walked in
-    /// [`Edits::iter`]'s own key order.
-    ///
-    /// An [`EditKey::Env`] entry has no home in a dog's section, a dog
-    /// having no env store, and is skipped rather than becoming a key in
-    /// it.
-    ///
-    /// A `null` value removes the key, which is how the pane's empty buffer
-    /// unsets one, and is what puts the dog back on its own default.
-    ///
-    /// [`None`] for a sheep pane, for a set holding no field edit, and for
-    /// a section that does not parse, raised by any one entry: a partial
-    /// section is worse than none, since the request would replace the
-    /// table with it.
-    #[must_use]
-    pub fn edited_section_with(&self, edits: &Edits) -> Option<String> {
-        let section = self.section.as_deref()?;
-        let mut doc: toml_edit::DocumentMut = section.parse().ok()?;
-        let mut wrote = false;
-        for (key, edit) in edits.iter() {
-            let EditKey::Field(name) = key else {
-                continue;
-            };
-            let PaneEdit::Set { value, .. } = edit.edit() else {
-                continue;
-            };
-            match value.as_value() {
-                Value::Null => {
-                    doc.remove(name.as_str());
-                }
-                Value::Bool(flag) => doc[name.as_str()] = toml_edit::value(*flag),
-                // A number that is neither an i64 nor an f64 is not
-                // something TOML can hold, so the edit is refused rather
-                // than rounded.
-                Value::Number(number) => match (number.as_i64(), number.as_f64()) {
-                    (Some(int), _) => doc[name.as_str()] = toml_edit::value(int),
-                    (None, Some(float)) => doc[name.as_str()] = toml_edit::value(float),
-                    (None, None) => return None,
-                },
-                Value::String(text) => doc[name.as_str()] = toml_edit::value(text.as_str()),
-                other => doc[name.as_str()] = toml_edit::value(other.to_string()),
-            }
-            wrote = true;
-        }
-        wrote.then(|| doc.to_string())
-    }
-
     /// The open text editor, or [`None`].
     #[must_use]
     pub fn typing(&self) -> Option<&PaneTyping> {
@@ -140,7 +94,11 @@ impl ConfigPane {
     /// silently, since the pane already holds nothing once this returns.
     #[must_use]
     pub(in crate::lookout) fn close(&mut self) -> Edits {
-        core::mem::take(&mut self.edits)
+        self.fold_entry_edits();
+        let edits = core::mem::take(&mut self.edits);
+        self.reshapes = Default::default();
+        self.resync_entries();
+        edits
     }
 
     /// Drops the most recently filed edit and names it, for `u`.
@@ -149,9 +107,17 @@ impl ConfigPane {
     /// `u` inside one shows the array it just restored rather than the one
     /// it has undone. One entry is one field, so a `u` there takes the
     /// whole field back to the shepherd's array rather than one keystroke
-    /// of it.
+    /// of it. Undoing the removal of an entry gives its rows back, with the
+    /// edits filed under the array and the entries that were open.
     pub(in crate::lookout) fn undo_edit(&mut self) -> Option<EditKey> {
         let undone = self.edits.undo();
+        if let Some(EditKey::Field(key)) = &undone
+            && self.entries_field(key).is_some()
+        {
+            self.restore_reshape(key);
+            self.resync_entries();
+            self.retain_known_open();
+        }
         if let Some(key) = self.list.as_ref().map(|list| list.key().to_owned()) {
             let elements = self.filed_elements_of(&key);
             if let Some(list) = self.list.as_mut() {
@@ -162,14 +128,16 @@ impl ConfigPane {
     }
 
     /// Files the opposite of what a bool holds, or the next name in a
-    /// choice. Does nothing for a locked field, or for one no keystroke
+    /// choice, or a name of a checklist toggled. Does nothing for a locked field, or for one no keystroke
     /// cycles ([`FieldKind::Text`], [`FieldKind::Integer`],
-    /// [`FieldKind::Map`], [`FieldKind::Opaque`]).
+    /// [`FieldKind::Number`], [`FieldKind::Map`], [`FieldKind::Opaque`],
+    /// [`FieldKind::Entries`]).
     pub fn cycle(&mut self) {
-        let Some(PaneRow::Field(index)) = self.cursor() else {
+        if let Some(PaneRow::Choice { field, item }) = self.cursor() {
+            self.toggle_choice(field, item);
             return;
-        };
-        let Some(field) = self.fields.fields().get(index) else {
+        }
+        let Some(field) = self.cursor_field() else {
             return;
         };
         if self.lock(&field.key).is_some() {
@@ -186,7 +154,7 @@ impl ConfigPane {
             },
             None => None,
         };
-        let current = filed_here.or_else(|| self.values.get(&field.key));
+        let current = filed_here.or_else(|| self.stored_of(&field.key));
         let next = match &field.kind {
             FieldKind::Bool => Value::Bool(!current.and_then(Value::as_bool).unwrap_or(false)),
             FieldKind::Choice(names) | FieldKind::Suggested(names) if !names.is_empty() => {
@@ -200,8 +168,11 @@ impl ConfigPane {
             | FieldKind::Suggested(_)
             | FieldKind::Text
             | FieldKind::Integer
+            | FieldKind::Number
             | FieldKind::Map
             | FieldKind::List(_)
+            | FieldKind::Entries(_)
+            | FieldKind::Union(_)
             | FieldKind::Opaque => return,
         };
         let key = field.key.clone();
@@ -224,6 +195,10 @@ impl ConfigPane {
     /// appears, rests on that: it never has to ask what a Structural
     /// edit would cost, because one can never be in the set to ask about.
     pub(super) fn file_field(&mut self, key: String, value: Value) {
+        if let Some(place) = self.place(&key) {
+            self.file_arm(place, value);
+            return;
+        }
         if self.stored_value_is(&key, &value) {
             self.edits.remove(&EditKey::Field(key));
             return;
@@ -243,11 +218,13 @@ impl ConfigPane {
     /// An absent key and a `null` are the same fact here: the pane renders
     /// both as `(unset)`, so unsetting a field that is already unset is
     /// not a change.
+    ///
+    /// For an array or map of tables an empty one is the same fact too: an
+    /// entry added and removed again leaves the section as it was.
     fn stored_value_is(&self, key: &str, value: &Value) -> bool {
-        match self.values.get(key) {
-            Some(stored) => stored == value,
-            None => value.is_null(),
-        }
+        let stored = self.stored_of(key).unwrap_or(&Value::Null);
+        stored == value
+            || (self.entries_field(key).is_some() && holds_nothing(stored) && holds_nothing(value))
     }
 
     /// `d` on the field list: restores the field under the cursor to its
@@ -284,16 +261,17 @@ impl ConfigPane {
     /// already been refused once, by the caller's own lock check, and this
     /// is the defense behind it.
     pub(in crate::lookout) fn file_default(&mut self) {
-        let Some(PaneRow::Field(index)) = self.cursor() else {
-            return;
-        };
-        let Some(field) = self.fields.fields().get(index) else {
+        let Some(field) = self.cursor_field() else {
             return;
         };
         if self.lock(&field.key).is_some() {
             return;
         }
         let key = field.key.clone();
+        if self.place(&key).is_some() {
+            self.restore_arm_field(&key);
+            return;
+        }
         if self.field_shows_default(&key) {
             return;
         }
@@ -355,16 +333,13 @@ impl ConfigPane {
     /// empty: the pane renders `<set>` for one and never holds the value,
     /// so a seed would have to invent it.
     pub fn begin_typing(&mut self) {
-        let Some(PaneRow::Field(index)) = self.cursor() else {
-            return;
-        };
-        let Some(field) = self.fields.fields().get(index) else {
+        let Some(field) = self.cursor_field() else {
             return;
         };
         if self.lock(&field.key).is_some()
             || !matches!(
                 field.kind,
-                FieldKind::Text | FieldKind::Integer | FieldKind::Suggested(_)
+                FieldKind::Text | FieldKind::Integer | FieldKind::Number | FieldKind::Suggested(_)
             )
         {
             return;
@@ -379,26 +354,36 @@ impl ConfigPane {
         };
         self.typing = Some(PaneTyping {
             key: field.key.clone(),
-            buffer: seed,
+            buffer: TextBox::from(seed),
         });
     }
 
-    /// Appends one typed character.
+    /// Inserts one typed character at the cursor.
     pub fn type_char(&mut self, typed: char) {
         if let Some(typing) = self.typing.as_mut() {
-            typing.buffer.push(typed);
+            typing.buffer.insert(typed);
         }
     }
 
-    /// Removes the last typed character.
+    /// Removes the character before the cursor.
     pub fn type_backspace(&mut self) {
         if let Some(typing) = self.typing.as_mut() {
-            typing.buffer.pop();
+            typing.buffer.backspace();
+        }
+    }
+
+    /// Moves the cursor or deletes, per `edit`.
+    pub fn edit_text(&mut self, edit: TextEdit) {
+        if let Some(typing) = self.typing.as_mut() {
+            typing.buffer.edit(edit);
         }
     }
 
     /// Files the buffer as an edit, typed to the field's kind, or hands
     /// back the reason it did not.
+    ///
+    /// The editor `Enter` on a map's `+ new` row opens is not for a field: it
+    /// takes the key of the entry to add, see [`Self::apply_new_key`].
     ///
     /// An empty buffer restores the field's default, through
     /// [`Self::default_for`] — the same value `d` files, and the same
@@ -417,8 +402,10 @@ impl ConfigPane {
     /// The check is [`super::super::validation::refusal`], which reads the
     /// grammar off the field rather than off the key: shep's own two string
     /// types go through their `FromStr`, a dog's own `pattern` through the
-    /// regex it published, and an integer through its schema's `minimum`
-    /// and `maximum`.
+    /// regex it published, an integer through its schema's `minimum`,
+    /// `maximum`, `exclusiveMinimum` and `exclusiveMaximum` (the two strict
+    /// spellings folded into the pair at the next integer in), and a decimal
+    /// through the same four as the schema wrote them.
     ///
     /// This is the only gate a dog's section has. `Request::SetDogConfig`
     /// checks that the table is TOML and writes it, because the dog is the
@@ -433,13 +420,26 @@ impl ConfigPane {
     #[must_use]
     pub fn apply_typing(&mut self) -> Option<Refusal> {
         let PaneTyping { key, buffer } = self.typing.take()?;
-        let field = self.fields.by_key(&key).cloned();
+        if let Some(field) = self.new_entry_field(&key) {
+            return self.apply_new_key(field, key, buffer);
+        }
+        let field = self.field_of(&key).cloned();
         if let Some(refused) = field
             .as_ref()
-            .and_then(|field| validation::refusal(field, &buffer))
+            .and_then(|field| validation::refusal(field, buffer.as_str()))
         {
             self.typing = Some(PaneTyping { key, buffer });
             return Some(refused);
+        }
+        if buffer.as_str().is_empty()
+            && let Some(text) = self.required_refusal(&key)
+        {
+            self.typing = Some(PaneTyping { key, buffer });
+            return Some(Refusal { text });
+        }
+        if buffer.as_str().is_empty() && self.place(&key).is_some() {
+            self.restore_arm_field(&key);
+            return None;
         }
         let kind = field.as_ref().map(|field| field.kind.clone());
         let value = match (kind, buffer.as_str()) {
@@ -457,8 +457,25 @@ impl ConfigPane {
                 Err(_) => {
                     let shown = field
                         .as_ref()
-                        .map_or(text, |field| validation::shown_value(field, text));
+                        .map_or(text, |field| validation::shown_value(field.secret, text));
                     let refused = validation::not_a_whole_number(&key, shown);
+                    self.typing = Some(PaneTyping { key, buffer });
+                    return Some(refused);
+                }
+            },
+            // The same second parse for a decimal. `validation::refusal` already
+            // refused every text `f64::from_str` cannot hold and every
+            // non-finite one it can, so this arm answers a refusal rather than
+            // filing: `Value::from(f64)` hands back `null` for a non-finite
+            // float, and a dog's section writer reads `null` as "remove this
+            // key".
+            (Some(FieldKind::Number), text) => match text.parse::<f64>() {
+                Ok(number) if number.is_finite() => Value::from(number),
+                _ => {
+                    let shown = field
+                        .as_ref()
+                        .map_or(text, |field| validation::shown_value(field.secret, text));
+                    let refused = validation::not_a_number(&key, shown);
                     self.typing = Some(PaneTyping { key, buffer });
                     return Some(refused);
                 }
@@ -472,447 +489,5 @@ impl ConfigPane {
     /// Drops an editor under construction, leaving the pane open.
     pub fn abandon_typing(&mut self) {
         self.typing = None;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use shep_core::config::{AppConfig, ApplyGroup, apply_group};
-    use shep_core::protocol::SheepConfigView;
-
-    use super::super::Lock;
-    use super::super::fixtures::{bark_pane, field, filed, filed_impact, secret_dog_pane, web};
-    use super::*;
-
-    #[test]
-    fn cycling_a_bool_files_a_set_with_the_flipped_value() {
-        let mut pane = ConfigPane::sheep(web());
-        pane.move_to_key("autorestart");
-        pane.cycle();
-        assert_eq!(filed(&pane, "autorestart"), Some(serde_json::json!(false)));
-        assert_eq!(pane.edits().len(), 1, "one key, one entry");
-    }
-
-    /// A round trip is not a change, so the entry goes rather than being
-    /// filed as the value the sheep already holds: an entry that changes
-    /// nothing would still be written and still be counted.
-    #[test]
-    fn cycling_a_bool_back_to_the_stored_value_unfiles_it() {
-        let mut pane = ConfigPane::sheep(web());
-        pane.move_to_key("autorestart");
-        pane.cycle();
-        pane.cycle();
-        assert_eq!(filed(&pane, "autorestart"), None);
-        assert!(pane.edits().is_empty());
-    }
-
-    #[test]
-    fn space_cycles_a_suggested_field_and_e_still_opens_the_editor() {
-        let mut pane = ConfigPane::sheep(web());
-        pane.move_to_key("kill_signal");
-        pane.cycle();
-        assert!(
-            filed(&pane, "kill_signal").is_some(),
-            "space files a suggestion"
-        );
-        pane.begin_typing();
-        assert!(pane.typing().is_some(), "e still opens a free-text editor");
-    }
-
-    /// The set records what each edit costs, per entry, so the close
-    /// dialog can read the heaviest one without re-deriving anything.
-    /// `apply_group` is a fact about the field; a write's fate is a fact
-    /// about the flock, which only the shepherd knows.
-    #[test]
-    fn a_filed_edit_carries_the_fields_own_apply_group() {
-        for (key, want) in [
-            ("autorestart", ApplyGroup::Live),
-            ("watch", ApplyGroup::Live),
-            ("autostart", ApplyGroup::NextSpawn),
-            ("merge_logs", ApplyGroup::NeedsRespawn),
-            ("shutdown_with_message", ApplyGroup::NeedsRespawn),
-        ] {
-            let mut pane = ConfigPane::sheep(web());
-            pane.move_to_key(key);
-            pane.cycle();
-            assert_eq!(
-                pane.cost(key),
-                Some(want),
-                "the fixture must keep {key} {want:?} or the test means nothing"
-            );
-            assert_eq!(filed_impact(&pane, key), Some(want), "{key}");
-        }
-    }
-
-    /// A dog's section belongs to the dog, so shep records no cost for it.
-    #[test]
-    fn a_dogs_filed_edit_carries_no_apply_group() {
-        let mut pane = bark_pane();
-        pane.move_to_key("history_bytes");
-        pane.begin_typing();
-        for _ in 0..8 {
-            pane.type_backspace();
-        }
-        for typed in "8192".chars() {
-            pane.type_char(typed);
-        }
-        assert_eq!(pane.apply_typing(), None, "the field takes what was typed");
-        assert_eq!(filed(&pane, "history_bytes"), Some(serde_json::json!(8192)));
-        assert_eq!(filed_impact(&pane, "history_bytes"), None);
-    }
-
-    /// The invariant [`super::super::app::App::close_offer`]'s own walk over
-    /// [`Edits::iter`] rests on: nothing a keystroke can do files a
-    /// `Structural` edit, because [`ConfigPane::sheep`] marks those fields
-    /// not editable and every filing door checks [`ConfigPane::lock`]
-    /// first.
-    #[test]
-    fn no_key_files_an_edit_for_a_structural_field() {
-        let structural: Vec<String> = ConfigPane::sheep(web())
-            .fields()
-            .fields()
-            .iter()
-            .filter(|field| apply_group(&field.key) == ApplyGroup::Structural)
-            .map(|field| field.key.clone())
-            .collect();
-        assert_eq!(
-            structural,
-            vec!["instances".to_owned(), "name".to_owned()],
-            "the schema must still carry the two Structural fields"
-        );
-        for key in structural {
-            let mut pane = ConfigPane::sheep(web());
-            pane.move_to_key(&key);
-            assert_eq!(pane.lock(&key), Some(Lock::Refused), "{key}");
-            pane.cycle();
-            pane.begin_typing();
-            pane.type_char('x');
-            assert_eq!(
-                pane.apply_typing(),
-                None,
-                "{key} passes validation; the lock is what stops it filing"
-            );
-            assert!(pane.edits().is_empty(), "{key} reached the set");
-        }
-    }
-
-    /// A string here would be refused by `AppConfig`'s own deserializer.
-    #[test]
-    fn typing_into_an_integer_and_applying_files_a_number_not_a_string() {
-        let mut pane = ConfigPane::sheep(web());
-        pane.move_to_key("max_restarts");
-        pane.begin_typing();
-        let typing = pane.typing().expect("the editor is open");
-        assert_eq!(typing.buffer, "32", "the editor opens on what is on screen");
-        pane.type_backspace();
-        pane.type_backspace();
-        for c in "40".chars() {
-            pane.type_char(c);
-        }
-        assert_eq!(pane.apply_typing(), None, "the field takes what was typed");
-        assert_eq!(filed(&pane, "max_restarts"), Some(serde_json::json!(40)));
-    }
-
-    /// The sibling of `d`'s own defect: emptying an integer field's buffer
-    /// used to file `Value::Null` regardless of the field's type, and
-    /// `max_restarts` is `u32`, not `Option<u32>`, so the daemon would have
-    /// refused it the same way it refused a bare `d` before that fix. An
-    /// emptied buffer now files the schema default through the same
-    /// [`ConfigPane::default_for`] `d` uses, not `null`.
-    #[test]
-    fn emptying_an_integer_field_and_applying_files_its_default_not_null() {
-        let mut pane = ConfigPane::sheep(web());
-        pane.move_to_key("max_restarts");
-        pane.begin_typing();
-        for _ in 0..10 {
-            pane.type_backspace();
-        }
-        assert_eq!(pane.typing().expect("still open").buffer, "");
-        assert_eq!(pane.apply_typing(), None, "the field takes what was typed");
-        assert_eq!(filed(&pane, "max_restarts"), Some(serde_json::json!(16)));
-    }
-
-    /// An `Option<T>` field with no schema default still unsets to `null`
-    /// through the emptied-buffer door: [`ConfigPane::default_for`] falls
-    /// back to [`Value::Null`] when [`Field::default_value`] is `None`,
-    /// which is exactly `cwd`'s case, so this path is unchanged for it.
-    #[test]
-    fn emptying_a_field_with_no_schema_default_still_unsets_to_null() {
-        let config = AppConfig {
-            name: "web".into(),
-            cwd: Some("/srv/web".into()),
-            ..AppConfig::default()
-        };
-        let mut pane = ConfigPane::sheep(SheepConfigView::new(config, vec!["cwd".into()], vec![]));
-        pane.move_to_key("cwd");
-        pane.begin_typing();
-        assert_eq!(
-            pane.typing().expect("the editor is open").buffer,
-            "/srv/web",
-            "the editor opens on what is on screen"
-        );
-        for _ in 0..8 {
-            pane.type_backspace();
-        }
-        assert_eq!(pane.apply_typing(), None, "the field takes what was typed");
-        assert_eq!(filed(&pane, "cwd"), Some(serde_json::Value::Null));
-    }
-
-    /// The request names one key and one JSON value; the daemon
-    /// deserializes that value into the field it names, so an integer
-    /// field handed `"40"` is refused rather than set.
-    #[test]
-    fn an_edit_carries_the_key_and_the_typed_value_and_nothing_else() {
-        let mut pane = ConfigPane::sheep(web());
-        pane.move_to_key("max_restarts");
-        pane.begin_typing();
-        pane.type_backspace();
-        pane.type_backspace();
-        for c in "40".chars() {
-            pane.type_char(c);
-        }
-        assert_eq!(pane.apply_typing(), None, "the field takes what was typed");
-        let writes = pane.close().into_writes();
-        let [PaneEdit::Set { key, value }] = writes.as_slice() else {
-            panic!("{writes:?}");
-        };
-        assert_eq!(key, "max_restarts");
-        assert_eq!(value.as_value(), &serde_json::json!(40));
-        assert!(
-            !matches!(value.as_value(), serde_json::Value::String(_)),
-            "an integer field must not travel as a string"
-        );
-    }
-
-    /// The set is what closing hands out, and closing empties it: a set
-    /// that has been written is not still pending.
-    #[test]
-    fn closing_hands_out_every_filed_edit_and_leaves_the_pane_empty() {
-        let mut pane = ConfigPane::sheep(web());
-        pane.move_to_key("autorestart");
-        pane.cycle();
-        pane.move_to_key("autostart");
-        pane.cycle();
-        assert_eq!(pane.edits().len(), 2);
-        let writes = pane.close().into_writes();
-        assert_eq!(writes.len(), 2, "{writes:?}");
-        assert!(pane.edits().is_empty(), "the pane keeps nothing back");
-        assert!(
-            pane.close().into_writes().is_empty(),
-            "a second close writes nothing twice"
-        );
-    }
-
-    /// The confirm sentence quotes what a write would actually mean, not
-    /// the digits the operator typed: this is the moment the maintainer's
-    /// own report says nothing warned them.
-    /// A unit field files the buffer verbatim, resolved unit or not: the
-    /// daemon parses `MemSize`, so a pane that rewrote `64` as `64 B`
-    /// would be a second grammar to keep in step with it. The resolving
-    /// happens on the way to the screen, in `display_value`, and nowhere
-    /// else.
-    #[test]
-    fn a_unit_field_files_the_buffer_and_never_a_resolved_form() {
-        for typed in ["64", "512M"] {
-            let mut pane = ConfigPane::sheep(web());
-            pane.move_to_key("max_memory");
-            pane.begin_typing();
-            for c in typed.chars() {
-                pane.type_char(c);
-            }
-            assert_eq!(pane.apply_typing(), None, "{typed} is a size shep takes");
-            assert_eq!(
-                filed(&pane, "max_memory"),
-                Some(serde_json::json!(typed)),
-                "{typed}"
-            );
-        }
-    }
-
-    /// The other half of the test above. The daemon is the backstop for a
-    /// sheep's own write and does not exist for a dog, so this gate is the
-    /// only thing between the buffer and `dogs.toml`.
-    #[test]
-    fn a_unit_field_refuses_a_buffer_its_own_grammar_does_not_take() {
-        let mut pane = ConfigPane::sheep(web());
-        pane.move_to_key("max_memory");
-        pane.begin_typing();
-        for c in "banana".chars() {
-            pane.type_char(c);
-        }
-        let refused = pane.apply_typing().expect("a size shep cannot read");
-        assert_eq!(
-            refused.text,
-            "max_memory is \"banana\", which is not a size shep accepts; \
-             try 512M, 2G, a bare number is bytes"
-        );
-        assert_eq!(filed(&pane, "max_memory"), None, "nothing was filed");
-        assert!(
-            pane.typing().is_some(),
-            "the editor stays open on what was typed"
-        );
-    }
-
-    /// The one editor a secret can be typed into, and `secret_dog_pane` is
-    /// the only fixture that reaches it. Seeded empty rather than with what
-    /// the section holds: the screen draws `<set>` for a secret and the
-    /// pane must not hand the old credential back for a backspace to edit.
-    #[test]
-    fn a_dogs_secret_field_seeds_its_editor_empty_and_files_what_was_typed() {
-        let mut pane = secret_dog_pane();
-        pane.move_to_key("webhook");
-        pane.begin_typing();
-        assert_eq!(
-            pane.typing().expect("the editor is open").buffer,
-            "",
-            "a secret seeds empty, however much the section holds"
-        );
-        for typed in "https://hook/NEW".chars() {
-            pane.type_char(typed);
-        }
-        assert_eq!(pane.apply_typing(), None, "the field takes what was typed");
-        assert_eq!(
-            filed(&pane, "webhook"),
-            Some(serde_json::json!("https://hook/NEW"))
-        );
-        let debug = format!("{pane:?}");
-        assert!(!debug.contains("OLD"), "{debug}");
-        assert!(!debug.contains("NEW"), "{debug}");
-    }
-
-    /// Re-rendering from parsed values would delete every comment in a
-    /// file shep does not author.
-    #[test]
-    fn an_edited_section_keeps_its_comments_and_changes_one_key() {
-        let pane = bark_pane();
-        let mut edits = Edits::default();
-        edits.set(field("poll", serde_json::json!("30s")), None);
-        let out = pane
-            .edited_section_with(&edits)
-            .expect("the fixture section parses");
-        assert!(out.contains("# how often"), "{out}");
-        assert!(out.contains("poll = \"30s\""), "{out}");
-        assert!(out.contains("history_bytes = 4096"), "{out}");
-        assert!(out.contains("url = \"https://hooks.example/x\""), "{out}");
-    }
-
-    /// An empty buffer unsets the key, putting it back on the dog's own
-    /// default.
-    #[test]
-    fn a_null_edit_removes_the_key_from_the_section() {
-        let pane = bark_pane();
-        let mut edits = Edits::default();
-        edits.set(field("history_bytes", serde_json::Value::Null), None);
-        let out = pane
-            .edited_section_with(&edits)
-            .expect("the fixture section parses");
-        assert!(!out.contains("history_bytes"), "{out}");
-        assert!(out.contains("# how often"), "{out}");
-    }
-
-    /// A dog's write patches its section's own TOML text rather than going
-    /// through `Request::SetSheepField`'s deserializer, so `null` already
-    /// means "remove this key" there, not a value refused for the wrong
-    /// type. `d` must keep filing `Value::Null` for a dog even when its
-    /// schema names a non-null default, or it would hard-code the default
-    /// into the section instead of restoring it.
-    #[test]
-    fn d_on_a_dog_field_files_null_even_with_a_schema_default() {
-        let schema = serde_json::json!({
-            "properties": {
-                "merge_logs": { "type": "boolean", "default": true },
-            },
-        });
-        let mut pane = ConfigPane::dog("bark".into(), None, schema, "merge_logs = false\n".into());
-        pane.move_to_key("merge_logs");
-        pane.file_default();
-        assert_eq!(
-            filed(&pane, "merge_logs"),
-            Some(Value::Null),
-            "a dog restores by removing the key, not by filing its default"
-        );
-        let out = pane
-            .edited_section_with(pane.edits())
-            .expect("the fixture section parses");
-        assert!(!out.contains("merge_logs"), "{out}");
-    }
-
-    /// A dog section takes every filed edit in one write rather than one
-    /// write per edit.
-    #[test]
-    fn a_dog_section_takes_every_filed_edit_in_one_write() {
-        let pane = bark_pane();
-        let mut edits = Edits::default();
-        edits.set(field("url", serde_json::json!("http://a")), None);
-        edits.set(field("timeout", serde_json::json!(30)), None);
-        let section = pane
-            .edited_section_with(&edits)
-            .expect("the fixture parses");
-        assert!(section.contains("http://a"), "{section}");
-        assert!(section.contains("30"), "{section}");
-    }
-
-    /// An env edit has no home in a dog's section and must not silently
-    /// become a key in it.
-    #[test]
-    fn an_env_edit_is_ignored_by_a_dog_section() {
-        let pane = bark_pane();
-        let mut edits = Edits::default();
-        edits.set(
-            PaneEdit::SetEnv {
-                key: "SECRET".to_owned(),
-                value: None,
-            },
-            None,
-        );
-        assert_eq!(pane.edited_section_with(&edits), None);
-    }
-
-    /// A stray env edit in a set that also carries a field edit must not
-    /// revive the old "one bad entry aborts the whole batch" bug: skipping
-    /// the env edit and an early return on any non-field entry both leave
-    /// `an_env_edit_is_ignored_by_a_dog_section` green, since an env-only
-    /// set returns `None` either way. Only a mixed set tells them apart.
-    #[test]
-    fn a_field_edit_lands_even_when_the_same_batch_carries_an_env_edit() {
-        let pane = bark_pane();
-        let mut edits = Edits::default();
-        edits.set(field("poll", serde_json::json!("30s")), None);
-        edits.set(
-            PaneEdit::SetEnv {
-                key: "SECRET".to_owned(),
-                value: None,
-            },
-            None,
-        );
-        let out = pane
-            .edited_section_with(&edits)
-            .expect("the field edit alone should still write");
-        assert!(out.contains("poll = \"30s\""), "{out}");
-        assert!(!out.contains("SECRET"), "{out}");
-    }
-
-    /// A section here would send a sheep's config out through a dog's
-    /// door.
-    #[test]
-    fn a_sheep_pane_has_no_section_to_edit() {
-        let pane = ConfigPane::sheep(web());
-        let mut edits = Edits::default();
-        edits.set(field("cwd", serde_json::json!("/srv")), None);
-        assert_eq!(pane.edited_section_with(&edits), None);
-    }
-
-    /// The buffer is what the operator is halfway through typing, and on
-    /// the env screen that is the secret itself (IR-41).
-    #[test]
-    fn debug_names_no_value_on_a_pane_typing() {
-        let typing = PaneTyping {
-            key: "cwd".into(),
-            buffer: "/home/ada/secret-project".into(),
-        };
-        assert_eq!(
-            format!("{typing:?}"),
-            r#"PaneTyping { key: "cwd", buffer: <24 chars> }"#
-        );
     }
 }

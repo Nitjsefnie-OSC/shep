@@ -55,7 +55,7 @@ async fn kill_daemon_shuts_the_flock_down_and_unlinks_the_socket() {
 
     // Reaped, not merely signalled: `kill(pid, None)` still returns `Ok` for a
     // zombie, so only ESRCH proves the daemon's own `wait()` ran. The `sleep 1`
-    // grandchildren are out of reach here; `real_runner.rs` covers them.
+    // grandchildren are out of reach here; `real_runner/signals.rs` covers them.
     for pid in pids {
         assert_reaped(pid).await;
     }

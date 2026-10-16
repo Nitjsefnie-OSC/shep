@@ -113,6 +113,7 @@ async fn a_namespace_pushed_for_another_environment_leaves_the_sheep_waiting() {
     actor
         .provider_secrets
         .put(
+            crate::supervisor::DEFAULT_ENVIRONMENT,
             "vercel",
             "production",
             BTreeMap::from([("API_KEY".to_string(), "sk_live".to_string())]),
@@ -152,6 +153,7 @@ async fn a_key_absent_from_a_pushed_pair_errors_at_once() {
     actor
         .provider_secrets
         .put(
+            crate::supervisor::DEFAULT_ENVIRONMENT,
             "vercel",
             "production",
             BTreeMap::from([("OTHER".to_string(), "1".to_string())]),

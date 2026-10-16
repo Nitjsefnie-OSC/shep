@@ -11,26 +11,51 @@
 //! `Request::ApplyConfig`.
 //!
 //! `config` holds the pane and everything it answers; `edit`, `env` and
-//! `list` hold what it does when a key lands; `dogs` holds a sheep's dogs
+//! `list` hold what it does when a key lands, and `choices` the checklist a
+//! list of choices opens to; `dogs` holds a sheep's dogs
 //! sub-screen and `sheep_dog` the pane over one dog's table on it; `types`
-//! and `fields` hold what the rest read and write.
+//! and `fields` hold what the rest read and write; `section_write` turns a
+//! filed set back into a dog's TOML text; `walk` holds the rows and the
+//! cursor's walk through them.
 
+mod choices;
 mod config;
+#[cfg(test)]
+mod config_tests;
 mod dogs;
 mod edit;
+#[cfg(test)]
+mod edit_tests;
+mod entries;
+mod entries_write;
+mod entry_add;
+#[cfg(test)]
+mod entry_edit;
+mod entry_remove;
 mod env;
 mod fields;
 #[cfg(test)]
 mod fixtures;
 mod list;
+mod section_write;
+#[cfg(test)]
+mod section_write_entries;
 mod sheep_dog;
+mod tree;
 mod types;
+mod union;
+#[cfg(test)]
+mod union_tests;
+mod walk;
 
 pub use config::{ConfigPane, ReloadKind};
 pub(crate) use dogs::dog_names;
 pub use dogs::{DogTableState, DogsPane, SheepDogEntry};
 pub use edit::PaneTyping;
+pub(in crate::lookout) use entries::EntryBody;
 pub use env::EnvTyping;
 pub(crate) use fields::{resolved_display, sheep_fields};
 pub use list::{ListPane, ListRow};
-pub use types::{FieldValue, Lock, PaneEdit, PaneRow, PaneTarget};
+pub(in crate::lookout) use tree::TreeRow;
+pub(in crate::lookout) use types::PathStep;
+pub use types::{FieldValue, Lock, PaneEdit, PaneRow, PaneTarget, SectionWrite};

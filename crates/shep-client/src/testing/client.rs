@@ -2,12 +2,13 @@ use super::*;
 use crate::{Client, ReconnectingClient};
 use futures_util::StreamExt;
 use shep_core::protocol::{
-    Envelope, HelloAck, Request, Response, RpcErrorCode, codec, decode_frame,
+    Envelope, HelloAck, Request, Response, RpcError, RpcErrorCode, codec, decode_frame,
 };
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::codec::Framed;
@@ -173,6 +174,45 @@ pub async fn fake_client_answering(
     (client, rx)
 }
 
+/// As [`fake_client_answering`], but `answer` may refuse: an `Err` is
+/// written as the reply's [`RpcError`], for a caller that has to see a
+/// daemon-side refusal come back as a failed request rather than as an
+/// unexpected [`Response`].
+///
+/// `answer` is called per request in arrival order, so it can refuse one
+/// request of a multi-request verb and answer the rest.
+pub async fn fake_client_answering_refusals(
+    path: &Path,
+    answer: impl Fn(&Request) -> Result<Response, RpcError> + Send + 'static,
+) -> (Client, mpsc::UnboundedReceiver<Envelope>) {
+    let mut listener = bind(path);
+    let (tx, rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let stream = listener.accept().await.unwrap();
+        let mut frames = Framed::new(stream, codec());
+        let _hello = handshake(&mut frames, sample_ack()).await;
+        while let Some(Ok(frame)) = frames.next().await {
+            let Ok(envelope) = decode_frame::<Envelope>(&frame) else {
+                break;
+            };
+            let id = envelope.id;
+            let answer = answer(&envelope.body);
+            // Forwarded before the reply is written, as in
+            // [`fake_client_answering`]: a test reads these envelopes after
+            // the call under test returns.
+            if tx.send(envelope).is_err() {
+                break;
+            }
+            match answer {
+                Ok(response) => write_reply(&mut frames, id, response).await,
+                Err(err) => write_err(&mut frames, id, err.code, err.message).await,
+            }
+        }
+    });
+    let client = Client::connect(path).await.unwrap();
+    (client, rx)
+}
+
 /// Binds `path`, handshakes with [`sample_ack`], and answers every request
 /// with `Response::Pong` while forwarding each decoded [`Envelope`] onto
 /// the returned channel, for asserting on what a `Client` puts on the wire
@@ -200,7 +240,7 @@ pub async fn fake_client_capturing_envelopes(path: &Path) -> (Client, mpsc::Rece
 }
 
 /// Binds `path`, handshakes with [`sample_ack`], and answers the one
-/// request that arrives with an [`RpcError`](shep_core::protocol::RpcError) carrying `code` and `message`.
+/// request that arrives with an [`RpcError`] carrying `code` and `message`.
 ///
 /// Backed by a [`FakeDaemon`] so the connection keeps serving afterward,
 /// unlike a bespoke one-shot task that would die after the scripted reply.
@@ -300,6 +340,46 @@ pub async fn fake_client_that_never_replies(path: &Path) -> (Client, JoinHandle<
         let mut frames = Framed::new(stream, codec());
         let _hello = handshake(&mut frames, sample_ack()).await;
         core::future::pending::<()>().await;
+    });
+    let client = Client::connect(path).await.unwrap();
+    (client, task)
+}
+
+/// Binds `path`, handshakes with [`sample_ack`], and answers each request
+/// with `response`, unless its wire deadline is shorter than `needs`, which
+/// it answers with `DeadlineExceeded` as the real daemon does when work
+/// outlasts the budget.
+///
+/// Decided from the envelope alone, with no sleep: a paused test clock
+/// auto-advances past a real socket read, so a fake that waited out `needs`
+/// would race the client's own timeout. Serves one connection, one request
+/// at a time.
+pub async fn fake_client_needing_budget(
+    path: &Path,
+    needs: Duration,
+    response: Response,
+) -> (Client, JoinHandle<()>) {
+    let mut listener = bind(path);
+    let task = tokio::spawn(async move {
+        let stream = listener.accept().await.unwrap();
+        let mut frames = Framed::new(stream, codec());
+        let _hello = handshake(&mut frames, sample_ack()).await;
+        loop {
+            let envelope = read_envelope(&mut frames).await;
+            let budget = Duration::from_millis(envelope.deadline_ms.unwrap_or(u64::MAX));
+            if budget < needs {
+                let message = format!("request deadline of {} ms expired", budget.as_millis());
+                write_err(
+                    &mut frames,
+                    envelope.id,
+                    RpcErrorCode::DeadlineExceeded,
+                    message,
+                )
+                .await;
+            } else {
+                write_reply(&mut frames, envelope.id, response.clone()).await;
+            }
+        }
     });
     let client = Client::connect(path).await.unwrap();
     (client, task)

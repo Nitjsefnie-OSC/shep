@@ -7,6 +7,21 @@ use super::*;
 /// this operator's to set.
 pub(super) const PROVIDER_ROW_REFUSAL: &str = "read-only: pushed by a dog, not set here";
 
+impl App {
+    /// Refuse `row` when a provider pushed it: raise the grave
+    /// [`PROVIDER_ROW_REFUSAL`] notice, and report whether it did.
+    ///
+    /// The check [`Self::secrets_confirm`] and [`Self::arm_secret_delete`]
+    /// share, so the sentence is raised from one place.
+    pub(super) fn refuse_provider_row(&mut self, row: &SecretRow) -> bool {
+        if matches!(row.source, Source::Namespace(_)) {
+            self.notice = Some(Notice::grave(PROVIDER_ROW_REFUSAL.to_string()));
+            return true;
+        }
+        false
+    }
+}
+
 /// `D`'s refusal on a row whose value comes from the `all` slot while a
 /// named environment's tab is open.
 ///
@@ -347,7 +362,7 @@ pub(crate) struct Typing {
     /// What is being typed: a new key's name, or a value for a key.
     pub what: TypingWhat,
     /// The buffer.
-    pub buffer: String,
+    pub buffer: TextBox,
 }
 
 /// Redacted (IR-41): a value buffer is the secret being typed.
@@ -355,7 +370,10 @@ impl fmt::Debug for Typing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Typing")
             .field("what", &self.what)
-            .field("buffer", &format_args!("<{} bytes>", self.buffer.len()))
+            .field(
+                "buffer",
+                &format_args!("<{} bytes>", self.buffer.as_str().len()),
+            )
             .finish()
     }
 }

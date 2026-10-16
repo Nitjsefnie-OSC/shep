@@ -9,11 +9,12 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use super::super::super::field::Field;
-use super::super::super::pane::{ConfigPane, PaneRow};
+use super::super::super::pane::{ConfigPane, EntryBody, PaneRow};
 use super::super::super::theme::Palette;
 use super::super::super::validation;
 use super::chrome::hairline_line;
-use super::field_row::{impact_tag, type_label};
+use super::entry_row::ENTRY_LABEL;
+use super::field_row::{TABLE_LABEL, impact_tag, type_label};
 use super::layout::{BLURB_WRAP, PANEL_MAX, clipped, mask_secret, wrap};
 use crate::vocabulary::Role;
 
@@ -60,7 +61,7 @@ pub(in crate::lookout::view) fn panel_for_field(
     // 1: the FOCUSED chip, the field name, its type.
     lines.push(Line::from(vec![
         Span::styled(" FOCUSED ", palette.band(Role::Butter)),
-        Span::raw(format!(" {}", field.key)),
+        Span::raw(format!(" {}", pane.shown_key(&field.key))),
         Span::styled(format!("  {}", type_label(field)), palette.muted()),
     ]));
 
@@ -74,6 +75,12 @@ pub(in crate::lookout::view) fn panel_for_field(
         usize::from(BLURB_WRAP.min(width.saturating_sub(2))),
     ) {
         lines.push(Line::from(Span::raw(format!("  {row}"))));
+    }
+    if let Some(arm) = pane.arm_description_of(&field.key) {
+        lines.push(Line::default());
+        for row in wrap(arm, usize::from(BLURB_WRAP.min(width.saturating_sub(2)))) {
+            lines.push(Line::from(Span::raw(format!("  {row}"))));
+        }
     }
 
     // 3: now, default, example. `now` is never empty; the other two show a
@@ -183,13 +190,81 @@ pub(in crate::lookout::view) fn panel_lines(
     palette: Palette,
     width: u16,
 ) -> Vec<Line<'static>> {
-    let Some(PaneRow::Field(index)) = pane.cursor() else {
-        return Vec::new();
+    let index = match pane.cursor() {
+        Some(PaneRow::Field(index)) => index,
+        Some(PaneRow::Table(index)) => return panel_for_table(pane, index, palette, width),
+        Some(PaneRow::Entry(index)) => return panel_for_entry(pane, index, palette, width),
+        Some(PaneRow::Choice { field, .. }) => field,
+        Some(row @ PaneRow::Arm { .. }) => {
+            return pane.arm_field(row).map_or_else(Vec::new, |field| {
+                panel_for_field(field, pane, palette, width)
+            });
+        }
+        Some(PaneRow::Env(_) | PaneRow::AddEnv) | None => return Vec::new(),
     };
     let Some(field) = pane.fields().fields().get(index) else {
         return Vec::new();
     };
     panel_for_field(field, pane, palette, width)
+}
+
+/// The panel for a nested table: the `FOCUSED` chip with its full key and
+/// its type, and nothing under it, since a table holds no value, default or
+/// validation of its own. A path longer than `width` leaves room for is
+/// clipped, so the type label stays inside the panel.
+fn panel_for_table(
+    pane: &ConfigPane,
+    index: usize,
+    palette: Palette,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let Some(path) = pane.table_path(index) else {
+        return Vec::new();
+    };
+    chip_line(path, TABLE_LABEL, palette, width)
+}
+
+/// The type label beside `+ new`'s chip.
+const NEW_PANEL_LABEL: &str = "adds an entry";
+
+/// The panel for a row under an array or map of tables: the chip with the
+/// row's label and its type, and nothing under it. An entry holds no value
+/// of its own. A field in one gets the panel any field does.
+fn panel_for_entry(
+    pane: &ConfigPane,
+    index: usize,
+    palette: Palette,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let Some(row) = pane.entry_row(index) else {
+        return Vec::new();
+    };
+    if let EntryBody::Leaf { field, .. } = &row.body {
+        return panel_for_field(field, pane, palette, width);
+    }
+    let label = match &row.body {
+        EntryBody::Node { entry: true, .. } => ENTRY_LABEL,
+        EntryBody::Node { .. } => TABLE_LABEL,
+        EntryBody::New { .. } => NEW_PANEL_LABEL,
+        EntryBody::Leaf { .. } => return Vec::new(),
+    };
+    chip_line(&row.label, label, palette, width)
+}
+
+/// The `FOCUSED` chip, `text` clipped to what `width` leaves room for, and
+/// `type_label` after it.
+fn chip_line(text: &str, type_label: &str, palette: Palette, width: u16) -> Vec<Line<'static>> {
+    let chip = " FOCUSED ";
+    let label = format!("  {type_label}");
+    let taken = chip.chars().count() + 1 + label.chars().count();
+    let budget = width
+        .min(PANEL_MAX)
+        .saturating_sub(u16::try_from(taken).unwrap_or(u16::MAX));
+    vec![Line::from(vec![
+        Span::styled(chip, palette.band(Role::Butter)),
+        Span::raw(format!(" {}", clipped(text, budget))),
+        Span::styled(label, palette.muted()),
+    ])]
 }
 
 #[cfg(test)]
@@ -220,6 +295,55 @@ mod tests {
             "the current value leaked: {text}"
         );
         assert!(text.contains("<set>"), "{text}");
+    }
+
+    /// A decimal field's VALIDATION rows come from the type table, the way a
+    /// duration's and an integer's do. Built from a schema rather than a shared
+    /// pane fixture, because no fixture the frames are captured from has a
+    /// decimal field, and adding one to those would move a snapshot for a
+    /// sentence this test only needs once.
+    #[test]
+    fn a_number_field_takes_its_bullets_from_the_type_table() {
+        let schema = serde_json::json!({
+            "properties": {
+                "per_item_usd": { "type": "number", "format": "double", "exclusiveMinimum": 0 },
+            },
+        });
+        let pane = ConfigPane::dog(
+            "kelpie".into(),
+            None,
+            schema,
+            "per_item_usd = 12.5\n".into(),
+        );
+        let field = pane
+            .fields()
+            .by_key("per_item_usd")
+            .expect("the schema declares per_item_usd");
+        let panel = text_of(&panel_for_field(field, &pane, fixtures::plain(), 120));
+        assert!(panel[0].contains("number"), "{panel:?}");
+        assert!(
+            panel.iter().any(|row| row.contains("VALIDATION")),
+            "{panel:?}"
+        );
+        assert!(
+            panel.iter().any(|row| row.contains("a number")),
+            "{panel:?}"
+        );
+    }
+
+    /// A table's chip keeps its `table` label and stays inside the panel
+    /// when the path is longer than the width leaves for it.
+    #[test]
+    fn a_tables_panel_clips_a_long_path_and_keeps_its_label() {
+        let mut pane = super::super::fixtures::nested_table_dog_pane();
+        pane.move_to_key("models.worker.token");
+        pane.close_table();
+        assert!(pane.cursor_on_table());
+        let text = text_of(&panel_lines(&pane, fixtures::plain(), 24));
+        assert_eq!(text.len(), 1, "{text:?}");
+        assert!(text[0].chars().count() <= 24, "{text:?}");
+        assert!(text[0].ends_with("table"), "{text:?}");
+        assert!(text[0].contains('\u{2026}'), "{text:?}");
     }
 
     #[test]

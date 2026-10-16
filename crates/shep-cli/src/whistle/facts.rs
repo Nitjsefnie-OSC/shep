@@ -134,6 +134,14 @@ pub struct SheepRow {
     /// unlike the two fields above, because `ProcessInfo` carries it without
     /// one and this type's doc promises byte-identical JSON.
     pub max_memory: Option<u64>,
+    /// `true` when the sheep's app is disabled: stopped, and refused a spawn
+    /// until `shep enable`. Absent otherwise, and when the peer daemon
+    /// predates the field. `status` stays `stopped` on a disabled sheep.
+    ///
+    /// `skip_serializing_if`, matching `ProcessInfo::disabled` exactly, which
+    /// is never `Some(false)`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
 }
 
 /// Where a dog came from. Mirrors `DogSource`'s tagged wire shape exactly.
@@ -146,6 +154,9 @@ pub enum DogSourceRow {
     Adopted {
         /// The path, as the operator gave it to `shep adopt`.
         path: String,
+        /// Whether the binary asked for the shepherd channel at adopt.
+        #[serde(skip_serializing_if = "core::ops::Not::not")]
+        channel: bool,
     },
     /// A source kind this whistle predates.
     ///
@@ -209,6 +220,7 @@ impl From<&ProcessInfo> for SheepRow {
             pending: info.pending.clone(),
             overridden: info.overridden.clone(),
             max_memory: info.max_memory,
+            disabled: info.disabled,
         }
     }
 }
@@ -226,7 +238,10 @@ impl From<&DogSource> for DogSourceRow {
     fn from(source: &DogSource) -> Self {
         match source {
             DogSource::BuiltIn => Self::BuiltIn,
-            DogSource::Adopted { path } => Self::Adopted { path: path.clone() },
+            DogSource::Adopted { path, channel } => Self::Adopted {
+                path: path.clone(),
+                channel: *channel,
+            },
             _ => Self::Unknown,
         }
     }
@@ -370,8 +385,9 @@ mod tests {
     /// Deep equality of the serialized values, not a key-set check: a field
     /// that keeps its name but changes shape fails here too.
     ///
-    /// Most `Option` fields are `Some` here, so a mismatched `Some`
-    /// conversion fails; the all-`None` case is the next test's job.
+    /// Most `Option` fields are `Some` here, and the dog's `channel` is
+    /// `true`, so a mismatched conversion fails; the all-`None` case is the
+    /// next test's job.
     #[test]
     fn a_sheep_row_serializes_exactly_as_process_info_does() {
         let info = ProcessInfo::builder(7, "api", ProcStatus::WaitingRestart)
@@ -387,6 +403,7 @@ mod tests {
             .cpu_ms(Some(5_678))
             .dog(Some(DogSource::Adopted {
                 path: "/usr/local/bin/dog".to_string(),
+                channel: true,
             }))
             .lambs(Some(vec![
                 Lamb::new(4243, "node"),
@@ -394,6 +411,7 @@ mod tests {
             ]))
             .pending(Some(vec!["env".to_string()]))
             .overridden(Some(vec!["cwd".to_string()]))
+            .disabled(Some(true))
             .build();
 
         assert_eq!(
@@ -401,6 +419,23 @@ mod tests {
             serde_json::to_value(&info).unwrap(),
             "whistle and `--format json` must describe a sheep identically"
         );
+    }
+
+    /// `channel` is skipped when `false` on both sides, so each value needs
+    /// its own comparison: one fixture can only ever pin one of them.
+    #[test]
+    fn every_dog_source_shape_serializes_exactly_as_dog_source_does() {
+        let adopted = |channel| DogSource::Adopted {
+            path: "/usr/local/bin/dog".to_string(),
+            channel,
+        };
+        for source in [DogSource::BuiltIn, adopted(false), adopted(true)] {
+            assert_eq!(
+                serde_json::to_value(DogSourceRow::from(&source)).unwrap(),
+                serde_json::to_value(&source).unwrap(),
+                "{source:?}"
+            );
+        }
     }
 
     /// A stopped sheep has `None` in six places; catches a twin that
@@ -432,6 +467,7 @@ mod tests {
             .memory_bytes(Some(1024 * 1024))
             .dog(Some(DogSource::Adopted {
                 path: "/usr/local/bin/dog".to_string(),
+                channel: false,
             }))
             .lambs(Some(vec![Lamb::new(4243, "node")]))
             .pending(Some(vec!["env".to_string()]))

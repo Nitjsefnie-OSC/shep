@@ -233,6 +233,14 @@ pub enum Response {
     },
     /// Answer to `Stop`
     Stopped(Vec<ProcessInfo>),
+    /// Answer to `Disable`: every instance of each app now disabled, as
+    /// they stand once stopped.
+    Disabled(Vec<ProcessInfo>),
+    /// Answer to `Enable`: every instance of each app that was disabled and
+    /// is now started.
+    ///
+    /// Empty when the selector matched only apps that were not disabled.
+    Enabled(Vec<ProcessInfo>),
     /// Answer to `Restart`: the sheep that were restarted, one row each.
     ///
     /// **When the reply arrives depends on how many sheep matched.** One
@@ -458,6 +466,7 @@ mod tests {
                     name: "otel".to_string(),
                     dog: Some(DogSource::Adopted {
                         path: "/usr/local/bin/shep-otel".to_string(),
+                        channel: false,
                     }),
                     ..sample_info()
                 }])),
@@ -683,6 +692,7 @@ mod tests {
                         .pid(Some(208_341))
                         .dog(Some(DogSource::Adopted {
                             path: "/usr/local/bin/shep-log-rotate".to_string(),
+                            channel: false,
                         }))
                         .handshook(Some(false))
                         .dog_stale(Some(false))
@@ -696,6 +706,7 @@ mod tests {
                         .pid(Some(208_341))
                         .dog(Some(DogSource::Adopted {
                             path: "/usr/local/bin/shep-log-rotate".to_string(),
+                            channel: false,
                         }))
                         .handshook(Some(false))
                         .dog_stale(Some(true))

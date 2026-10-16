@@ -1,10 +1,12 @@
 //! Arguments for the dog verbs: `dogs`, `enable`, `disable`, `adopt`,
-//! `rehome`, and the hidden `dog` re-exec target.
+//! the hidden `rehome`, and the hidden `dog` re-exec target.
 //!
-//! A dog is named, never selected, so none of these takes the selector
-//! grammar the flock verbs share. Three of the six get by on the one name
-//! field [`DogArgs`] carries; the docs on the other two say what they add
-//! and why it was not worth widening the shared struct.
+//! `enable` and `disable` also take a sheep's name, so each carries a
+//! sheep-and-dog `name` of its own. The rest name a dog and never select
+//! one, so none of them takes the selector grammar the flock verbs share.
+//! Two of the six get by on the one name field [`DogArgs`] carries; the docs
+//! on the others say what they add and why it was not worth widening the
+//! shared struct.
 
 use std::path::PathBuf;
 
@@ -21,16 +23,15 @@ pub struct DogsArgs {
     pub filter: Option<String>,
 }
 
-/// Arguments to `shep disable`/`shep rehome`, and to the hidden `shep dog`
+/// Arguments to the hidden `shep rehome`, and to the hidden `shep dog`
 /// re-exec target.
 ///
-/// One struct for all three, matching [`StartupArgs`](crate::cli::StartupArgs)'s own precedent: a
+/// One struct for both, matching [`StartupArgs`](crate::cli::StartupArgs)'s own precedent: a
 /// dog is named, never selected — `SelectorArgs`' grammar (`all`, `/regex/`,
 /// `fold:<name>`) answers "which of the flock", and a dog is not the flock.
-/// `shep enable` shares this shape too, but carries a second, hidden field
-/// ([`EnableArgs`]) that none of the three below has any use for, so it
-/// gets a struct of its own rather than widening this one for verbs that
-/// would never touch the extra field.
+/// `shep enable` carries a second, hidden field ([`EnableArgs`]) and both it
+/// and `shep disable` ([`DisableArgs`]) also take a sheep's name, so each
+/// gets a struct of its own rather than widening this one.
 #[derive(Debug, clap::Args)]
 pub struct DogArgs {
     /// The dog's name, the `[<name>]` config key in `dogs.toml`
@@ -57,12 +58,21 @@ pub struct DogArgs {
 /// `the_hidden_pm2_spelling_reaches_adopt_with_the_arguments_the_right_way_round`.
 #[derive(Debug, clap::Args)]
 pub struct EnableArgs {
-    /// The dog's name, the `[<name>]` config key in `dogs.toml`
+    /// A sheep's name, `fold:<fold>`, `/<regex>/` or `all`, or a dog's name
+    /// (the `[<name>]` config key in `dogs.toml`)
     pub name: String,
     /// Hidden pm2-spelling alias for `shep adopt`: routes to `adopt` with
     /// this flag's value as the binary path
     #[arg(long, hide = true)]
     pub exec: Option<PathBuf>,
+}
+
+/// Arguments to `shep disable`.
+#[derive(Debug, clap::Args)]
+pub struct DisableArgs {
+    /// A sheep's name, `fold:<fold>`, `/<regex>/` or `all`, or a dog's name
+    /// (the `[<name>]` config key in `dogs.toml`)
+    pub name: String,
 }
 
 /// Arguments to `shep adopt`.

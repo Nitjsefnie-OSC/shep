@@ -67,15 +67,24 @@ const dogLogDemo = `2026-09-02T14:22:31.412+02:00 [shep] shep started this dog; 
     </p>
     <p>
       <code>shep flock</code> prints the flock as two tables (sheep, then
-      dogs) and <code>shep dogs</code> prints the second one alone. A
+      dogs) and <code>shep dogs</code> prints the second one alone. Both
+      built-ins always appear, <code>disabled</code> until enabled. A
       wildcard selector (<code>stop all</code>, <code>reload all</code>,{" "}
       <code>/regex/</code>) never touches a dog; naming one exactly always
-      does, which is what lets <code>shep disable bark</code> reach a dog
-      while a sweep of everything else leaves it running.
+      does, so <code>shep disable bark</code> reaches a dog that a sweep
+      leaves running.
     </p>
 
     <h2 id="turning-one-on">Turning one on</h2>
     <VerbSignature verb="enable" usage="shep enable <name>">
+      <p>
+        <code>enable</code> and <code>disable</code> also take a sheep's
+        name, which is{" "}
+        <a href="/docs/lifecycle#what-stays-what-goes-the-muster-roll">
+          a different verb
+        </a>
+        . What follows is the dog half.
+      </p>
       <p>
         Writes <code>shep.toml</code> first, then starts the dog now if a
         shepherd is listening. Run it with nothing listening and it still
@@ -85,19 +94,29 @@ const dogLogDemo = `2026-09-02T14:22:31.412+02:00 [shep] shep started this dog; 
         <code>shep start</code> and <code>shep muster</code>.
       </p>
       <p>
-        Takes a built-in name or one <code>shep adopt</code> has recorded,
-        and refuses anything else before it writes. A refused enable leaves{" "}
-        <code>shep.toml</code> untouched. The check reads{" "}
-        <code>[daemon] adopted_dogs</code> rather than the shepherd, so it
-        holds with nothing listening.
+        Takes a built-in name or one <code>shep adopt</code> has recorded.
+        Any other name exits 3 and lists the dogs, or 5 with no shepherd.
       </p>
     </VerbSignature>
     <VerbSignature verb="disable" usage="shep disable <name>">
       <p>
         The mirror: stops the dog if one is running and removes it from the
-        boot list either way. It carries no name check of its own,
+        boot list either way. <code>shep flock</code> keeps listing it,{" "}
+        <code>disabled</code>. It carries no name check of its own,
         deliberately, so it is what takes a hand-written{" "}
         <code>enabled_dogs</code> entry back out.
+      </p>
+    </VerbSignature>
+    <VerbSignature verb="delete" usage="shep delete <name>">
+      <p>
+        The one way to remove a dog: it is stopped, deregistered, and struck
+        from <code>enabled_dogs</code>, <code>adopted_dogs</code> and{" "}
+        <code>channel_dogs</code> in <code>shep.toml</code>, so the next boot
+        does not bring it back. Its <code>&lt;name&gt;</code> section in{" "}
+        <code>dogs.toml</code> stays, webhook URLs and all, and the verb
+        says so: those settings are yours rather than the adoption's. A
+        built-in dog is refused by the shepherd, and the refusal names{" "}
+        <code>shep disable</code> as the verb that exists for one.
       </p>
     </VerbSignature>
     <CodeBlock>{`$ shep enable metrics
@@ -105,16 +124,18 @@ NAME     SOURCE    SHEPHERD  STATUS
 metrics  built-in  true      online
 
 $ shep dogs
-ID  NAME     STATUS  PID    RESTARTS  EXIT  CPU  MEM    UPTIME  SOURCE
-1   metrics  online  49313  0         -     -    10.9M  2s      built-in
+ID  NAME     STATUS    PID    RESTARTS  EXIT  CPU  MEM    UPTIME  SOURCE
+0   metrics  online    49313  0         -     -    10.9M  2s      built-in
+1   bark     disabled  -      0         -     -    -      0s      built-in
 
 $ shep flock
 ID  NAME  STATUS  PID    RESTARTS  EXIT  CFG  CPU  MEM   UPTIME  FOLD  SMIT
-0   web   online  49290  0         -     -    -    3.0M  2s      -     -
+2   web   online  49290  0         -     -    -    3.0M  2s      -     -
 
 Dogs
-ID  NAME     STATUS  PID    RESTARTS  EXIT  CPU  MEM    UPTIME  SOURCE
-1   metrics  online  49313  0         -     -    10.9M  2s      built-in
+ID  NAME     STATUS    PID    RESTARTS  EXIT  CPU  MEM    UPTIME  SOURCE
+0   metrics  online    49313  0         -     -    10.9M  2s      built-in
+1   bark     disabled  -      0         -     -    -      0s      built-in
 
 $ shep disable metrics`}</CodeBlock>
     <p class="fine">
@@ -127,6 +148,14 @@ $ shep disable metrics`}</CodeBlock>
       restart count against a <code>SOURCE</code> of <code>built-in</code>,
       for a name that is not one; <code>shep bleats &lt;name&gt;</code> is
       where the refusal itself shows up.
+    </p>
+    <p class="fine">
+      A dog's name is not a sheep's to take, built-in or adopted. Starting a
+      new sheep named <code>metrics</code> is refused, whether the dog runs
+      or sits disabled. A sheep that already holds the name keeps it: the
+      shepherd skips the dog, warns at boot to rename one of the two, and{" "}
+      <code>shep enable metrics</code> says a sheep is already registered
+      under it.
     </p>
     <p class="fine">
       The dogs table shares its column order with the sheep table above it,
@@ -177,6 +206,21 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
       schema. See <a href="/docs/boot-order">boot order</a> for the stages
       this positions a dog in.
     </p>
+    <p class="fine">
+      <code>[daemon] channel_dogs</code> lives there too, written by{" "}
+      <code>shep adopt</code> for a dog that <a
+      href="/docs/writing-a-dog#asking-for-the-channel">asks for the shepherd
+      channel</a>. Such a dog takes <code>shep trigger</code>.
+    </p>
+    <p class="fine">
+      <code>shep daemon reload</code> carries every dog holding a process,
+      marked or not, and leaves a parked one behind: a dog that is disabled
+      and stopped is registered at rest by the successor the way a cold boot
+      registers it, under a new id. A dog <code>enabled_dogs</code> dropped is
+      stopped and marked, running or already stopped, so it reads{" "}
+      <code>disabled</code> and <code>shep enable &lt;name&gt;</code> is the
+      way back.
+    </p>
 
     <h2 id="configuration-lives-on-the-socket-not-the-environment">Configuration lives on the socket, not the environment</h2>
     <p>
@@ -213,6 +257,11 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
       a sheep's own table</a> for how a dog gets it.
     </p>
     <p>
+      <code>shep copy web.dogs.kelpie api.dogs.kelpie</code> moves one
+      sheep's table for a dog onto another sheep, merging into what that
+      sheep already holds unless <code>--replace</code> says otherwise.
+    </p>
+    <p>
       A third place, <code>[dog.&lt;name&gt;]</code> at the top level of a
       Flockfile, is read and discarded: shep parses it so the file still
       loads, but keeps nothing from it. It exists for a dog that reads its
@@ -229,11 +278,16 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
       listener, or ask for its own restart. The frame says that the section
       changed and nothing about what is in it. Bark subscribes and swaps in
       place, since sinks and rules are pure data with no OS resource
-      attached. Two things publish today: the boot that moves a section out
-      of <code>shep.toml</code>, and a write from{" "}
+      attached. Four things publish today: the boot that moves a section out
+      of <code>shep.toml</code>, a write from{" "}
       <a href="/docs/lookout">the dog config pane</a>, which is why an edit
-      made there reaches a running bark without bouncing it. A hand edit
-      still needs the stop and start above.
+      made there reaches a running bark without bouncing it, a provider
+      dog's push that changes a value the section names with{" "}
+      <code>{"{{secret:namespace/KEY}}"}</code>, and a change to{" "}
+      <code>secrets.json</code> that moves a key the section names with{" "}
+      <code>{"{{secret:KEY}}"}</code>. Writing the same value again
+      publishes nothing. A hand edit of <code>dogs.toml</code> still needs
+      the stop and start above.
     </p>
     <Callout variant="careful">
       A dog that restarts itself on a config change has to say so in its own
@@ -289,9 +343,10 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
     <CodeBlock label="dogs.toml">{`[metrics]
 bind = "127.0.0.1:9615"`}</CodeBlock>
     <p>
-      Nothing accumulates between scrapes. Every request rebuilds the
-      reading from a fresh flock listing and a fresh host sample, verified
-      by scraping it directly:
+      The flock and host series are rebuilt per scrape, from a fresh flock
+      listing and a fresh host sample. The channel samples are not: the dog
+      keeps the last sample per sender, name and label set until that sender
+      stops or restarts. Verified by scraping it directly:
     </p>
     <CodeBlock>{`$ curl 127.0.0.1:9615/metrics
 shep_sheep_memory_bytes{sheep="web",id="0",fold=""} 3178496
@@ -313,13 +368,14 @@ shep_host_memory_total_bytes 51539607552`}</CodeBlock>
       <div class="row"><span><code>shep_sheep_restart_total</code></span> <span data-label="Meaning">Restart count since registration.</span></div>
       <div class="row"><span><code>shep_sheep_uptime_seconds</code></span> <span data-label="Meaning">Seconds since this sheep's last successful start.</span></div>
       <div class="row"><span><code>shep_sheep_status</code></span> <span data-label="Meaning">1 for the status this sheep is currently in, 0 for every other status.</span></div>
-      <div class="row"><span><code>shep_dog_up</code></span> <span data-label="Meaning">1 when this dog is online, 0 otherwise.</span></div>
+      <div class="row"><span><code>shep_dog_up</code></span> <span data-label="Meaning">1 when this dog is online, 0 otherwise. A disabled dog has no series.</span></div>
       <div class="row"><span><code>shep_daemon_up</code></span> <span data-label="Meaning">Always 1: the scrape reached the shepherd.</span></div>
       <div class="row"><span><code>shep_daemon_pid</code></span> <span data-label="Meaning">The shepherd's own pid, so a restart is visible as a step change.</span></div>
       <div class="row"><span><code>shep_host_memory_total_bytes</code></span> <span data-label="Meaning">Total physical memory on the host.</span></div>
       <div class="row"><span><code>shep_host_memory_used_bytes</code></span> <span data-label="Meaning">Memory in use on the host, as the platform reports it.</span></div>
       <div class="row"><span><code>shep_host_processes</code></span> <span data-label="Meaning">Number of processes running on the host, the flock included.</span></div>
       <div class="row"><span><code>shep_host_uptime_seconds</code></span> <span data-label="Meaning">Seconds since the host booted.</span></div>
+      <div class="row"><span><code>shep_channel_samples_refused_total</code></span> <span data-label="Meaning">Channel samples this dog refused, by reason. Absent until the first refusal.</span></div>
     </div>
     </details>
     <p class="fine">
@@ -331,6 +387,114 @@ shep_host_memory_total_bytes 51539607552`}</CodeBlock>
       metrics won't make that call for you by shipping wide and asking you
       to lock it down.
     </p>
+
+    <h3 id="channel-samples">Channel samples</h3>
+    <p>
+      A sheep or a dog can send its own numbers on its shepherd channel. The
+      dog keeps them and appends them to every scrape, after the groups above
+      and beside every export, under the labels shep already uses for that
+      process: <code>sheep</code>, <code>id</code> and <code>fold</code> for a
+      sheep, <code>dog</code> and <code>source</code> for a dog. <a
+      href="/docs/shepherd-channel">The shepherd channel</a> says what to write
+      on fd 3.
+    </p>
+    <div class="metrics-table">
+      <div class="row header"><span>Rule</span><span>Refused as</span></div>
+      <div class="row"><span>A name matches <code>[a-zA-Z_:][a-zA-Z0-9_:]*</code>, at most 128 bytes</span> <span data-label="Refused as"><code>invalid_name</code></span></div>
+      <div class="row"><span>No name starts with <code>shep_</code></span> <span data-label="Refused as"><code>reserved_name</code></span></div>
+      <div class="row"><span>A label name matches <code>[a-zA-Z_][a-zA-Z0-9_]*</code>, at most 64 bytes, no <code>__</code> prefix</span> <span data-label="Refused as"><code>invalid_label</code></span></div>
+      <div class="row"><span>No label named <code>sheep</code>, <code>id</code>, <code>fold</code>, <code>dog</code> or <code>source</code></span> <span data-label="Refused as"><code>reserved_label</code></span></div>
+      <div class="row"><span>At most 16 labels, 256-byte label values, 512-byte help text</span> <span data-label="Refused as"><code>too_long</code></span></div>
+      <div class="row"><span>At most 256 series per sender, oldest kept</span> <span data-label="Refused as"><code>series_cap</code></span></div>
+      <div class="row"><span>A name keeps the kind its first sample set</span> <span data-label="Refused as"><code>type_conflict</code></span></div>
+    </div>
+    <p>
+      A refusal is counted in <code>shep_channel_samples_refused_total</code>
+      with a <code>reason</code> label, and the dog prints one line per sender
+      and reason in its own log, read with <code>shep bleats metrics</code>.
+      A metric that never shows up is otherwise silent.
+    </p>
+    <p>
+      A sender's samples go when it stops, exits, restarts, is deleted or
+      errors. A reload frees the drained instance's through its own
+      deregistration, never the numbers of the instance now serving.
+    </p>
+
+    <h3 id="otlp-export">OTLP export</h3>
+    <p>
+      The same series can be pushed to an OTLP/HTTP collector instead of
+      waited for. <code>otlp_endpoint</code> is the only key that turns it
+      on:
+    </p>
+    <CodeBlock label="dogs.toml">{`[metrics]
+otlp_endpoint = "http://127.0.0.1:4318"
+otlp_interval = "60s"
+otlp_timeout = "10s"
+
+[metrics.otlp_headers]
+Authorization = "Bearer token-from-a-secret-manager"`}</CodeBlock>
+    <div class="metrics-table">
+      <div class="row header">
+        <span>Key</span>
+        <span>Meaning</span>
+      </div>
+      <div class="row"><span><code>otlp_endpoint</code></span> <span data-label="Meaning">Base URL of the collector, <code>http://</code> or <code>https://</code>. Absent means no export, and <code>/v1/metrics</code> is appended to it.</span></div>
+      <div class="row"><span><code>otlp_interval</code></span> <span data-label="Meaning">Between exports, <code>60s</code> by default. The first lands one interval after the dog starts.</span></div>
+      <div class="row"><span><code>otlp_timeout</code></span> <span data-label="Meaning">One export's budget, connect through response, <code>10s</code> by default.</span></div>
+      <div class="row"><span><code>otlp_headers</code></span> <span data-label="Meaning">Extra headers, for a collector that needs auth. Empty by default, and never printed.</span></div>
+    </div>
+    <p>
+      Export is a cargo feature: on in every prebuilt release binary and
+      the <code>.deb</code>, off in <code>cargo install shep</code> and the
+      Homebrew formula:
+    </p>
+    <CodeBlock>{`$ cargo install shep --features otel`}</CodeBlock>
+    <p>
+      A build without it refuses <code>otlp_endpoint</code> at startup,
+      exiting <code>invalid_config</code> and naming the feature, rather
+      than running a dog that exports nothing while <code>shep list</code>
+      reports it online.
+    </p>
+    <p>
+      The body is OTLP/JSON, your samples included: they land after the
+      built-in groups, named as <code>/metrics</code> names them. Every
+      series above is a <code>gauge</code> except
+      <code>shep_sheep_restart_total</code> and the samples you sent as
+      counters, monotonic cumulative <code>sum</code>s whose
+      <code>startTimeUnixNano</code> is when their sender started, so a
+      restart moves it and a collector reads the reset; the dog's own
+      counters keep its start. A sample's help text is its
+      <code>description</code>, and one with none
+      has none. <code>shep_channel_samples_refused_total</code> goes out as
+      an integer sum. Integers are decimal strings, rates and sample values
+      are numbers, and every Prometheus label is a string attribute, so both
+      paths report the same series with the same labels. <code>NaN</code> and
+      <code>+Inf</code> reach <code>/metrics</code> but not the export.
+    </p>
+    <p>
+      One failed export is one line in the dog's log, on the first failure
+      after a success and again on recovery, never once per tick. A 2xx
+      whose body names a <code>partialSuccess</code> counts as one: the line
+      carries its <code>rejectedDataPoints</code> and
+      <code>errorMessage</code>, and an empty <code>partialSuccess</code> is
+      a clean export. Its body is read for that alone, up to 8 KiB. It never
+      touches the scrape server or the dog's exit code, and there is no
+      final flush on stop: the next tick sends current values anyway.
+    </p>
+    <p class="fine">
+      The feature adds no dependency, and its cost is code only. Measured on
+      one machine (macOS, Apple Silicon, raw file size, not #292's corrected
+      install-size method):
+    </p>
+    <div class="metrics-table">
+      <div class="row header">
+        <span>Build</span>
+        <span>target/release/shep</span>
+      </div>
+      <div class="row"><span>default</span> <span data-label="target/release/shep">19,069,728 bytes</span></div>
+      <div class="row"><span><code>--features otel</code></span> <span data-label="target/release/shep">19,166,944 bytes</span></div>
+      <div class="row"><span>delta</span> <span data-label="target/release/shep">97,216 bytes</span></div>
+    </div>
 
     <h2 id="the-bark-dog">The bark dog</h2>
     <p>
@@ -389,6 +553,24 @@ sinks = ["oncall"]`}</CodeBlock>
       A dropped frame triggers an immediate poll instead of waiting. The two
       routes share one debounce record per subject, so an{" "}
       <code>Errored</code> seen by both fires once, not twice.
+    </p>
+    <p>
+      To alert on a line a sheep prints, add a <code>log_match</code> rule:
+    </p>
+    <CodeBlock label="dogs.toml">{`[[bark.rules]]
+on = "log_match"
+pattern = "FATAL|panicked at"
+stream = "err"
+sinks = ["oncall"]`}</CodeBlock>
+    <p>
+      <code>pattern</code> is a regex, unanchored, and can't be empty.{" "}
+      <code>stream</code> is <code>out</code>, <code>err</code> or{" "}
+      <code>both</code> (the default). The first matching line per sheep
+      per debounce window is the one sent; later ones in the window are
+      dropped. The shepherd forwards log lines to bark only while a{" "}
+      <code>log_match</code> rule exists, and bark can miss lines when a
+      sheep outruns it: the poll can't recover a line. The line goes to
+      the sink as written, so it can carry a secret.
     </p>
     <p class="fine">
       Every fired alert is appended to <code>$SHEP_HOME/barks.jsonl</code>, a

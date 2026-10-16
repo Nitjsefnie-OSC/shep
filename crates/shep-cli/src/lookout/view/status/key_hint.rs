@@ -1,5 +1,6 @@
 use super::super::super::app::{App, Body, Control, Grouping, TypingWhat};
 use super::super::super::pane::ConfigPane;
+use super::super::super::textbox::TextBox;
 
 /// The key hint once the link is [`Link::Lost`](crate::lookout::app::Link::Lost).
 ///
@@ -23,11 +24,12 @@ pub(super) const FROZEN_HINT: &str = "q quit   h keymap   j/k g/G move   \
 
 /// What the pane's open editor is labelled, and what is in it.
 ///
-/// Three editors, one slot: a field edit is labelled with the field, an
+/// Four editors, one slot: a field edit is labelled with the field, an
 /// env edit with `env` and the key, a list edit with the field and the
-/// element's position, and either `+ new`/`+ add a key` row with what it
-/// wants, since there is nothing yet to name.
-pub(super) fn pane_editor(pane: &ConfigPane) -> Option<(String, &str)> {
+/// element's position, a map's `+ new` entry with the map, and either
+/// `+ new`/`+ add a key` row with what it wants, since there is nothing yet
+/// to name.
+pub(super) fn pane_editor(pane: &ConfigPane) -> Option<(String, &TextBox)> {
     if let Some(list) = pane.list() {
         return match list.typing()? {
             (Some(index), buffer) => Some((format!("{} {index} =", list.key()), buffer)),
@@ -41,12 +43,15 @@ pub(super) fn pane_editor(pane: &ConfigPane) -> Option<(String, &str)> {
         };
     }
     let typing = pane.typing()?;
-    Some((format!("editing {}", typing.key), typing.buffer.as_str()))
+    if let Some(entries) = pane.new_entry_editor() {
+        return Some((format!("new {entries} key"), &typing.buffer));
+    }
+    Some((format!("editing {}", typing.key), &typing.buffer))
 }
 
 /// The secrets pane's open input, labelled by which step it is: the
 /// `+ new key` row's name, or a key's value.
-pub(super) fn secrets_typing(app: &App) -> Option<(String, &str)> {
+pub(super) fn secrets_typing(app: &App) -> Option<(String, &TextBox)> {
     let Body::Secrets(pane) = app.body() else {
         return None;
     };
@@ -55,7 +60,7 @@ pub(super) fn secrets_typing(app: &App) -> Option<(String, &str)> {
         TypingWhat::NewKey => "new key".to_string(),
         TypingWhat::ValueFor(key) => format!("value for {key}"),
     };
-    Some((label, typing.buffer.as_str()))
+    Some((label, &typing.buffer))
 }
 
 /// The key an armed `D` would delete, or `None`.

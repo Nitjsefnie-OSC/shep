@@ -7,9 +7,9 @@ These are real frames, rendered headlessly through ratatui's TestBackend by
 
 Nothing here is a mockup.
 
-frames.ansi renders all sixty-two scenes through the same coloured
+frames.ansi renders all sixty-seven scenes through the same coloured
 palette the pinned `.snap` tests use; read it with `less -R`. frames.txt
-renders the same sixty-two scenes through the flattened NO_COLOR palette
+renders the same sixty-seven scenes through the flattened NO_COLOR palette
 instead, the one an operator with $NO_COLOR set or a 16-colour terminal
 actually gets. The two files are deliberately different pictures of the
 same dashboard, not one file with the colour removed.
@@ -1329,12 +1329,12 @@ cwd                         (unset)                                         │o
 esc flock   e edit   J/K next sheep   x stop   R restart   L reload   b full log   / filter                                                      control enabled
 
 === edit_pane  (160x48) ===
-The redrawn editing pane on api, fresh: no edits filed, at 160x48. The tab row names all eight groups with only the active one chipped, the header reads FIELD / VALUE / LANDS, the explanation panel sits beside the field list naming the field under the cursor, and every env value reads (set) rather than the value itself.
+The redrawn editing pane on api, fresh: no edits filed, at 160x48. The tab row names all nine groups with only the active one chipped, the header reads FIELD / VALUE / LANDS, the explanation panel sits beside the field list naming the field under the cursor, and every env value reads (set) rather than the value itself.
 
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)                                                                                                                                         
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab next group   1…8 jump                                                     
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
 >  cwd                        (unset)                                         respawn    FOCUSED  cwd  text                                                     
@@ -1386,7 +1386,7 @@ The same pane with two edits filed: cwd, which needs a respawn, and max_memory, 
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)  2 edits                                                                                                                                
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab next group   1…8 jump                                                     
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
    autorestart                true                                            now        FOCUSED  max_memory  memory size                                       
@@ -1438,7 +1438,7 @@ The same fresh pane at 120 columns: narrow enough that LANDS gives way to the ex
 shep lookout   /home/ada/.shep                                                                            6 in the flock
                                                                                                                         
  ██ api  (sheep config)                                                                                                 
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab next group   1…8 jump             
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   …
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                                                                     
 >  cwd                        (unset)                              FOCUSED  cwd  text                                   
@@ -1490,7 +1490,7 @@ The same fresh pane at 88 columns: narrow enough that the explanation panel is g
 shep lookout   /home/ada/.shep                                            6 in the flock
                                                                                         
  ██ api  (sheep config)                                                                 
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab n…
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs   …
   ──────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS     
   Where the process runs. Without it, the daemon's own directory                        
@@ -1542,19 +1542,19 @@ api's editing pane, cursor on its dogs row: jobs, legacy names the tables the sh
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)                                                                                                                                         
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab next group   1…8 jump                                                     
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
-   args                       ["--port","8080"]                               respawn    FOCUSED  dogs  opaque                                                  
-   channel                    false                                           respawn     Settings for one dog on this sheep alone, opaque to shep              
->› dogs                       jobs, legacy                                    now                                                                               
-   environment                (unset)                                         respawn     now     jobs, legacy                                                  
-   stdin                      false                                           respawn     default {}                                                            
-                                                                                          example (none)                                                        
+>› dogs                       jobs, legacy                                    now        FOCUSED  dogs  opaque                                                  
+                                                                                          Settings for one dog on this sheep alone, opaque to shep              
   env                                                                                                                                                           
-   DATABASE_URL               (set)                                                       ● now  the running sheep picks it up without stopping                 
-   NODE_ENV                   (set)                                                                                      pick the timing when you close the pane
-   + add a key                                                                                                                                                  
+   DATABASE_URL               (set)                                                       now     jobs, legacy                                                  
+   NODE_ENV                   (set)                                                       default {}                                                            
+   + add a key                                                                            example (none)                                                        
+                                                                                                                                                                
+                                                                                          ● now  the running sheep picks it up without stopping                 
+                                                                                                                         pick the timing when you close the pane
+                                                                                                                                                                
                                                                                           ──────────────────────────────────────────────────────────────────────
                                                                                           VALIDATION                                                            
                                                                                           █ a table of dog name to a table of settings                          
@@ -1693,22 +1693,22 @@ shep lookout   /home/ada/.shep                                                  
 esc back   j/k select   g/G first/last   r refresh   enter open   d remove   q quit                                                              control enabled
 
 === sheep_dog_table  (160x48) ===
-Enter on jobs opens its table pane: dotted rows for the nested hours and models.worker tables, and models.worker.token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame.
+Enter on jobs opens its table pane as a tree: hours and models open at the first level, models.worker opened onto token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame.
 
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
   api › jobs  (dog table)                                                                                                                                       
->  concurrency                2                                                          FOCUSED  concurrency  integer                                          
-   hours.end                  17:00                                                       concurrency                                                           
-   hours.start                09:00                                                                                                                             
-   merge                      ask                                                         now     2                                                             
-   models.worker.model        small                                                       default (none)                                                        
-   models.worker.token        <set>                                                       example (none)                                                        
-                                                                                                                                                                
-                                                                                          ──────────────────────────────────────────────────────────────────────
-                                                                                          VALIDATION                                                            
-                                                                                          █ a whole number                                                      
+   concurrency                2                                                          FOCUSED  models.worker.token  text                                     
+   ▾ hours                                                                    table       token                                                                 
+     end                      17:00                                                                                                                             
+     start                    09:00                                                       now     <set>                                                         
+   merge                      ask                                                         default (none)                                                        
+   ▾ models                                                                   table       example (none)                                                        
+     ▾ worker                                                                 table                                                                             
+       model                  small                                                                                                                             
+>      token                  <set>                                                                                                                             
   shep publishes the change; jobs decides what to reload                                                                                                        
+                                                                                                                                                                
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
@@ -1744,13 +1744,273 @@ shep lookout   /home/ada/.shep                                                  
                                                                                                                                                                 
 esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit   control enabled
 
+=== sheep_dog_union  (160x48) ===
+Enter on kelpie opens its table pane over a recorded copy of its schema, skills opened onto one union per step: implement reads kind = path and is open onto its kind row and its path, review reads kind = plugin and is closed, and retro reads (unset). The cursor is on path, and the explanation panel names it and carries the blurb of the path arm.
+
+shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
+                                                                                                                                                                
+  api › kelpie  (dog table)                                                                                                                                     
+   ▾ skills                                                                   table      FOCUSED  skills.implement.path  text                                   
+     ▾ implement              kind = path                                                 The skill folder, from the repo root.                                 
+       kind                   path                                                                                                                              
+>      path                   skills/mine                                                 A skill kept in the repo.                                             
+     ▸ retro                  (unset)                                                                                                                           
+     ▸ review                 kind = plugin                                               now     skills/mine                                                   
+                                                                                          default (none)                                                        
+                                                                                          example (none)                                                        
+  shep publishes the change; kelpie decides what to reload                                                                                                      
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit   control enabled
+
+=== dog_entries  (160x48) ===
+A dog's pane over a paddock-shaped schema at 160x48: clients and models each read as a count and nothing more, clients is open onto alpha, b-2 and #2, named by name, then id, then their index, and alpha is open onto its fields, key drawn <set> with no credential on screen anywhere in the frame. The cursor is on key, which opens an editor like any other field.
+
+shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
+                                                                                                                                                                
+  paddock  (dog config)                                                                                                                                         
+ ~ ▾ clients                  3 entries                                                  FOCUSED  clients[0].key  text                                          
+     ▾ alpha                                                                  entry       key                                                                   
+       id                     (unset)                                                                                                                           
+>      key                    <set>                                                       now     <set>                                                         
+       name                   alpha                                                       default (none)                                                        
+ ~     peers                  (unset)                                                     example (none)                                                        
+       timeout                30                                                                                                                                
+     ▸ b-2                                                                    entry                                                                             
+     ▸ #2                                                                     entry                                                                             
+     + new                                                                                                                                                      
+ ~ ▸ models                   2 entries                                                                                                                         
+   retries                    3                                                                                                                                 
+  shep publishes the change; paddock decides what to reload                                                                                                     
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit   control enabled
+
+=== dog_entries_narrow  (88x48) ===
+The same pane at 88 columns: narrow enough that the explanation panel is gone, so the count, the entries and the rows under them have the whole width.
+
+shep lookout   /home/ada/.shep                                            6 in the flock
+                                                                                        
+  paddock  (dog config)                                                                 
+  key                                                                                   
+ ~ ▾ clients                  3 entries                                                 
+     ▾ alpha                                                                  entry     
+       id                     (unset)                                                   
+>      key                    <set>                                                     
+       name                   alpha                                                     
+ ~     peers                  (unset)                                                   
+       timeout                30                                                        
+     ▸ b-2                                                                    entry     
+     ▸ #2                                                                     entry     
+     + new                                                                              
+ ~ ▸ models                   2 entries                                                 
+   retries                    3                                                         
+  shep publishes the change; paddock decides what to reload                             
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                                        
+esc close   j/k select   g/G first/last   r refresh   space cycle   e e… control enabled
+
+=== dog_entry_typing  (160x48) ===
+The same pane at 160x48 with the b-2 client open and a name being typed into it: the value cell holds the typed text and the cursor, the explanation panel describes name, and the title band counts no edit until the text is applied.
+
+shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
+                                                                                                                                                                
+  paddock  (dog config)                                                                                                                                         
+ ~ ▾ clients                  3 entries                                                  FOCUSED  clients[1].name  text                                         
+     ▸ alpha                                                                  entry       name                                                                  
+     ▾ b-2                                                                    entry                                                                             
+       id                     b-2                                                         now     (unset)                                                       
+       key                    <set>                                                       default (none)                                                        
+>      name                   beta▏                                                       example (none)                                                        
+ ~     peers                  (unset)                                                                                                                           
+       timeout                (unset)                                                                                                                           
+     ▸ #2                                                                     entry                                                                             
+     + new                                                                                                                                                      
+ ~ ▸ models                   2 entries                                                                                                                         
+   retries                    3                                                                                                                                 
+  shep publishes the change; paddock decides what to reload                                                                                                     
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+editing clients[1].name  beta▏   enter applies   esc cancels                                                                                     control enabled
+
+=== dog_entries_new  (160x48) ===
+Enter on the + new row under models: the key editor opens in the status bar, labelled new models key, with gpt-5 typed and the cursor after it. Nothing is filed until the key is applied, so the title band counts no edit. An empty key would abandon, and a key models already holds is refused with a sentence naming it.
+
+shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
+                                                                                                                                                                
+  paddock  (dog config)                                                                                                                                         
+ ~ ▸ clients                  3 entries                                                  FOCUSED  + new  adds an entry                                          
+ ~ ▾ models                   2 entries                                                                                                                         
+     ▸ large                                                                  entry                                                                             
+     ▸ small                                                                  entry                                                                             
+>    + new                                                                                                                                                      
+   retries                    3                                                                                                                                 
+  shep publishes the change; paddock decides what to reload                                                                                                     
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+                                                                                                                                                                
+new models key  gpt-5▏   enter applies   esc cancels                                                                                             control enabled
+
 === close_dialog  (160x48) ===
 esc pressed with cwd and err_file edited and listen_timeout already parked from before: the close dialog names both counts, boxed and centred at 160x48 over the dimmed editing pane.
 
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)  2 edits                                                                                                                                
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab next group   1…8 jump                                                     
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
 >  err_file                   (unset) -> /var/log/api/err.log                 respawn    FOCUSED  err_file  text                                                
@@ -1802,7 +2062,7 @@ The same dialog at 90 columns, exactly the floor its border needs: 86 interior c
 shep lookout   /home/ada/.shep                                              6 in the flock
                                                                                           
  ██ api  (sheep config)  2 edits                                                          
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab nex…
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     …
   ────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                                       
 >  err_file                   (unset) -… FOCUSED  err_file  text                          
@@ -1854,7 +2114,7 @@ The same dialog one column under the floor, at 89: the border is dropped and the
 shep lookout   /home/ada/.shep                                             6 in the flock
                                                                                          
  ██ api  (sheep config)  2 edits                                                         
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab ne…
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs    …
   ───────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                            LANDS     
   Where stderr goes. Written out, the default is                                         
@@ -1906,7 +2166,7 @@ esc pressed with no edit of the operator's own, only listen_timeout already park
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)                                                                                                                                         
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab next group   1…8 jump                                                     
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
 >  cwd                        (unset)                                         respawn    FOCUSED  cwd  text                                                     
@@ -1971,18 +2231,18 @@ host  load  ██░░░░░░░░ 2.31 4.10 3.88 / 10 cores     host me
                                                                                                                                                                 
                 ▛▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▜                
                 ▐MOVING                          LOOKING                         CHANGING                        DOING                         ▌                
-                ▐j/k  ↓/↑     select a row       h  ?         this keymap        any char     types into a box   x            stop             ▌                
-                ▐g/G home/end first / last       b            feed, full screen  ⌫ ↵ esc      erase, file, drop  R            restart          ▌                
+                ▐j/k  ↓/↑     select a row       b            feed, full screen  any char     types into a box   x            stop             ▌                
+                ▐g/G home/end first / last       h  ?         this keymap        ⌫/del ↵ esc  erase, file, drop  R            restart          ▌                
                 ▐J/K          next / prev sheep  F            gather by fold     e            the config pane    L            reload           ▌                
                 ▐ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                    ▌                
                 ▐←/→          environment tab    o            out / err / both   d            restore default      ▟█████▙                     ▌                
-                ▐tab          next config group  m            minimum level      u            undo the edit       ▟███████▙                    ▌                
-                ▐1-8          jump to a group    f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
-                ▐n/N          next / prev match  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌                
-                ▐↵            open selection     /            filter, or match   D            delete a secret                                  ▌                
-                ▐esc          back one level     r            refresh now        c            leave it running                                 ▌                
-                ▐                                v            reveal for 10s                                                                   ▌                
-                ▐                                y            copy the value                                                                   ▌                
+                ▐←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit       ▟███████▙                    ▌                
+                ▐ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
+                ▐tab/S-tab    next / prev group  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌                
+                ▐1-9          jump to a group    /            filter, or match   D            delete a secret                                  ▌                
+                ▐n/N          next / prev match  r            refresh now        c            leave it running                                 ▌                
+                ▐↵            open selection     v            reveal for 10s     ctrl-w/u/k   cut word, to ends                                ▌                
+                ▐esc          back one level     y            copy the value                                                                   ▌                
                 ▐                                                                                                                              ▌                
                 ▐ the three above each arm a confirm  ·  ↵ confirms  ·  10s to answer  ·  █ control enabled                                    ▌                
                 ▐ colour is decoration only: every coloured cell says the same thing in words. NO_COLOR loses nothing but the colour.          ▌                
@@ -2023,18 +2283,18 @@ host  load  ██░░░░░░░░ 2.31 4.10 3.88 / 10 cores     host me
                                                                                                                                   
  ▛▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▜ 
  ▐MOVING                          LOOKING                         CHANGING                        DOING                         ▌ 
- ▐j/k  ↓/↑     select a row       h  ?         this keymap        any char     types into a box   x            stop             ▌ 
- ▐g/G home/end first / last       b            feed, full screen  ⌫ ↵ esc      erase, file, drop  R            restart          ▌ 
+ ▐j/k  ↓/↑     select a row       b            feed, full screen  any char     types into a box   x            stop             ▌ 
+ ▐g/G home/end first / last       h  ?         this keymap        ⌫/del ↵ esc  erase, file, drop  R            restart          ▌ 
  ▐J/K          next / prev sheep  F            gather by fold     e            the config pane    L            reload           ▌ 
  ▐ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                    ▌ 
  ▐←/→          environment tab    o            out / err / both   d            restore default      ▟█████▙                     ▌ 
- ▐tab          next config group  m            minimum level      u            undo the edit       ▟███████▙                    ▌ 
- ▐1-8          jump to a group    f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌ 
- ▐n/N          next / prev match  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌ 
- ▐↵            open selection     /            filter, or match   D            delete a secret                                  ▌ 
- ▐esc          back one level     r            refresh now        c            leave it running                                 ▌ 
- ▐                                v            reveal for 10s                                                                   ▌ 
- ▐                                y            copy the value                                                                   ▌ 
+ ▐←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit       ▟███████▙                    ▌ 
+ ▐ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌ 
+ ▐tab/S-tab    next / prev group  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌ 
+ ▐1-9          jump to a group    /            filter, or match   D            delete a secret                                  ▌ 
+ ▐n/N          next / prev match  r            refresh now        c            leave it running                                 ▌ 
+ ▐↵            open selection     v            reveal for 10s     ctrl-w/u/k   cut word, to ends                                ▌ 
+ ▐esc          back one level     y            copy the value                                                                   ▌ 
  ▐                                                                                                                              ▌ 
  ▐ the three above each arm a confirm  ·  ↵ confirms  ·  10s to answer  ·  █ control enabled                                    ▌ 
  ▐ colour is decoration only: every coloured cell says the same thing in words. NO_COLOR loses nothing but the colour.          ▌ 
@@ -2060,18 +2320,18 @@ q quit   j/k select   / filter   F folds   x stop   R restart   L reload   s set
 129 columns, one below KeymapFloor's own 130: the border is gone, but columns_for(129) is still 4, so this is the widest form the overlay ever draws with all four columns and no frame around them. It sits next to KeymapFloor on purpose, so the two together pin the boundary rather than bracketing it loosely.
 
 MOVING                          LOOKING                         CHANGING                        DOING                            
-j/k  ↓/↑     select a row       h  ?         this keymap        any char     types into a box   x            stop                
-g/G home/end first / last       b            feed, full screen  ⌫ ↵ esc      erase, file, drop  R            restart             
+j/k  ↓/↑     select a row       b            feed, full screen  any char     types into a box   x            stop                
+g/G home/end first / last       h  ?         this keymap        ⌫/del ↵ esc  erase, file, drop  R            restart             
 J/K          next / prev sheep  F            gather by fold     e            the config pane    L            reload              
 ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                       
 ←/→          environment tab    o            out / err / both   d            restore default                                     
-tab          next config group  m            minimum level      u            undo the edit                                       
-1-8          jump to a group    f            follow the tail    s            shepherd settings                                   
-n/N          next / prev match  w            wrap long lines    S            secrets                                             
-↵            open selection     /            filter, or match   D            delete a secret                                     
-esc          back one level     r            refresh now        c            leave it running                                    
-                                v            reveal for 10s                                                                      
-                                y            copy the value                                                                      
+←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit                                       
+ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings                                   
+tab/S-tab    next / prev group  w            wrap long lines    S            secrets                                             
+1-9          jump to a group    /            filter, or match   D            delete a secret                                     
+n/N          next / prev match  r            refresh now        c            leave it running                                    
+↵            open selection     v            reveal for 10s     ctrl-w/u/k   cut word, to ends                                   
+esc          back one level     y            copy the value                                                                      
                                                                                                                                  
  the three above each arm a confirm  ·  ↵ confirms  ·  10s to answer  ·  █ control enabled                                       
  colour is decoration only: every coloured cell says the same thing in words. NO_COLOR loses nothing but the colour.             
@@ -2112,18 +2372,18 @@ q quit   j/k select   / filter   F folds   x stop   R restart   L reload   s set
 100 columns: columns_for(100) is 3, so MOVING, LOOKING and CHANGING share one bank and DOING drops to a bank of its own below a blank separator row.
 
 MOVING                          LOOKING                         CHANGING                            
-j/k  ↓/↑     select a row       h  ?         this keymap        any char     types into a box       
-g/G home/end first / last       b            feed, full screen  ⌫ ↵ esc      erase, file, drop      
+j/k  ↓/↑     select a row       b            feed, full screen  any char     types into a box       
+g/G home/end first / last       h  ?         this keymap        ⌫/del ↵ esc  erase, file, drop      
 J/K          next / prev sheep  F            gather by fold     e            the config pane        
 ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value          
 ←/→          environment tab    o            out / err / both   d            restore default        
-tab          next config group  m            minimum level      u            undo the edit          
-1-8          jump to a group    f            follow the tail    s            shepherd settings      
-n/N          next / prev match  w            wrap long lines    S            secrets                
-↵            open selection     /            filter, or match   D            delete a secret        
-esc          back one level     r            refresh now        c            leave it running       
-                                v            reveal for 10s                                         
-                                y            copy the value                                         
+←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit          
+ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings      
+tab/S-tab    next / prev group  w            wrap long lines    S            secrets                
+1-9          jump to a group    /            filter, or match   D            delete a secret        
+n/N          next / prev match  r            refresh now        c            leave it running       
+↵            open selection     v            reveal for 10s     ctrl-w/u/k   cut word, to ends      
+esc          back one level     y            copy the value                                         
                                                                                                     
 DOING                                                                                               
 x            stop                                                                                   
@@ -2164,22 +2424,22 @@ q quit   j/k select   / filter   F folds   x stop   R restart   L reload   s set
 70 columns: columns_for(70) is 2, so the four groups split into two banks of two, MOVING and LOOKING on top and CHANGING and DOING below.
 
 MOVING                          LOOKING                               
-j/k  ↓/↑     select a row       h  ?         this keymap              
-g/G home/end first / last       b            feed, full screen        
+j/k  ↓/↑     select a row       b            feed, full screen        
+g/G home/end first / last       h  ?         this keymap              
 J/K          next / prev sheep  F            gather by fold           
 ctrl-d/u     page the feed      z            collapse a fold          
 ←/→          environment tab    o            out / err / both         
-tab          next config group  m            minimum level            
-1-8          jump to a group    f            follow the tail          
-n/N          next / prev match  w            wrap long lines          
-↵            open selection     /            filter, or match         
-esc          back one level     r            refresh now              
-                                v            reveal for 10s           
-                                y            copy the value           
+←/→ alt-b/f  char / word move   m            minimum level            
+ctrl-a/e     home/end in a box  f            follow the tail          
+tab/S-tab    next / prev group  w            wrap long lines          
+1-9          jump to a group    /            filter, or match         
+n/N          next / prev match  r            refresh now              
+↵            open selection     v            reveal for 10s           
+esc          back one level     y            copy the value           
                                                                       
 CHANGING                        DOING                                 
 any char     types into a box   x            stop                     
-⌫ ↵ esc      erase, file, drop  R            restart                  
+⌫/del ↵ esc  erase, file, drop  R            restart                  
 e            the config pane    L            reload                   
 space        cycle a value                                            
 d            restore default                                          
@@ -2188,7 +2448,7 @@ s            shepherd settings
 S            secrets                                                  
 D            delete a secret                                          
 c            leave it running                                         
-                                                                      
+ctrl-w/u/k   cut word, to ends                                        
                                                                       
                                                                       
  the three above each arm a confirm  ·  ↵ confirms  ·  10s to answer …
@@ -2231,18 +2491,18 @@ host  load  ██░░░░░░░░ 2.31 4.10 3.88 / 10 cores     host me
   1     web                   online           48212    0         -          -              ▄  2.9%    ░░░░░░░░░░  178.0M    1h 16m    edge        -            
                 ▛▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▜                
                 ▐MOVING                          LOOKING                         CHANGING                        DOING                         ▌                
-                ▐j/k  ↓/↑     select a row       h  ?         this keymap        any char     types into a box   x            stop             ▌                
-                ▐g/G home/end first / last       b            feed, full screen  ⌫ ↵ esc      erase, file, drop  R            restart          ▌                
+                ▐j/k  ↓/↑     select a row       b            feed, full screen  any char     types into a box   x            stop             ▌                
+                ▐g/G home/end first / last       h  ?         this keymap        ⌫/del ↵ esc  erase, file, drop  R            restart          ▌                
                 ▐J/K          next / prev sheep  F            gather by fold     e            the config pane    L            reload           ▌                
                 ▐ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                    ▌                
                 ▐←/→          environment tab    o            out / err / both   d            restore default      ▟█████▙                     ▌                
-                ▐tab          next config group  m            minimum level      u            undo the edit       ▟███████▙                    ▌                
-                ▐1-8          jump to a group    f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
-                ▐n/N          next / prev match  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌                
-                ▐↵            open selection     /            filter, or match   D            delete a secret                                  ▌                
-                ▐esc          back one level     r            refresh now        c            leave it running                                 ▌                
-                ▐                                v            reveal for 10s                                                                   ▌                
-                ▐                                y            copy the value                                                                   ▌                
+                ▐←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit       ▟███████▙                    ▌                
+                ▐ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
+                ▐tab/S-tab    next / prev group  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌                
+                ▐1-9          jump to a group    /            filter, or match   D            delete a secret                                  ▌                
+                ▐n/N          next / prev match  r            refresh now        c            leave it running                                 ▌                
+                ▐↵            open selection     v            reveal for 10s     ctrl-w/u/k   cut word, to ends                                ▌                
+                ▐esc          back one level     y            copy the value                                                                   ▌                
                 ▐                                                                                                                              ▌                
                 ▐ the three above are refused  ·  █ the link is down  ·  nothing acts                                                          ▌                
                 ▐ colour is decoration only: every coloured cell says the same thing in words. NO_COLOR loses nothing but the colour.          ▌                
@@ -2283,18 +2543,18 @@ host  load  ██░░░░░░░░ 2.31 4.10 3.88 / 10 cores     host me
                                                                                                                                                                 
                 ▛▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▜                
                 ▐MOVING                          LOOKING                         CHANGING                        DOING                         ▌                
-                ▐j/k  ↓/↑     select a row       h  ?         this keymap        any char     types into a box   x            stop             ▌                
-                ▐g/G home/end first / last       b            feed, full screen  ⌫ ↵ esc      erase, file, drop  R            restart          ▌                
+                ▐j/k  ↓/↑     select a row       b            feed, full screen  any char     types into a box   x            stop             ▌                
+                ▐g/G home/end first / last       h  ?         this keymap        ⌫/del ↵ esc  erase, file, drop  R            restart          ▌                
                 ▐J/K          next / prev sheep  F            gather by fold     e            the config pane    L            reload           ▌                
                 ▐ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                    ▌                
                 ▐←/→          environment tab    o            out / err / both   d            restore default      ▟█████▙                     ▌                
-                ▐tab          next config group  m            minimum level      u            undo the edit       ▟███████▙                    ▌                
-                ▐1-8          jump to a group    f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
-                ▐n/N          next / prev match  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌                
-                ▐↵            open selection     /            filter, or match   D            delete a secret                                  ▌                
-                ▐esc          back one level     r            refresh now        c            leave it running                                 ▌                
-                ▐                                v            reveal for 10s                                                                   ▌                
-                ▐                                y            copy the value                                                                   ▌                
+                ▐←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit       ▟███████▙                    ▌                
+                ▐ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings   ▜██▀ ▀██▛                    ▌                
+                ▐tab/S-tab    next / prev group  w            wrap long lines    S            secrets               ▀▘ ▀▘                      ▌                
+                ▐1-9          jump to a group    /            filter, or match   D            delete a secret                                  ▌                
+                ▐n/N          next / prev match  r            refresh now        c            leave it running                                 ▌                
+                ▐↵            open selection     v            reveal for 10s     ctrl-w/u/k   cut word, to ends                                ▌                
+                ▐esc          back one level     y            copy the value                                                                   ▌                
                 ▐                                                                                                                              ▌                
                 ▐ the three above each arm a confirm  ·  ↵ confirms  ·  10s to answer  ·  █ read-only                                          ▌                
                 ▐ colour is decoration only: every coloured cell says the same thing in words. NO_COLOR loses nothing but the colour.          ▌                
@@ -2320,18 +2580,18 @@ q quit   j/k select   g/G first/last   r refresh   / filter   F folds   s settin
 160x16, under the nineteen rows the box needs: the sheep is boxed-only and already gone, and the borderless form has shed to its own Decoration tier, which drops the NO_COLOR sentence too, while every key row is still on screen.
 
 MOVING                          LOOKING                         CHANGING                        DOING                                                           
-j/k  ↓/↑     select a row       h  ?         this keymap        any char     types into a box   x            stop                                               
-g/G home/end first / last       b            feed, full screen  ⌫ ↵ esc      erase, file, drop  R            restart                                            
+j/k  ↓/↑     select a row       b            feed, full screen  any char     types into a box   x            stop                                               
+g/G home/end first / last       h  ?         this keymap        ⌫/del ↵ esc  erase, file, drop  R            restart                                            
 J/K          next / prev sheep  F            gather by fold     e            the config pane    L            reload                                             
 ctrl-d/u     page the feed      z            collapse a fold    space        cycle a value                                                                      
 ←/→          environment tab    o            out / err / both   d            restore default                                                                    
-tab          next config group  m            minimum level      u            undo the edit                                                                      
-1-8          jump to a group    f            follow the tail    s            shepherd settings                                                                  
-n/N          next / prev match  w            wrap long lines    S            secrets                                                                            
-↵            open selection     /            filter, or match   D            delete a secret                                                                    
-esc          back one level     r            refresh now        c            leave it running                                                                   
-                                v            reveal for 10s                                                                                                     
-                                y            copy the value                                                                                                     
+←/→ alt-b/f  char / word move   m            minimum level      u            undo the edit                                                                      
+ctrl-a/e     home/end in a box  f            follow the tail    s            shepherd settings                                                                  
+tab/S-tab    next / prev group  w            wrap long lines    S            secrets                                                                            
+1-9          jump to a group    /            filter, or match   D            delete a secret                                                                    
+n/N          next / prev match  r            refresh now        c            leave it running                                                                   
+↵            open selection     v            reveal for 10s     ctrl-w/u/k   cut word, to ends                                                                  
+esc          back one level     y            copy the value                                                                                                     
                                                                                                                                                                 
  the three above each arm a confirm  ·  ↵ confirms  ·  10s to answer  ·  █ control enabled                                                                      
  h or ?  closes this  ·  q  ctrl-c  quits lookout                                                                                                               

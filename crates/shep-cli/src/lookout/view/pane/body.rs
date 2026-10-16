@@ -10,8 +10,9 @@ use ratatui::text::{Line, Span};
 use super::super::super::pane::{ConfigPane, PaneRow};
 use super::super::super::theme::Palette;
 use super::super::scroll::{self, Attempt};
+use super::entry_row::{arm_line, choice_line, entry_line};
 use super::env::pending_and_env_lines;
-use super::field_row::{field_line, section_header};
+use super::field_row::{field_line, section_header, table_line};
 
 /// The active group's fields, laid out through [`scroll::to_cursor`]
 /// exactly as [`body_from`] already does for the groupless fallback, then
@@ -41,7 +42,7 @@ pub(super) fn grouped_body_lines(
         lines.extend(tail);
         return lines;
     }
-    let mut lines = if !pane.fields().is_empty() && budget > 0 {
+    let mut lines = if !pane.field_rows().is_empty() && budget > 0 {
         let field_rows = pane.field_rows();
         let cursor_row = field_rows
             .iter()
@@ -113,8 +114,80 @@ pub(super) fn body_from(
     let mut drawn = 0usize;
 
     for (index, row) in rows.iter().enumerate() {
-        let PaneRow::Field(field_index) = *row else {
-            continue;
+        let field_index = match *row {
+            PaneRow::Field(field_index) => field_index,
+            PaneRow::Table(table_index) => {
+                if index < offset {
+                    continue;
+                }
+                if !room(lines.len(), 1, index) {
+                    break;
+                }
+                lines.push(table_line(
+                    pane,
+                    table_index,
+                    pane.cursor() == Some(*row),
+                    width,
+                    palette,
+                    show_lands,
+                ));
+                drawn += 1;
+                continue;
+            }
+            PaneRow::Entry(entry_index) => {
+                if index < offset {
+                    continue;
+                }
+                if !room(lines.len(), 1, index) {
+                    break;
+                }
+                lines.push(entry_line(
+                    pane,
+                    entry_index,
+                    pane.cursor() == Some(*row),
+                    width,
+                    palette,
+                    show_lands,
+                ));
+                drawn += 1;
+                continue;
+            }
+            PaneRow::Choice { .. } => {
+                if index < offset {
+                    continue;
+                }
+                if !room(lines.len(), 1, index) {
+                    break;
+                }
+                lines.push(choice_line(
+                    pane,
+                    *row,
+                    pane.cursor() == Some(*row),
+                    width,
+                    palette,
+                ));
+                drawn += 1;
+                continue;
+            }
+            PaneRow::Arm { .. } => {
+                if index < offset {
+                    continue;
+                }
+                if !room(lines.len(), 1, index) {
+                    break;
+                }
+                lines.push(arm_line(
+                    pane,
+                    *row,
+                    pane.cursor() == Some(*row),
+                    width,
+                    palette,
+                    show_lands,
+                ));
+                drawn += 1;
+                continue;
+            }
+            PaneRow::Env(_) | PaneRow::AddEnv => continue,
         };
         let group = pane
             .fields()
@@ -199,8 +272,23 @@ pub(super) fn cursor_only(
 ) -> Vec<Line<'static>> {
     let rows = pane.field_rows();
     let mut lines = Vec::new();
-    if let Some(PaneRow::Field(index)) = rows.get(cursor_row).copied() {
-        lines.push(field_line(pane, index, true, width, palette, show_lands));
+    match rows.get(cursor_row).copied() {
+        Some(PaneRow::Field(index)) => {
+            lines.push(field_line(pane, index, true, width, palette, show_lands));
+        }
+        Some(PaneRow::Table(index)) => {
+            lines.push(table_line(pane, index, true, width, palette, show_lands));
+        }
+        Some(PaneRow::Entry(index)) => {
+            lines.push(entry_line(pane, index, true, width, palette, show_lands));
+        }
+        Some(row @ PaneRow::Choice { .. }) => {
+            lines.push(choice_line(pane, row, true, width, palette));
+        }
+        Some(row @ PaneRow::Arm { .. }) => {
+            lines.push(arm_line(pane, row, true, width, palette, show_lands));
+        }
+        Some(PaneRow::Env(_) | PaneRow::AddEnv) | None => {}
     }
     let hidden_below = rows.len().saturating_sub(cursor_row + 1);
     if cursor_row > 0 && lines.len() < budget {
@@ -537,7 +625,10 @@ mod tests {
     fn a_short_body_sheds_the_legend_before_the_tab_row() {
         let app = fixtures::app_in_sheep_pane();
         let rows = fixtures::render_all(&config_pane_lines_for_tests(&app, 160, 6));
-        assert!(rows.contains("tab next group"), "the tab row must survive");
+        assert!(
+            rows.contains("next / prev group"),
+            "the tab row must survive"
+        );
         assert!(!rows.contains("changed by you"), "the legend must go first");
     }
 }

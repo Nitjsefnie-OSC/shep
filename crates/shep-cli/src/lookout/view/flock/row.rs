@@ -782,6 +782,7 @@ mod tests {
             .pid(Some(4_242))
             .dog(Some(DogSource::Adopted {
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
+                channel: false,
             }))
             .handshook(Some(false))
             .build();
@@ -810,6 +811,7 @@ mod tests {
             .pid(Some(4_242))
             .dog(Some(DogSource::Adopted {
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
+                channel: false,
             }))
             .handshook(Some(true))
             .build();

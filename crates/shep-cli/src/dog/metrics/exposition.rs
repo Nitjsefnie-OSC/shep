@@ -5,13 +5,16 @@
 
 use core::fmt::{self, Write as _};
 
+use shep_core::protocol::MetricType;
 use shep_core::status::ProcStatus;
 
 use super::Reading;
+use super::samples::SampleFamily;
 
 /// Every [`ProcStatus`] value, in the order `shep_sheep_status` renders
-/// them, so a scrape's series order is stable across calls.
-const ALL_STATUSES: [ProcStatus; 6] = [
+/// them, so a scrape's series order is stable across calls, and so the OTLP
+/// exporter writes the same six.
+pub(super) const ALL_STATUSES: [ProcStatus; 6] = [
     ProcStatus::Starting,
     ProcStatus::Online,
     ProcStatus::Stopping,
@@ -128,7 +131,7 @@ impl fmt::Display for StatusLabels<'_> {
 /// fixed at compile time. The dog-source spelling lives in `shep-core`'s own
 /// `From<&DogSource> for &'static str`; the two hand-listed vocabularies sit
 /// where the type that owns them is defined.
-fn status_label(status: ProcStatus) -> &'static str {
+pub(super) fn status_label(status: ProcStatus) -> &'static str {
     match status {
         ProcStatus::Starting => "starting",
         ProcStatus::Online => "online",
@@ -139,10 +142,78 @@ fn status_label(status: ProcStatus) -> &'static str {
     }
 }
 
+/// The `# TYPE` spelling for a channel sample's kind, the same two words the
+/// wire carries.
+fn kind_label(kind: &MetricType) -> &'static str {
+    match kind {
+        MetricType::Gauge => "gauge",
+        MetricType::Counter => "counter",
+    }
+}
+
+/// Escapes help text for a `# HELP` line. Backslash and newline are the only
+/// two that need it, and the newline is the one that would split the line.
+fn escape_help(help: &str) -> String {
+    let mut escaped = String::with_capacity(help.len());
+    for ch in help.chars() {
+        match ch {
+            '\\' => escaped.push_str(r"\\"),
+            '\n' => escaped.push_str(r"\n"),
+            other => escaped.push(other),
+        }
+    }
+    escaped
+}
+
+/// A sample value in the text form's own spelling. The wire can carry a value
+/// the format has no decimal spelling for, and `inf` is not one of the three
+/// names a scraper accepts.
+fn render_value(value: f64) -> String {
+    if value.is_finite() {
+        value.to_string()
+    } else if value.is_nan() {
+        "NaN".to_string()
+    } else if value > 0.0 {
+        "+Inf".to_string()
+    } else {
+        "-Inf".to_string()
+    }
+}
+
+/// Renders one channel sample family: its `# HELP`/`# TYPE` pair, or the
+/// `# TYPE` half alone when nothing carried help, then one series per point.
+///
+/// The name needs no escaping: [`super::grammar`] refused every name that is
+/// not `[a-zA-Z_:][a-zA-Z0-9_:]*` before the store kept it.
+fn render_family(family: &SampleFamily, out: &mut String) {
+    if family.points.is_empty() {
+        return;
+    }
+    if let Some(help) = &family.help {
+        let _ = writeln!(out, "# HELP {} {}", family.name, escape_help(help));
+    }
+    let _ = writeln!(out, "# TYPE {} {}", family.name, kind_label(&family.kind));
+    for point in &family.points {
+        let pairs: Vec<(&str, &str)> = point
+            .labels
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        let _ = writeln!(
+            out,
+            "{}{} {}",
+            family.name,
+            labels(&pairs),
+            render_value(point.value)
+        );
+    }
+}
+
 /// Renders `reading` as Prometheus text exposition, format version 0.0.4.
 ///
 /// One `# HELP`/`# TYPE` pair per metric name, every series of a name
-/// grouped beneath it, and a trailing newline.
+/// grouped beneath it, and a trailing newline. The built-in groups come first
+/// and the channel samples after them, each in its own name order.
 ///
 /// Label values are escaped (`\\`, `"`, `\n`). A sheep's name is
 /// operator-supplied and reaches this function verbatim, so an unescaped
@@ -212,6 +283,11 @@ pub fn render(reading: &Reading) -> String {
 
     for info in &reading.flock {
         if let Some(source) = &info.dog {
+            // Parked on purpose: a series at 0 would read as a dog that
+            // went down, and fire the alert written for that.
+            if info.disabled == Some(true) {
+                continue;
+            }
             let pairs = [
                 ("dog", info.name.as_str()),
                 ("source", <&'static str>::from(source)),
@@ -283,14 +359,18 @@ pub fn render(reading: &Reading) -> String {
     ] {
         group.render_into(&mut out);
     }
+    for family in &reading.samples {
+        render_family(family, &mut out);
+    }
     out
 }
 
 #[cfg(test)]
-mod tests {
-    use shep_core::protocol::{DogSource, ProcessInfo};
+pub(super) mod tests {
+    use shep_core::protocol::{DogSource, MetricType, ProcessInfo};
     use shep_core::status::ProcStatus;
 
+    use super::super::samples::{SampleFamily, SamplePoint};
     use super::super::{HostReading, Reading};
     use super::render;
 
@@ -329,6 +409,7 @@ mod tests {
             flock: vec![],
             daemon_version: "9.9.9".to_string(),
             daemon_pid: 12345,
+            samples: vec![],
             host: Some(HostReading {
                 memory_total_bytes: 16_000_000_000,
                 memory_used_bytes: 8_000_000_000,
@@ -410,6 +491,27 @@ mod tests {
         );
     }
 
+    /// fails if disabling a dog reads as it going down, which fires the
+    /// "dog down" alert an operator wrote for a crash.
+    #[test]
+    fn a_disabled_dog_exports_no_series_at_all() {
+        let mut parked = sample_info("bark");
+        parked.status = ProcStatus::Stopped;
+        parked.dog = Some(DogSource::BuiltIn);
+        parked.disabled = Some(true);
+        let mut running = sample_info("metrics");
+        running.dog = Some(DogSource::BuiltIn);
+        let text = render(&Reading {
+            flock: vec![parked, running],
+            ..reading()
+        });
+        assert!(!text.contains(r#"dog="bark""#), "{text}");
+        assert!(
+            text.contains(r#"shep_dog_up{dog="metrics",source="built-in"} 1"#),
+            "{text}"
+        );
+    }
+
     #[test]
     fn every_metric_name_carries_one_help_one_type_and_contiguous_series() {
         let mut dog = sample_info("bark");
@@ -485,12 +587,204 @@ mod tests {
         assert_eq!(super::escape_label_value(r#"we"b\x"#), r#"we\"b\\x"#);
     }
 
+    /// One [`SamplePoint`] with `labels`, which is the store's own shape.
+    fn point(labels: &[(&str, &str)], value: f64) -> SamplePoint {
+        SamplePoint {
+            labels: labels
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+            value,
+        }
+    }
+
+    /// One [`SampleFamily`] as [`super::super::samples::SampleStore`] would
+    /// hand it over.
+    fn family(
+        name: &str,
+        kind: MetricType,
+        help: Option<&str>,
+        points: Vec<SamplePoint>,
+    ) -> SampleFamily {
+        SampleFamily {
+            name: name.to_string(),
+            help: help.map(str::to_string),
+            kind,
+            points,
+        }
+    }
+
+    /// A [`Reading`] with `samples` on it and nothing else changed.
+    fn with_samples(samples: Vec<SampleFamily>) -> Reading {
+        Reading {
+            samples,
+            ..reading()
+        }
+    }
+
+    #[test]
+    fn a_counter_sample_is_typed_counter_in_the_exposition() {
+        let text = render(&with_samples(vec![family(
+            "requests_total",
+            MetricType::Counter,
+            Some("Requests served."),
+            vec![point(&[("sheep", "web"), ("id", "3")], 4.0)],
+        )]));
+        assert!(
+            text.contains("# HELP requests_total Requests served."),
+            "{text}"
+        );
+        assert!(text.contains("# TYPE requests_total counter"), "{text}");
+        assert!(
+            text.contains(r#"requests_total{sheep="web",id="3"} 4"#),
+            "{text}"
+        );
+    }
+
+    /// The same shape as
+    /// [`every_metric_name_carries_one_help_one_type_and_contiguous_series`],
+    /// for a name two senders both report.
+    #[test]
+    fn two_senders_of_one_name_share_one_help_and_type_block() {
+        let text = render(&with_samples(vec![family(
+            "requests",
+            MetricType::Gauge,
+            Some("Requests in flight."),
+            vec![
+                point(&[("sheep", "web"), ("id", "3"), ("fold", "")], 1.0),
+                point(&[("dog", "bark"), ("source", "built-in")], 2.0),
+            ],
+        )]));
+        let lines: Vec<&str> = text.lines().collect();
+        let name = "requests";
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|l| l.starts_with(&format!("# HELP {name} ")))
+                .count(),
+            1,
+            "{name} must carry exactly one HELP line: {text}"
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|l| l.starts_with(&format!("# TYPE {name} ")))
+                .count(),
+            1,
+            "{name} must carry exactly one TYPE line: {text}"
+        );
+        let series: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| {
+                l.strip_prefix(name)
+                    .is_some_and(|rest| rest.starts_with('{') || rest.starts_with(' '))
+            })
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(series.len(), 2, "{text}");
+        assert_eq!(
+            series[1] - series[0] + 1,
+            series.len(),
+            "{name}'s series are not contiguous: {series:?}"
+        );
+    }
+
+    #[test]
+    fn a_label_value_and_help_text_are_escaped() {
+        let text = render(&with_samples(vec![family(
+            "queue_depth",
+            MetricType::Gauge,
+            Some("jobs \\\"quoted\".\nSecond line."),
+            vec![point(&[("model", "we\"b\\x\n")], 1.0)],
+        )]));
+        assert!(
+            text.contains(r#"queue_depth{model="we\"b\\x\n"} 1"#),
+            "{text}"
+        );
+        // A HELP line is one line: the newline inside it is escaped, and so is
+        // the backslash. A double quote needs no escaping in help text, only
+        // in a label value.
+        assert!(
+            text.contains(r#"# HELP queue_depth jobs \\"quoted".\nSecond line."#),
+            "{text}"
+        );
+        assert_eq!(
+            text.lines()
+                .filter(|l| l.starts_with("# HELP queue_depth"))
+                .count(),
+            1,
+            "an unescaped newline in help text split the line: {text}"
+        );
+    }
+
+    #[test]
+    fn a_family_with_no_help_renders_no_help_line() {
+        let text = render(&with_samples(vec![family(
+            "queue_depth",
+            MetricType::Gauge,
+            None,
+            vec![point(&[("model", "qwen")], 1.0)],
+        )]));
+        assert!(!text.contains("# HELP queue_depth"), "{text}");
+        assert!(text.contains("# TYPE queue_depth gauge"), "{text}");
+    }
+
+    /// The samples come after every built-in group, so a scraper reading the
+    /// reference series first never reads a sample in front of them.
+    #[test]
+    fn channel_samples_render_after_the_builtin_groups() {
+        let text = render(&Reading {
+            flock: vec![sample_info("web")],
+            samples: vec![family(
+                "rps",
+                MetricType::Gauge,
+                Some("Requests per second."),
+                vec![point(&[("sheep", "web"), ("id", "3")], 2.0)],
+            )],
+            ..reading()
+        });
+        let lines: Vec<&str> = text.lines().collect();
+        let last_builtin = lines
+            .iter()
+            .rposition(|l| l.starts_with("shep_host_uptime_seconds"))
+            .expect("the host group is in every reading");
+        let sample = lines
+            .iter()
+            .position(|l| l.starts_with("# TYPE rps "))
+            .expect("the sample is rendered: {text}");
+        assert!(sample > last_builtin, "{text}");
+    }
+
+    /// The wire can carry a value the text format has no decimal spelling for.
+    /// `inf` is not one of the three names a scraper accepts.
+    #[test]
+    fn a_non_finite_sample_renders_the_formats_own_spelling() {
+        let text = render(&with_samples(vec![family(
+            "queue_depth",
+            MetricType::Gauge,
+            None,
+            vec![
+                point(&[("model", "nan")], f64::NAN),
+                point(&[("model", "up")], f64::INFINITY),
+                point(&[("model", "down")], f64::NEG_INFINITY),
+            ],
+        )]));
+        assert!(text.contains(r#"queue_depth{model="nan"} NaN"#), "{text}");
+        assert!(text.contains(r#"queue_depth{model="up"} +Inf"#), "{text}");
+        assert!(text.contains(r#"queue_depth{model="down"} -Inf"#), "{text}");
+        assert!(!text.contains(" inf"), "{text}");
+    }
+
     /// The [`Reading`] [`GOLDEN_EXPOSITION`] was captured from: one plain
     /// sheep, one idle sheep with no CPU or memory sample, one dog, and
     /// one sheep whose name needs all three escapes while in a non-online
     /// state, so every label path and all six status spellings appear in
     /// it.
-    fn golden_reading() -> Reading {
+    ///
+    /// `pub(super)`: the OTLP encoder's drift guard renders the same
+    /// reading through both renderers.
+    pub(in crate::dog::metrics) fn golden_reading() -> Reading {
         let mut dog = sample_info("bark");
         dog.dog = Some(DogSource::BuiltIn);
         let mut odd = sample_info("we\"b\\x\n");

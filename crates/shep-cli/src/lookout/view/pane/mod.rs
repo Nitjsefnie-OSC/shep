@@ -6,11 +6,11 @@
 //! between the title and the status bar, both have more rows than a
 //! terminal has lines, and both pay for chrome the viewport cannot see.
 //! The scroll walk is shared ([`super::scroll::to_cursor`]); the layout
-//! below is this pane's own, since a field list under eight headers and a
+//! below is this pane's own, since a field list under nine headers and a
 //! settings screen with a dogs table share almost no lines.
 //!
-//! A sheep pane is 40 rows plus a title, eight headers and seven blank
-//! separators: sixteen lines of chrome before a marker is paid for.
+//! A sheep pane is 40 rows plus a title, nine headers and eight blank
+//! separators: eighteen lines of chrome before a marker is paid for.
 //!
 //! `layout` holds the width budget, `field_row` one row, and `chrome`,
 //! `env`, `list`, `dogs` and `panel` the regions around them. `body` decides
@@ -21,6 +21,7 @@ mod chrome;
 pub(super) mod close;
 mod dogs;
 mod draw;
+mod entry_row;
 mod env;
 mod field_row;
 #[cfg(test)]

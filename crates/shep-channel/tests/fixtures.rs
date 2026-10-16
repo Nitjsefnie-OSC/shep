@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use shep_channel::{ChildMessage, LambLabel, ShepherdMessage};
+use shep_channel::{ChildMessage, LambLabel, MetricType, ShepherdMessage};
 
 mod common;
 
@@ -47,6 +47,9 @@ fn child_messages_match_their_fixtures() {
             ChildMessage::Metric {
                 name: "rps".into(),
                 value: 42.0,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
             },
         ),
         (
@@ -54,6 +57,36 @@ fn child_messages_match_their_fixtures() {
             ChildMessage::Metric {
                 name: "idle".into(),
                 value: 0.0,
+                metric_type: None,
+                labels: std::collections::BTreeMap::new(),
+                help: None,
+            },
+        ),
+        (
+            "child-metric-counter",
+            ChildMessage::Metric {
+                name: "queue_depth".into(),
+                value: 3.0,
+                metric_type: Some(MetricType::Counter),
+                labels: std::collections::BTreeMap::new(),
+                help: None,
+            },
+        ),
+        (
+            "child-metric-labelled",
+            ChildMessage::Metric {
+                name: "queue_depth".into(),
+                value: 3.0,
+                metric_type: Some(MetricType::Counter),
+                labels: [("model".to_string(), "qwen".to_string())].into(),
+                help: Some("Requests waiting for the lease.".into()),
+            },
+        ),
+        (
+            "child-note",
+            ChildMessage::Note {
+                name: "lease.web.want.1760500000".into(),
+                value: 1.0,
             },
         ),
         (

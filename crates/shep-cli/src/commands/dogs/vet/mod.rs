@@ -26,6 +26,13 @@ use crate::output::Streams;
 pub enum AdoptRefusal {
     /// Nothing exists at that path.
     Missing,
+    /// The path could not be looked up for a reason other than absence: a
+    /// directory on the way to it that this user cannot search, or a symlink
+    /// loop. Not [`Missing`](Self::Missing): the file may well be there.
+    Inaccessible {
+        /// What the OS reported.
+        reason: String,
+    },
     /// It exists and is not a file (a directory, most often a `bin/` the
     /// operator meant to point inside of).
     NotAFile,
@@ -64,6 +71,9 @@ impl std::fmt::Display for AdoptRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Missing => write!(f, "no file exists at that path"),
+            Self::Inaccessible { reason } => {
+                write!(f, "that path could not be looked up: {reason}")
+            }
             Self::NotAFile => write!(f, "that path is not a file"),
             Self::NotExecutable => write!(f, "no execute bit is set on that file"),
             Self::WorldWritable { path } => write!(
@@ -121,7 +131,7 @@ pub fn vet_binary_within(
     name: &str,
     budget: Duration,
 ) -> Result<VettedBinary, AdoptRefusal> {
-    let metadata = std::fs::metadata(path).map_err(|_| AdoptRefusal::Missing)?;
+    let metadata = std::fs::metadata(path).map_err(lookup_refusal)?;
     if !metadata.is_file() {
         return Err(AdoptRefusal::NotAFile);
     }
@@ -133,13 +143,12 @@ pub fn vet_binary_within(
     if metadata.permissions().mode() & 0o111 == 0 {
         return Err(AdoptRefusal::NotExecutable);
     }
-    // Only a symlink loop or a race with a delete can fail here, and neither
-    // has anything more specific than `Missing`. The verbatim prefix is
-    // stripped because the path is recorded in a file operators edit.
+    // The verbatim prefix is stripped because the path is recorded in a file
+    // operators edit.
     let canonical = path
         .canonicalize()
         .map(|abs| shep_core::paths::strip_verbatim_prefix(&abs).into_owned())
-        .map_err(|_| AdoptRefusal::Missing)?;
+        .map_err(lookup_refusal)?;
     let group_writable = writability(&canonical)?;
     let answer = ask_version(&canonical, home, name, budget)?;
     // `answer.version` is never compared: a third-party dog's crate version
@@ -162,6 +171,18 @@ pub fn vet_binary_within(
         answer,
         schema,
     })
+}
+
+/// The refusal for a failed lookup of the candidate's path: `Missing` only
+/// when the OS says nothing is there, otherwise the OS's own reason.
+fn lookup_refusal(err: std::io::Error) -> AdoptRefusal {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        AdoptRefusal::Missing
+    } else {
+        AdoptRefusal::Inaccessible {
+            reason: err.to_string(),
+        }
+    }
 }
 
 /// The whole environment a dog is run with here: what the daemon would give
@@ -631,6 +652,23 @@ pub(super) fn report_dog_version(streams: &mut Streams<'_>, name: &str, answer: 
         ),
     };
     streams.aside(DOG_VERSION_NOTICE, &message);
+}
+
+/// [`emit_notice`](crate::output::emit_notice) code for the report that a
+/// candidate asked for the shepherd channel; not a failure.
+const DOG_CHANNEL_NOTICE: &str = "dog_channel";
+
+/// Tells the operator the candidate asked for the shepherd channel.
+///
+/// The dog asked, not the operator, so this is where an operator hears that
+/// it takes `shep trigger` and is stopped by a message instead of a signal.
+pub(super) fn report_channel_ask(streams: &mut Streams<'_>, name: &str) {
+    let message = format!(
+        "{name} asked for the shepherd channel, so it runs with channel and \
+         shutdown_with_message: `shep trigger {name} <action>` reaches it, and \
+         shep stops it with a message rather than a signal"
+    );
+    streams.aside(DOG_CHANNEL_NOTICE, &message);
 }
 
 /// [`emit_notice`](crate::output::emit_notice) code for the

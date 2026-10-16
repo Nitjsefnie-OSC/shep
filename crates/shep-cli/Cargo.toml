@@ -73,6 +73,15 @@ assets = [
     ["completions/shep.fish", "usr/share/fish/vendor_completions.d/shep.fish", "644"],
 ]
 
+[features]
+# Option: OTLP/HTTP export for the metrics dog, behind `[dog.metrics]`
+# `otlp_endpoint`. Off by default, and it adds no dependency: the encoder is
+# `serde_json` and the transport is `fetch`'s, both already linked for bark.
+# Off is not silent: a config that names `otlp_endpoint` exits
+# `invalid_config` naming this feature rather than running an exporter that
+# exports nothing.
+otel = []
+
 [dependencies]
 # `features = ["schema"]`: `shep schema` prints `shep_core::config::
 # flockfile_schema_json()`, which only exists behind that feature. This
@@ -192,6 +201,8 @@ rmcp.workspace = true
 # `rmcp::schemars`, because `#[derive(JsonSchema)]` in `src/whistle/` expands
 # to absolute `schemars::` paths.
 schemars.workspace = true
+# The lookout text box's cursor and editing commands.
+tui-input.workspace = true
 # Two `ratatui` transitive floors, only ever read by `-Z minimal-versions`;
 # see the workspace `Cargo.toml`'s comments on each.
 time.workspace = true

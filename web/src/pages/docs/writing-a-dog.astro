@@ -26,6 +26,20 @@ const probeSnippet = `fn main() {
     // ...normal startup, reached only when this run is not a probe.
 }`;
 
+const channelSnippet = `use shep_client::dogs::{Probe, Stop};
+
+fn main() {
+    Probe::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+        .ask_for_channel()
+        .answer::<MyDogConfig>();
+
+    let (stop, request) = Stop::new();
+    let shepherd = shep_channel::serve();
+    shepherd.on_action("rotate", |_params, _name| "rotated".to_string());
+    shepherd.on_shutdown(move || request.request());
+    // ...the dog's own loop, watching \`stop\`.
+}`;
+
 const configSnippet = `use shep_client::dogs::dog_config;
 use shep_client::shep_core::values::{MemSize, UpDuration};
 
@@ -82,7 +96,7 @@ report to whoever wrote it`;
         cost one child rather than two.
       </p>
     </VerbSignature>
-    <VerbSignature verb="rehome" usage="shep rehome <name>">
+    <VerbSignature verb="delete" usage="shep delete <name>">
       <p>
         <code>disable</code>'s counterpart for a third-party dog: stops it
         if running and forgets where its binary lived, rather than leaving
@@ -101,7 +115,7 @@ report to whoever wrote it`;
 NAME      SOURCE   SHEPHERD  STATUS
 watchdog  adopted  true      online
 
-$ shep rehome watchdog
+$ shep delete watchdog
 NAME      SOURCE   SHEPHERD  STATUS
 watchdog  adopted  true      stopped`}</CodeBlock>
     <p>
@@ -118,7 +132,7 @@ watchdog  adopted  true      stopped`}</CodeBlock>
     </p>
     <p>
       What gets recorded in <code>shep.toml</code> is the canonicalized,
-      absolute path (never whatever relative path you typed) because the
+      absolute path because the
       daemon may resolve it again after a reboot from a different working
       directory than the one <code>adopt</code> ran from.
     </p>
@@ -128,7 +142,14 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       <code>$SHEP_HOME/run/shep.sock</code>, send <code>Hello</code>, wait
       for <code>HelloAck</code>, then send{" "}
       <code>Request::DogConfig {"{"} name {"}"}</code> to fetch your own
-      section as opaque text. Shep sets two variables of its own on a dog:{" "}
+      section as opaque text. Send{" "}
+      <code>Request::DogConfigResolved {"{"} name {"}"}</code> instead to
+      have each <code>{'{{secret:...}}'}</code> replaced by its value;{" "}
+      <code>DogConfig</code> still gives the text as written. A Rust dog on{" "}
+      <code>shep-client</code> gets this from <code>dog_config</code>{" "}
+      unchanged. Against a shepherd too old to know the request it reads the
+      plain section, and refuses one naming a reference as{" "}
+      <code>unsupported</code>. Shep sets two variables of its own on a dog:{" "}
       <code>$SHEP_HOME</code>, which is how it finds that socket in the first
       place, and <code>$SHEP_DOG_NAME</code>, which is the name to put in
       that request. No <code>[&lt;name&gt;]</code> value rides along
@@ -147,8 +168,7 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       refused too. <code>shep daemon reload</code> prints that report to the
       operator, after your reconnect rather than before it: what the old
       image knew about you described a process that was about to stop
-      existing. Without it you go quiet and nothing on either side says
-      why.
+      existing. Without it you go quiet.
     </p>
     <p>
       A dog written against <code>shep-client</code> gets both halves from{" "}
@@ -167,11 +187,9 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       of a shepherd whose pid does not change, so it keeps its own pid and
       its restart count stays where it was. What does not survive is the
       accepted connection, which dies with the old image — so a dog that
-      does not dial again is a live process holding a dead socket, alive on
-      every column a listing has and answering nothing. Both built-in dogs
+      does not dial again is a live process holding a dead socket. Both built-in dogs
       are measured holding their pid and <code>restarts 0</code> across ten
-      reloads, the metrics dog still serving a scrape and the bark dog
-      still delivering.
+      reloads, still serving and delivering.
     </p>
     <p>
       A subscription belongs to one connection too, so a dog that has one
@@ -297,6 +315,7 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       </div>
       <div class="row"><span>the version on line 1</span> <span data-label="Answers">Which build of the dog this is. A difference is reported, never refused.</span></div>
       <div class="row"><span><code>shep-protocol</code></span> <span data-label="Answers">Whether this dog can handshake with this shepherd at all. Below the floor it can't connect; above it, shep accepts it.</span></div>
+      <div class="row"><span><code>shep-channel</code></span> <span data-label="Answers">Optional. <code>true</code> asks for the <a href="#asking-for-the-channel">shepherd channel</a>.</span></div>
     </div>
     <CodeBlock>{`shep-log-rotate 0.1.3
 shep-protocol: 8`}</CodeBlock>
@@ -381,11 +400,34 @@ against the current shep-core, or run a shep that accepts protocol 6`}</CodeBloc
       can't hang the <code>adopt</code> that's vetting it.
     </p>
     <p>
-      None of the answer is written down. <code>[daemon] adopted_dogs</code>{" "}
-      records the path and nothing else, and a protocol stored at adopt time
+      Only a channel ask is written down. A protocol stored at adopt time
       would be a copy of a number that can change on disk with nothing
-      watching. Shep asks the binary again rather than remembering what it
-      said.
+      watching, so shep asks the binary again rather than remembering what
+      it said.
+    </p>
+
+    <h3 id="asking-for-the-channel">Asking for the shepherd channel</h3>
+    <p>
+      A dog gets no channel unless it asks. One that wants{" "}
+      <code>shep trigger &lt;dog&gt; &lt;action&gt;</code>, or to be stopped
+      by a message, adds a line to its answer:
+    </p>
+    <CodeBlock>{`shep-otel 0.2.0
+shep-protocol: 11
+shep-channel: true`}</CodeBlock>
+    <p>
+      <code>shep adopt</code> records the ask in{" "}
+      <code>[daemon] channel_dogs</code>, and shep starts the dog with{" "}
+      <code>channel</code> and <code>shutdown_with_message</code> set. Only{" "}
+      <code>true</code> asks. <code>shep adopt</code> reads the line again,
+      and a running dog picks up the change at <code>shep disable</code> then{" "}
+      <code>shep enable</code>.
+    </p>
+    <CodeBlock label="main.rs">{channelSnippet}</CodeBlock>
+    <p>
+      Serve it with <code>shep-channel</code>. A stop is the{" "}
+      <code>shutdown</code> message with no signal behind it, so a dog that
+      ignores it is killed once <code>kill_timeout</code> runs out.
     </p>
 
     <h3 id="restart-and-the-answer">What <code>shep restart &lt;dog&gt;</code> does with the answer</h3>
@@ -603,10 +645,13 @@ speaks protocol 9, accepts 8 and newer`}</CodeBlock>
     </p>
     <p>
       A schema's own bounds are checked in the editor rather than after the
-      write: a <code>pattern</code>, a <code>minimum</code> or a{" "}
-      <code>maximum</code> refuses the value there and says what the field
-      does take. Another reason to publish the narrow thing over a bare{" "}
-      <code>string</code>, since shep writes the section without reading it.
+      write: a <code>pattern</code>, a <code>minimum</code>, a{" "}
+      <code>maximum</code>, an <code>exclusiveMinimum</code>, an{" "}
+      <code>exclusiveMaximum</code> or an <code>enum</code> of numbers refuses
+      the value there and says what the field does take, and a range with
+      nothing in it says so once. Another reason to publish the narrow thing
+      over a bare{" "}<code>string</code>, since shep writes the section
+      without reading it.
     </p>
     <Callout variant="note">
       Answering is optional, exactly as <code>--version</code> is. A dog
@@ -685,12 +730,12 @@ speaks protocol 9, accepts 8 and newer`}</CodeBlock>
     <p>
       <code>#[shep(secret)]</code> marks a field of <code>S</code> the way
       it marks one of <code>T</code>: <code>&lt;set&gt;</code> in lookout,
-      never the value. A nested struct in <code>S</code> becomes dotted
-      rows there, <code>models.worker.model</code> for a{" "}
-      <code>models</code> field holding a <code>worker</code> field
-      holding a <code>model</code>. An array, or a map with more than a
-      fixed set of keys, stays one read-only row: neither has a shape the
-      pane can write back into.
+      never the value. A nested struct in <code>S</code> becomes a
+      table row there with its keys indented under it, like{" "}
+      <code>models</code> holding <code>worker</code> holding{" "}
+      <code>model</code>. A map with more than
+      a fixed set of keys, an array of tables, or a list whose items can
+      be null stays one read-only row.
     </p>
     <p class="fine">
       Without the <code>schema</code> feature,{" "}

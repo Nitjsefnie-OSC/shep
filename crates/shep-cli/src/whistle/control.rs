@@ -33,7 +33,7 @@ impl Whistle {
     /// anyway. Refuses the whole call if any matched instance is running.
     #[tool(
         name = "start_sheep",
-        description = "Start a registered sheep that is currently stopped. Cannot register new processes — the sheep must already be in the flock. The running check is a courtesy, not a guarantee: a sheep that comes up between the check and the call is restarted. For a multi-instance app, the whole call is refused if any instance is running.",
+        description = "Start a registered sheep that is currently stopped. Cannot register new processes: the sheep must already be in the flock. The running check is a courtesy, not a guarantee: a sheep that comes up between the check and the call is restarted. For a multi-instance app, the whole call is refused if any instance is running.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -399,6 +399,50 @@ mod tests {
             }
             other => panic!("expected Restart second, got {other:?}"),
         }
+    }
+
+    /// A disabled sheep reads `stopped`, so whistle's own running check lets
+    /// it through and the shepherd's `Disabled` refusal is what the model
+    /// sees: its words, and the `usage` code `RpcErrorCode::exit_code` maps
+    /// it to.
+    #[tokio::test]
+    async fn start_sheep_on_a_disabled_sheep_returns_the_shepherds_refusal() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+        let mut parked = shep_client::testing::sample_info();
+        parked.status = shep_core::status::ProcStatus::Stopped;
+        parked.disabled = Some(true);
+        let served = serve_connections_in_sequence(
+            &socket,
+            vec![
+                Ok(Response::Described(vec![parked])),
+                Err((
+                    RpcErrorCode::Disabled,
+                    "web is disabled; `shep enable web` clears that and starts it".to_string(),
+                )),
+            ],
+        );
+
+        let whistle = whistle_at(socket);
+        let result = tokio::time::timeout(
+            TEST_TIMEOUT,
+            whistle.start_sheep(Parameters(SheepName {
+                name: "web".to_string(),
+            })),
+        )
+        .await
+        .expect("start_sheep must return within the test timeout")
+        .err()
+        .expect("a disabled sheep must be refused");
+
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured content");
+        assert_eq!(structured["code"], "usage");
+        let message = structured["message"].as_str().expect("a string");
+        assert!(message.contains("shep enable web"), "{message}");
+
+        let envelopes = served.await.expect("the fake daemon task must not panic");
+        assert!(matches!(envelopes[1].body, Request::Restart { .. }));
     }
 
     /// Four instances, two online: refuses the whole call and names the

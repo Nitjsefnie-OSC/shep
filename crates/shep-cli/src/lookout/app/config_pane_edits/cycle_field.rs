@@ -9,19 +9,15 @@ impl App {
     /// running flock's config needs the fat-finger catch a keystroke that
     /// stops a sheep has.
     pub(in crate::lookout::app) fn cycle_field(&mut self) -> Effect {
+        // A table holds no value to cycle, and nothing to refuse either.
+        if self.config_pane().is_some_and(ConfigPane::cursor_on_table) {
+            return Effect::None;
+        }
         // The lock is checked ahead of the control gate, the same order
         // `confirm_field` takes: it is the more specific fact, and
         // `--allow-control` would not change it. A screen that answers
         // one question two ways teaches an operator to believe neither.
-        if let Some((key, lock)) = self
-            .config_pane()
-            .and_then(ConfigPane::cursor_lock)
-            .map(|(key, lock)| (key.to_owned(), lock))
-        {
-            self.notice = Some(Notice {
-                text: Self::lock_refusal(&key, lock),
-                grave: true,
-            });
+        if self.refuse_if_locked() {
             return Effect::None;
         }
         if self.authorize_write().is_none() {
@@ -36,7 +32,6 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::*;
     use super::*;
     use crate::lookout::app::testing::*;
 

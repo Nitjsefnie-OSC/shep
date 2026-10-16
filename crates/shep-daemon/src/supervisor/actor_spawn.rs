@@ -53,6 +53,28 @@ impl<R: ProcessRunner> Actor<R> {
             .into_info()
     }
 
+    /// Registers one dog as a flock member without spawning it.
+    ///
+    /// Marks it disabled when `disabled` names it, and only when this call is
+    /// what registered it: a dog or sheep already holding the name keeps the
+    /// mark it has.
+    pub(super) fn register_dog_at_rest(
+        &mut self,
+        app: &ResolvedApp,
+        source: DogSource,
+        disabled: &BTreeSet<String>,
+    ) -> ProcessInfo {
+        match self.register_without_spawning(app, ProcStatus::Stopped, Some(source)) {
+            Registration::Fresh(info) => {
+                if disabled.contains(&info.name) {
+                    self.disabled.insert(info.name.clone());
+                }
+                self.with_mark(info)
+            }
+            Registration::AlreadyKnown(info) => info,
+        }
+    }
+
     /// The secret view one spawn of `app` resolves against.
     ///
     /// The store is read here rather than inside [`assemble`], the same way
@@ -310,6 +332,7 @@ impl<R: ProcessRunner> Actor<R> {
                     app.clone(),
                     self.events.clone(),
                     self.tx.clone(),
+                    self.lamb_sweep(),
                 );
                 let ready_tx = if gated {
                     Some(spawn_readiness_task(
@@ -443,6 +466,11 @@ impl<R: ProcessRunner> Actor<R> {
         // readiness re-arm between them has to see it, since a `ready_failed`
         // instance is `Starting` by construction and must not get a wait.
         let ready_failed = carried.ready_failed().unwrap_or(false);
+        // The mark is the app's, so it is set before the slot lands: nothing
+        // the successor does to this instance can respawn it in between.
+        if carried.disabled() == Some(true) {
+            self.disabled.insert(app.config().name.clone());
+        }
         // Restored as a pair with its reset flag: a parked config promoted
         // without it comes up on the identity the flag exists to replace.
         // A parked config that fails to normalize is dropped and warned about
@@ -598,6 +626,7 @@ impl<R: ProcessRunner> Actor<R> {
             app.clone(),
             self.events.clone(),
             self.tx.clone(),
+            self.lamb_sweep(),
         );
         self.sheep.insert(
             id,

@@ -16,6 +16,11 @@ rust-version = "1.88"
 
 [dependencies]
 shep-daemon = { path = "../crates/shep-daemon" }
+shep-core = { path = "../crates/shep-core" }
+# Shaped like the root workspace's entries for the same crates: `to_string`
+# needs `std`, and tempfile's defaults pull nothing this bench uses.
+serde_json = { version = "1", default-features = false, features = ["std"] }
+tempfile = { version = "3.10", default-features = false }
 # rust-version 1.80, under this workspace's 1.88 floor. Turning off defaults
 # (rayon, plotters, cargo_bench_support) and naming cargo_bench_support back
 # on keeps rayon and plotters out of a bench crate that only runs via
@@ -24,6 +29,10 @@ criterion = { version = "0.7", default-features = false, features = ["cargo_benc
 
 [[bench]]
 name = "memory_sample"
+harness = false
+
+[[bench]]
+name = "bark_append"
 harness = false
 
 # No `[lints]` here: `workspace = true` fails for the same reason

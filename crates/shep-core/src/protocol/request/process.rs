@@ -5,52 +5,14 @@ use serde::{Deserialize, Serialize};
 use crate::config::LevelRule;
 use crate::status::ProcStatus;
 
+use super::DogSource;
+
 // Named by intra-doc links and by nothing rustc compiles, so the
 // import is behind `cfg(doc)` rather than flagged unused.
 #[cfg(doc)]
 use super::{Response, SheepDrift, Smit};
 #[cfg(doc)]
 use crate::config::AppConfig;
-
-/// Where a dog came from: this binary, or one an operator adopted.
-///
-/// Carried on [`ProcessInfo::dog`], so a listing distinguishes the two
-/// populations without a second request.
-// wire format: changing existing variants is a breaking change
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum DogSource {
-    /// An argv branch of the shep binary itself (`shep dog <name>`).
-    BuiltIn,
-    /// A binary an operator adopted, run at the daemon's own trust level.
-    Adopted {
-        /// The binary's path, exactly as the operator gave it to `adopt`.
-        path: String,
-    },
-}
-
-impl DogSource {
-    /// The kind's one-word label, `built-in` or `adopted`.
-    ///
-    /// Never the adopted path: this is what a SOURCE column shows, and the
-    /// path is on the variant for a caller that wants it.
-    const fn as_str(&self) -> &'static str {
-        match self {
-            DogSource::BuiltIn => "built-in",
-            DogSource::Adopted { .. } => "adopted",
-        }
-    }
-}
-
-/// The kind's label, for a caller rendering a source into a cell or a
-/// metric value. Takes a borrow, since [`DogSource::Adopted`] owns a
-/// `String` that the label does not read.
-impl From<&DogSource> for &'static str {
-    fn from(source: &DogSource) -> Self {
-        source.as_str()
-    }
-}
 
 /// One process the OS reports as a descendant of a sheep.
 ///
@@ -299,6 +261,23 @@ pub struct ProcessInfo {
     /// neither `PROTOCOL_VERSION` nor `SCHEMA_VERSION` moves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reload_deadline_ms: Option<u64>,
+    /// `Some(true)` when the sheep's app is disabled: stopped, and refused a
+    /// spawn until `shep enable`. `None` otherwise, which also covers a peer
+    /// daemon that predates the field.
+    ///
+    /// Beside [`Self::status`] rather than a [`ProcStatus`] variant: that enum
+    /// is closed, so an older peer could not decode a new one. A disabled row
+    /// keeps `status: "stopped"`. Never `Some(false)`, so the key is absent
+    /// from every row that is not disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
+    /// Whether this sheep's own log lines carry the shepherd's stamp, from
+    /// its [`AppConfig::log_timestamps`]. `Some(false)` is the only value a
+    /// daemon sets. `None` for a dog, which always stamps, and for a peer
+    /// daemon that predates the field: both read as stamped, which is what
+    /// every daemon before it wrote. Additive, like [`Self::disabled`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_timestamps: Option<bool>,
 }
 
 /// Orders one flock listing the way every operator-facing surface presents
@@ -353,6 +332,8 @@ impl ProcessInfo {
                 max_memory: None,
                 level_rules: Vec::new(),
                 reload_deadline_ms: None,
+                disabled: None,
+                log_timestamps: None,
             },
         }
     }
@@ -512,6 +493,19 @@ impl ProcessInfoBuilder {
         self
     }
 
+    /// Sets whether the sheep's app is disabled; `None` when it is not.
+    pub fn disabled(mut self, disabled: Option<bool>) -> Self {
+        self.info.disabled = disabled;
+        self
+    }
+
+    /// Sets whether the sheep's app turns the shepherd's stamp off; `None`
+    /// for a dog, which always stamps.
+    pub fn log_timestamps(mut self, log_timestamps: Option<bool>) -> Self {
+        self.info.log_timestamps = log_timestamps;
+        self
+    }
+
     /// Finishes the row.
     #[must_use]
     pub fn build(self) -> ProcessInfo {
@@ -567,8 +561,17 @@ pub(super) fn sample_info() -> ProcessInfo {
         // serialized shape of a real one is pinned on its own, by
         // `a_reload_deadline_is_absent_from_the_wire_until_a_reload_sets_one`.
         reload_deadline_ms: None,
+        // `None` so the key is absent from the pinned bytes; its serialized
+        // shape is pinned by `a_disabled_flag_is_absent_from_the_wire_until_set`.
+        disabled: None,
+        // `None` for the same reason, its shape pinned by
+        // `a_stamps_off_flag_is_absent_from_the_wire_until_set`.
+        log_timestamps: None,
     }
 }
+
+#[cfg(test)]
+mod stamps;
 
 #[cfg(test)]
 mod tests {
@@ -762,20 +765,6 @@ mod tests {
     }
 
     #[test]
-    fn a_dog_source_serializes_snake_case_under_its_kind() {
-        assert_eq!(
-            serde_json::to_string(&DogSource::BuiltIn).unwrap(),
-            r#"{"kind":"built_in"}"#
-        );
-        let adopted = DogSource::Adopted {
-            path: "/usr/local/bin/shep-otel".to_string(),
-        };
-        let wire = r#"{"kind":"adopted","path":"/usr/local/bin/shep-otel"}"#;
-        assert_eq!(serde_json::to_string(&adopted).unwrap(), wire);
-        assert_eq!(serde_json::from_str::<DogSource>(wire).unwrap(), adopted);
-    }
-
-    #[test]
     fn v1_process_info_without_a_dog_marker_still_deserializes() {
         let fixture = r#"{"id":3,"name":"web","status":"online","pid":4242,"restarts":1,"uptime_ms":60000,"fold":"backend","out_file":"/l/o.log","err_file":"/l/e.log","cpu_percent":12.5,"memory_bytes":50331648}"#;
         let info: ProcessInfo = serde_json::from_str(fixture).unwrap();
@@ -858,6 +847,24 @@ mod tests {
         assert_eq!(back.reload_deadline_ms, Some(16_000));
     }
 
+    /// A disabled sheep stays `stopped` on the wire and gains a key beside it;
+    /// every other row is the bytes it always was.
+    #[test]
+    fn a_disabled_flag_is_absent_from_the_wire_until_set() {
+        let plain = ProcessInfo::builder(1, "web", ProcStatus::Stopped).build();
+        let json = serde_json::to_string(&plain).expect("serialize");
+        assert!(!json.contains("disabled"), "{json}");
+
+        let parked = ProcessInfo::builder(1, "web", ProcStatus::Stopped)
+            .disabled(Some(true))
+            .build();
+        let json = serde_json::to_string(&parked).expect("serialize");
+        assert!(json.contains(r#""status":"stopped""#), "{json}");
+        assert!(json.contains(r#""disabled":true"#), "{json}");
+        let back: ProcessInfo = serde_json::from_str(&json).expect("round trip");
+        assert_eq!(back.disabled, Some(true));
+    }
+
     #[test]
     fn an_older_daemons_process_info_still_decodes() {
         // Every additive field, asserted off one payload. A payload written
@@ -868,6 +875,8 @@ mod tests {
         let info: ProcessInfo = serde_json::from_str(older).expect("an older payload decodes");
         assert_eq!(info.max_memory, None);
         assert_eq!(info.reload_deadline_ms, None);
+        assert_eq!(info.disabled, None);
+        assert_eq!(info.log_timestamps, None);
     }
 
     #[test]

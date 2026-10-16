@@ -5,6 +5,7 @@
 //! told apart from an operator's stop and from a drain. The others answer
 //! the remaining events a sheep or a subsystem raises.
 
+use super::actor_disable::Sweep;
 use super::*;
 
 impl<R: ProcessRunner> Actor<R> {
@@ -27,11 +28,11 @@ impl<R: ProcessRunner> Actor<R> {
     ) {
         let mut matched: Vec<ProcessInfo> = Vec::new();
         let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-        for id in self.matching_ids(selector) {
+        for id in self.reached_ids(selector, Sweep::Any) {
             let slot = self
                 .sheep
                 .get(&id)
-                .expect("`matching_ids` answers with ids read off this map a moment ago");
+                .expect("`reached_ids` answers with ids read off this map a moment ago");
             paths.insert(slot.entry.out_file.clone());
             paths.insert(slot.entry.err_file.clone());
             matched.push(to_info(&slot.entry, &self.smits));
@@ -74,6 +75,23 @@ impl<R: ProcessRunner> Actor<R> {
     ///
     /// Every registered sheep is described, with no selector: a handover
     /// carries one process image, so the flock goes whole or not at all.
+    ///
+    /// One group is left behind: every dog that is parked, which
+    /// [`Self::is_parked_dog`] spells as the disabled mark and no process.
+    /// Whether a dog runs is `shep.toml`'s decision, and this daemon never
+    /// reads that file while a successor boots from it, so the successor
+    /// registers a parked dog at rest exactly as a cold boot does, under a new
+    /// id. Carrying it would pin the id this flock issued and hand the
+    /// successor a stopped dog its idempotent [`Self::do_start_dog`] could
+    /// never start.
+    ///
+    /// Everything holding a process carries, marked or not. This snapshot is
+    /// the only way a successor learns a pid, and a process it never learned
+    /// is one it cannot stop: `shep disable` sets the mark before its stop
+    /// begins and answers only once the stop has finished, so a reload racing
+    /// that disable meets a marked dog still on its kill ladder. A dog an
+    /// operator stopped with `shep stop` carries too, mark or no mark: its row
+    /// and its history are the successor's to inherit.
     #[cfg(unix)]
     pub(super) fn handle_handover_snapshot(
         &self,
@@ -83,6 +101,7 @@ impl<R: ProcessRunner> Actor<R> {
         let mut drafts: Vec<HandoverDraft> = self
             .sheep
             .values()
+            .filter(|slot| !self.is_parked_dog(&slot.entry))
             .map(|slot| HandoverDraft {
                 entry: slot.entry.clone(),
                 // Whole, not `is_some()`: the kind decides what the
@@ -92,6 +111,7 @@ impl<R: ProcessRunner> Actor<R> {
                 pending_delete: slot.pending_delete,
                 epoch: slot.epoch,
                 ready_failed: slot.ready_failed,
+                disabled: self.is_disabled_id(slot.entry.id),
                 restart_due: slot.restart_due,
                 log_ctl: slot.log_ctl.clone(),
                 channel_open: slot.open_channel().is_some(),
@@ -177,11 +197,11 @@ impl<R: ProcessRunner> Actor<R> {
     ) {
         let mut matched: Vec<ProcessInfo> = Vec::new();
         let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-        for id in self.matching_ids(selector) {
+        for id in self.reached_ids(selector, Sweep::Any) {
             let slot = self
                 .sheep
                 .get(&id)
-                .expect("`matching_ids` answers with ids read off this map a moment ago");
+                .expect("`reached_ids` answers with ids read off this map a moment ago");
             paths.insert(slot.entry.out_file.clone());
             paths.insert(slot.entry.err_file.clone());
             matched.push(to_info(&slot.entry, &self.smits));
@@ -394,8 +414,13 @@ impl<R: ProcessRunner> Actor<R> {
         // A manual Restart forces a respawn, where `decide_on_exit` would
         // choose CleanStop off `manual_stop`. Not while shutting down, which
         // would orphan a child outside the shutdown snapshot; not under
-        // `pending_delete`, which would hand back a live process as deleted.
-        if kind == Some(ManualKind::Restart) && !self.shutting_down && !pending_delete {
+        // `pending_delete`, which would hand back a live process as deleted;
+        // not for a disabled app, whose stop rode this marker.
+        if kind == Some(ManualKind::Restart)
+            && !self.shutting_down
+            && !pending_delete
+            && !self.is_disabled_id(id)
+        {
             // Re-fetched rather than carried down: the reload branches above
             // hand `self` back to itself, ending the earlier borrow.
             self.sheep
@@ -520,6 +545,10 @@ impl<R: ProcessRunner> Actor<R> {
             tracing::debug!(id, pid, "extra restart dropped: no such sheep");
             return;
         };
+        if self.is_disabled_id(id) {
+            tracing::info!(id, pid, "extra restart dropped: the app is disabled");
+            return;
+        }
         if slot.entry.pid != Some(pid) {
             tracing::debug!(
                 id,

@@ -1,9 +1,12 @@
 //! [`DogTable`]: one dog's opaque per-sheep settings table.
 
 use core::fmt;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
+
+use crate::config::table::{TOML_PRIVATE_DATETIME_KEY, deserialize_table};
 
 /// One dog's `[app.dogs.<name>]` table on a sheep, held opaque.
 ///
@@ -45,10 +48,18 @@ impl fmt::Debug for DogTable {
     }
 }
 
-/// toml_datetime's private field name for a bare TOML date, time, or
-/// datetime: the shape `toml` 0.8 hands a generic `Deserialize` before the
-/// value ever reaches JSON, measured against toml 0.8.23.
-const TOML_PRIVATE_DATETIME_KEY: &str = "$__toml_private_datetime";
+/// Reads the `dogs` table itself, one [`DogTable`] per dog. The
+/// `deserialize_with` on [`AppConfig::dogs`](crate::config::AppConfig::dogs).
+///
+/// The shared reader is what refuses `dogs: null` in YAML, where a null
+/// scalar asked for as a map would otherwise become an empty one, and a bare
+/// TOML datetime under `[[app]]`, which arrives as a one-key table. Each
+/// table inside `dogs` keeps its own rules, below.
+pub(super) fn deserialize_dogs<'de, D: Deserializer<'de>>(
+    de: D,
+) -> Result<BTreeMap<String, DogTable>, D::Error> {
+    deserialize_table(de, "dogs")
+}
 
 impl<'de> Deserialize<'de> for DogTable {
     /// Reads a table, refusing anything else, and rewrites a TOML datetime,
@@ -212,6 +223,27 @@ mod tests {
     #[test]
     fn an_array_is_refused() {
         assert!(toml::from_str::<Holder>("table = [1]\n").is_err());
+    }
+
+    /// fails if a wire `dogs` that is not a table stops being refused.
+    ///
+    /// `AppConfig` decodes from a peer as well as from a Flockfile, and both
+    /// paths read the key through the shared table reader. The wire refused a
+    /// null map before, in serde's words: what changed is the words, not what
+    /// is refused. A real table still decodes.
+    #[test]
+    fn a_wire_dogs_that_is_not_a_table_is_still_refused() {
+        let src = r#"{"name":"web","script":"./srv","dogs":null}"#;
+        let err = serde_json::from_str::<crate::config::AppConfig>(src)
+            .expect_err("a wire dogs that is not a table must be refused, as it always was");
+        let msg = err.to_string();
+        assert!(msg.contains("`dogs` must be a table"), "{msg}");
+
+        let ok: crate::config::AppConfig = serde_json::from_str(
+            r#"{"name":"web","script":"./srv","dogs":{"jobs":{"concurrency":2}}}"#,
+        )
+        .expect("a real dogs table on the wire still decodes");
+        assert_eq!(ok.dogs.len(), 1);
     }
 
     #[test]

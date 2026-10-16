@@ -18,8 +18,9 @@ impl<R: ProcessRunner> Actor<R> {
     ///
     /// Both refusals are decided ahead of the wait, since a sheep refused
     /// after one was armed would leave a wait nothing drives home: no open
-    /// [`SheepSlot::open_channel`] is [`ActionOutcome::NoChannel`], a drainee
-    /// is [`ActionOutcome::Skipped`]. A replacement is not skipped.
+    /// [`SheepSlot::open_channel`] is [`ActionOutcome::NoChannel`], or
+    /// [`ActionOutcome::DogNoChannel`] for a dog spawned without one, and a
+    /// drainee is [`ActionOutcome::Skipped`]. A replacement is not skipped.
     pub(super) fn begin_action(
         &mut self,
         selector: &ProcessSelector,
@@ -56,11 +57,14 @@ impl<R: ProcessRunner> Actor<R> {
                 continue;
             }
             let Some(to_child) = slot.open_channel().cloned() else {
-                refused.push(ActionReply {
-                    id,
-                    name,
-                    outcome: ActionOutcome::NoChannel,
-                });
+                // A dog has no Flockfile key to set, so its row names the dog
+                // as the one that has to ask.
+                let outcome = if slot.entry.dog.is_some() && !config.channel {
+                    ActionOutcome::DogNoChannel
+                } else {
+                    ActionOutcome::NoChannel
+                };
+                refused.push(ActionReply { id, name, outcome });
                 continue;
             };
             let answer =
@@ -470,7 +474,7 @@ impl<R: ProcessRunner> Actor<R> {
         let mut listing: Vec<ProcessInfo> = self
             .sheep
             .values()
-            .map(|slot| to_info(&slot.entry, &self.smits))
+            .map(|slot| self.with_mark(to_info(&slot.entry, &self.smits)))
             .collect();
         sort_flock(&mut listing);
         listing

@@ -170,10 +170,7 @@ pub(super) fn feed_for(which: Scene) -> Tail {
                 "next rotation in 6h",
             ]
             .into_iter()
-            .map(|text| TailLine {
-                stream: Stream::Out,
-                text: text.to_string(),
-            })
+            .map(|text| TailLine::new(Stream::Out, text))
             .collect(),
             missed_lines: 0,
             missed_bytes: 0,
@@ -182,9 +179,11 @@ pub(super) fn feed_for(which: Scene) -> Tail {
         },
         Scene::FeedGap => Tail {
             lines: (0..30)
-                .map(|n| TailLine {
-                    stream: Stream::Out,
-                    text: format!("GET /v1/orders/{n} 200 {}ms", 8 + n % 40),
+                .map(|n| {
+                    TailLine::new(
+                        Stream::Out,
+                        &format!("GET /v1/orders/{n} 200 {}ms", 8 + n % 40),
+                    )
                 })
                 .collect(),
             missed_lines: 500,
@@ -245,10 +244,7 @@ pub(super) fn feed_for(which: Scene) -> Tail {
                 (Stream::Out, "GET /v1/orders/9013 200 7ms"),
             ]
             .into_iter()
-            .map(|(stream, text)| TailLine {
-                stream,
-                text: text.to_string(),
-            })
+            .map(|(stream, text)| TailLine::new(stream, text))
             .collect(),
             missed_lines: 0,
             missed_bytes: 0,
@@ -265,10 +261,7 @@ pub(super) fn feed_for(which: Scene) -> Tail {
                 "connection pool: 14/50 in use",
             ]
             .into_iter()
-            .map(|text| TailLine {
-                stream: Stream::Out,
-                text: text.to_string(),
-            })
+            .map(|text| TailLine::new(Stream::Out, text))
             .collect(),
             missed_lines: 0,
             missed_bytes: 0,
@@ -694,6 +687,36 @@ pub(super) fn dogs_probe() -> Vec<SheepDogEntry> {
             schema: None,
         },
     ]
+}
+
+/// The probe answer of the `kelpie` scenes: one dog, carrying the recorded
+/// copy of shep-kelpie's own `--schema` answer.
+pub(super) fn kelpie_probe() -> Vec<SheepDogEntry> {
+    vec![SheepDogEntry {
+        name: "kelpie".to_string(),
+        adopted_path: Some(PathBuf::from("/opt/kelpie")),
+        schema: Some(crate::lookout::testing::kelpie_sheep_schema()),
+    }]
+}
+
+/// `api`'s config for the `kelpie` scenes: [`edit_pane_config_view`]'s own
+/// fields, plus a `kelpie` table that sets two of the three steps.
+pub(super) fn kelpie_config_view() -> SheepConfigView {
+    let mut view = edit_pane_config_view();
+    view.config.dogs.insert(
+        "kelpie".to_string(),
+        json!({
+            "skills": {
+                "implement": { "kind": "path", "path": "skills/mine" },
+                "review": { "kind": "plugin", "plugin": "superpowers", "skill": "code-review" },
+            },
+        })
+        .as_object()
+        .cloned()
+        .expect("an object")
+        .into(),
+    );
+    view
 }
 
 /// `api`'s config for the dogs sub-screen and per-sheep table scenes:

@@ -58,6 +58,14 @@ import Callout from "../../components/docs/Callout.astro";
       now running, not the one it replaced.
     </p>
 
+    <p>
+      Listing the built-in dogs in <code>shep flock</code> never costs a
+      sheep. One you already named <code>metrics</code> or <code>bark</code>{" "}
+      keeps its name and its id. The shepherd leaves that dog out, warns at
+      boot to rename one of the two, and restores the sheep even when{" "}
+      <code>[daemon] boot_first_dogs</code> names the dog.
+    </p>
+
     <h2 id="when-it-cannot-carry">When it cannot carry</h2>
     <p class="fine">
       One thing still sends a reload down the older path: a sheep whose log
@@ -78,6 +86,12 @@ import Callout from "../../components/docs/Callout.astro";
       shepherd's own config and an app's Flockfile are two separate things
       that happen to share a word.
     </p>
+    <p class="fine">
+      It re-reads <code>enabled_dogs</code> with it. A dog the new file no
+      longer names is stopped and marked <code>disabled</code>, running or
+      already stopped, and one already parked is registered at rest under a
+      new id.
+    </p>
 
     <h2 id="version-skew">Version skew</h2>
     <Callout variant="careful">
@@ -86,6 +100,12 @@ import Callout from "../../components/docs/Callout.astro";
       old one. shep refuses most verbs against a version-skewed shepherd and
       names this exact command as the fix.
     </Callout>
+    <p class="fine">
+      An older <code>shep</code> re-running{" "}
+      <code>shep start &lt;Flockfile&gt;</code> gets the shepherd's refusal on
+      a disabled sheep's row and stops there, so the rest of the file does
+      not start.
+    </p>
     <p class="fine">
       <code>shep start &lt;Flockfile&gt;</code> used to be the one verb that
       did not refuse cleanly across that skew: applying a Flockfile to a
@@ -100,6 +120,17 @@ import Callout from "../../components/docs/Callout.astro";
       both bumped even though the new requests were additive, for the same
       reason the rename did. Reloading first is still the whole fix either
       way.
+    </p>
+
+    <h2 id="going-back">Going back to an older version</h2>
+    <p class="fine">
+      An older <code>shep</code> reads no <a href="/docs/lifecycle">disabled</a>
+      marks out of a handover blob or a flock file. A parked sheep stays down
+      and loses its guard: <code>start</code>, <code>restart</code> and
+      <code>stock</code> stop refusing it, a sweep or a re-run Flockfile starts
+      it, and nothing holds it down after that. <code>shep flock</code> stops
+      saying <code>disabled</code>. Run <code>shep disable</code> again after
+      going back.
     </p>
   </article>
 </DocsLayout>

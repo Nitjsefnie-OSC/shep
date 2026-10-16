@@ -100,9 +100,13 @@ fn resolved_name(cache: &HashMap<u32, ProcessInfo>, id: u32) -> String {
 /// The daemon emits [`BusEvent::LogOut`]/[`LogErr`](BusEvent::LogErr) per
 /// sheep, so a follow labels a line even when several instances share one
 /// log file, unlike the backlog path.
-fn resolved_instance(cache: &HashMap<u32, ProcessInfo>, id: u32) -> Option<u32> {
+fn resolved_instance(
+    cache: &HashMap<u32, ProcessInfo>,
+    counts: &HashMap<String, usize>,
+    id: u32,
+) -> Option<u32> {
     let info = cache.get(&id)?;
-    if instance_count(cache, &info.name) > 1 {
+    if counts.get(info.name.as_str()).copied().unwrap_or(0) > 1 {
         info.instance
     } else {
         None
@@ -123,19 +127,23 @@ fn selector_allows(selector: &ProcessSelector, cache: &HashMap<u32, ProcessInfo>
     }
 }
 
-/// Writes one rendered line to `out`. `stream` is `"out"` or `"err"`, the
-/// sheep stream the line came from, not `out`'s own identity: every line
-/// this function is called with lands on [`Streams::out`].
+/// Writes one line, the backlog path and the follow path both through
+/// here, so a replayed line and a followed line render identically.
+///
+/// `stream` is `"out"` or `"err"`, the sheep stream the line came from,
+/// not `out`'s own identity: every line this function is called with
+/// lands on [`Streams::out`]. Table format sanitises the line and puts
+/// the stream's default colour on the line text, never on the `name |`
+/// label; JSON carries the raw line, sanitiser never applied.
 fn write_line(
-    out: &mut dyn io::Write,
-    fmt: Format,
+    streams: &mut Streams<'_>,
     id: u32,
     name: &str,
     instance: Option<u32>,
     stream: &'static str,
     line: &str,
 ) -> io::Result<()> {
-    match fmt {
+    match streams.fmt {
         Format::Json => {
             let payload = BleatLine {
                 schema_version: output::SCHEMA_VERSION,
@@ -145,13 +153,17 @@ fn write_line(
                 stream,
                 line,
             };
-            serde_json::to_writer(&mut *out, &payload)?;
-            writeln!(out)
+            serde_json::to_writer(&mut *streams.out, &payload)?;
+            writeln!(streams.out)
         }
-        Format::Table => match instance {
-            Some(slot) => writeln!(out, "{name}:{slot} | {line}"),
-            None => writeln!(out, "{name} | {line}"),
-        },
+        Format::Table => {
+            let clean = output::log_line::sanitize_log_line(line);
+            let text = output::log_line::paint_default(&clean, stream, streams.style);
+            match instance {
+                Some(slot) => writeln!(streams.out, "{name}:{slot} | {text}"),
+                None => writeln!(streams.out, "{name} | {text}"),
+            }
+        }
     }
 }
 
@@ -160,6 +172,21 @@ fn write_line(
 /// is labelled: `shep bleats web:0` still prints `web:0`, not `web`.
 fn instance_count(cache: &HashMap<u32, ProcessInfo>, name: &str) -> usize {
     cache.values().filter(|info| info.name == name).count()
+}
+
+/// Every name `cache` holds, with how many rows carry it. Same counting
+/// rule as [`instance_count`]: over the whole cache, never a selector's
+/// matched subset.
+///
+/// Built once per follow, from the one listing [`resolve_names`] took.
+/// That cache never changes after it, so a followed line's label costs one
+/// lookup here rather than a scan of every process in the flock.
+fn instance_counts(cache: &HashMap<u32, ProcessInfo>) -> HashMap<String, usize> {
+    let mut counts: HashMap<String, usize> = HashMap::with_capacity(cache.len());
+    for info in cache.values() {
+        *counts.entry(info.name.clone()).or_insert(0) += 1;
+    }
+    counts
 }
 
 /// One of `bleats`' own notices, unless `--quiet` asked for silence.
@@ -189,13 +216,22 @@ const TAIL_WINDOW_BYTES: u64 = 256 * 1024;
 /// short.
 ///
 /// `std::fs`, not `tokio::fs`: shep-cli's tokio has no `fs` feature. Each
-/// line loses its daemon-added timestamp ([`shep_core::logstamp`]), so it
-/// reads the same as a line from the bus. A non-zero seek discards bytes
-/// up to the first `\n`, rather than rendering a mid-line fragment.
+/// line loses its daemon-added timestamp ([`shep_core::logstamp`]) when
+/// `stamped` says the shepherd added one, so it reads the same as a line
+/// from the bus. A non-zero seek discards bytes up to the first `\n`,
+/// rather than rendering a mid-line fragment.
+///
+/// `stamped` is a row's [`ProcessInfo::log_timestamps`] read the absent way:
+/// an app that turned the stamp off wrote its own prefix, and cutting 30
+/// bytes off an RFC 3339 line of its own cuts into the app's text.
 ///
 /// # Errors
 /// The file could not be opened, `stat`ed, seeked, or read.
-pub(crate) fn read_tail(path: &Path, limit: usize) -> io::Result<(Vec<String>, bool)> {
+pub(crate) fn read_tail(
+    path: &Path,
+    limit: usize,
+    stamped: bool,
+) -> io::Result<(Vec<String>, bool)> {
     let mut file = std::fs::File::open(path)?;
     let len = file.metadata()?.len();
     let start = len.saturating_sub(TAIL_WINDOW_BYTES);
@@ -222,10 +258,18 @@ pub(crate) fn read_tail(path: &Path, limit: usize) -> io::Result<(Vec<String>, b
     // The daemon's per-line stamp comes off here, so a `line` has one
     // meaning across both of this verb's paths: the follow path reads the
     // bus, which carries a sheep's own bytes. The stamp stays in the file
-    // for `tail`, `less` and `grep`.
+    // for `tail`, `less` and `grep`. Only a row the shepherd stamped has a
+    // stamp to take off.
     let mut lines: Vec<String> = text
         .split('\n')
-        .map(|line| shep_core::logstamp::strip(line).to_string())
+        .map(|line| {
+            if stamped {
+                shep_core::logstamp::strip(line)
+            } else {
+                line
+            }
+        })
+        .map(str::to_string)
         .collect();
     if lines.last().is_some_and(String::is_empty) {
         lines.pop();
@@ -347,12 +391,15 @@ fn tail_log_files(
                     } else {
                         None
                     };
-                    match read_tail(Path::new(path), args.lines) {
+                    // The row that reaches the file first decides whether it
+                    // is stamped: instances of one app share both the path
+                    // and its `log_timestamps`.
+                    let stamped = info.log_timestamps.unwrap_or(true);
+                    match read_tail(Path::new(path), args.lines, stamped) {
                         Ok((lines, _truncated)) => {
                             for line in lines {
                                 if let Err(write_err) = write_line(
-                                    streams.out,
-                                    streams.fmt,
+                                    streams,
                                     info.id,
                                     name,
                                     label_instance,
@@ -410,6 +457,7 @@ fn handle_event(
     streams: &mut Streams<'_>,
     quiet: bool,
     cache: &HashMap<u32, ProcessInfo>,
+    counts: &HashMap<String, usize>,
     selector: &ProcessSelector,
     args: &BleatsArgs,
     event: BusEvent,
@@ -418,16 +466,16 @@ fn handle_event(
         BusEvent::LogOut { id, line } => {
             if !args.err && selector_allows(selector, cache, id) {
                 let name = resolved_name(cache, id);
-                let instance = resolved_instance(cache, id);
-                write_line(streams.out, streams.fmt, id, &name, instance, "out", &line)?;
+                let instance = resolved_instance(cache, counts, id);
+                write_line(streams, id, &name, instance, "out", &line)?;
             }
             Ok(())
         }
         BusEvent::LogErr { id, line } => {
             if !args.out && selector_allows(selector, cache, id) {
                 let name = resolved_name(cache, id);
-                let instance = resolved_instance(cache, id);
-                write_line(streams.out, streams.fmt, id, &name, instance, "err", &line)?;
+                let instance = resolved_instance(cache, counts, id);
+                write_line(streams, id, &name, instance, "err", &line)?;
             }
             Ok(())
         }
@@ -517,6 +565,10 @@ pub async fn bleats_with_signal(
         return tail_log_files(streams, quiet, &cache, &selector, args);
     }
 
+    // A follow labels every line it receives, and `cache` cannot change
+    // under it: taken once, before subscribing.
+    let counts = instance_counts(&cache);
+
     // Backlog before subscribing, so a line in the gap is missed rather
     // than printed twice. The tail's exit code is discarded: an unreadable
     // log for one sheep must not stop the follow over the whole flock.
@@ -538,7 +590,7 @@ pub async fn bleats_with_signal(
                 match item {
                     Some(Ok(event)) => {
                         if let Err(write_err) =
-                            handle_event(streams, quiet, &cache, &selector, args, event)
+                            handle_event(streams, quiet, &cache, &counts, &selector, args, event)
                         {
                             let code = write_outcome(Err(write_err));
                             let _ = streams.out.flush();
