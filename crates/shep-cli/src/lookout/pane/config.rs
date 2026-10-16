@@ -551,7 +551,14 @@ impl ConfigPane {
             .values
             .get("readiness_probe")
             .is_some_and(|probe| !probe.is_null());
-        reload_mode(flag("wait_ready"), has_probe, flag("reuse_port"))
+        let readiness = if flag("wait_ready") {
+            ConfiguredReadiness::Channel
+        } else if has_probe {
+            ConfiguredReadiness::Probe
+        } else {
+            ConfiguredReadiness::Heuristic
+        };
+        reload_mode(readiness, flag("reuse_port"))
     }
 
     /// Adopts a previous pane's pending set, so a refresh does not
@@ -581,15 +588,31 @@ pub enum ReloadKind {
     Serial,
 }
 
+/// Which readiness signal the pane's values ask for, in the daemon's order.
+///
+/// The daemon reaches the same three-way choice through
+/// `ReadinessSource::of`, which answers for `wait_ready` before it reads
+/// `readiness_probe`. The pane holds the kind alone: it never parses a
+/// probe's target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ConfiguredReadiness {
+    /// `wait_ready = true`: the shepherd channel's `{"kind":"ready"}`.
+    Channel,
+    /// `readiness_probe` is set, and `wait_ready` did not answer first.
+    Probe,
+    /// Neither is configured: readiness is the deadline elapsing.
+    Heuristic,
+}
+
 /// Whether a reload of this app overlaps or runs serially.
 ///
-/// The daemon decides through `ReadinessSource::of`, which answers for
-/// `wait_ready` before it reads `readiness_probe`, so an app with both
-/// overlaps.
-pub(super) const fn reload_mode(wait_ready: bool, has_probe: bool, reuse_port: bool) -> ReloadKind {
-    if !wait_ready && has_probe && !reuse_port {
-        ReloadKind::Serial
-    } else {
-        ReloadKind::Overlap
+/// The daemon's own `ReloadMode::of` reads the same two facts the same way:
+/// only a `Probe` is answerable by the instance being replaced, so only a
+/// `Probe` serialises, and `reuse_port` spares even that app the
+/// `EADDRINUSE` an overlap would take.
+pub(super) const fn reload_mode(readiness: ConfiguredReadiness, reuse_port: bool) -> ReloadKind {
+    match (readiness, reuse_port) {
+        (ConfiguredReadiness::Probe, false) => ReloadKind::Serial,
+        _ => ReloadKind::Overlap,
     }
 }

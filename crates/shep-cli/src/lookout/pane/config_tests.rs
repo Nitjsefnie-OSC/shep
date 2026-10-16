@@ -6,7 +6,7 @@ use shep_core::values::{MemSize, UpDuration};
 
 use shep_core::config::{AppConfig, ApplyGroup, ProbeConfig, ProbeKind};
 
-use super::config::reload_mode;
+use super::config::{ConfiguredReadiness, reload_mode};
 use super::*;
 
 #[test]
@@ -77,10 +77,26 @@ fn the_menu_counts_the_parked_fields_once() {
 
 #[test]
 fn a_probe_without_reuse_port_is_the_only_serial_reload() {
-    assert_eq!(reload_mode(false, true, false), ReloadKind::Serial);
-    assert_eq!(reload_mode(true, true, false), ReloadKind::Overlap);
-    assert_eq!(reload_mode(false, true, true), ReloadKind::Overlap);
-    assert_eq!(reload_mode(false, false, false), ReloadKind::Overlap);
+    assert_eq!(
+        reload_mode(ConfiguredReadiness::Probe, false),
+        ReloadKind::Serial,
+        "the outgoing instance can answer the probe the replacement must pass"
+    );
+    assert_eq!(
+        reload_mode(ConfiguredReadiness::Channel, false),
+        ReloadKind::Overlap,
+        "a channel belongs to the instance that opened it"
+    );
+    assert_eq!(
+        reload_mode(ConfiguredReadiness::Probe, true),
+        ReloadKind::Overlap,
+        "reuse_port means no EADDRINUSE to avoid"
+    );
+    assert_eq!(
+        reload_mode(ConfiguredReadiness::Heuristic, false),
+        ReloadKind::Overlap,
+        "nothing is being waited on"
+    );
 }
 
 #[test]
