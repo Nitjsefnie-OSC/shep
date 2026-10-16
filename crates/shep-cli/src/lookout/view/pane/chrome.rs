@@ -86,7 +86,9 @@ pub(super) fn title_band_line(pane: &ConfigPane, palette: Palette, width: u16) -
 
 /// The tab row: every group in [`GROUP_ORDER`], the active one drawn as a
 /// paper-2 chip in ink and the rest in ink-3, then the two keys that move
-/// between them.
+/// between them. The wording is the help overlay's own row for the same two
+/// keys (`lookout/keymap.rs`), so the pane and the overlay say the same
+/// thing about `tab` and `shift-tab`.
 pub(super) fn tab_row_line(pane: &ConfigPane, palette: Palette, width: u16) -> Line<'static> {
     let active = pane.group();
     let chip = |group: &str| format!(" {group} ");
@@ -95,7 +97,7 @@ pub(super) fn tab_row_line(pane: &ConfigPane, palette: Palette, width: u16) -> L
         .map(|group| chip(group))
         .collect::<Vec<_>>()
         .join(" ");
-    let full = format!("{chips}    tab next group   1\u{2026}9 jump");
+    let full = format!("{chips}    tab/S-tab next / prev group   1\u{2026}9 jump");
     let text = fit(&full, body_width(width));
     let marker = chip(active);
     let mut spans = vec![Span::raw("  ")];

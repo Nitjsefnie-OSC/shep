@@ -43,7 +43,7 @@ impl ResolvedApp {
 /// - [`NormalizeError::ZeroFailureThreshold`]: a probe's `failure_threshold` is explicitly `0`.
 /// - [`NormalizeError::IntervalBelowMinimum`]: a probe's `interval` is under the floor its own loop honours.
 /// - [`NormalizeError::ZeroMaxMemory`]: `max_memory` is `0`.
-/// - [`NormalizeError::ActionTimeoutTooLong`]: `action_timeout` is at or above the ceiling no RPC caller could wait past.
+/// - [`NormalizeError::ActionTimeoutTooLong`]: `action_timeout` is above the ceiling no RPC caller could wait past.
 /// - [`NormalizeError::InvalidKillSignal`]: `kill_signal` names a signal the daemon's stop ladder cannot send.
 /// - [`NormalizeError::WatchWithoutCwd`]: `watch` is `true` with no `cwd` set.
 /// - [`NormalizeError::ZeroWatchDelay`]: `watch_delay` is `0`.
@@ -117,10 +117,11 @@ pub(super) const MIN_LIVENESS_INTERVAL: UpDuration = UpDuration::from_millis(1_0
 /// `starting` sooner must not lose that.
 pub(super) const MIN_READINESS_INTERVAL: UpDuration = UpDuration::from_millis(1);
 
-/// Longest `action_timeout` an app may name.
+/// Longest `action_timeout` an app may name. The ceiling itself is
+/// accepted: `normalize` refuses only a value above it.
 ///
 /// The daemon clamps every RPC deadline to `MAX_DEADLINE_MS` (60s, in
-/// shep-daemon's `rpc` module), so a value at or above that line could
+/// shep-daemon's `rpc` module), so a wait above that line could
 /// never be honoured by any caller. Set 2s under the clamp so the daemon
 /// still has room to build the `TimedOut` row and send it back after the
 /// wait gives up.
