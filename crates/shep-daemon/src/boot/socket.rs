@@ -208,6 +208,7 @@ mod tests {
     use crate::fake::ScriptedRunner;
     use crate::testing::test_paths;
     use std::sync::Arc;
+    use std::sync::mpsc;
     use std::time::Duration;
 
     #[test]
@@ -357,12 +358,30 @@ mod tests {
         Other(String),
     }
 
+    /// How long a racer waits for its sibling's verdict: a bound, so a racer
+    /// that panicked on the way there fails the test rather than parks.
+    const RACER_VERDICT_BOUND: Duration = Duration::from_secs(10);
+
+    /// Report this racer's verdict and wait for the sibling's.
+    ///
+    /// # Panics
+    /// If the sibling's report never arrives within [`RACER_VERDICT_BOUND`].
+    #[track_caller]
+    fn swap_verdicts(outbox: &mpsc::Sender<()>, inbox: &mpsc::Receiver<()>) {
+        outbox
+            .send(())
+            .expect("the sibling holds its inbox open until it reports");
+        inbox
+            .recv_timeout(RACER_VERDICT_BOUND)
+            .expect("the other racer panicked or wedged before it reported");
+    }
+
     #[test]
     fn two_concurrent_boots_on_a_stale_socket_exactly_one_wins() {
-        // Two daemons racing on a crashed predecessor's leftover both see
-        // `ConnectionRefused` and enter `bind_socket`'s recovery arm, where the
-        // loser's `remove_file` can delete the winner's fresh listener.
-        // Looped: the bad interleaving does not land on every attempt.
+        // Two daemons racing on a crashed predecessor's leftover. `PidfileLock`
+        // decides it: the loser is refused before it reaches `bind_socket`'s
+        // probe-then-unlink, so it can never delete the winner's listener.
+        // Looped: a lock regression clobbers the winner on some attempts only.
         for _ in 0..25 {
             // `blocking_lock` per SIGNAL_TEST_LOCK's rule: this fn is sync.
             let _guard = SIGNAL_TEST_LOCK.blocking_lock();
@@ -377,13 +396,22 @@ mod tests {
             // Real OS threads on a barrier, not tokio tasks: `boot`'s
             // synchronous prefix never awaits, so two tasks on one runtime
             // would run one body to completion before the other was scheduled.
-            let barrier = Arc::new(std::sync::Barrier::new(2));
-            let handles: Vec<_> = (0..2)
-                .map(|_| {
+            let start = Arc::new(std::sync::Barrier::new(2));
+            // The rendezvous is the contention point, not the start barrier: a
+            // racer that finishes its boot releases the flock, so a sibling
+            // that reaches `PidfileLock::acquire` after that finds the home
+            // free and wins too.
+            let (outboxes, inboxes): (Vec<_>, Vec<_>) =
+                (0..2).map(|_| mpsc::channel::<()>()).unzip();
+            let handles: Vec<_> = inboxes
+                .into_iter()
+                .enumerate()
+                .map(|(racer, inbox)| {
                     let paths = paths.clone();
-                    let barrier = Arc::clone(&barrier);
+                    let start = Arc::clone(&start);
+                    let outbox = outboxes[1 - racer].clone();
                     std::thread::spawn(move || {
-                        barrier.wait(); // both racers cross together
+                        start.wait(); // both racers cross together
                         let rt = tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
@@ -403,19 +431,30 @@ mod tests {
                                     let reachable =
                                         std::os::unix::net::UnixStream::connect(daemon.socket())
                                             .is_ok();
+                                    // `daemon` is still held at the rendezvous:
+                                    // its flock and listener stay claimed.
+                                    swap_verdicts(&outbox, &inbox);
+                                    drop(daemon);
                                     RaceOutcome::Won {
                                         socket_still_accepts: reachable,
                                     }
                                 }
                                 Err(BootError::AlreadyRunning { .. }) => {
+                                    swap_verdicts(&outbox, &inbox);
                                     RaceOutcome::AlreadyRunning
                                 }
-                                Err(other) => RaceOutcome::Other(other.to_string()),
+                                Err(other) => {
+                                    swap_verdicts(&outbox, &inbox);
+                                    RaceOutcome::Other(other.to_string())
+                                }
                             }
                         })
                     })
                 })
                 .collect();
+            // Every sender now belongs to a racer, so one that panics closes
+            // its sibling's inbox at once instead of leaving it on a timeout.
+            drop(outboxes);
             let outcomes: Vec<RaceOutcome> =
                 handles.into_iter().map(|h| h.join().unwrap()).collect();
 
