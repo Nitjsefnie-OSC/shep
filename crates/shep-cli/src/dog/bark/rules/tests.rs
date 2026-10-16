@@ -1,5 +1,6 @@
 use shep_core::protocol::ProcessInfo;
 
+use super::super::config::{BarkConfig, rules_for};
 use super::*;
 
 fn one_sink(name: &str) -> BTreeMap<String, Sink> {
@@ -159,13 +160,50 @@ fn a_rule_routed_at_a_sink_that_does_not_exist_is_refused_at_startup() {
     );
 }
 
+/// The name promises an alert, so the test asks for one. The rules come in
+/// through [`rules_for`], the door the dog itself uses for a `[dog.bark]`
+/// that has sinks and no rules, and both routes the dog walks are driven:
+/// an `Errored` event on the bus, and an errored entry in the
+/// reconciliation poll. Reading the default rule's own fields instead
+/// passes a set that is present, correctly spelled and wired to nothing.
+///
+/// Two sinks, so a default routed to only one of them fails here too. Each
+/// route gets its own `Rules`: the two share one debounce, so a second
+/// firing asked of one instance answers the debounce rather than the
+/// wiring.
 #[test]
 fn a_bark_with_sinks_and_no_rules_still_alerts_when_the_shepherd_gives_up() {
-    let sinks = one_sink("ops");
-    let rules = Rules::default_rules(&sinks);
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].when, Trigger::GaveUp {});
-    assert_eq!(rules[0].sinks, vec!["ops"]);
+    let mut sinks = one_sink("ops");
+    sinks.extend(one_sink("audit"));
+    let config = BarkConfig {
+        sinks,
+        ..BarkConfig::default()
+    };
+    let every_sink = ["audit".to_owned(), "ops".to_owned()];
+
+    let mut rules = rules_for(&config).unwrap();
+    let fired = rules.on_event(&errored_event("web"), 1_000);
+    assert_eq!(fired.len(), 1, "an Errored event must alert, once");
+    assert_eq!(fired[0].bark.rule, "gave_up");
+    assert_eq!(fired[0].bark.subject, "web");
+    assert_eq!(
+        fired[0].bark.message,
+        "web gave up: restart budget exhausted"
+    );
+    assert_eq!(
+        fired[0].sinks, every_sink,
+        "the default rule routes to every sink"
+    );
+
+    let mut rules = rules_for(&config).unwrap();
+    let fired = rules.on_poll(&[errored_info("web")], 2_000);
+    assert_eq!(
+        fired.len(),
+        1,
+        "the poll alerts for what the bus dropped, on a fresh engine"
+    );
+    assert_eq!(fired[0].bark.subject, "web");
+    assert_eq!(fired[0].sinks, every_sink);
 }
 
 #[test]
