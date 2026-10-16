@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-16
+
+### Fixed
+
+- Drop the em dashes from the stale dog verdict
+- Drop every em dash from a non-test string literal
+
+
 ## [0.15.0] - 2026-10-15
 
 ### Added
