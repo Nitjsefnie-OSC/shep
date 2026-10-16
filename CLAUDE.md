@@ -168,4 +168,4 @@ The five default roles, label string equal to role name. See `docs/agents/triage
 
 ### Domain docs
 
-Single-context: `docs/terminology.md` is the glossary and `docs/decisions.md` the decision log. See `docs/agents/domain.md`.
+Single-context: `GLOSSARY.md` at the root is a signpost to `docs/terminology.md`, which is the glossary, and `docs/decisions.md` is the decision log. See `docs/agents/domain.md`.
