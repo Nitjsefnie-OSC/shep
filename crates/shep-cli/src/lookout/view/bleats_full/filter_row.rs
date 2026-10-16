@@ -152,10 +152,11 @@ mod tests {
             .set_stream(Some(Stream::Err));
         let text = render_all(&draw_lines(&app, 160, 40));
         assert!(text.contains("stream err"), "got {text}");
-        // The row's own composition sentence always says "level" and
-        // "match" (an unclassifiable line's level, and the AND rule), so
-        // this checks for the chips specifically rather than the bare
-        // words.
+        // The row's own composition sentence always says "level" (an
+        // unclassifiable line's level), so the level check reads the chip's
+        // `level ≥` rather than the bare word. The match chip is
+        // `match ` plus the text an operator typed, and the sentence never
+        // says "match" at all: the space keeps this check on the chip.
         assert!(!text.contains("level ≥"), "got {text}");
         assert!(!text.contains("match "), "got {text}");
     }

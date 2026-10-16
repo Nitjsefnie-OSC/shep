@@ -111,10 +111,12 @@ fn lines(app: &App, pane: &BleatsPane, width: u16, rows: usize) -> Vec<Line<'sta
     for line in &survivors[window] {
         out.extend(feed_line_rows(app, filters, line, width, wrap));
     }
-    // A single line taller than the whole body (an extreme wrapped case, or
-    // a body of zero rows) can still push `out` past `rows`: `window_range`
-    // always includes at least one line so the pane never renders nothing,
-    // even when that one line does not fit. This is the actual guarantee
+    // Two things can leave `out` longer than `rows`. A single wrapped line
+    // taller than the whole body: `window_range` always includes at least one
+    // line while there are body rows to draw into, even one whose own cost
+    // exceeds them, so the pane never renders nothing. And a body of zero
+    // rows, where the title and the filter row alone are already longer than
+    // the area. This is the actual guarantee
     // `draw`'s own bounds check backs up for the terminal; `draw_lines`'s
     // tests call this directly, with no such check downstream.
     out.truncate(rows);
@@ -161,7 +163,7 @@ fn title_line(app: &App, pane: &BleatsPane, width: u16) -> Line<'static> {
     ))
 }
 
-/// The sheep id a [`BleatsPane`] describes, or `None` for the two `RowKey`
+/// The sheep id a [`BleatsPane`] describes, or `None` for the three `RowKey`
 /// variants it is never opened on. `ask_for_bleats` only ever builds one on
 /// a [`RowKey::Sheep`]; this stays exhaustive rather than assuming that
 /// holds forever.
