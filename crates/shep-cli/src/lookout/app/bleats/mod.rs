@@ -2,14 +2,15 @@
 //! match box. The keys this pane and the sheep pane's embedded feed answer
 //! the same way live in [`super::feed_keys`].
 //!
-//! Two modules, one per reason to change: this one opens the pane on the
+//! Three modules, one per reason to change: this one opens the pane on the
 //! selected sheep and holds the accessors for the pane and for the feed it
 //! reads; [`keys`] answers the pane's own keymap and the scroll back through
-//! the tail.
+//! the tail; [`match_box`] keeps the match axis apart from that scroll.
 
 use super::*;
 
 mod keys;
+mod match_box;
 
 impl App {
     /// `b`: opens the full-screen bleats pane on the selected sheep. A
