@@ -24,20 +24,16 @@
  * and time-based ambients (wind sway, shooting stars, sun/moon glow) keep
  * the scene breathing even when the page is still. See THE SPEED MODEL
  * comment above the parallax rules at the bottom of this file for the whole
- * choreography and how to tune it.
+ * choreography and how to tune it. Each drifting component restates its own
+ * share of those rules in its own <style>: the celestial bodies in
+ * CelestialBodies.astro, the puffs in Clouds.astro.
  */
 import Sheep from "../marks/Sheep.astro";
 import Dog from "../marks/Dog.astro";
 import Barn from "../marks/Barn.astro";
 import Tuft from "./Tuft.astro";
+import CelestialBodies from "./CelestialBodies.astro";
 import Clouds from "./Clouds.astro";
-
-const stars = [
-  [8, 14, 3, 3.1], [16, 38, 2, 4.2], [24, 8, 2.5, 2.6], [33, 24, 3, 3.8], [41, 7, 2, 4.6],
-  [49, 30, 2.5, 3.2], [57, 13, 3, 2.9], [64, 35, 2, 4.1], [72, 9, 2.5, 3.5], [79, 27, 3, 2.7],
-  [86, 16, 2, 4.4], [92, 38, 2.5, 3.3], [12, 52, 2, 3.9], [68, 56, 2.5, 4.8],
-  [37, 62, 2, 3.4], [83, 66, 2.5, 4.1], [22, 72, 2, 3.7], [58, 78, 2, 4.5],
-].map(([x, y, d, dur]) => ({ x, y, d, dur }));
 
 const posts = [30, 180, 330, 480, 630, 780, 930, 1080, 1230, 1350];
 
@@ -228,30 +224,7 @@ const grazing = [
 <div class="stage">
   <div class="sky-gradient"></div>
 
-  <div class="stars">
-    {stars.map((s) => (
-      <span
-        class="star anim-twinkle"
-        style={`left:${s.x}%;top:${s.y}%;width:${s.d}px;height:${s.d}px;--twinkle-duration:${s.dur}s;`}
-      />
-    ))}
-    <span
-      class="shooting-star"
-      style="left:64%;top:18%;--shoot-duration:9.5s;--shoot-delay:2.8s;"
-    />
-    <span
-      class="shooting-star"
-      style="left:28%;top:44%;--shoot-duration:14s;--shoot-delay:8.4s;"
-    />
-  </div>
-
-  <div class="moon">
-    <span class="crater" style="left:21px;top:29px;width:17px;height:17px;" />
-    <span class="crater" style="left:55px;top:21px;width:12px;height:12px;" />
-    <span class="crater" style="left:45px;top:58px;width:21px;height:21px;" />
-  </div>
-
-  <div class="sun" aria-hidden="true"></div>
+  <CelestialBodies />
 
   <Clouds />
 
@@ -433,125 +406,6 @@ const grazing = [
       #b9e5f7 44.6%,
       #cfebf8 50.7%,
       #cfebf8 100%
-    );
-  }
-
-  .stars {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 36vh;
-    z-index: 1;
-  }
-
-  .star {
-    position: absolute;
-    border-radius: 50%;
-    background: var(--fleece);
-  }
-
-  /*
-   * Meteors. Base opacity 0: the streak only ever appears through its
-   * time-based keyframes, so reduced-motion visitors (and anyone with
-   * animations off) simply never see one — no static streak parked in the
-   * sky. They live inside .stars, so they inherit its slow drift and fade,
-   * and die with the night the way the stars do. The gradient runs bright
-   * head (left) to transparent tail; rotate(-33deg) matches the keyframes'
-   * travel vector (-190px, +123px), down-and-left toward the horizon.
-   */
-  .shooting-star {
-    position: absolute;
-    width: 110px;
-    height: 3px;
-    border-radius: 3px;
-    background: linear-gradient(90deg, var(--fleece), rgba(255, 255, 255, 0));
-    opacity: 0;
-    transform: rotate(-33deg);
-  }
-
-  .moon {
-    position: absolute;
-    left: 17%;
-    top: 9vh;
-    /* 100px, up from the original 76 (crater offsets above scaled with it,
-       x1.32). Its drift range stays at the 17vh-span figures — the extra
-       height only means the animation completes a moment before the disc
-       fully exits, and the 25-65% fade has it invisible long before that
-       seam could show. */
-    width: 100px;
-    height: 100px;
-    border-radius: 50%;
-    background: var(--illus-moon);
-    border: 4px solid var(--line);
-    box-shadow: 5px 5px 0 rgba(14, 23, 48, 0.35);
-    z-index: 1;
-  }
-
-  .crater {
-    position: absolute;
-    border-radius: 50%;
-    background: var(--illus-moon-craters);
-    display: block;
-  }
-
-  .sun {
-    position: absolute;
-    left: 60%;
-    /* 190vh, not the original 224vh: the disc now rises at ~0.2x (THE
-       SPEED MODEL below), so it visually crests the hills about 1.5
-       viewports of scroll later than a 1x sun from the same spot would.
-       Placing it a third of a viewport earlier puts the crest back inside
-       the orange dawn band instead of into an already-blue morning. */
-    top: 190vh;
-    /* Fluid, capped at 168px (up from a fixed 124): at 60% left a fixed
-       disc this size would poke past a 375px viewport and horizontal
-       clipping would slice it flat — 34vw keeps the whole disc on screen
-       at any width, and aspect-ratio keeps it a circle. */
-    width: min(168px, 34vw);
-    aspect-ratio: 1;
-    border-radius: 50%;
-    background: var(--butter);
-    border: 4px solid var(--line);
-    box-shadow: 6px 6px 0 rgba(23, 37, 28, 0.16);
-    z-index: 1;
-  }
-
-  /*
-   * Soft halos behind the two discs, following the barn-glow precedent for
-   * radial gradients in an otherwise hard-outlined scene. Each is a child
-   * pseudo-element rather than a sibling so it rides the disc's own drift
-   * transform for free; z-index -1 tucks it behind the disc's fill (both
-   * discs are positioned with z-index 1, so each is its own stacking
-   * context and -1 cannot escape below the sky). The glows are static for
-   * reduced-motion visitors — light, not movement — and only the gentle
-   * breathing (glow-breathe, in the motion block below) is gated.
-   */
-  .moon::before,
-  .sun::before {
-    content: "";
-    position: absolute;
-    border-radius: 50%;
-    z-index: -1;
-  }
-
-  .moon::before {
-    inset: -52px;
-    background: radial-gradient(
-      circle,
-      rgba(244, 240, 226, 0.45) 0%,
-      rgba(244, 240, 226, 0.16) 45%,
-      rgba(244, 240, 226, 0) 70%
-    );
-  }
-
-  .sun::before {
-    inset: -68px;
-    background: radial-gradient(
-      circle,
-      rgba(247, 228, 176, 0.85) 0%,
-      rgba(243, 196, 76, 0.36) 42%,
-      rgba(243, 196, 76, 0) 70%
     );
   }
 
@@ -923,6 +777,7 @@ const grazing = [
    *     stars   r 0.30, S 36vh -> range 120vh,       drift  84vh, fades
    *     moon    r 0.10, S 17vh -> range 170vh,       drift 153vh, fades
    *     sun     r 0.45         -> range cover 222%,  drift 122vh, eased
+   *              (the rules for all three in CelestialBodies.astro)
    *     clouds  r per instance -> cloudMotion() in clouds.ts, the rules in
    *              Clouds.astro
    *
@@ -947,20 +802,6 @@ const grazing = [
    * behind reduced-motion, same as motion.css.
    */
   @media (prefers-reduced-motion: no-preference) {
-    .shooting-star {
-      animation: shoot var(--shoot-duration, 12s) linear infinite;
-      animation-delay: var(--shoot-delay, 0s);
-    }
-
-    .sun::before {
-      animation: glow-breathe 7s ease-in-out infinite;
-    }
-
-    .moon::before {
-      animation: glow-breathe 9s ease-in-out infinite;
-      animation-delay: -3.5s;
-    }
-
     @supports (animation-timeline: scroll()) {
       /*
        * Deliberately longhand, not the `animation` shorthand: Astro's CSS
@@ -972,42 +813,19 @@ const grazing = [
        * the compiled rule's selector survives, its body is empty). The
        * longhand properties do not hit that merge path. animation-range is
        * kept out of any shorthand for the same reason. (The time-based
-       * ambients above may use the shorthand: they set no timeline, so
-       * there is nothing for the minifier to fold in.)
+       * ambients in the components may use the shorthand: they set no
+       * timeline, so there is nothing for the minifier to fold in.)
        *
-       * Shared base for every scroll-driven element still drawn here.
-       * view() support always ships alongside scroll() support, so the .sun
-       * member of this list getting its animation-name in the view() block
-       * below is not a real split — and either way, a base with no name is
-       * a no-op. The puff layer restates these three declarations in its
-       * own component: Astro scopes a selector to its own component's
-       * markup, so a puff selector here would match nothing.
+       * Shared base for every scroll-driven element still drawn here —
+       * now only the fog. Astro scopes a selector to its own component's
+       * markup, so every other member is restated in the component that
+       * draws it: star, moon and sun in CelestialBodies.astro, the puffs
+       * in Clouds.astro.
        */
-      .stars,
-      .moon,
-      .sun,
       .mist {
         animation-duration: auto;
         animation-timing-function: linear;
         animation-fill-mode: both;
-      }
-
-      .stars {
-        animation-name: sky-drift-fade;
-        animation-timeline: scroll(root);
-        animation-range: 0% 120vh;
-        --parallax-drift: 84vh;
-      }
-
-      .moon {
-        /* The early-fade profile, not sky-drift-fade: at 0.1x the moon has
-           crawled fully above the viewport by ~55% of its range, so the
-           stars' back-45% fade would play out offscreen. 25%-65% dissolves
-           the disc exactly across its visible departure into the dawn. */
-        animation-name: sky-drift-fade-early;
-        animation-timeline: scroll(root);
-        animation-range: 0% 170vh;
-        --parallax-drift: 153vh;
       }
 
       /* The fog reads overall page progress: its subject (the sticky
@@ -1017,103 +835,6 @@ const grazing = [
         animation-name: mist-cycle;
         animation-timeline: scroll(root);
       }
-    }
-
-    @supports (animation-timeline: view()) {
-      .sun {
-        animation-name: sky-drift;
-        animation-timeline: view();
-        animation-range: cover 0% cover 222%;
-        animation-timing-function: cubic-bezier(0.3, 0.5, 0.6, 1);
-        --parallax-drift: 122vh;
-      }
-    }
-  }
-
-  @keyframes sky-drift {
-    from {
-      transform: translateY(0);
-    }
-    to {
-      transform: translateY(var(--parallax-drift, 0vh));
-    }
-  }
-
-  /*
-   * Drift plus a fade across the back 45%. The 55% keyframe must pin the
-   * transform to 0.55 * drift by hand — an intermediate keyframe that only
-   * declared opacity would still restart the transform's interpolation
-   * there, and with any non-linear timing the drift rate would visibly
-   * change at the seam. Linear timing only, for the same reason.
-   */
-  @keyframes sky-drift-fade {
-    from {
-      transform: translateY(0);
-      opacity: 1;
-    }
-    55% {
-      transform: translateY(calc(var(--parallax-drift, 0vh) * 0.55));
-      opacity: 1;
-    }
-    to {
-      transform: translateY(var(--parallax-drift, 0vh));
-      opacity: 0;
-    }
-  }
-
-  /* Same construction, tuned for the moon (see its rule above): hold to
-     25%, gone by 65%, transform hand-pinned at both seams. */
-  @keyframes sky-drift-fade-early {
-    from {
-      transform: translateY(0);
-      opacity: 1;
-    }
-    25% {
-      transform: translateY(calc(var(--parallax-drift, 0vh) * 0.25));
-      opacity: 1;
-    }
-    65% {
-      transform: translateY(calc(var(--parallax-drift, 0vh) * 0.65));
-      opacity: 0;
-    }
-    to {
-      transform: translateY(var(--parallax-drift, 0vh));
-      opacity: 0;
-    }
-  }
-
-  @keyframes shoot {
-    0% {
-      transform: translate3d(0, 0, 0) rotate(-33deg);
-      opacity: 0;
-    }
-    3% {
-      opacity: 0.9;
-    }
-    10% {
-      transform: translate3d(-190px, 123px, 0) rotate(-33deg);
-      opacity: 0;
-    }
-    100% {
-      transform: translate3d(-190px, 123px, 0) rotate(-33deg);
-      opacity: 0;
-    }
-  }
-
-  /*
-   * Opacity only — deliberately NO transform. A time-based scale on these
-   * ::before glows, whose parents carry a scroll-driven transform of their
-   * own, hit a Chromium compositing bug during verification: with the sun
-   * on screen the page rendered blank in the capture path. Pulsing opacity
-   * reads the same and composites cleanly.
-   */
-  @keyframes glow-breathe {
-    from,
-    to {
-      opacity: 0.7;
-    }
-    50% {
-      opacity: 1;
     }
   }
 

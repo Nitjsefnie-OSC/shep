@@ -9,9 +9,10 @@
  * as its own artwork (the path is the sheep handoff silhouette), and takes
  * no design token of its own beyond --fleece and --ink.
  *
- * Two things reach across the component boundary by inheritance, and need no
- * rule here: --col-right, defined on `.stage` in SkyStage.astro, and the
- * scroll-driven keyframes (sky-drift) still defined there. Astro scopes a
+ * Two things reach across the component boundary, and need no rule here:
+ * --col-right, inherited from `.stage` in SkyStage.astro, and the
+ * scroll-driven keyframes (sky-drift), defined in CelestialBodies.astro
+ * and shared because Astro 7 leaves keyframe names unscoped. Astro scopes a
  * `<style>` to its own component, so every rule that styles this markup is
  * here — including this slice's members of the scroll-driven block below.
  * THE SPEED MODEL comment in SkyStage.astro is the one explanation of that
@@ -101,9 +102,10 @@ import { clouds, cloudMotion } from "./clouds";
 
     @supports (animation-timeline: scroll()) {
       /*
-       * The `.cloud` member of SkyStage.astro's shared base for every
-       * scroll-driven element. It has to be restated here rather than left
-       * in the parent's selector list: Astro scopes each component's
+       * The `.cloud` member of the shared base for every scroll-driven
+       * element (its `.mist` member is now the only one still in
+       * SkyStage.astro). It has to be restated here rather than left in
+       * the parent's selector list: Astro scopes each component's
        * selectors to that component's own elements, so a `.cloud` in
        * SkyStage.astro would match nothing once the markup moved, and the
        * build stays green. Same three declarations, same order relative to
