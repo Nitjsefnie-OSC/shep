@@ -6,4 +6,3 @@
 
 # #301
 1109 crates/shep-daemon/src/supervisor/tests/mod.rs
-1103 crates/shep-cli/src/lookout/app/bleats.rs
