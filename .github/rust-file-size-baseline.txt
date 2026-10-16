@@ -8,4 +8,3 @@
 1109 crates/shep-daemon/src/supervisor/tests/mod.rs
 1011 crates/shep-cli/src/lookout/pane_bleats.rs
 1103 crates/shep-cli/src/lookout/app/bleats.rs
-1070 crates/shep-cli/src/lookout/view/bleats_full.rs
