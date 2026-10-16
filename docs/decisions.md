@@ -36,7 +36,7 @@ go for the full argument. The commit that removed them names itself.
 - [Output and first run](#output-and-first-run) (9)
 - [Config overrides](#config-overrides) (9)
 - [Dog config store](#dog-config-store) (1)
-- [CI flakes, and the log line a stop could lose](#ci-flakes-and-the-log-line-a-stop-could-lose) (4)
+- [CI flakes, and the log line a stop could lose](#ci-flakes-and-the-log-line-a-stop-could-lose) (5)
 - [CI and releases](#ci-and-releases) (3)
 - [Config pane writes](#config-pane-writes) (1)
 - [Boot ordering](#boot-ordering) (8)
@@ -2005,6 +2005,22 @@ What proves the fix is that window held open on purpose. A 500ms sleep at the to
 One drop, and a second is still fatal. The poll is serial and the exec happens once, so at most one accepted connection can be open when the image is replaced. A shepherd dropping every reply is a defect rather than a handover, and a wait that spun its whole deadline out over one would report the caller's assertion against a value it never read. It is a separate helper rather than a widening of `poll_flock_data` because this is the only case in the file that signals a handover itself: every other caller polls a shepherd nobody is replacing, or one `shep daemon reload` has already waited out, and there a dropped reply is a shepherd that died unasked.
 
 `verified crates/shep-cli/tests/cli_e2e.rs (DROPPED_REPLY, DROPPED_HANDSHAKE, poll_flock_data_across_a_handover, poll_flock_until, closed_by_a_handover, a_successor_inheriting_an_empty_flock_does_not_restore_the_roll) and docs/brainstorming/specs/2026-08-29-daemon-handover-design.md (H2)`
+
+### The boot race that reported two winners was racing its own threads, not the flock
+
+`two_concurrent_boots_on_a_stale_socket_exactly_one_wins` failed once on `slow (macos-latest)` and passed on a rerun of that job alone, Linux and Windows green in the same run, always with `exactly one racer must win a boot on the same $SHEP_HOME: [Won { socket_still_accepts: true }, Won { socket_still_accepts: true }]`. It was absent from the 40 `test.yml` runs before it.
+
+The boot path was not the thing that was wrong. `boot` takes `PidfileLock::acquire` before `bind_socket`, `Listener::bind`'s unix arm is a plain `tokio::net::UnixListener::bind` with no unlink of its own, and the probe-then-unlink that could delete another daemon's listener is reachable only by whoever already holds the flock. macOS is not the exception: XNU's `flock(2)` refuses a second open file description of the same file even inside the process that holds the first, which is the fact `the_adopted_pidfile_arm_does_not_release_the_lock` already stands on. So no two boots in this test ever held one `$SHEP_HOME` at the same time, and there was no check-then-act window to find between the probe and the bind.
+
+What the test got wrong is that its only barrier sat in front of the boots. A barrier aligns two thread starts, and a start is not the contention point. A racer that finishes `boot` returns a `RunningDaemon`, and returning it drops the `PidfileLock` and closes the listener. A sibling that reaches `PidfileLock::acquire` after that finds the home free, takes it, and binds. Both racers then report a win, and both sockets accept, because each answers on its own inode and the loser's `remove_file` never ran. That is the CI payload exactly.
+
+Measured, because one green rerun is not evidence of absence. The sandbox this work ran in refuses `bind(2)` everywhere, so the test itself cannot run on a macOS host here: 70 of the 1262 `shep-daemon` lib tests fail locally on that one syscall, identical before and after the change. So the race was measured one level down instead, in one process, two threads, `flock(2)` on a shared pidfile, the winner holding for 2ms, and the racer-start jitter drawn uniformly from a range. Without a rendezvous, 1000 trials each: 0 two-winner trials at 0..0.5ms, 0 at 0..1ms, 219 at 0..3ms, 687 at 0..12ms. With each racer holding its claim until the sibling has reported: 1 winner in all 4000 trials, at every jitter. The crossover is the whole diagnosis, and it sits where the issue guessed, in the test's synchronisation.
+
+**Why:** the two cheap answers were both available and both wrong. The `slow` tier already holds this test: `ci-slow` runs it serially with no retries, so it was already on the quietest machine CI has, and the tier's own criterion is a duration, a batch or a count a contended runner cannot hold still, which "exactly one of two boots wins" is not. A retry would have been worse, since this tier deliberately has none, and a retry turns a scheduling tail into a green leg without saying which of the two readings was right. Quarantining it or lowering the iteration count would have made the event rarer while leaving a test that can report two shepherds on one home for a home that never had two.
+
+The fix is a second rendezvous rather than a wider margin. Each racer sends its verdict into its sibling's `mpsc` inbox and blocks on its own with `RACER_VERDICT_BOUND` (10s), and the winner holds its `RunningDaemon` across that wait, so the loser's `PidfileLock::acquire` always lands while the winner still holds. std's `Barrier` has no timed wait, which is why the rendezvous is a channel pair rather than a second barrier. The sender table is dropped once the racers are spawned, so every sender belongs to a racer and one that panics before reporting closes its sibling's inbox at once: measured at 155us to failure rather than 10s of deadline. The iteration count stays at 25, because a real lock regression reaches the clobber on some attempts only, and the rendezvous does not make that rarer.
+
+`verified crates/shep-daemon/src/boot/socket.rs (two_concurrent_boots_on_a_stale_socket_exactly_one_wins, swap_verdicts, RACER_VERDICT_BOUND), crates/shep-daemon/src/boot/mod.rs (PidfileLock::acquire before bind_socket), crates/shep-daemon/src/boot/pidfile.rs (the_adopted_pidfile_arm_does_not_release_the_lock), crates/shep-core/src/transport.rs (Listener::bind)`
 
 ## CI and releases
 
