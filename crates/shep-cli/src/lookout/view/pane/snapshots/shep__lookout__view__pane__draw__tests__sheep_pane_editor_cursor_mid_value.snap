@@ -3,7 +3,7 @@ source: crates/shep-cli/src/lookout/view/pane/draw.rs
 expression: "text.join(\"\\n\")"
 ---
  ██ web  (sheep config)                                                                                                 
-   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump      
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   …
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                               
    autorestart                true                                 FOCUSED  max_restarts  integer

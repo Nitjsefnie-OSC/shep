@@ -625,7 +625,10 @@ mod tests {
     fn a_short_body_sheds_the_legend_before_the_tab_row() {
         let app = fixtures::app_in_sheep_pane();
         let rows = fixtures::render_all(&config_pane_lines_for_tests(&app, 160, 6));
-        assert!(rows.contains("tab next group"), "the tab row must survive");
+        assert!(
+            rows.contains("next / prev group"),
+            "the tab row must survive"
+        );
         assert!(!rows.contains("changed by you"), "the legend must go first");
     }
 }

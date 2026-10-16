@@ -176,8 +176,9 @@ pub enum KeyPress {
     NextGroup,
     /// `Shift+Tab`: moves the config pane's focus to the previous group.
     PrevGroup,
-    /// `1` through `8`: jumps the config pane's focus straight to that
-    /// group, numbered in the order the pane lists them.
+    /// `1` through `9`: jumps the config pane's focus straight to that
+    /// group, numbered in the order the pane lists them (`GROUP_ORDER`,
+    /// nine of them). A digit past the last group is ignored.
     Group(u8),
     /// `u`: undoes the config pane's last change.
     Undo,
