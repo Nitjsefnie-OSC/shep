@@ -2510,3 +2510,13 @@ A handover snapshot describes every registered entry except a dog that is parked
 A row in `web/public/dogs.json` whose `repo` is under `github.com/shep-pm/` gets a page at `/docs/dogs/<adopt_as>`, built from the README at the repo's latest GitHub release tag. The page names that tag. A relative `.md` link is imported as a sub-page under the dog's page, at any depth; a relative image or other file points at the repo at that tag; an absolute URL is left alone, so a dog keeps a link off the site by making it absolute. A fetch that fails stops the deploy, which leaves the last good site up; PR CI only warns. Each dog repo dispatches `pages.yml` when it publishes a release, with one org-wide token. Which content checks the imported pages skip is still open (#660).
 
 **Why:** #660 first asked for a pinned ref recorded in shep, so a build was reproducible. Pinning or vendoring makes every dog release a manual sync in shep, and the maintainer refused that cost. Following the latest release still keeps an unreleased README off the site. crates.io was not used because only `cargo` rows publish there, and a packaged README's paths are relative to the crate, not the repo. Failing only the deploy keeps a dog repo's breakage out of shep's PR queue. The cost: a page can describe a newer version than the one an index row approves for install, and the printed tag is the only signal of that.
+
+## The docs site's prose budget
+
+### What a page measures is printed by the budget script, never written beside its ceiling
+
+`BUDGETS` in `web/scripts/verify-prose-budget.ts` holds the ceiling and nothing else. The script's report prints each page's count, its ceiling, and the words left under it, and names every page with under 10 words left on a line of its own. A test reads the script's own source and refuses a `// 1659`-style count written beside an entry.
+
+**Why:** that comment was the only number anyone saw without running the script, and 16 of 29 were stale on 2026-10-19, each one reading lower than the page measured: `from-pm2` showed 61 words of room and had 3. It was believed and the script not run twice, `getting-started` in #100 and `shepherd-channel` read as 86 words of headroom against 29 (#596). The other way out was to have the script rewrite the comment in place, which keeps a number in the file but only as fresh as the last run that wrote it, and skipping the run is the failure being fixed. The cost: a rewrite brief no longer finds a page's current count in the file, and runs `node --test scripts/verify-prose-budget.ts` for it.
+
+`verified web/scripts/verify-prose-budget.ts (BUDGETS, reportRow, thinHeadroom, "no BUDGETS entry carries a hand-written measured count")`
