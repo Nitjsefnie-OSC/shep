@@ -285,9 +285,10 @@ mod tests {
         );
     }
 
-    /// A group row can never own this pane ([`ask_for_bleats`] refuses one),
-    /// but `sheep_id` stays exhaustive, and the title has to say something
-    /// sane if it is ever handed one anyway.
+    /// A [`RowKey::Group`] row can never own this pane:
+    /// `lookout::app::bleats::ask_for_bleats` opens it only on a
+    /// [`RowKey::Sheep`]. `sheep_id` stays exhaustive anyway, and the title
+    /// has to say something sane if the pane is ever handed a group row.
     #[test]
     fn the_title_says_no_sheep_is_selected_for_a_non_sheep_row() {
         let app = with_no_selection();

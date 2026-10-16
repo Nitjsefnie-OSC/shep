@@ -61,8 +61,9 @@ pub(super) fn row_height(text: &str, text_width: u16, wrap: bool) -> usize {
 /// clamps rather than panicking or reading past the end. Both walks always
 /// include at least one line once `len > 0` and `body_rows > 0`, even one
 /// whose own cost alone exceeds `body_rows`: a body of one very long wrapped
-/// line is still one line to show, not zero. A `body_rows` of zero is the
-/// early return above, and there is no row left to draw into.
+/// line is still one line to show, not zero. A `body_rows` of zero takes the
+/// `len == 0 || body_rows == 0` guard at the top of the body and answers
+/// `0..0`: there is no row left to draw into.
 pub(super) fn window_range(
     len: usize,
     scroll_offset: usize,
