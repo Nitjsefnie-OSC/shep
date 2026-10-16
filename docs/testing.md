@@ -36,10 +36,13 @@ when touching either.
 
 CI runs that tier as its own serial `slow` job and skips it everywhere else,
 because a contended runner cannot hold a wall clock still: the debouncer
-tests were the whole of CI's red for four runs. `boot.rs`'s
+tests were the whole of CI's red for four runs. `boot/socket.rs`'s
 `two_concurrent_boots_on_a_stale_socket_exactly_one_wins` rides along in that
 job for the same reason without being in a `mod slow` — it is fast, but it
-races two threads and needs the machine quiet. Add a timing- or
+races two threads and the socket it fabricates wants a machine nobody else is
+forking into. Its verdict is no longer a claim about the machine: each racer
+holds its daemon at a rendezvous until the sibling has reported, so the winner
+always still owns the home when the loser asks for it. Add a timing- or
 contention-sensitive test and it needs the same treatment; the workflow's
 skip list names both groups explicitly.
 

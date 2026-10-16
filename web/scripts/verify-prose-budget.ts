@@ -11,6 +11,13 @@
 //
 // This exists because a rewrite brief carrying no numeric target reliably
 // comes back having kept most of the original text. The number is the brief.
+//
+// What a page measures is not written in this file. It used to be a `// 1659`
+// beside every ceiling, and 16 of 29 of those were stale on 2026-10-19, each
+// one reading lower than the page measured: `from-pm2` showed 61 words of room
+// and had 3. The comment was believed and the script was not run twice, which
+// is #596. The report at the bottom prints the count and the words left under
+// the ceiling, and a test below refuses a measured count written here.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -39,7 +46,8 @@ const pagesDir = fileURLToPath(new URL("../src/pages/docs", import.meta.url));
  * for a correction rather than for prose: `getting-started` for the note
  * saying `./server` is the reader's own binary, and `from-pm2` for the
  * clause saying which of the three binaries 17.94 MiB is. Say why in a
- * comment when you do it.
+ * comment when you do it, and say no number for the page's own count: the
+ * report prints the one it just measured.
  */
 export const BUDGETS: Record<string, number> = {
   // Raised from 4150 on 2026-09-27 for the per-sheep dog settings section:
@@ -65,8 +73,8 @@ export const BUDGETS: Record<string, number> = {
   // holds an integer to `exclusiveMinimum`/`exclusiveMaximum` too, and a
   // range that admits nothing is said once, which is what a dog author
   // publishing those keywords gets told about the editor.
-  "writing-a-dog": 4490, // 4484
-  overrides: 3380, // 3250
+  "writing-a-dog": 4490,
+  overrides: 3380,
   // Raised from 3240 on 2026-09-27 for "A sheep's dogs row": the sub-screen
   // and the per-sheep table pane are new operator-facing surface, not
   // prose to trim back out.
@@ -103,7 +111,7 @@ export const BUDGETS: Record<string, number> = {
   // kind that now edits, say a whole number typed into one is filed as a
   // float, and say a list of numbers is still read-only, which the old text
   // left implied by silence.
-  "lookout-config": 3920, // 3906
+  "lookout-config": 3920,
   // Raised from 2930 on 2026-09-14 for the host line, which `shep flock`
   // began printing on a one-shot listing and not only under `--follow`. It
   // shows above every table on this page, so four transcripts gained a line
@@ -112,7 +120,7 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3130 on 2026-10-15 for "Following logs" saying which stream
   // colour a plain line gets, that a line carrying its own colour is left
   // alone, and that `--format json` stays raw. Required content for #846.
-  output: 3190, // 3185
+  output: 3190,
   // Raised from 2980 on 2026-10-13 for the `log_match` rule: a new `on`
   // value, its `stream` key, and the loss and secrets caveats are
   // operator-facing surface, not prose to trim back out.
@@ -144,15 +152,15 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3960 on 2026-10-14 for the `shep copy` sentence: a per-sheep
   // dog table is operator-facing config, and #830 is the verb that moves one
   // onto another sheep.
-  dogs: 3990, // 3947
-  lookout: 2770, // 2629
-  "first-flockfile": 2360, // 2245
+  dogs: 3990,
+  lookout: 2770,
+  "first-flockfile": 2360,
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
   // push now reaches a running dog, which an operator rotating a secret has
   // to be told. The page had drifted to 2067 against a recorded 1977.
   // Raised again from 2150 on 2026-10-13 for the store poll: a `shep secret
   // set` reaches a running dog, and the page says how soon and which keys.
-  secrets: 2200, // 2184
+  secrets: 2200,
   // Raised from 2020 on 2026-10-13 for `disable` and `enable`: two verbs
   // with a refusal an operator has to be told about (an id or `name:slot`
   // exits 2, and `start`, `restart` and `stock` refuse a disabled app) are
@@ -168,7 +176,7 @@ export const BUDGETS: Record<string, number> = {
   //
   // Raised again for the same verb refusing a name it cannot judge, which is
   // an exit an operator hits. Paid for by tightening the sentence above it.
-  lifecycle: 2245, // 2235
+  lifecycle: 2245,
   // Cut from 1900 for the stamps-off tail sentence: the page has to say a
   // sheep with `log_timestamps = false` carries no stamp for `bleats` to
   // strip, and it paid for that line by tightening the sentences around it
@@ -176,7 +184,7 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 1895 on 2026-10-15 for the same #846 rule on this page:
   // which lines are coloured, the fallback for a line that already has its
   // own colour, and what a table strips out of a line.
-  logs: 1995, // 1988
+  logs: 1995,
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim
   // back out.
@@ -186,10 +194,10 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 2060 for "Notes for a dog": `note` is a new message an app
   // author has to be told about, and the section is already cut to the
   // topic, the grammar and the drop.
-  "shepherd-channel": 2165, // 2158
-  "from-pm2": 1720, // 1659
-  "boot-order": 1670, // 1586
-  "talking-to-a-sheep": 1620, // 1534
+  "shepherd-channel": 2165,
+  "from-pm2": 1720,
+  "boot-order": 1670,
+  "talking-to-a-sheep": 1620,
   // Raised from 1330 on the same day and for the same feature. `host` is a
   // fourth key beside `data`, and its three spellings are three different
   // answers a script has to tell apart: an object, `null`, and no key at
@@ -198,13 +206,13 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 1410 on 2026-10-13 for `disabled`: a key that is absent
   // unless true, beside a `status` that still reads `stopped`, is a shape
   // a script has to be told about.
-  "json-output": 1470, // 1413
-  startup: 1250, // 1192
-  examples: 1200, // 1156
-  "not-built": 1080, // 1020
-  folds: 900, // 852
-  whistle: 710, // 675
-  containers: 560, // 526
+  "json-output": 1470,
+  startup: 1250,
+  examples: 1200,
+  "not-built": 1080,
+  folds: 900,
+  whistle: 710,
+  containers: 560,
   // Raised from 560 on 2026-10-13 for dog names: an upgrade must say a sheep
   // named after a built-in keeps its name.
   //
@@ -219,19 +227,19 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 675 on 2026-10-14 for the `enabled_dogs` half of the reload
   // the page already describes: a successor stops a dog the new file dropped
   // and registers a parked one at rest. Required content, not prose.
-  upgrading: 710, // 704
-  kv: 550, // 519
+  upgrading: 710,
+  kv: 550,
   // Raised from 440 on 2026-09-21 for the prebuilt-binary download list,
   // which is new content rather than a correction. The page was sitting at
   // exactly 440, one word from failing the build, and the `// 413` beside
   // the old number was 27 words stale: the figure in this comment is only
   // as good as the run that wrote it.
-  "getting-started": 500, // 471
-  serve: 480, // 448
-  cli: 380, // 356
-  "community-dogs": 300, // 277
-  terminology: 210, // 199
-  "pm2-verbs": 40, // 36
+  "getting-started": 500,
+  serve: 480,
+  cli: 380,
+  "community-dogs": 300,
+  terminology: 210,
+  "pm2-verbs": 40,
 };
 
 
@@ -355,19 +363,122 @@ test("every page that exists has a budget", async () => {
   );
 });
 
+/** Column widths of the report, so its header and its rows line up. */
+const COUNT_WIDTH = 5;
+const CEILING_WIDTH = 6;
+const LEFT_WIDTH = 5;
+
+/** Words left under a ceiling below which the report names the page itself. */
+const THIN_HEADROOM = 10;
+
+/** The report's first line, above the rows `reportRow` writes. */
+export const REPORT_HEADER = [
+  "count".padStart(COUNT_WIDTH),
+  "budget".padStart(CEILING_WIDTH),
+  "left".padStart(LEFT_WIDTH),
+  "page",
+].join("  ");
+
+/**
+ * One report row: words measured, ceiling, words left under it, slug.
+ *
+ * The headroom is the number a page edit needs, and it is always the one this
+ * run measured. A copy of it written beside a ceiling in `BUDGETS` is the stale
+ * comment #596 is about.
+ */
+export function reportRow(slug: string, count: number, budget: number | undefined): string {
+  return [
+    String(count).padStart(COUNT_WIDTH),
+    (budget === undefined ? "-" : String(budget)).padStart(CEILING_WIDTH),
+    (budget === undefined ? "-" : String(budget - count)).padStart(LEFT_WIDTH),
+    slug,
+  ].join("  ");
+}
+
+/** One page in the report. `budget` is undefined for a page with no ceiling. */
+type PageRow = { slug: string; count: number; budget: number | undefined };
+
+/** Slugs with under `under` words left, thinnest first, each as `slug left`. */
+export function thinHeadroom(
+  rows: { slug: string; count: number; budget: number }[],
+  under: number,
+): string[] {
+  return rows
+    .filter((row) => row.budget - row.count < under)
+    .sort((a, b) => a.budget - a.count - (b.budget - b.count))
+    .map((row) => `${row.slug} ${row.budget - row.count}`);
+}
+
+test("reportRow prints the count, the ceiling and the words left under it", () => {
+  assert.equal(reportRow("from-pm2", 1717, 1720), " 1717    1720      3  from-pm2");
+});
+
+test("reportRow says so when a page has no ceiling", () => {
+  assert.equal(reportRow("a-new-page", 120, undefined), "  120       -      -  a-new-page");
+});
+
+test("thinHeadroom names the pages with the least room, thinnest first", () => {
+  const rows = [
+    { slug: "writing-a-dog", count: 4489, budget: 4490 },
+    { slug: "from-pm2", count: 1720, budget: 1720 },
+    { slug: "cli", count: 356, budget: 380 },
+  ];
+  assert.deepEqual(thinHeadroom(rows, 10), ["from-pm2 0", "writing-a-dog 1"]);
+});
+
+test("thinHeadroom says nothing when every page has room", () => {
+  assert.deepEqual(thinHeadroom([{ slug: "cli", count: 356, budget: 380 }], 10), []);
+});
+
+test("no BUDGETS entry carries a hand-written measured count", async () => {
+  // A `// 1659` beside a ceiling used to be the only number anyone saw without
+  // running this script. 16 of 29 were stale on 2026-10-19 and every one read
+  // lower than the page measured: `from-pm2` showed 61 words of room and had 3.
+  // The comment was believed twice and the script was not run, which is #596.
+  // The count lives in the report this script prints, where it is always the
+  // one just measured.
+  const self = fileURLToPath(import.meta.url);
+  const source = await readFile(self, "utf8");
+  const start = source.indexOf("export const BUDGETS");
+  assert.notEqual(start, -1, "this guard reads the BUDGETS block by name, and the name is gone");
+  const block = source.slice(start, source.indexOf("};", start));
+  const lines = block.split("\n");
+  const entries = lines.filter((line) => /^\s*"?[a-z][a-z0-9-]*"?:\s*\d+,?\s*$/.test(line));
+  assert.equal(
+    entries.length,
+    Object.keys(BUDGETS).length,
+    "this guard only saw part of the block, so it checked nothing",
+  );
+  const written = lines.filter((line) => /^\s*"?[a-z][a-z0-9-]*"?:\s*\d+,?\s*\/\/\s*\d+\s*$/.test(line));
+  assert.deepEqual(
+    written,
+    [],
+    "a measured count written beside a ceiling goes stale; run this script and read the headroom column it prints",
+  );
+});
+
 test("report every page's prose count, so the unbudgeted ones stay visible", async () => {
   const files = (await readdir(pagesDir)).filter((f) => f.endsWith(".astro") && f !== "index.astro");
-  const rows: [string, number][] = [];
+  const rows: PageRow[] = [];
   for (const file of files) {
     const slug = file.replace(/\.astro$/, "");
-    rows.push([slug, proseWords(await readFile(`${pagesDir}/${file}`, "utf8"))]);
+    rows.push({
+      slug,
+      count: proseWords(await readFile(`${pagesDir}/${file}`, "utf8")),
+      budget: BUDGETS[slug],
+    });
   }
-  rows.sort((a, b) => b[1] - a[1]);
-  const total = rows.reduce((sum, [, n]) => sum + n, 0);
-  for (const [slug, n] of rows) {
-    const budget = BUDGETS[slug];
-    console.log(`  ${String(n).padStart(5)}  ${slug}${budget === undefined ? "" : `  (budget ${budget})`}`);
+  rows.sort((a, b) => b.count - a.count);
+  const total = rows.reduce((sum, row) => sum + row.count, 0);
+  console.log(REPORT_HEADER);
+  for (const row of rows) {
+    console.log(reportRow(row.slug, row.count, row.budget));
   }
-  console.log(`  ${String(total).padStart(5)}  TOTAL across ${rows.length} pages`);
+  console.log(`  ${String(total).padStart(COUNT_WIDTH)}  TOTAL across ${rows.length} pages`);
+  const budgeted = rows.filter((row): row is PageRow & { budget: number } => row.budget !== undefined);
+  const thin = thinHeadroom(budgeted, THIN_HEADROOM);
+  if (thin.length > 0) {
+    console.log(`  thin headroom, under ${THIN_HEADROOM} words left: ${thin.join(", ")}`);
+  }
   assert.ok(rows.length > 0, "found no docs pages to count");
 });

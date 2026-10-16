@@ -36,7 +36,7 @@ go for the full argument. The commit that removed them names itself.
 - [Output and first run](#output-and-first-run) (9)
 - [Config overrides](#config-overrides) (9)
 - [Dog config store](#dog-config-store) (1)
-- [CI flakes, and the log line a stop could lose](#ci-flakes-and-the-log-line-a-stop-could-lose) (4)
+- [CI flakes, and the log line a stop could lose](#ci-flakes-and-the-log-line-a-stop-could-lose) (5)
 - [CI and releases](#ci-and-releases) (3)
 - [Config pane writes](#config-pane-writes) (1)
 - [Boot ordering](#boot-ordering) (8)
@@ -2006,6 +2006,24 @@ One drop, and a second is still fatal. The poll is serial and the exec happens o
 
 `verified crates/shep-cli/tests/cli_e2e.rs (DROPPED_REPLY, DROPPED_HANDSHAKE, poll_flock_data_across_a_handover, poll_flock_until, closed_by_a_handover, a_successor_inheriting_an_empty_flock_does_not_restore_the_roll) and docs/brainstorming/specs/2026-08-29-daemon-handover-design.md (H2)`
 
+### The boot race that reported two winners was racing its own threads, not the flock
+
+`two_concurrent_boots_on_a_stale_socket_exactly_one_wins` failed once on `slow (macos-latest)` and passed on a rerun of that job alone, Linux and Windows green in the same run, always with `exactly one racer must win a boot on the same $SHEP_HOME: [Won { socket_still_accepts: true }, Won { socket_still_accepts: true }]`. It was absent from the 40 `test.yml` runs before it.
+
+The boot path was not the thing that was wrong. `boot` takes `PidfileLock::acquire` before `bind_socket`, `Listener::bind`'s unix arm is a plain `tokio::net::UnixListener::bind` with no unlink of its own, and the probe-then-unlink that could delete another daemon's listener is reachable only by whoever already holds the flock. macOS is not the exception: XNU's `flock(2)` refuses a second open file description of the same file even inside the process that holds the first, which is the fact `the_adopted_pidfile_arm_does_not_release_the_lock` already stands on. So no two boots in this test ever held one `$SHEP_HOME` at the same time, and there was no check-then-act window to find between the probe and the bind.
+
+What the test got wrong is that its only barrier sat in front of the boots. A barrier aligns two thread starts, and a start is not the contention point. A racer that finishes `boot` returns a `RunningDaemon`, and returning it drops the `PidfileLock` and closes the listener. A sibling that reaches `PidfileLock::acquire` after that finds the home free, takes it, and binds. Both racers then report a win, and both sockets accept, because each answers on its own inode and the loser's `remove_file` never ran. That is the CI payload exactly.
+
+Measured, because one green rerun is not evidence of absence. The sandbox this work ran in refuses `bind(2)` everywhere, so the test itself cannot run on a macOS host here: 70 of the 1262 `shep-daemon` lib tests fail locally on that one syscall, identical before and after the change. So the race was measured one level down instead, in one process, two threads, `flock(2)` on a shared pidfile, the winner holding for 2ms, and the racer-start jitter drawn uniformly from a range. Without a rendezvous, 1000 trials each: 0 two-winner trials at 0..0.5ms, 0 at 0..1ms, 219 at 0..3ms, 687 at 0..12ms. With each racer holding its claim until the sibling has reported: 1 winner in all 4000 trials, at every jitter. The crossover is the whole diagnosis, and it sits where the issue guessed, in the test's synchronisation.
+
+The test itself was then run on the maintainer's 14-core Mac, `test(two_concurrent_boots)` alone under nextest with `--retries 0`: 0 failures in 100 runs at `b117d2b0` and 0 in 200 with fourteen busy loops alongside, and 0 in 100 plain and 0 in 200 stressed at this fix's head. The race never surfaced there, so those counts neither prove nor disprove the fix. What they do rule out is a wide window: the event needs a racer-start gap longer than the winner's whole boot, which that machine did not produce even loaded, and CI's macOS leg is where the fix is checked.
+
+**Why:** the two cheap answers were both available and both wrong. The `slow` tier already holds this test: `ci-slow` runs it serially with no retries, so it was already on the quietest machine CI has, and the tier's own criterion is a duration, a batch or a count a contended runner cannot hold still, which "exactly one of two boots wins" is not. A retry would have been worse, since this tier deliberately has none, and a retry turns a scheduling tail into a green leg without saying which of the two readings was right. Quarantining it or lowering the iteration count would have made the event rarer while leaving a test that can report two shepherds on one home for a home that never had two.
+
+The fix is a second rendezvous rather than a wider margin. Each racer sends its verdict into its sibling's `mpsc` inbox and blocks on its own with `RACER_VERDICT_BOUND` (10s), and the winner holds its `RunningDaemon` across that wait, so the loser's `PidfileLock::acquire` always lands while the winner still holds. std's `Barrier` has no timed wait, which is why the rendezvous is a channel pair rather than a second barrier. The sender table is dropped once the racers are spawned, so every sender belongs to a racer and one that panics before reporting closes its sibling's inbox at once: measured at 155us to failure rather than 10s of deadline. The iteration count stays at 25, because a real lock regression reaches the clobber on some attempts only, and the rendezvous does not make that rarer.
+
+`verified crates/shep-daemon/src/boot/socket.rs (two_concurrent_boots_on_a_stale_socket_exactly_one_wins, swap_verdicts, RACER_VERDICT_BOUND), crates/shep-daemon/src/boot/mod.rs (PidfileLock::acquire before bind_socket), crates/shep-daemon/src/boot/pidfile.rs (the_adopted_pidfile_arm_does_not_release_the_lock), crates/shep-core/src/transport.rs (Listener::bind)`
+
 ## CI and releases
 
 ### An intra-workspace dev-dependency names only a path, never a version
@@ -2492,3 +2510,13 @@ A handover snapshot describes every registered entry except a dog that is parked
 A row in `web/public/dogs.json` whose `repo` is under `github.com/shep-pm/` gets a page at `/docs/dogs/<adopt_as>`, built from the README at the repo's latest GitHub release tag. The page names that tag. A relative `.md` link is imported as a sub-page under the dog's page, at any depth; a relative image or other file points at the repo at that tag; an absolute URL is left alone, so a dog keeps a link off the site by making it absolute. A fetch that fails stops the deploy, which leaves the last good site up; PR CI only warns. Each dog repo dispatches `pages.yml` when it publishes a release, with one org-wide token. Which content checks the imported pages skip is still open (#660).
 
 **Why:** #660 first asked for a pinned ref recorded in shep, so a build was reproducible. Pinning or vendoring makes every dog release a manual sync in shep, and the maintainer refused that cost. Following the latest release still keeps an unreleased README off the site. crates.io was not used because only `cargo` rows publish there, and a packaged README's paths are relative to the crate, not the repo. Failing only the deploy keeps a dog repo's breakage out of shep's PR queue. The cost: a page can describe a newer version than the one an index row approves for install, and the printed tag is the only signal of that.
+
+## The docs site's prose budget
+
+### What a page measures is printed by the budget script, never written beside its ceiling
+
+`BUDGETS` in `web/scripts/verify-prose-budget.ts` holds the ceiling and nothing else. The script's report prints each page's count, its ceiling, and the words left under it, and names every page with under 10 words left on a line of its own. A test reads the script's own source and refuses a `// 1659`-style count written beside an entry.
+
+**Why:** that comment was the only number anyone saw without running the script, and 16 of 29 were stale on 2026-10-19, each one reading lower than the page measured: `from-pm2` showed 61 words of room and had 3. It was believed and the script not run twice, `getting-started` in #100 and `shepherd-channel` read as 86 words of headroom against 29 (#596). The other way out was to have the script rewrite the comment in place, which keeps a number in the file but only as fresh as the last run that wrote it, and skipping the run is the failure being fixed. The cost: a rewrite brief no longer finds a page's current count in the file, and runs `node --test scripts/verify-prose-budget.ts` for it.
+
+`verified web/scripts/verify-prose-budget.ts (BUDGETS, reportRow, thinHeadroom, "no BUDGETS entry carries a hand-written measured count")`
