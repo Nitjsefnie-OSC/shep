@@ -26,16 +26,14 @@
  * comment above the parallax rules at the bottom of this file for the whole
  * choreography and how to tune it. Each drifting component restates its own
  * share of those rules in its own <style>: the celestial bodies in
- * CelestialBodies.astro, the puffs in Clouds.astro.
+ * CelestialBodies.astro, the puffs in Clouds.astro, the fog in
+ * PastureScenery.astro.
  */
 import Sheep from "../marks/Sheep.astro";
 import Dog from "../marks/Dog.astro";
-import Barn from "../marks/Barn.astro";
-import Tuft from "./Tuft.astro";
+import PastureScenery from "./PastureScenery.astro";
 import CelestialBodies from "./CelestialBodies.astro";
 import Clouds from "./Clouds.astro";
-
-const posts = [30, 180, 330, 480, 630, 780, 930, 1080, 1230, 1350];
 
 /*
  * Roaming animals visit the pasture and leave the way they came (the
@@ -45,7 +43,8 @@ const posts = [30, 180, 330, 480, 630, 780, 930, 1080, 1230, 1350];
  * at load). Visit spots are chosen OFF the resident grazers' lanes so no
  * sheep ever walks through another — the fix for the old edge-to-edge
  * crossings reading as z-order bugs. Each visit spot has a grass tuft
- * planted at it (the tufts config below) so the stops read as eating.
+ * planted at it (the tufts config in PastureScenery.astro) so the stops
+ * read as eating.
  * Fleece colors are illustration literals like the marks' own: a
  * moorit-brown ewe trailing a white lamb up front, a black sheep and a
  * white ewe with a brown lamb far back. Lambs gambol instead of bobbing.
@@ -126,43 +125,11 @@ const roaming: RoamerSpec[] = [
 ];
 
 /*
- * Grass tufts. Positions land on the spots where an animal actually
- * stands still — each grazer's walk plateau (home + ~55% of its walk
- * amplitude) and each roamer's visit spot — so a stopped, bobbing sheep
- * reads as eating, plus a few decorative extras. `far` tufts render in a
- * layer just after the far hill (behind the fog, fence and every animal)
- * and take the far-depth filter; near ones sit on the near hill under
- * the fence. Retune these alongside the grazing/roaming configs above —
- * a tuft nobody stops at is scenery, a stop with no tuft is a sheep
- * staring at nothing. Both layers draw through the one Tuft.astro
- * component, so a retune here is the whole change.
- */
-interface TuftSpec {
-  left: string;
-  bottom: string;
-  width: number;
-  far?: boolean;
-  flip?: boolean;
-}
-
-const tufts: TuftSpec[] = [
-  { left: "11.5%", bottom: "15.8vh", width: 22, far: true },
-  { left: "56%", bottom: "16.8vh", width: 24, far: true, flip: true },
-  { left: "28.5%", bottom: "14.2vh", width: 22, far: true },
-  { left: "42%", bottom: "19vh", width: 18, far: true, flip: true },
-  { left: "84%", bottom: "16.2vh", width: 20, far: true },
-  { left: "31%", bottom: "2.6vh", width: 30 },
-  { left: "53.5%", bottom: "1.6vh", width: 32, flip: true },
-  { left: "16%", bottom: "4.3vh", width: 28 },
-  { left: "70%", bottom: "3vh", width: 26, flip: true },
-];
-
-/*
  * Depth for the grazing sheep: far/mid/near controls width (a clamp() in
  * the stylesheet, not a fixed px, so the footprint itself shrinks with the
  * viewport instead of only its position), walk speed, height against the
- * hill, and z-index (the far sheep paints behind .fence — see that rule).
- * left/bottom are home positions; --walk-amp is how far each one wanders
+ * hill, and z-index (the far sheep paints behind .fence — see that rule
+ * in PastureScenery.astro). left/bottom are home positions; --walk-amp is how far each one wanders
  * from home before turning back (see the `walk` keyframes in motion.css).
  * These lanes plus the dog's fixed spot were checked against each other at
  * 320px — the tightest width, since every sheep's clamp() is pinned to its
@@ -229,59 +196,7 @@ const grazing = [
   <Clouds />
 
   <div class="pasture" aria-hidden="true">
-    <div class="far-hill">
-      <svg viewBox="0 0 1200 210" preserveAspectRatio="none" width="100%" height="100%">
-        <path
-          d="M0 118C170 62 360 132 560 104 760 76 950 30 1200 84V210H0Z"
-          fill="var(--illus-far-hill)"
-          stroke="var(--ink)"
-          stroke-width="4"
-        />
-      </svg>
-    </div>
-
-    <div class="tuft-layer far" aria-hidden="true">
-      {tufts
-        .filter((t) => t.far)
-        .map((t) => (
-          <Tuft {...t} />
-        ))}
-    </div>
-
-    <div class="barn">
-      <Barn width={300} />
-    </div>
-
-    <div class="mist"></div>
-
-    <div class="near-hill">
-      <svg viewBox="0 0 1200 260" preserveAspectRatio="none" width="100%" height="100%">
-        <path
-          d="M0 92C220 52 470 116 700 88 930 60 1050 96 1200 70V260H0Z"
-          fill="var(--grass)"
-          stroke="var(--ink)"
-          stroke-width="4"
-        />
-      </svg>
-    </div>
-
-    <div class="tuft-layer" aria-hidden="true">
-      {tufts
-        .filter((t) => !t.far)
-        .map((t) => (
-          <Tuft {...t} />
-        ))}
-    </div>
-
-    <div class="fence">
-      <svg viewBox="0 0 1400 76" preserveAspectRatio="none" width="100%" height="100%">
-        <g fill="var(--fleece)" stroke="var(--ink)" stroke-width="4">
-          <rect x="0" y="22" width="1400" height="12" rx="3" />
-          <rect x="0" y="48" width="1400" height="12" rx="3" />
-          {posts.map((a) => <path d={`M${a} 74V14l14-10 14 10v60Z`} />)}
-        </g>
-      </svg>
-    </div>
+    <PastureScenery />
 
     {grazing.map((sheep) => (
       <div
@@ -418,123 +333,15 @@ const grazing = [
     z-index: 2;
     pointer-events: none;
     /* The far-depth atmosphere, declared once for its three consumers
-       (.tuft-layer.far, .depth-far, .roamer-far — all inside .pasture) so
-       a retune can't drift them apart. Custom properties inherit through
-       the DOM, so they keep working if a consumer moves into a child
-       component.
+       (.tuft-layer.far in PastureScenery.astro, .depth-far, .roamer-far —
+       all inside .pasture in the DOM) so a retune can't drift them apart.
+       Custom properties inherit through the DOM, so they keep working if a
+       consumer moves into a child component.
 
        Desaturate and lift only — no opacity() term: translucent animals
        read as ghosts (the fence showed straight through the black sheep),
        and atmospheric distance comes through the contrast drop alone. */
     --atmo: saturate(0.58) brightness(1.07);
-  }
-
-  .far-hill {
-    position: absolute;
-    left: -4%;
-    right: -4%;
-    bottom: 8%;
-    height: 43vh;
-  }
-
-  .near-hill {
-    position: absolute;
-    left: -4%;
-    right: -4%;
-    bottom: 0;
-    height: 27vh;
-  }
-
-  .fence {
-    position: absolute;
-    left: -6%;
-    right: -6%;
-    bottom: 7vh;
-    height: 54px;
-    /* Above the hills' implicit stacking order but below the near/mid sheep
-       and dog (z-index 3) — the far sheep (z-index 1) sits behind this on
-       purpose, so it reads as grazing on the other side of the fence. */
-    z-index: 2;
-  }
-
-  .barn {
-    position: absolute;
-    right: 6%;
-    bottom: 26%;
-    width: min(300px, 26vw);
-  }
-
-  /* Barn.astro sizes its own wrapper from the `width` prop (a fixed px
-     figure for a standalone mark); here it must instead fill this
-     already-responsive min(300px,26vw) container. */
-  .barn :global(.barn-mark) {
-    width: 100% !important;
-  }
-
-  /*
-   * Dawn fog over the far hill and the barn's feet. It sits in the sticky
-   * pasture between the barn and the near hill (paint order is DOM order
-   * here), so the near meadow, fence and animals all stay crisp in front
-   * of it while the far scenery goes hazy. Base opacity 0: it only exists
-   * through its scroll-driven keyframes (mist-cycle below) — thin before
-   * first light, thickest at dawn, burned off by mid-morning — so browsers
-   * without scroll-driven animations, and reduced-motion visitors, never
-   * see a stuck noon fog. The night wash multiplies over it (z-index 3 vs
-   * the pasture's 2), which keeps it a dim grey bank before first light
-   * rather than a bright cream one.
-   */
-  .mist {
-    position: absolute;
-    left: -3%;
-    right: -3%;
-    bottom: 21%;
-    height: 26vh;
-    opacity: 0;
-    background:
-      radial-gradient(
-        58% 60% at 22% 62%,
-        rgba(251, 246, 231, 0.75),
-        rgba(251, 246, 231, 0) 70%
-      ),
-      radial-gradient(
-        46% 64% at 58% 42%,
-        rgba(251, 246, 231, 0.6),
-        rgba(251, 246, 231, 0) 72%
-      ),
-      radial-gradient(
-        50% 55% at 88% 60%,
-        rgba(251, 246, 231, 0.7),
-        rgba(251, 246, 231, 0) 70%
-      );
-    /* The band is a hard-edged box, and any fog ellipse whose soft falloff
-       reaches past it gets sliced flat at the boundary — the middle puff's
-       vertical reach crossed the band's top and drew a visible straight
-       edge across the night sky. The mask fades the band's own edges so
-       nothing inside it can ever terminate in a hard line, whatever the
-       ellipse geometry above does. */
-    -webkit-mask-image: linear-gradient(
-      180deg,
-      transparent 0%,
-      #000 24%,
-      #000 76%,
-      transparent 100%
-    );
-    mask-image: linear-gradient(
-      180deg,
-      transparent 0%,
-      #000 24%,
-      #000 76%,
-      transparent 100%
-    );
-  }
-
-  .tuft-layer {
-    position: absolute;
-    inset: 0;
-  }
-
-  .tuft-layer.far {
-    filter: var(--atmo);
   }
 
   .grazing-sheep {
@@ -665,8 +472,11 @@ const grazing = [
   .barn-glow {
     position: absolute;
     /*
-     * Centers the glow on the barn: barn's own right offset (6%) plus half
-     * the barn's width minus half the glow's own 132px. Below ~500px the
+     * Centers the glow on the barn, which PastureScenery.astro now draws:
+     * its `.barn` rule owns the `6%` right and `26%` bottom mirrored here,
+     * and the media block below repeats the pair for the mobile bottom.
+     * The centering math: barn's own right offset (6%) plus half the
+     * barn's width minus half the glow's own 132px. Below ~500px the
      * barn (min(300px,26vw)) shrinks past 132px, so the raw calc goes
      * negative — a negative `right` pushes this box's right edge past the
      * container's right edge, which is exactly what forced the page to
@@ -687,39 +497,22 @@ const grazing = [
     );
   }
 
-  /* Responsive first pass (docs/shep-design/README.md, "Responsive": "scenery
-     reduced to a band rather than removed"). The sheep/dog footprints are
-     already fluid (the clamp() widths above), so this tightens the hill
-     band on short mobile viewports — and everything ANCHORED to the
-     desktop hill band must move with it. The barn and mist are re-seated
-     onto the shrunken far hill (26% of the viewport floated the barn in
-     open sky once the hill dropped to 22vh), the barn's glow repeats the
-     barn's own bottom so it stays centered on the hayloft, and the front
-     line — the dog and the visiting mid roamer — drops below the fence's
-     lowered bottom edge, which is the same feet-clear-of-the-bottom-rail
-     rule the mid grazer's 3vh was originally chosen for. The roamer's
-     bottom is inline (per-instance), hence the !important. */
+  /* The stage members of the responsive first pass (docs/shep-design/
+     README.md, "Responsive": "scenery reduced to a band rather than
+     removed"). The hill band itself tightens in PastureScenery.astro's own
+     media block, which re-seats the barn and the mist onto the shrunken
+     far hill (26% of the viewport floated the barn in open sky once the
+     hill dropped to 22vh). The barn's glow repeats the barn's own bottom
+     so it stays centered on the hayloft, and the front line — the dog and
+     the visiting mid roamer — drops below the fence's lowered bottom edge,
+     which is the same feet-clear-of-the-bottom-rail rule the mid grazer's
+     3vh was originally chosen for. The roamer's bottom is inline
+     (per-instance), hence the !important. */
   @media (max-width: 600px) {
-    .far-hill,
-    .near-hill {
-      height: 22vh;
-    }
-
-    .fence {
-      bottom: 8vh;
-    }
-
-    .barn {
-      bottom: 18vh;
-    }
-
     .barn-glow {
+      /* The 18vh here must match the barn's mobile bottom in
+         PastureScenery.astro's .barn rule — change the two together. */
       bottom: calc(18vh + min(300px, 26vw) * 0.62 - 66px);
-    }
-
-    .mist {
-      bottom: 10vh;
-      height: 18vh;
     }
 
     .watch-dog {
@@ -780,6 +573,8 @@ const grazing = [
    *              (the rules for all three in CelestialBodies.astro)
    *     clouds  r per instance -> cloudMotion() in clouds.ts, the rules in
    *              Clouds.astro
+   *     mist    no drift, an opacity cycle on scroll(root) -> the rules in
+   *              PastureScenery.astro
    *
    * The stars and moon also FADE (the sky-drift-fade* keyframes — stars
    * across the back 45% of their range, the moon over 25%-65%, timed to
@@ -799,60 +594,9 @@ const grazing = [
    * (Firefox at this build) get the static 1x sky — never a stuck offset —
    * while still getting every time-based ambient (twinkle, wind sway,
    * shooting stars, glow breathing). Everything, ambient included, sits
-   * behind reduced-motion, same as motion.css.
+   * behind reduced-motion, same as motion.css. The rules themselves now
+   * all live in the components that draw their markup: the shared base and
+   * its last member drawn outside a drifting component, the fog, moved to
+   * PastureScenery.astro with it.
    */
-  @media (prefers-reduced-motion: no-preference) {
-    @supports (animation-timeline: scroll()) {
-      /*
-       * Deliberately longhand, not the `animation` shorthand: Astro's CSS
-       * minifier (Lightning CSS) folds a shorthand `animation` declaration
-       * plus a separate `animation-timeline` into one shorthand value, and
-       * as of this build it produces `animation:linear both sky-parallax
-       * scroll(root)`, a value the browser itself then rejects as invalid,
-       * silently dropping the whole declaration (confirmed via the CSSOM:
-       * the compiled rule's selector survives, its body is empty). The
-       * longhand properties do not hit that merge path. animation-range is
-       * kept out of any shorthand for the same reason. (The time-based
-       * ambients in the components may use the shorthand: they set no
-       * timeline, so there is nothing for the minifier to fold in.)
-       *
-       * Shared base for every scroll-driven element still drawn here —
-       * now only the fog. Astro scopes a selector to its own component's
-       * markup, so every other member is restated in the component that
-       * draws it: star, moon and sun in CelestialBodies.astro, the puffs
-       * in Clouds.astro.
-       */
-      .mist {
-        animation-duration: auto;
-        animation-timing-function: linear;
-        animation-fill-mode: both;
-      }
-
-      /* The fog reads overall page progress: its subject (the sticky
-         pasture) is always on screen, so view() would be meaningless — the
-         whole scroll range IS its dawn-and-burn-off day. */
-      .mist {
-        animation-name: mist-cycle;
-        animation-timeline: scroll(root);
-      }
-    }
-  }
-
-  /* Percentages are of the whole scroll: fog on the pasture from before
-     first light, thickest as the dawn band crosses, burned off by the time
-     the sky turns full blue. */
-  @keyframes mist-cycle {
-    0% {
-      opacity: 0.55;
-    }
-    20% {
-      opacity: 0.75;
-    }
-    38% {
-      opacity: 0;
-    }
-    100% {
-      opacity: 0;
-    }
-  }
 </style>
