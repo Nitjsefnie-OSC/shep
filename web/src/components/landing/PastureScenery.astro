@@ -6,7 +6,9 @@
  * `.pasture`, with no wrapper element of its own: these seven blocks are
  * direct children of the sticky pasture, in the same DOM order they had
  * before the split, so the animals PastureAnimals.astro draws after them
- * still paint in front.
+ * keep the z-order they were tuned to against this scenery: the near and
+ * mid grazers, the dog and the mid roamer at z-index 3 in front of
+ * `.fence`'s 2, the far grazers and far roamers at 1 behind it on purpose.
  *
  * Not a mark: it belongs to this scene, has no design-source page behind
  * it as its own artwork, and takes no design token of its own beyond the
