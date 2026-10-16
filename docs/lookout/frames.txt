@@ -1334,7 +1334,7 @@ The redrawn editing pane on api, fresh: no edits filed, at 160x48. The tab row n
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)                                                                                                                                         
-   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump                                              
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
 >  cwd                        (unset)                                         respawn    FOCUSED  cwd  text                                                     
@@ -1386,7 +1386,7 @@ The same pane with two edits filed: cwd, which needs a respawn, and max_memory, 
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)  2 edits                                                                                                                                
-   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump                                              
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
    autorestart                true                                            now        FOCUSED  max_memory  memory size                                       
@@ -1438,7 +1438,7 @@ The same fresh pane at 120 columns: narrow enough that LANDS gives way to the ex
 shep lookout   /home/ada/.shep                                                                            6 in the flock
                                                                                                                         
  ██ api  (sheep config)                                                                                                 
-   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump      
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   …
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                                                                     
 >  cwd                        (unset)                              FOCUSED  cwd  text                                   
@@ -1542,7 +1542,7 @@ api's editing pane, cursor on its dogs row: jobs, legacy names the tables the sh
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)                                                                                                                                         
-   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump                                              
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
 >› dogs                       jobs, legacy                                    now        FOCUSED  dogs  opaque                                                  
@@ -2010,7 +2010,7 @@ esc pressed with cwd and err_file edited and listen_timeout already parked from 
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)  2 edits                                                                                                                                
-   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump                                              
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
 >  err_file                   (unset) -> /var/log/api/err.log                 respawn    FOCUSED  err_file  text                                                
@@ -2166,7 +2166,7 @@ esc pressed with no edit of the operator's own, only listen_timeout already park
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)                                                                                                                                         
-   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump                                              
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
 >  cwd                        (unset)                                         respawn    FOCUSED  cwd  text                                                     

@@ -1376,7 +1376,7 @@ The redrawn editing pane on api, fresh: no edits filed, at 160x48. The tab row n
 [0m[7m[38;5;29mshep lookout   /home/ada/.shep                                                                                                                    6 in the flock[0m
                                                                                                                                                                 [0m
 [0m[7m[38;5;221m ██ api  (sheep config)                                                                                                                                         [0m
-  [0m[48;5;235m process [0m[38;5;245m  logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump                                              [0m
+  [0m[48;5;235m process [0m[38;5;245m  logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 [0m
 [0m[38;5;238m  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[38;5;245m  FIELD                       VALUE                                           LANDS     [0m                                                                        [0m
 [0m[38;5;221m[48;5;235m>[0m[48;5;235m  cwd                        (unset)                                         respawn   [0m[7m[38;5;221m FOCUSED [0m cwd[0m[38;5;245m  text[0m                                                     [0m
@@ -1429,7 +1429,7 @@ The same pane with two edits filed: cwd, which needs a respawn, and max_memory, 
 [0m[7m[38;5;29mshep lookout   /home/ada/.shep                                                                                                                    6 in the flock[0m
                                                                                                                                                                 [0m
 [0m[7m[38;5;221m ██ api  (sheep config)  2 edits                                                                                                                                [0m
-  [0m[38;5;245m process   logging   inputs  [0m[48;5;235m restart [0m[38;5;245m  readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump                                              [0m
+  [0m[38;5;245m process   logging   inputs  [0m[48;5;235m restart [0m[38;5;245m  readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 [0m
 [0m[38;5;238m  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[38;5;245m  FIELD                       VALUE                                           LANDS     [0m                                                                        [0m
    autorestart                true                                            now       [0m[7m[38;5;221m FOCUSED [0m max_memory[0m[38;5;245m  memory size[0m                                       [0m
@@ -1482,7 +1482,7 @@ The same fresh pane at 120 columns: narrow enough that LANDS gives way to the ex
 [0m[7m[38;5;29mshep lookout   /home/ada/.shep                                                                            6 in the flock[0m
                                                                                                                         [0m
 [0m[7m[38;5;221m ██ api  (sheep config)                                                                                                 [0m
-  [0m[48;5;235m process [0m[38;5;245m  logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump      [0m
+  [0m[48;5;235m process [0m[38;5;245m  logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   …[0m
 [0m[38;5;238m  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[38;5;245m  FIELD                       VALUE                               [0m                                                      [0m
 [0m[38;5;221m[48;5;235m>[0m[48;5;235m  cwd                        (unset)                             [0m[7m[38;5;221m FOCUSED [0m cwd[0m[38;5;245m  text[0m                                   [0m
@@ -1588,7 +1588,7 @@ api's editing pane, cursor on its dogs row: jobs, legacy names the tables the sh
 [0m[7m[38;5;29mshep lookout   /home/ada/.shep                                                                                                                    6 in the flock[0m
                                                                                                                                                                 [0m
 [0m[7m[38;5;221m ██ api  (sheep config)                                                                                                                                         [0m
-  [0m[38;5;245m process   logging   inputs   restart   readiness   shutdown   watch   cron  [0m[48;5;235m dogs [0m[38;5;245m    tab next group   1…9 jump                                              [0m
+  [0m[38;5;245m process   logging   inputs   restart   readiness   shutdown   watch   cron  [0m[48;5;235m dogs [0m[38;5;245m    tab/S-tab next / prev group   1…9 jump                                 [0m
 [0m[38;5;238m  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[38;5;245m  FIELD                       VALUE                                           LANDS     [0m                                                                        [0m
 [0m[38;5;221m[48;5;235m>[0m[38;5;245m[48;5;235m› dogs                       jobs, legacy                                    now       [0m[7m[38;5;221m FOCUSED [0m dogs[0m[38;5;245m  opaque[0m                                                  [0m
@@ -2065,7 +2065,7 @@ esc pressed with cwd and err_file edited and listen_timeout already parked from 
 [0m[7m[38;5;29mshep lookout   /home/ada/.shep                                                                                                                    6 in the flock[0m
                                                                                                                                                                 [0m
 [0m[38;5;245m ██ api  (sheep config)  2 edits                                                                                                                                [0m
-[0m[38;5;245m   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump                                              [0m
+[0m[38;5;245m   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 [0m
 [0m[38;5;245m  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[38;5;245m  FIELD                       VALUE                                           LANDS                                                                             [0m
 [0m[38;5;245m>  err_file                   (unset) -> /var/log/api/err.log                 respawn    FOCUSED  err_file  text                                                [0m
@@ -2224,7 +2224,7 @@ esc pressed with no edit of the operator's own, only listen_timeout already park
 [0m[7m[38;5;29mshep lookout   /home/ada/.shep                                                                                                                    6 in the flock[0m
                                                                                                                                                                 [0m
 [0m[38;5;245m ██ api  (sheep config)                                                                                                                                         [0m
-[0m[38;5;245m   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab next group   1…9 jump                                              [0m
+[0m[38;5;245m   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 [0m
 [0m[38;5;245m  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 [0m[38;5;245m  FIELD                       VALUE                                           LANDS                                                                             [0m
 [0m[38;5;245m>  cwd                        (unset)                                         respawn    FOCUSED  cwd  text                                                     [0m

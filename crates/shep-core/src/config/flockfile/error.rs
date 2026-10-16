@@ -23,7 +23,15 @@ pub enum FlockfileError {
     Json5(String),
     /// The document parsed but declared no apps
     NoApps,
-    /// The document named one or more keys no field claims.
+    /// An `app` entry named one or more keys no field claims.
+    ///
+    /// Only a key inside an `app` entry lands here. A top-level typo is
+    /// refused earlier, by `RawFlockfile`'s own `deny_unknown_fields`,
+    /// which the backend's derived `Deserialize` enforces directly rather
+    /// than through the `serde_ignored` callback this variant collects
+    /// from: it arrives as the format variant
+    /// ([`FlockfileError::Toml`], [`FlockfileError::Yaml`],
+    /// [`FlockfileError::Json`], [`FlockfileError::Json5`]) naming the key.
     ///
     /// A Flockfile is hand-written, unlike the same [`AppConfig`](crate::config::AppConfig)/
     /// [`ProbeConfig`](crate::config::ProbeConfig) shape riding the wire,

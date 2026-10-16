@@ -105,10 +105,11 @@ pub enum NormalizeError {
         /// The sheep name, so the error names which Flockfile entry to edit.
         name: String,
     },
-    /// `action_timeout` is at or above `normalize`'s own ceiling: a wait no
+    /// `action_timeout` is above `normalize`'s own ceiling: a wait no
     /// RPC caller could ever be given enough deadline to outlast, since the
     /// daemon clamps every deadline a caller can ask for. Carries the app
-    /// name, the value as written, and the ceiling it failed.
+    /// name, the value as written, and the ceiling it failed. The ceiling
+    /// itself is accepted.
     ActionTimeoutTooLong {
         /// The sheep name, so the error names which Flockfile entry to edit.
         name: String,

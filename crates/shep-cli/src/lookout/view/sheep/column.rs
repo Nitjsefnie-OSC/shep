@@ -235,8 +235,8 @@ fn env_row_line(key: &str, sealed: bool, palette: Palette) -> Line<'static> {
 
 /// The header row: `e edit`, and how many fields
 /// [`SheepConfigView::pending`] is still carrying, once there is a config
-/// to read one off. No `tab next group`: no key routes one, the same defect
-/// the status bar carried until Task 7 fixed it for that frame.
+/// to read one off. No `tab/S-tab next / prev group`: no key routes one, the
+/// same defect the status bar carried until Task 7 fixed it for that frame.
 fn column_header_line(pane: &SheepPane, palette: Palette) -> Line<'static> {
     let mut text = "\u{2588}\u{2588} CONFIG & ENV   e edit".to_owned();
     if let Some(pending) = pane
