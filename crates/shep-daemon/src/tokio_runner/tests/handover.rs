@@ -193,25 +193,20 @@ async fn two_pumps_on_one_log_path_report_different_numbers() {
 /// stale report risks the successor adopting an unrelated file as this
 /// sheep's stdout. `err_pipe` staying at its own number is what keeps
 /// this a case about the ended stream, not a dead pump.
+///
+/// Settles on the report's own `out_pipe` rather than on the number going
+/// closed: the same number is open again the moment any other test in this
+/// process opens a file.
 #[tokio::test]
 async fn a_report_after_a_stream_ends_names_no_descriptor_for_it() {
     let mut pump = PumpHarness::start_over_pipes();
     pump.feed(false, "before-the-eof").await;
 
     drop(pump.out_writer);
-    let_the_pump_settle().await;
 
     // Sent through the field, not `report_fds`: dropping the writer
     // above moves out of the harness, so `&self` cannot be called.
-    let (done, ack) = oneshot::channel();
-    pump.ctl
-        .send(LogCtl::ReportFds { done })
-        .await
-        .expect("a pump with one live stream still reads its control channel");
-    let fds = timeout(PUMP_DEADLINE, ack)
-        .await
-        .expect("a descriptor report must be acknowledged")
-        .expect("the pump must answer rather than drop the acknowledgement");
+    let fds = report_fds_until(&pump.ctl, |fds| fds.out_pipe.is_none()).await;
 
     assert_eq!(
         fds.out_pipe, None,
