@@ -6,6 +6,7 @@ use super::emit_dog_action;
 use super::test_support::streams;
 use crate::cli::Format;
 use crate::exit::ExitCode;
+use crate::output::DogActionStatus;
 
 #[test]
 fn emit_dog_action_wraps_the_row_in_the_verb_s_envelope_under_json() {
@@ -19,8 +20,7 @@ fn emit_dog_action_wraps_the_row_in_the_verb_s_envelope_under_json() {
         "disable",
         "bark",
         DogSource::BuiltIn,
-        "stopped",
-        true,
+        DogActionStatus::Acted("stopped"),
     );
 
     assert_eq!(code, ExitCode::Success);
@@ -39,7 +39,13 @@ fn emit_dog_action_carries_shepherd_acted_false_when_no_shepherd_answered() {
     let mut streams = streams(&mut out, &mut err);
     streams.fmt = Format::Json;
 
-    let code = emit_dog_action(&mut streams, "enable", "bark", None, "will start", false);
+    let code = emit_dog_action(
+        &mut streams,
+        "enable",
+        "bark",
+        None,
+        DogActionStatus::NoShepherd("will start"),
+    );
 
     assert_eq!(code, ExitCode::Success);
     let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -57,8 +63,7 @@ fn emit_dog_action_writes_the_table_row_under_table() {
         "adopt",
         "otel",
         None,
-        "running",
-        true,
+        DogActionStatus::Acted("running"),
     );
 
     assert_eq!(code, ExitCode::Success);

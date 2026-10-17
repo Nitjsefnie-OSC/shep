@@ -47,11 +47,11 @@ pub use flock::emit_flock;
 #[cfg_attr(windows, allow(unused_imports))]
 pub use rows::{
     AvailableDogRows, BarkRows, CopyChange, CopyReport, DeletedIds, DescribedSecret, DogActionRow,
-    DogRows, EmptiedFile, EmptiedFiles, FlockRows, FlushedRows, ImportEnvRow, ImportEnvRows,
-    ImportRow, ImportRows, KillRow, KvEntry, KvRows, KvUnsetRow, LabelledLambRows, LambRows,
-    RolledSheep, RolledSheepRows, SavedRollRow, SecretKeyRow, SecretKeyRows, SecretSlotRow,
-    SecretStatus, SecretValueRow, SentLineRows, SignalledRows, StartupStep, StartupSteps,
-    TriggeredRows,
+    DogActionStatus, DogRows, EmptiedFile, EmptiedFiles, FlockRows, FlushedRows, ImportEnvRow,
+    ImportEnvRows, ImportRow, ImportRows, KillRow, KvEntry, KvRows, KvUnsetRow, LabelledLambRows,
+    LambRows, RolledSheep, RolledSheepRows, SavedRollRow, SecretKeyRow, SecretKeyRows,
+    SecretSlotRow, SecretStatus, SecretValueRow, SentLineRows, SignalledRows, StartupStep,
+    StartupSteps, TriggeredRows,
 };
 pub use table::{human_bytes, human_duration, local_timestamp, render_table};
 
