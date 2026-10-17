@@ -127,6 +127,21 @@ pub(super) fn unit_file_name(plan: &StartupPlan) -> String {
         .into_owned()
 }
 
+/// `/run/systemd/system` is a directory, which is what `sd_booted(3)`
+/// checks.
+///
+/// A newtype rather than a bare bool so a probe cannot land in the other
+/// probe's slot at a call site.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SystemdBooted(bool);
+
+/// `/run/openrc` is there, in either of the two shapes the host can leave it
+/// in.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OpenrcRunning(bool);
+
 /// Which init a Linux host running these two probes is on.
 ///
 /// A pure function so the order is testable off Linux. systemd wins a
@@ -136,10 +151,10 @@ pub(super) fn unit_file_name(plan: &StartupPlan) -> String {
 /// [`current_init`]'s Linux arm is the only non-test caller; `#[cfg]`-ed
 /// away on every other target rather than blanket-`#[allow(dead_code)]`ed.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-const fn linux_init(systemd: bool, openrc: bool) -> Option<Init> {
-    if systemd {
+const fn linux_init(systemd: SystemdBooted, openrc: OpenrcRunning) -> Option<Init> {
+    if systemd.0 {
         Some(Init::Systemd)
-    } else if openrc {
+    } else if openrc.0 {
         Some(Init::Openrc)
     } else {
         None
@@ -160,8 +175,10 @@ pub(super) fn current_init() -> Option<Init> {
     #[cfg(target_os = "linux")]
     {
         linux_init(
-            Path::new("/run/systemd/system").is_dir(),
-            Path::new("/run/openrc/softlevel").exists() || Path::new("/run/openrc").is_dir(),
+            SystemdBooted(Path::new("/run/systemd/system").is_dir()),
+            OpenrcRunning(
+                Path::new("/run/openrc/softlevel").exists() || Path::new("/run/openrc").is_dir(),
+            ),
         )
     }
     #[cfg(target_os = "macos")]
@@ -238,10 +255,19 @@ mod tests {
     /// checks, so both present means openrc leftovers on a systemd host.
     #[test]
     fn systemd_wins_when_both_linux_probes_are_true() {
-        assert_eq!(linux_init(true, true), Some(Init::Systemd));
-        assert_eq!(linux_init(true, false), Some(Init::Systemd));
-        assert_eq!(linux_init(false, true), Some(Init::Openrc));
-        assert_eq!(linux_init(false, false), None);
+        assert_eq!(
+            linux_init(SystemdBooted(true), OpenrcRunning(true)),
+            Some(Init::Systemd)
+        );
+        assert_eq!(
+            linux_init(SystemdBooted(true), OpenrcRunning(false)),
+            Some(Init::Systemd)
+        );
+        assert_eq!(
+            linux_init(SystemdBooted(false), OpenrcRunning(true)),
+            Some(Init::Openrc)
+        );
+        assert_eq!(linux_init(SystemdBooted(false), OpenrcRunning(false)), None);
     }
 
     /// A unit installed under one init must be removable after the host

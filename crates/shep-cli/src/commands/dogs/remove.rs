@@ -119,7 +119,6 @@ async fn remove_after_config(
             name,
             source,
             NO_SHEPHERD_DISABLE_STATUS,
-            false,
         );
     };
     match client
@@ -129,7 +128,7 @@ async fn remove_after_config(
         .await
     {
         Ok(Response::Deleted(_ids)) => {
-            emit_dog_action(streams, removal.verb(), name, source, DISABLED_STATUS, true)
+            emit_dog_action(streams, removal.verb(), name, source, DISABLED_STATUS)
         }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
@@ -154,6 +153,7 @@ mod tests {
     use super::*;
     use crate::cli::Format;
     use crate::commands::dogs::test_support::streams;
+    use crate::output::DogActionStatus;
 
     /// Both places a dog's own settings can sit: a `[dog.otel]` an
     /// un-migrated `shep.toml` still carries, and the `[otel]` in
@@ -254,10 +254,10 @@ mod tests {
         );
     }
 
-    /// `shepherd_acted` separates "only the config changed" from "a shepherd
-    /// acted", and this verb's two branches differ in little else. The pair
-    /// is the guard: either case alone passes while the other branch carries
-    /// the wrong flag.
+    /// `shepherd_acted` and `status` together separate "only the config
+    /// changed" from "a shepherd acted", and this verb's two branches differ
+    /// in little else. The pair is the guard: either field alone passes while
+    /// the other branch carries the wrong one.
     #[tokio::test]
     async fn a_removal_reports_whether_a_shepherd_acted() {
         let dir = tempfile::tempdir().unwrap();
@@ -266,7 +266,10 @@ mod tests {
             shep_client::testing::fake_client_answering(&path, |_| Response::Deleted(vec![3]))
                 .await;
 
-        for (client, expected) in [(Some(&client), true), (None, false)] {
+        for (client, expected) in [
+            (Some(&client), DogActionStatus::Acted("stopped")),
+            (None, NO_SHEPHERD_DISABLE_STATUS),
+        ] {
             let mut out = Vec::new();
             let mut err = Vec::new();
             let mut streams = streams(&mut out, &mut err);
@@ -285,9 +288,15 @@ mod tests {
             let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
             assert_eq!(
                 json["data"]["shepherd_acted"],
-                serde_json::json!(expected),
+                serde_json::json!(expected.shepherd_acted()),
                 "client present: {}, payload: {}",
                 client.is_some(),
+                String::from_utf8_lossy(&out)
+            );
+            assert_eq!(
+                json["data"]["status"],
+                expected.text(),
+                "payload: {}",
                 String::from_utf8_lossy(&out)
             );
         }

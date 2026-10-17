@@ -382,8 +382,7 @@ pub(crate) mod tests {
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
                 channel: false,
             },
-            "online",
-            true,
+            DogActionStatus::Acted("online"),
         );
         let cells = reversed::<DogActionRow>(adopted.rows().remove(0), dog_action_paint);
         let h = DogActionRow::headers();
