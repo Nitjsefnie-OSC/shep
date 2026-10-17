@@ -21,7 +21,7 @@ go for the full argument. The commit that removed them names itself.
 
 - [Core types and the daemon's shape](#core-types-and-the-daemons-shape) (5)
 - [The CLI surface](#the-cli-surface) (4)
-- [Supervision and lifecycle](#supervision-and-lifecycle) (17)
+- [Supervision and lifecycle](#supervision-and-lifecycle) (18)
 - [The log plane](#the-log-plane) (9)
 - [Reload](#reload) (9)
 - [Custom actions and the shepherd channel](#custom-actions-and-the-shepherd-channel) (10)
@@ -259,6 +259,14 @@ normalize() rejects watch=true when the app sets no cwd (NormalizeError::WatchWi
 **Why:** Two alternatives were considered and rejected: defaulting to the daemon's own cwd is dangerous (nothing in the workspace chdirs, so under systemd with no WorkingDirectory= that default is `/`, arming a recursive watch over the whole filesystem); arming nothing with a warning is the same silent-failure shape the https rejection avoids. A watch root must come from the Flockfile.
 
 `docs/writing-plans/plans/2026-08-08-shep-phase4-lifecycle.md:635`
+
+### A readiness probe's interval is capped at a quarter of listen_timeout, so a gated wait gets more than one look
+
+`await_ready`'s probe arm sleeps the probe's own `interval` after each look, shortened to `listen_timeout / 4` where the interval is longer than that. A shorter interval is never raised. Liveness keeps `interval` as written, floored at 1s.
+
+**Why:** #687. The first probe lands at t=0, before a fresh process has bound anything, so an interval at or past the deadline (10s default against a 3s one) left one failure and no second look: every reload of a probed app at the defaults ended with its replacement left `starting`, and a plain start only survived it because a start marks a timed-out sheep `online` anyway. The alternative the issue offered was a Flockfile warning for `interval >= listen_timeout`, which reports a broken default instead of fixing it, and every probed app on a stock Flockfile sits on that default. Dividing the deadline rather than polling on one fixed short gap bounds the sleep after each look to a quarter of the wait: at a 60s `listen_timeout` the gap is 15s, not 500ms, so an exec probe is not run 120 times to learn that one app is slow. Four looks inside the deadline is what a prober that answers at once gets at that cap, not what every wait gets: an `interval` under the cap, and the 1ms floor, give more looks, and a probe that takes time to answer moves the looks after it later. The 1ms floor is the daemon's own guard, because `normalize` says nothing about `listen_timeout` and a deadline under 4ms divides to zero.
+
+`verified crates/shep-daemon/src/probes/ready.rs (await_ready, readiness_poll_interval, READINESS_PROBE_GAPS, a_probe_that_takes_a_second_to_answer_shifts_the_looks_after_it), crates/shep-core/src/config/normalize/resolved_app.rs (MIN_READINESS_INTERVAL), crates/shep-daemon/src/supervisor/tests/readiness.rs (a_reload_of_a_probed_app_reaches_online_at_the_default_probe_interval)`
 
 ## The log plane
 

@@ -314,6 +314,12 @@ of that exposure, so the socket would buy a round trip for nothing.
 - **Probes** (per app, optional): `readiness_probe` / `liveness_probe` =
   HTTP GET / TCP connect / exec, with interval, timeout, failure threshold.
   Readiness gates reload; liveness failures trigger the restart policy.
+  A readiness wait sleeps `interval` after each look, and no sleep runs
+  longer than a quarter of `listen_timeout`: its first probe lands at spawn,
+  before a fresh process has bound anything, so a gap as wide as the deadline
+  would leave the wait one failure and no second look. A look that takes time
+  delays the one after it by that much as well. Liveness polls at `interval`
+  as written, floored at 1s.
 - `wait_ready = true` selects channel-based readiness; probe config selects
   probe-based; neither selects the heuristic source (`ReadinessSource::
   Heuristic`, "ready" = spawn success + `listen_timeout`) — but the

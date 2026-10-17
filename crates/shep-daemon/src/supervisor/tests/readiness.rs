@@ -4,7 +4,7 @@
 //! its deadline elapses. The awkward cases are the ones where it is stopped,
 //! restarted or exits while that wait is still outstanding.
 //!
-//! The two probe cases wait on the probe's own traffic (a request reaching
+//! The probe cases wait on the probe's own traffic (a request reaching
 //! the test's fake, a marker file the probe command writes) rather than on a
 //! wall-clock window, and let the probe pass only where the test itself says
 //! so: a queued 2xx reply, a marker file the test writes. Their readiness
@@ -158,6 +158,110 @@ async fn an_exec_readiness_probe_sees_the_assembled_env_not_the_apps_own() {
     .await
     .expect("Online once the exec probe can resolve $SHEP_INSTANCE");
     assert_eq!(handle.list().await[0].status, ProcStatus::Online);
+}
+
+// Both values at their production defaults, the arrangement a gated wait has
+// to survive: the probe's 10s `interval` is past the 3000ms `listen_timeout`,
+// so following `interval` lands the second look after the readiness deadline
+// has already elapsed. Real clock, since the probe spawns a real `sh`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_reload_of_a_probed_app_reaches_online_at_the_default_probe_interval() {
+    let dir = tempfile::tempdir().unwrap();
+    let ready_file = dir.path().join("ready-0");
+    let attempts_file = dir.path().join("probe-attempts-0");
+    let mut app = AppConfig::minimal("web", "./srv");
+    app.readiness_probe = Some(ProbeConfig {
+        // A `sh` fork and two file operations, bounded three orders of
+        // magnitude above what they cost on a quiet runner. `interval` stays
+        // at the 10s this fixture copies from production: it is the number
+        // under test.
+        timeout: UpDuration::from_millis(2_000),
+        ..probe_config(
+            ProbeKind::Exec,
+            &format!(
+                r#"echo >> "{dir}/probe-attempts-$SHEP_INSTANCE"; test -f "{dir}/ready-$SHEP_INSTANCE""#,
+                dir = dir.path().display(),
+            ),
+        )
+    });
+    // The start's own probe has to pass for there to be an `Online` instance
+    // to reload, so the marker is there before the flock is.
+    std::fs::write(&ready_file, b"").unwrap();
+    let (handle, _runner, mut rx) = started(
+        &dir,
+        app,
+        vec![ProcScript::never_exits(), ProcScript::never_exits()],
+    )
+    .await;
+
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        await_event(&mut rx, 0, ProcessEventKind::Online),
+    )
+    .await
+    .expect("the start's probe passes the marker written for it");
+    assert_eq!(probe_attempts(&attempts_file), 1, "one probe for the start");
+
+    // Gone before the reload is asked for, so the replacement's first probe
+    // cannot be the one that finds it.
+    std::fs::remove_file(&ready_file).unwrap();
+
+    handle
+        .reload(ProcessSelector::Name("web".to_string()))
+        .await
+        .expect("the reload is accepted");
+
+    // The second attempt is the replacement's first look, taken with nothing
+    // to answer it. Restoring the marker here is what makes a later poll the
+    // one that passes.
+    await_probe_attempts(&attempts_file, 2, Duration::from_secs(10)).await;
+    std::fs::write(&ready_file, b"").unwrap();
+
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        await_event(&mut rx, 1, ProcessEventKind::Reloaded),
+    )
+    .await
+    .expect("a replacement that failed its first probe and passed a later one is serving");
+
+    let after = handle.list().await;
+    assert_eq!(after.len(), 1, "the drainee's registration goes with it");
+    assert_eq!(after[0].id, 1);
+    assert_eq!(
+        after[0].status,
+        ProcStatus::Online,
+        "a probe that passed inside listen_timeout must put the replacement online"
+    );
+}
+
+/// How many probe runs have appended a line to `path`.
+fn probe_attempts(path: &std::path::Path) -> usize {
+    match std::fs::read_to_string(path) {
+        Ok(text) => text.lines().count(),
+        Err(_) => 0,
+    }
+}
+
+/// Polls `path` until it holds at least `want` probe attempts.
+///
+/// Polling is how a test waits on a probe child's write: the line lands
+/// through the OS, not through the runtime's clock.
+async fn await_probe_attempts(path: &std::path::Path, want: usize, bound: Duration) {
+    let reached = tokio::time::timeout(bound, async {
+        loop {
+            if probe_attempts(path) >= want {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(
+        reached.is_ok(),
+        "{} never reached {want} probe attempts",
+        path.display(),
+    );
 }
 
 /// Polls `path` until it exists, giving up after `bound`.

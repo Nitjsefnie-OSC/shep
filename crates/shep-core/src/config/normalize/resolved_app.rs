@@ -111,10 +111,11 @@ pub(super) const MIN_LIVENESS_INTERVAL: UpDuration = UpDuration::from_millis(1_0
 
 /// Shortest `interval` a `readiness_probe` may name.
 ///
-/// A whole second lower than [`MIN_LIVENESS_INTERVAL`]: the readiness wait
-/// honours its `interval` exactly as written, bounded by `listen_timeout`,
-/// so only zero needs rejecting. A fast app polling every 20ms to leave
-/// `starting` sooner must not lose that.
+/// A whole second lower than [`MIN_LIVENESS_INTERVAL`]: the readiness wait is
+/// bounded by `listen_timeout` and shortens an `interval` only where following
+/// it would push the next poll past a quarter of that bound, so only zero
+/// needs rejecting. A fast app polling every 20ms to leave `starting` sooner
+/// must not lose that.
 pub(super) const MIN_READINESS_INTERVAL: UpDuration = UpDuration::from_millis(1);
 
 /// Longest `action_timeout` an app may name. The ceiling itself is

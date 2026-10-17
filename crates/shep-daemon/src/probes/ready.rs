@@ -8,6 +8,11 @@
 //! configures no signal of its own: the wait then costs `listen_timeout`
 //! rather than nothing.
 //!
+//! A probe wait sleeps at most a quarter of its deadline between looks, cut
+//! from `interval` where that is wider: the first probe lands at t=0, before
+//! a fresh process has bound anything, and each sleep runs from the end of
+//! the probe before it, so a slow probe shifts the looks after it.
+//!
 //! ## Reference
 //!
 //! - [`ReadinessSource`], [`Readiness`], [`await_ready`]
@@ -56,6 +61,24 @@ impl ReadinessSource {
     }
 }
 
+/// How many probe gaps a readiness wait splits its deadline into.
+///
+/// Four is the fewest that covers a process taking most of the deadline to
+/// bind: at the 3000ms `listen_timeout` default the sleep between looks is
+/// 750ms, so a prober that answers at once looks at 0, 750ms, 1500ms and
+/// 2250ms. Fewer gaps leaves a wider window in which a process that has
+/// bound nothing goes unlooked at.
+const READINESS_PROBE_GAPS: u32 = 4;
+
+/// Floor on the gap between readiness probes.
+///
+/// `deadline / READINESS_PROBE_GAPS` is zero for any deadline under
+/// four milliseconds, and a zero sleep would spin the loop for as long as the
+/// deadline lasts. `shep-core`'s `normalize` floors a probe's own `interval`
+/// at 1ms and says nothing about `listen_timeout`, so a tiny deadline is
+/// reachable.
+const MIN_READINESS_POLL: Duration = Duration::from_millis(1);
+
 /// How a readiness wait ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Readiness {
@@ -100,9 +123,10 @@ pub async fn await_ready(
             // this loop is bounded by `deadline`, not infinite, and
             // flooring it would hold a fast, already-answering app at
             // `starting` for a needless second.
-            let interval = config.interval.as_duration();
+            let interval = readiness_poll_interval(config, deadline);
             let timeout = config.timeout.as_duration();
-            // Probe first, sleep after, so the first probe lands at t=0.
+            // Probe first, sleep after: the first probe lands at t=0, and
+            // each sleep runs from the end of the probe before it.
             // `failure_threshold` is never read here: it is a liveness
             // concept, not a readiness one.
             let poll = async {
@@ -126,6 +150,21 @@ pub async fn await_ready(
             Readiness::Ready
         }
     }
+}
+
+/// The gap [`await_ready`] sleeps after each probe of `config` under `deadline`.
+///
+/// `config.interval` as written, shortened only where following it would
+/// spend the whole wait on the probe that lands at t=0. A shorter interval
+/// is never raised: an app polled every 20ms leaves `starting` 20ms after it
+/// binds, whatever its deadline. A probe that takes time to answer moves the
+/// looks after it later, not the gap.
+fn readiness_poll_interval(config: &ProbeConfig, deadline: Duration) -> Duration {
+    config
+        .interval
+        .as_duration()
+        .min(deadline / READINESS_PROBE_GAPS)
+        .max(MIN_READINESS_POLL)
 }
 
 #[cfg(test)]
@@ -253,6 +292,110 @@ mod tests {
 
         assert_eq!(readiness, Readiness::TimedOut);
         assert_eq!(tokio::time::Instant::now() - start, deadline);
+    }
+
+    // Both defaults at once: a 10s `interval` under a 3000ms deadline. The
+    // first probe lands at t=0, where nothing has bound yet, so a wait that
+    // follows `interval` here can only ever time out.
+    #[tokio::test(start_paused = true)]
+    async fn a_probe_interval_past_the_deadline_still_polls_inside_it() {
+        let source = tcp_source(10_000);
+        let (_tx, rx) = oneshot::channel();
+        let prober = Arc::new(ScriptedProber::new(vec![
+            Err(ProbeFailure::Transport("connection refused".to_string())),
+            Ok(()),
+        ]));
+        let start = tokio::time::Instant::now();
+
+        let readiness = await_ready(&source, Duration::from_secs(3), rx, prober).await;
+
+        assert_eq!(readiness, Readiness::Ready);
+        assert_eq!(
+            tokio::time::Instant::now() - start,
+            Duration::from_millis(750),
+            "the second probe must land a quarter of the deadline in, not one 10s interval in"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_deadline_holds_a_probe_every_quarter_of_it_at_the_default_interval() {
+        let source = tcp_source(10_000);
+        let (_tx, rx) = oneshot::channel();
+        let prober = Arc::new(ScriptedProber::new(vec![Err(ProbeFailure::Timeout)]));
+        let start = tokio::time::Instant::now();
+        let deadline = Duration::from_secs(3);
+
+        let dyn_prober = Arc::clone(&prober) as Arc<dyn Prober>;
+        let readiness = await_ready(&source, deadline, rx, dyn_prober).await;
+
+        assert_eq!(readiness, Readiness::TimedOut);
+        assert_eq!(
+            tokio::time::Instant::now() - start,
+            deadline,
+            "the extra probes must not end the wait early"
+        );
+        assert!(
+            prober.calls() >= 4,
+            "a 3s deadline split into 750ms gaps looks at 0ms, 750ms, 1500ms and 2250ms; \
+             following the 10s interval instead gives one probe and no more"
+        );
+    }
+
+    // The cap bounds the sleep, not the landing times. A 1s probe plus a
+    // 750ms sleep fits twice inside a 3s deadline and leaves no room for a
+    // third look, where two fast probes plus two sleeps fit four.
+    #[tokio::test(start_paused = true)]
+    async fn a_probe_that_takes_a_second_to_answer_shifts_the_looks_after_it() {
+        let source = tcp_source(10_000);
+        let (_tx, rx) = oneshot::channel();
+        let prober = Arc::new(
+            ScriptedProber::new(vec![Err(ProbeFailure::Timeout)])
+                .with_delay(Duration::from_secs(1)),
+        );
+        let start = tokio::time::Instant::now();
+        let deadline = Duration::from_secs(3);
+
+        let dyn_prober = Arc::clone(&prober) as Arc<dyn Prober>;
+        let readiness = await_ready(&source, deadline, rx, dyn_prober).await;
+
+        assert_eq!(readiness, Readiness::TimedOut);
+        assert_eq!(tokio::time::Instant::now() - start, deadline);
+        assert_eq!(
+            prober.calls(),
+            2,
+            "looks start at 0 and 1.75s, each sleep running from the end of the probe before it"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_interval_under_the_cap_is_never_raised_to_it() {
+        let source = tcp_source(20);
+        let (_tx, rx) = oneshot::channel();
+        let prober = Arc::new(ScriptedProber::new(vec![
+            Err(ProbeFailure::Transport("connection refused".to_string())),
+            Ok(()),
+        ]));
+        let start = tokio::time::Instant::now();
+
+        let readiness = await_ready(&source, Duration::from_secs(3), rx, prober).await;
+
+        assert_eq!(readiness, Readiness::Ready);
+        assert_eq!(
+            tokio::time::Instant::now() - start,
+            Duration::from_millis(20),
+            "a 20ms poller leaves `starting` 20ms after it answers, not 750ms after"
+        );
+    }
+
+    #[test]
+    fn a_deadline_under_four_milliseconds_still_polls_at_one_ms() {
+        let config = probe_config(ProbeKind::Tcp, "localhost:5432");
+
+        assert_eq!(
+            readiness_poll_interval(&config, Duration::from_millis(3)),
+            Duration::from_millis(1),
+            "3ms / 4 is zero, and a zero sleep spins the loop for the whole deadline"
+        );
     }
 
     #[tokio::test(start_paused = true)]
