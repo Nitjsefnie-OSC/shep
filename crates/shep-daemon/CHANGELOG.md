@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bound a pump-EOF test wait on the descriptor, not a yield count
 - Settle the descriptor-report wait on the pump's report
+- Settle the descriptor-report test on the pump's report, not an fd number
+- Poll a readiness probe inside listen_timeout
 
 
 ## [0.15.1] - 2026-10-16
