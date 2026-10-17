@@ -8,10 +8,10 @@
 //! configures no signal of its own: the wait then costs `listen_timeout`
 //! rather than nothing.
 //!
-//! A probe wait polls at the probe's own `interval`, capped at a quarter of
-//! its deadline: the first probe lands at t=0, before a fresh process has
-//! bound anything, so a gap as wide as the deadline leaves one failure and no
-//! second look.
+//! A probe wait sleeps at most a quarter of its deadline between looks, cut
+//! from `interval` where that is wider: the first probe lands at t=0, before
+//! a fresh process has bound anything, and each sleep runs from the end of
+//! the probe before it, so a slow probe shifts the looks after it.
 //!
 //! ## Reference
 //!
@@ -64,9 +64,10 @@ impl ReadinessSource {
 /// How many probe gaps a readiness wait splits its deadline into.
 ///
 /// Four is the fewest that covers a process taking most of the deadline to
-/// bind: at the 3000ms `listen_timeout` default the gap is 750ms, so the
-/// looks land at 0, 750ms, 1500ms and 2250ms. Fewer gaps leaves a wider
-/// window in which a process that has bound nothing goes unlooked at.
+/// bind: at the 3000ms `listen_timeout` default the sleep between looks is
+/// 750ms, so a prober that answers at once looks at 0, 750ms, 1500ms and
+/// 2250ms. Fewer gaps leaves a wider window in which a process that has
+/// bound nothing goes unlooked at.
 const READINESS_PROBE_GAPS: u32 = 4;
 
 /// Floor on the gap between readiness probes.
@@ -124,7 +125,8 @@ pub async fn await_ready(
             // `starting` for a needless second.
             let interval = readiness_poll_interval(config, deadline);
             let timeout = config.timeout.as_duration();
-            // Probe first, sleep after, so the first probe lands at t=0.
+            // Probe first, sleep after: the first probe lands at t=0, and
+            // each sleep runs from the end of the probe before it.
             // `failure_threshold` is never read here: it is a liveness
             // concept, not a readiness one.
             let poll = async {
@@ -150,12 +152,13 @@ pub async fn await_ready(
     }
 }
 
-/// The gap [`await_ready`] sleeps between probes of `config` under `deadline`.
+/// The gap [`await_ready`] sleeps after each probe of `config` under `deadline`.
 ///
 /// `config.interval` as written, shortened only where following it would
 /// spend the whole wait on the probe that lands at t=0. A shorter interval
 /// is never raised: an app polled every 20ms leaves `starting` 20ms after it
-/// binds, whatever its deadline.
+/// binds, whatever its deadline. A probe that takes time to answer moves the
+/// looks after it later, not the gap.
 fn readiness_poll_interval(config: &ProbeConfig, deadline: Duration) -> Duration {
     config
         .interval
@@ -335,6 +338,32 @@ mod tests {
             prober.calls() >= 4,
             "a 3s deadline split into 750ms gaps looks at 0ms, 750ms, 1500ms and 2250ms; \
              following the 10s interval instead gives one probe and no more"
+        );
+    }
+
+    // The cap bounds the sleep, not the landing times. A 1s probe plus a
+    // 750ms sleep fits twice inside a 3s deadline and leaves no room for a
+    // third look, where two fast probes plus two sleeps fit four.
+    #[tokio::test(start_paused = true)]
+    async fn a_probe_that_takes_a_second_to_answer_shifts_the_looks_after_it() {
+        let source = tcp_source(10_000);
+        let (_tx, rx) = oneshot::channel();
+        let prober = Arc::new(
+            ScriptedProber::new(vec![Err(ProbeFailure::Timeout)])
+                .with_delay(Duration::from_secs(1)),
+        );
+        let start = tokio::time::Instant::now();
+        let deadline = Duration::from_secs(3);
+
+        let dyn_prober = Arc::clone(&prober) as Arc<dyn Prober>;
+        let readiness = await_ready(&source, deadline, rx, dyn_prober).await;
+
+        assert_eq!(readiness, Readiness::TimedOut);
+        assert_eq!(tokio::time::Instant::now() - start, deadline);
+        assert_eq!(
+            prober.calls(),
+            2,
+            "looks start at 0 and 1.75s, each sleep running from the end of the probe before it"
         );
     }
 

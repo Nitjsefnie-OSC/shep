@@ -151,7 +151,8 @@ depends_on = ["db"]`}</CodeBlock>
       <code>listen_timeout</code> between polls, whatever its{" "}
       <code>interval</code> says. The first poll lands at spawn, before the app
       has bound anything, so the one that matters is the next: at the defaults
-      that is 750ms, 1500ms and 2250ms inside a three second deadline. An{" "}
+      it runs 750ms after the previous poll answers, and a poll that takes a
+      second to answer moves the ones after it later. An {" "}
       <code>interval</code> under that quarter is honoured exactly, which is
       what the 100ms above buys, a poll every hundred milliseconds instead of
       one every 750.
