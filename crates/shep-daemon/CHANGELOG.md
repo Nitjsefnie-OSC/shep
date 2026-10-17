@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-10-17
+
+### Fixed
+
+- Bound a pump-EOF test wait on the descriptor, not a yield count
+- Settle the descriptor-report wait on the pump's report
+
+
 ## [0.15.1] - 2026-10-16
 
 ### Fixed
