@@ -35,7 +35,7 @@ mod vet;
 
 #[cfg(all(test, unix))]
 mod emit_dog_action_tests;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod test_support;
 
 pub use adopt::adopt;
