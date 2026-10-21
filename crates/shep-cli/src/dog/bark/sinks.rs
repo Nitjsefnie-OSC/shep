@@ -18,7 +18,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use shep_client::dogs::dog_config;
 use shep_core::barks::Bark;
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 
 use crate::fetch::{self, Target};
 use crate::terminal_safe;
@@ -368,6 +368,9 @@ async fn deliver_inner(target: &Target, body: &str) -> Result<(), SinkError> {
     read_response(stream).await
 }
 
+/// The most of a non-2xx reply's first body line [`read_response`] keeps.
+const MAX_DIAGNOSTIC_BYTES: usize = 1024;
+
 /// Reads the status line off `stream`; a 2xx reply is read no further. A
 /// non-2xx reads past the remaining header lines to the blank line that
 /// ends them, or to EOF, then takes one more line for
@@ -376,8 +379,12 @@ async fn deliver_inner(target: &Target, body: &str) -> Result<(), SinkError> {
 /// The status line is [`fetch::parse_status_line`]'s to judge, and the
 /// diagnostic is the peer's wording, so it is
 /// [`terminal_safe::sanitise`]d here, where it becomes an owned string.
+///
+/// The peer sizes neither, so both are bounded: the status line and header
+/// block share [`fetch::MAX_HEADER_BYTES`] through a `Take`, and the
+/// diagnostic is cut at [`MAX_DIAGNOSTIC_BYTES`].
 async fn read_response<S: AsyncRead + Unpin>(stream: S) -> Result<(), SinkError> {
-    let mut reader = BufReader::new(stream);
+    let mut reader = BufReader::new(stream).take(fetch::MAX_HEADER_BYTES as u64);
     let mut status_line = String::new();
     reader.read_line(&mut status_line).await?;
     let code = fetch::parse_status_line(&status_line)?;
@@ -388,16 +395,22 @@ async fn read_response<S: AsyncRead + Unpin>(stream: S) -> Result<(), SinkError>
     loop {
         let mut line = String::new();
         let read = reader.read_line(&mut line).await?;
+        if read == 0 && reader.limit() == 0 {
+            return Err(SinkError::Transport {
+                source: std::io::Error::other("response headers exceeded the size limit"),
+            });
+        }
         if read == 0 || line == "\r\n" || line == "\n" {
             break;
         }
     }
 
-    let mut diagnostic = String::new();
-    reader.read_line(&mut diagnostic).await?;
+    reader.set_limit(MAX_DIAGNOSTIC_BYTES as u64);
+    let mut diagnostic = Vec::new();
+    reader.read_until(b'\n', &mut diagnostic).await?;
     Err(SinkError::Status {
         code,
-        message: terminal_safe::sanitise(&diagnostic).0,
+        message: terminal_safe::sanitise(&String::from_utf8_lossy(&diagnostic)).0,
     })
 }
 
@@ -629,6 +642,27 @@ mod tests {
         };
         assert_eq!(message, "bad[2Jline");
         assert!(!err.to_string().contains('\u{1b}'));
+    }
+
+    /// A peer that never ends a header line must not be read forever.
+    #[tokio::test]
+    async fn a_header_block_over_the_cap_is_a_transport_failure() {
+        let mut reply = b"HTTP/1.1 500 Oops\r\nX-Pad: ".to_vec();
+        reply.resize(reply.len() + fetch::MAX_HEADER_BYTES, b'a');
+        let err = read_response(&reply[..]).await.unwrap_err();
+        assert!(matches!(err, SinkError::Transport { .. }), "{err:?}");
+    }
+
+    /// A peer that never ends the first body line must not be read forever.
+    #[tokio::test]
+    async fn a_body_line_over_the_cap_is_cut_short() {
+        let mut reply = b"HTTP/1.1 500 Oops\r\n\r\n".to_vec();
+        reply.resize(reply.len() + 100 * 1024, b'a');
+        let err = read_response(&reply[..]).await.unwrap_err();
+        let SinkError::Status { code: 500, message } = &err else {
+            panic!("expected a 500 status, got {err:?}");
+        };
+        assert_eq!(message.len(), MAX_DIAGNOSTIC_BYTES);
     }
 
     #[test]
