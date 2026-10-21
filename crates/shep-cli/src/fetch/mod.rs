@@ -18,9 +18,7 @@ use core::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
-use tokio_rustls::rustls::pki_types::ServerName;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 
 use crate::terminal_safe;
 
@@ -32,6 +30,11 @@ mod post;
 /// of the crate reaches it as. Its `PostReply` is named where it is made.
 #[cfg(feature = "otel")]
 pub use post::post_json;
+
+/// Connect, TLS handshake, write and flush: the half every request here shares.
+mod transport;
+
+pub(crate) use transport::connect_and_send;
 
 /// The most this module will read before the blank line that ends a
 /// response's header block, status line included.
@@ -382,38 +385,11 @@ pub async fn get(target: &Target, limit: usize, timeout: Duration) -> Result<Vec
     }
 }
 
-/// Connects to `target`, over TLS when `target.https`, and runs the
-/// write/read exchange over whichever stream results.
+/// Connects to `target`, sends `request` and reads the reply with
+/// [`read_response`].
 async fn get_inner(target: &Target, limit: usize) -> Result<Vec<u8>, FetchError> {
-    let request = build_get_request(target);
-    let tcp = TcpStream::connect((target.host.as_str(), target.port)).await?;
-    if target.https {
-        let domain = ServerName::try_from(target.host.clone())
-            .map_err(|source| FetchError::Transport(std::io::Error::other(source)))?;
-        let tls = tls_connector()
-            .connect(domain, tcp)
-            .await
-            .map_err(peer_transport_error)?;
-        exchange(tls, &request, limit).await
-    } else {
-        exchange(tcp, &request, limit).await
-    }
-}
-
-/// A transport failure the peer had a hand in wording, sanitised.
-///
-/// The OS writes most of these and is not the threat. A TLS handshake is
-/// the exception: rustls's `CertificateError::NotValidForNameContext`
-/// prints the names the peer's certificate presented, and [`FetchError`]'s
-/// `Display` puts those in front of an operator.
-///
-/// Keeps the [`std::io::ErrorKind`] and drops the nested source, which
-/// nothing walks.
-fn peer_transport_error(source: std::io::Error) -> FetchError {
-    FetchError::Transport(std::io::Error::new(
-        source.kind(),
-        terminal_safe::sanitise(&source.to_string()).0,
-    ))
+    let stream = connect_and_send(target, build_get_request(target).as_bytes()).await?;
+    read_response(stream, limit).await
 }
 
 /// The request line and headers [`get_inner`] sends. `Host` names the port
@@ -430,19 +406,6 @@ fn build_get_request(target: &Target) -> String {
         "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n",
         path = target.path,
     )
-}
-
-/// Writes `request`, flushes, then reads back the response. The flush
-/// matters on the TLS branch: `tokio-rustls` buffers writes in `rustls`'s
-/// record layer, and skipping it leaves a request the peer never sees.
-async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
-    mut stream: S,
-    request: &str,
-    limit: usize,
-) -> Result<Vec<u8>, FetchError> {
-    stream.write_all(request.as_bytes()).await?;
-    stream.flush().await?;
-    read_response(stream, limit).await
 }
 
 /// Reads the status line, then headers to the blank line that ends them,
@@ -567,24 +530,26 @@ async fn read_response<S: AsyncRead + Unpin>(
 
 /// The status code out of `status_line` (`"HTTP/1.1 200 OK\r\n"`), refusing
 /// anything not shaped like an HTTP status line at all.
-fn parse_status_line(status_line: &str) -> Result<u16, FetchError> {
+pub(crate) fn parse_status_line(status_line: &str) -> Result<u16, std::io::Error> {
     let mut parts = status_line.split_whitespace();
     match parts.next() {
         Some(version) if version.starts_with("HTTP/") => {}
         _ => {
-            return Err(FetchError::Transport(std::io::Error::other(
+            return Err(std::io::Error::other(
                 "response did not start with an HTTP status line",
-            )));
+            ));
         }
     }
     parts
         .next()
         .and_then(|code| code.parse().ok())
-        .ok_or_else(|| FetchError::Transport(std::io::Error::other("malformed http status code")))
+        .ok_or_else(|| std::io::Error::other("malformed http status code"))
 }
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::AsyncWriteExt;
+
     use super::*;
 
     /// Serves one canned response on an ephemeral port, then stops.
