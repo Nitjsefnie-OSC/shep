@@ -56,12 +56,19 @@ cargo test -p shep --lib --bins --all-features -- --skip ::slow::
 Run these before you open a pull request. One at a time: the workspace shares
 one build lock, so two at once is slower than either alone.
 
+Lint on 1.93, the version CI uses, not on `stable`
+([why](docs/testing.md#why-linting-runs-on-193)). Install it once:
+
 ```bash
-cargo fmt --all --check
+rustup toolchain install 1.93 --profile minimal --component clippy,rustfmt
 ```
 
 ```bash
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo +1.93 fmt --all -- --check
+```
+
+```bash
+cargo +1.93 clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 ```bash
