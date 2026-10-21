@@ -547,5 +547,28 @@ wire change: the
 write is `Request::SetSheepField` for a field and
 `Request::SetSheepDogSettings` for a table.
 
+**A community dog index lists the dogs others have written, and shep prints
+how to install one without running anything** (2026-08-21 for the index and
+its parser, 2026-08-23 for the verb). `web/public/dogs.json` is a document
+built from pull requests, served from `https://shep-pm.com/dogs.json`.
+`crates/shep-cli/src/dog_index/` fetches it and `shep dogs --available` lists
+it by category, with `SHEP_DOG_INDEX` pointing a run at another URL for
+self-hosting and for the tests. Each entry names how it installs, as one of
+four kinds: `cargo` (a crates.io package, with an optional version for a
+pre-release), `cargo-git` (a repository), `go-install` (a Go module) and
+`manual` (prose, never a command). The detail view prints the install step (the
+prose itself for `manual`) and then a `shep adopt <path> --name <name>` line.
+The operator runs the first. shep runs only the second, which vets the binary
+before it registers it, so nothing in shep fetches, builds or executes a
+stranger's code. The reason, argued in
+[deferred.md](specs/deferred.md#shep-install-does-not-exist-and-a-scanner-is-not-what-would-make-it-safe)
+and tracked as #357, is that the index is written by strangers and every
+string in it reaches a terminal, so the module treats all of it as hostile
+and sanitises escapes. An index whose strings cannot be trusted to print is
+not one to trust to execute. The source kind is a tagged enum so an installer
+can be added later without asking past contributors to rewrite their entries.
+A future `shep install` would reverse the print-only call, and this entry is
+the record of the call it reverses.
+
 Project memory (cross-session state) tracks decisions; docs above are the
 source of truth.
