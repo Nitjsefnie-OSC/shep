@@ -156,10 +156,10 @@ impl ClientFlock {
 
 impl FlockSource for ClientFlock {
     async fn flock(&self) -> Result<Vec<ProcessInfo>, RequestError> {
-        match self.0.request(Request::ListFlock).await? {
-            Response::Flock(flock) => Ok(flock),
+        match self.0.list_flock().await {
             // `Response` is `#[non_exhaustive]`; the next poll asks again.
-            _unrecognised => Ok(Vec::new()),
+            Err(RequestError::UnexpectedReply { .. }) => Ok(Vec::new()),
+            answer => answer,
         }
     }
 

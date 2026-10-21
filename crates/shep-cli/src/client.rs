@@ -1,6 +1,8 @@
 //! Daemon connectivity: connect-or-autostart, the `start`/`add` Flockfile
 //! load path, the bare-shepherd boot, and the foreground daemon command.
 
+use std::path::Path;
+
 use cli::{DaemonArgs, Format, GlobalArgs, StartArgs};
 use commands::daemon::{daemon_exit_code, run_daemon};
 use commands::lifecycle::{self, Load};
@@ -122,30 +124,34 @@ pub(crate) async fn start_bare_shepherd(
         Ok(client) => {
             // Asked after the boot: bringing the shepherd up restores the
             // muster roll, so a flock that looked empty may have members now.
-            let restored = client
-                .request(shep_core::protocol::Request::ListFlock)
-                .await;
-            let known = match &restored {
-                Ok(shep_core::protocol::Response::Flock(procs)) => procs.len(),
-                _ => 0,
-            };
-            let message = if known == 0 {
-                format!(
-                    "shepherd up, flock at {}. Nothing running yet; \
-                     `shep start <target>` adds a sheep.",
-                    paths.home.display()
-                )
-            } else {
-                format!(
-                    "shepherd up, flock at {}. {known} sheep restored from the roll; \
-                     `shep flock` lists them.",
-                    paths.home.display()
-                )
-            };
-            streams.note("start", &message);
+            let restored = client.list_flock().await.ok().map(|flock| flock.len());
+            streams.note("start", &boot_message(&paths.home, restored));
             ExitCode::Success
         }
         Err(code) => code,
+    }
+}
+
+/// What `shep start` says once a shepherd is up.
+///
+/// `restored` is the size of the flock the shepherd listed, or `None` when it
+/// could not be asked or its answer was not recognised: that case says
+/// nothing about how many sheep run.
+fn boot_message(home: &Path, restored: Option<usize>) -> String {
+    let home = home.display();
+    match restored {
+        Some(0) => format!(
+            "shepherd up, flock at {home}. Nothing running yet; \
+             `shep start <target>` adds a sheep."
+        ),
+        Some(known) => format!(
+            "shepherd up, flock at {home}. {known} sheep restored from the roll; \
+             `shep flock` lists them."
+        ),
+        None => format!(
+            "shepherd up, flock at {home}. The shepherd did not say what is in \
+             the flock; `shep flock` lists it."
+        ),
     }
 }
 
@@ -207,6 +213,33 @@ mod tests {
     /// `ENOENT` is what a person meets where no shepherd has ever run.
     /// `EACCES` is a socket this user may not have, and `shep start` would be
     /// the wrong fix for it.
+    #[test]
+    fn a_boot_message_counts_only_a_flock_it_was_told() {
+        let home = std::path::Path::new("/srv/shep");
+
+        assert_eq!(
+            boot_message(home, Some(0)),
+            "shepherd up, flock at /srv/shep. Nothing running yet; \
+             `shep start <target>` adds a sheep."
+        );
+        assert_eq!(
+            boot_message(home, Some(3)),
+            "shepherd up, flock at /srv/shep. 3 sheep restored from the roll; \
+             `shep flock` lists them."
+        );
+    }
+
+    /// A failed or unrecognised listing is not an empty flock, so the message
+    /// claims neither "nothing running" nor a number.
+    #[test]
+    fn a_boot_message_without_an_answer_claims_nothing_about_the_flock() {
+        assert_eq!(
+            boot_message(std::path::Path::new("/srv/shep"), None),
+            "shepherd up, flock at /srv/shep. The shepherd did not say what is in \
+             the flock; `shep flock` lists it."
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn an_absent_socket_names_the_next_command_and_other_failures_do_not() {

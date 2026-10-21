@@ -5,7 +5,7 @@
 use shep_client::Client;
 use shep_core::config::AppConfig;
 use shep_core::paths::ShepPaths;
-use shep_core::protocol::{Request, Response, SelectorSpec};
+use shep_core::protocol::{Request, SelectorSpec};
 
 use crate::cli::{BleatsArgs, DaemonArgs};
 use crate::commands::bleats::bleats_with_signal;
@@ -137,11 +137,11 @@ pub async fn run(streams: &mut Streams<'_>, quiet: bool, options: ForegroundOpti
     let mut ending: Option<Ending> = None;
     {
         let watcher = watch_until_empty(|| async {
-            match client.request(Request::ListFlock).await {
-                Ok(Response::Flock(procs)) => sample(&procs),
+            match client.list_flock().await {
+                Ok(procs) => sample(&procs),
                 // A request error mid-poll is not evidence the flock is gone,
                 // and the `supervisor` branch ends the race if it is.
-                _ => Sample::Busy,
+                Err(_) => Sample::Busy,
             }
         });
         tokio::pin!(watcher);

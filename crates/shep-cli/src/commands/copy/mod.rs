@@ -28,7 +28,7 @@ use shep_client::Client;
 use shep_core::protocol::{Request, Response};
 
 use crate::cli::{CopyArgs, Format};
-use crate::commands::rpc::{client_error, unexpected_response};
+use crate::commands::rpc::{client_error, typed_request_error, unexpected_response};
 use crate::exit::ExitCode;
 use crate::output::Streams;
 
@@ -257,8 +257,8 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`.
 async fn flock_names(client: &Client, streams: &mut Streams<'_>) -> Result<FlockNames, ExitCode> {
-    match client.request(Request::ListFlock).await {
-        Ok(Response::Flock(info)) => Ok(FlockNames {
+    match client.list_flock().await {
+        Ok(info) => Ok(FlockNames {
             sheep: info
                 .iter()
                 .filter(|info| info.dog.is_none())
@@ -270,8 +270,7 @@ async fn flock_names(client: &Client, streams: &mut Streams<'_>) -> Result<Flock
                 .map(|info| info.name.clone())
                 .collect(),
         }),
-        Ok(_other) => Err(unexpected_response(streams)),
-        Err(err) => Err(client_error(streams, &err)),
+        Err(err) => Err(typed_request_error(streams, &err)),
     }
 }
 
