@@ -151,7 +151,7 @@ pub(super) fn column_header_line(palette: Palette, width: u16, show_lands: bool)
 /// this pane answers to (`view::status::pane_hint`), so this line explains
 /// the glyphs instead, adapted from the design's own legend
 /// (`docs/lookout/design-files/README.md`, the 1e frame's row 45) to the
-/// four the pane actually draws (see [`super::field_row::field_line`]).
+/// glyphs the pane actually draws (see [`super::field_row::field_line`]).
 ///
 /// Names no key: `status.rs`'s `esc close` is the one place that wording
 /// lives, and a second copy here would only need to be kept in sync with
@@ -167,7 +167,8 @@ pub(super) fn legend_line(palette: Palette, width: u16) -> Line<'static> {
             "  {}",
             fit(
                 "= read-only, set it in the Flockfile   ~ no widget for this shape   \
-                 ! parked, awaits a respawn   * yours   -> changed by you, not yet written",
+                 ! parked, awaits a respawn   * yours   -> changed by you, not yet written   \
+                 \u{203a} opens its own screen",
                 body_width(width)
             )
         ),
@@ -219,6 +220,25 @@ mod tests {
     use super::*;
     use crate::lookout::app::{KeyPress, Msg};
     use crate::lookout::view::fixtures;
+
+    #[test]
+    fn the_legend_explains_the_glyph_for_a_row_that_opens_its_own_screen() {
+        let text = text_of(&[legend_line(fixtures::plain(), 200)]);
+        assert!(
+            text[0].contains("\u{203a} opens its own screen"),
+            "{:?}",
+            text[0]
+        );
+        for entry in [
+            "= read-only",
+            "~ no widget",
+            "! parked",
+            "* yours",
+            "-> changed by you",
+        ] {
+            assert!(text[0].contains(entry), "{entry:?} in {:?}", text[0]);
+        }
+    }
 
     #[test]
     fn the_title_names_the_target_and_no_longer_calls_it_read_only() {
