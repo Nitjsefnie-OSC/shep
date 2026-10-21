@@ -1,11 +1,10 @@
 use crate::cli::{DogsArgs, Format};
-use crate::commands::rpc::request_and_render;
+use crate::commands::rpc::typed_request_error;
 use crate::dog_index::{self, AvailableDog, DogSourceKind};
 use crate::exit::ExitCode;
 use crate::fetch;
 use crate::output::{AvailableDogRows, DogRows, Streams, emit, write_outcome};
 use shep_client::Client;
-use shep_core::protocol::{Request, Response};
 
 /// Lists the dogs and nothing else: the same `Request::ListFlock` [`flock`](crate::commands::query::flock_display::flock)
 /// sends, filtered to the entries carrying a `testing::dog` marker
@@ -16,24 +15,25 @@ use shep_core::protocol::{Request, Response};
 /// a dogs-only listing.
 pub async fn dogs(client: &Client, streams: &mut Streams<'_>, args: &DogsArgs) -> ExitCode {
     let filter = args.filter.as_deref();
-    request_and_render(
-        client,
-        streams,
-        "dogs",
-        Request::ListFlock,
-        None,
-        |response| match response {
-            Response::Flock(procs) => Some(DogRows(
+    match client.list_flock().await {
+        Ok(procs) => {
+            let rows = DogRows(
                 procs
                     .into_iter()
                     .filter(|p| p.dog.is_some())
                     .filter(|p| filter.is_none_or(|f| matches_filter(f, &[&p.name])))
                     .collect(),
-            )),
-            _ => None,
-        },
-    )
-    .await
+            );
+            write_outcome(emit(
+                &mut *streams.out,
+                streams.fmt,
+                "dogs",
+                rows,
+                streams.style,
+            ))
+        }
+        Err(err) => typed_request_error(streams, &err),
+    }
 }
 
 /// Whether `filter` matches any of `haystacks`, case-insensitively. Shared

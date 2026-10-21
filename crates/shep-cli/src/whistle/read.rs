@@ -76,12 +76,10 @@ impl Whistle {
         annotations(read_only_hint = true)
     )]
     pub async fn list_flock(&self) -> Result<Json<FlockListing>, CallToolResult> {
-        match self.shepherd.call(Request::ListFlock).await? {
-            Response::Flock(flock) => Ok(Json(FlockListing {
-                flock: flock.iter().map(SheepRow::from).collect(),
-            })),
-            _ => Err(unexpected_response()),
-        }
+        let (_ack, flock) = self.shepherd.list_flock_with_ack().await?;
+        Ok(Json(FlockListing {
+            flock: flock.iter().map(SheepRow::from).collect(),
+        }))
     }
 
     /// One sheep in detail, its process-tree members included.
@@ -110,10 +108,7 @@ impl Whistle {
         annotations(read_only_hint = true)
     )]
     pub async fn get_metrics(&self) -> Result<Json<MetricsReading>, CallToolResult> {
-        let (ack, response) = self.shepherd.call_with_ack(Request::ListFlock).await?;
-        let Response::Flock(flock) = response else {
-            return Err(unexpected_response());
-        };
+        let (ack, flock) = self.shepherd.list_flock_with_ack().await?;
         Ok(Json(MetricsReading {
             daemon_version: ack.daemon_version,
             daemon_pid: ack.pid,
@@ -237,7 +232,7 @@ fn tail_stream(
 /// A reply shape none of these five tools asked for. `Response` is
 /// `#[non_exhaustive]`, so a variant this client predates, or simply the
 /// wrong one for the request sent, maps here instead of being guessed at.
-fn unexpected_response() -> CallToolResult {
+pub(super) fn unexpected_response() -> CallToolResult {
     CallToolResult::structured_error(serde_json::json!({
         "code": "internal",
         "message": "the shepherd answered with a response this client does not understand",
