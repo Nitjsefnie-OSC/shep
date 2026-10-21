@@ -194,7 +194,7 @@ mod tests {
             "[host]",
             "a\u{0}b",
             "a\u{7f}b",
-            "caf\u{e9}",
+            "web\u{e9}",
         ] {
             assert!(Destination::parse(text).is_err(), "{text:?}");
         }
