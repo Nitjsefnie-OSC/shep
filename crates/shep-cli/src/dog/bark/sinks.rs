@@ -2,8 +2,9 @@
 //! [`deliver`] that POSTs a rendered body to it.
 //!
 //! Hand-rolled HTTP/1.1 over `tokio-rustls`, not `reqwest`: fewer
-//! transitive dependencies and no C toolchain. The connect-and-TLS setup
-//! lives in `crate::fetch`, shared with `shep dogs --available`.
+//! transitive dependencies and no C toolchain. The connect, TLS setup,
+//! write and status-line check live in `crate::fetch`, shared with
+//! `shep dogs --available`.
 //!
 //! `http://` is accepted for a [`Sink::Json`] endpoint; only
 //! [`require_usable_url`] rejects it, for Discord and Slack. No
@@ -17,11 +18,10 @@ use std::time::Duration;
 use serde::Deserialize;
 use shep_client::dogs::dog_config;
 use shep_core::barks::Bark;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
-use tokio_rustls::rustls::pki_types::ServerName;
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
 use crate::fetch::{self, Target};
+use crate::terminal_safe;
 
 /// One named entry under `[dog.bark.sinks]`.
 ///
@@ -203,7 +203,8 @@ pub enum SinkError {
     Status {
         /// The HTTP status code.
         code: u16,
-        /// The first line of the response body.
+        /// The first line of the response body, sanitised: the peer
+        /// worded it.
         message: String,
     },
 }
@@ -359,36 +360,11 @@ fn build_request(target: &Target, body: &str) -> String {
     )
 }
 
-/// Connects to `target`, over TLS when `target.https`, and runs the
-/// write/read exchange over whichever stream results.
+/// Connects to `target` with [`fetch::connect_and_send`] and reads the
+/// reply.
 async fn deliver_inner(target: &Target, body: &str) -> Result<(), SinkError> {
     let request = build_request(target, body);
-    let tcp = TcpStream::connect((target.host.as_str(), target.port)).await?;
-    if target.https {
-        let domain =
-            ServerName::try_from(target.host.clone()).map_err(|source| SinkError::Transport {
-                source: std::io::Error::other(source),
-            })?;
-        let tls = fetch::tls_connector().connect(domain, tcp).await?;
-        write_and_read(tls, &request).await
-    } else {
-        write_and_read(tcp, &request).await
-    }
-}
-
-/// Writes `request`, flushes, then reads back the status line (and, on a
-/// non-2xx, one diagnostic line of body).
-///
-/// The explicit `flush` matters on the TLS branch: `tokio-rustls` buffers
-/// writes in `rustls`'s own record layer, and skipping it can leave a
-/// request sitting in a buffer the peer never sees. The same flush on a
-/// plain `TcpStream` is redundant, not wrong.
-async fn write_and_read<S: AsyncRead + AsyncWrite + Unpin>(
-    mut stream: S,
-    request: &str,
-) -> Result<(), SinkError> {
-    stream.write_all(request.as_bytes()).await?;
-    stream.flush().await?;
+    let stream = fetch::connect_and_send(target, request.as_bytes()).await?;
     read_response(stream).await
 }
 
@@ -396,11 +372,15 @@ async fn write_and_read<S: AsyncRead + AsyncWrite + Unpin>(
 /// non-2xx reads past the remaining header lines to the blank line that
 /// ends them, or to EOF, then takes one more line for
 /// [`SinkError::Status`]'s diagnostic.
+///
+/// The status line is [`fetch::parse_status_line`]'s to judge, and the
+/// diagnostic is the peer's wording, so it is
+/// [`terminal_safe::sanitise`]d here, where it becomes an owned string.
 async fn read_response<S: AsyncRead + Unpin>(stream: S) -> Result<(), SinkError> {
     let mut reader = BufReader::new(stream);
     let mut status_line = String::new();
     reader.read_line(&mut status_line).await?;
-    let code = parse_status_code(&status_line)?;
+    let code = fetch::parse_status_line(&status_line)?;
     if (200..300).contains(&code) {
         return Ok(());
     }
@@ -417,19 +397,8 @@ async fn read_response<S: AsyncRead + Unpin>(stream: S) -> Result<(), SinkError>
     reader.read_line(&mut diagnostic).await?;
     Err(SinkError::Status {
         code,
-        message: diagnostic.trim_end().to_string(),
+        message: terminal_safe::sanitise(&diagnostic).0,
     })
-}
-
-/// The status code out of an HTTP/1.x status line (`"HTTP/1.1 429 ..."`).
-fn parse_status_code(status_line: &str) -> Result<u16, SinkError> {
-    status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse().ok())
-        .ok_or_else(|| SinkError::Transport {
-            source: std::io::Error::other("malformed http status line"),
-        })
 }
 
 #[cfg(test)]
@@ -621,6 +590,45 @@ mod tests {
         .expect("the delivery outlived its own sink timeout")
         .unwrap_err();
         assert!(matches!(err, SinkError::Status { code: 429, .. }));
+    }
+
+    /// The second word of `garbage 200 OK` parses as a 2xx, which is how
+    /// the sink used to accept it.
+    #[tokio::test]
+    async fn a_reply_that_is_not_http_is_a_transport_failure() {
+        for reply in [
+            &b"garbage 200 OK\r\n\r\n"[..],
+            b"HTTX/1.1 200 OK\r\n\r\n",
+            b"200 OK\r\n\r\n",
+        ] {
+            let err = read_response(reply).await.unwrap_err();
+            assert!(
+                matches!(err, SinkError::Transport { .. }),
+                "{reply:?} gave {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_chunked_2xx_reply_is_accepted_without_reading_further() {
+        read_response(
+            &b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"[..],
+        )
+        .await
+        .unwrap();
+    }
+
+    /// The peer words the body line, and `Display` is what a caller prints.
+    #[tokio::test]
+    async fn a_refusals_body_line_cannot_drive_a_terminal() {
+        let err = read_response(&b"HTTP/1.1 500 Oops\r\n\r\nbad\x1b[2J\x07line\n"[..])
+            .await
+            .unwrap_err();
+        let SinkError::Status { code: 500, message } = &err else {
+            panic!("expected a 500 status, got {err:?}");
+        };
+        assert_eq!(message, "bad[2Jline");
+        assert!(!err.to_string().contains('\u{1b}'));
     }
 
     #[test]
