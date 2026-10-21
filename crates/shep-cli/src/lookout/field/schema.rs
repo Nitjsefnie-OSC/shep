@@ -7,7 +7,7 @@
 use serde_json::{Map, Value};
 
 use super::union::union_of;
-use super::{Entries, FieldKind, ListItem, ValueKind};
+use super::{Entries, FieldKind, ListItem, ValueKind, all_strings};
 
 /// Follows one `$ref` of the form `#/$defs/Name` into `defs`.
 fn resolve<'a>(schema: &'a Value, defs: &'a Map<String, Value>) -> &'a Value {
@@ -124,22 +124,13 @@ fn type_of(schema: &Value) -> Option<&str> {
 /// that is no closed set at all.
 fn closed_set(schema: &Value) -> Option<Vec<String>> {
     if let Some(consts) = schema.get("oneOf").and_then(Value::as_array) {
-        let names: Vec<String> = consts
-            .iter()
-            .filter_map(|arm| arm.get("const").and_then(Value::as_str))
-            .map(str::to_owned)
-            .collect();
-        if !names.is_empty() && names.len() == consts.len() {
+        let named = all_strings(consts, |arm| arm.get("const").and_then(Value::as_str));
+        if let Some(names) = named.filter(|names| !names.is_empty()) {
             return Some(names);
         }
     }
     let values = schema.get("enum").and_then(Value::as_array)?;
-    let names: Vec<String> = values
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect();
-    (names.len() == values.len()).then_some(names)
+    all_strings(values, Value::as_str)
 }
 
 pub(super) fn kind_of(schema: &Value, defs: &Map<String, Value>) -> FieldKind {
@@ -956,5 +947,27 @@ mod tests {
             kind_of(&json!({ "enum": ["only"] }), &defs),
             FieldKind::Choice(vec!["only".into()])
         );
+    }
+
+    /// A `oneOf` is a choice only when every arm names its value, so one arm
+    /// without a `const` keeps the field from becoming one.
+    #[test]
+    fn a_one_of_with_an_arm_lacking_a_const_is_not_a_choice() {
+        let schema = json!({
+            "oneOf": [{ "const": "x" }, { "type": "string" }]
+        });
+        assert!(!matches!(
+            kind_of(&schema, &Map::new()),
+            FieldKind::Choice(_)
+        ));
+    }
+
+    #[test]
+    fn an_enum_with_a_non_string_member_is_not_a_choice() {
+        let schema = json!({ "enum": ["a", 1] });
+        assert!(!matches!(
+            kind_of(&schema, &Map::new()),
+            FieldKind::Choice(_)
+        ));
     }
 }
