@@ -18,11 +18,11 @@ use futures_util::FutureExt;
 use serde::Serialize;
 
 use shep_client::{Client, EventStream, Lagged};
-use shep_core::protocol::{BusEvent, ProcessInfo, Request, Response};
+use shep_core::protocol::{BusEvent, ProcessInfo};
 use shep_core::selector::ProcessSelector;
 
 use crate::cli::{BleatsArgs, Format};
-use crate::commands::rpc::{client_error, unexpected_response};
+use crate::commands::rpc::typed_request_error;
 use crate::commands::selector::parse_selector;
 use crate::exit::ExitCode;
 use crate::output::{self, Streams, write_outcome};
@@ -60,10 +60,9 @@ async fn resolve_names(
     client: &Client,
     streams: &mut Streams<'_>,
 ) -> Result<HashMap<u32, ProcessInfo>, ExitCode> {
-    match client.request(Request::ListFlock).await {
-        Ok(Response::Flock(procs)) => Ok(procs.into_iter().map(|p| (p.id, p)).collect()),
-        Ok(_unrecognised) => Err(unexpected_response(streams)),
-        Err(err) => Err(client_error(streams, &err)),
+    match client.list_flock().await {
+        Ok(procs) => Ok(procs.into_iter().map(|p| (p.id, p)).collect()),
+        Err(err) => Err(typed_request_error(streams, &err)),
     }
 }
 
