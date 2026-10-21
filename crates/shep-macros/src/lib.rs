@@ -107,7 +107,8 @@ const JSON_SCHEMA: &str = "JsonSchema";
 ///   to read;
 /// - `#[shep(...)]` on the type or on a variant, neither of which is a field;
 /// - a union, which has no serde representation to build a schema from;
-/// - `#[shep]` with no option in parentheses;
+/// - `#[shep]` with no option in parentheses, including empty parentheses
+///   as in `#[shep()]`;
 /// - `#[shep(secret = ...)]`, since `secret` is a flag and takes no value;
 /// - any option other than `secret`, rejected as a likely misspelling of it;
 /// - an argument to `#[dog_config]` itself, which takes none;
@@ -335,7 +336,7 @@ fn take_secret(field: &mut Field) -> syn::Result<bool> {
         if !attr.path().is_ident(ATTR) {
             continue;
         }
-        if !matches!(attr.meta, Meta::List(_)) {
+        if !matches!(&attr.meta, Meta::List(list) if !list.tokens.is_empty()) {
             return Err(syn::Error::new_spanned(
                 attr,
                 "`#[shep]` needs an option in parentheses: the only one is \
