@@ -26,6 +26,14 @@ use bounds::bounds_of;
 use init::{neighbours, strings, suggestions};
 use schema::{holds_secret, kind_of, render_default, value_kind_of};
 
+/// Each of `values` read through `pick`, when `pick` finds a string in every
+/// one. A single entry it cannot read rejects the list, since a list with
+/// holes in it is worse than none.
+fn all_strings(values: &[Value], pick: impl Fn(&Value) -> Option<&str>) -> Option<Vec<String>> {
+    let names: Vec<String> = values.iter().filter_map(pick).map(str::to_owned).collect();
+    (names.len() == values.len()).then_some(names)
+}
+
 /// What the widget for one field is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldKind {
