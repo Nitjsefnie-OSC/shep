@@ -1,7 +1,7 @@
 use super::secret_inspection::describe_selector;
 use super::terminal_fitting::fit_rows;
 use crate::cli::{FoldArgs, Format};
-use crate::commands::rpc::{client_error, unexpected_response};
+use crate::commands::rpc::typed_request_error;
 use crate::exit::ExitCode;
 use crate::flourish;
 use crate::host;
@@ -101,8 +101,8 @@ pub fn flock_from_roll(streams: &mut Streams<'_>, paths: &ShepPaths) -> ExitCode
 /// one [`crate::output::Render`] type per verb rather than two tables from one
 /// `Vec<ProcessInfo>`.
 pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
-    match client.request(Request::ListFlock).await {
-        Ok(Response::Flock(procs)) => {
+    match client.list_flock().await {
+        Ok(procs) => {
             // Read before `procs` moves into `emit_flock`.
             let art = (streams.fmt == Format::Table && streams.style.level.sheep())
                 .then(|| sheep_flourish(&procs))
@@ -129,8 +129,7 @@ pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
                 streams.style,
             ))
         }
-        Ok(_unrecognised) => unexpected_response(streams),
-        Err(err) => client_error(streams, &err),
+        Err(err) => typed_request_error(streams, &err),
     }
 }
 
@@ -226,13 +225,12 @@ pub(crate) async fn flock_follow(
         // The request is raced too, so a shepherd that stops answering does
         // not hold the terminal until it does.
         let listing = tokio::select! {
-            listing = client.request(Request::ListFlock) => listing,
+            listing = client.list_flock() => listing,
             _ = interrupt.recv() => return ExitCode::Success,
         };
         let procs = match listing {
-            Ok(Response::Flock(procs)) => procs,
-            Ok(_unrecognised) => return unexpected_response(streams),
-            Err(err) => return client_error(streams, &err),
+            Ok(procs) => procs,
+            Err(err) => return typed_request_error(streams, &err),
         };
         let host = tokio::select! {
             host = host_usage(client) => host,

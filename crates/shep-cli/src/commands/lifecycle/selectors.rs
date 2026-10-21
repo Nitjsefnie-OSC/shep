@@ -214,8 +214,5 @@ pub(crate) fn fail_target(streams: &mut Streams<'_>, err: &TargetError) -> ExitC
 /// An unreachable or unexpected answer yields an empty flock; the `Start`
 /// that follows reports its own failures.
 pub(crate) async fn flock_now(client: &Client) -> Vec<shep_core::protocol::ProcessInfo> {
-    match client.request(Request::ListFlock).await {
-        Ok(Response::Flock(procs)) => procs,
-        _ => Vec::new(),
-    }
+    client.list_flock().await.unwrap_or_default()
 }

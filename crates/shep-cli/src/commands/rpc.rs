@@ -55,6 +55,18 @@ pub(crate) fn client_error(streams: &mut Streams<'_>, err: &RequestError) -> Exi
     streams.fail(ExitCode::from(err), &err.to_string())
 }
 
+/// Reports a failed typed request, and hands back its code.
+///
+/// An [`RequestError::UnexpectedReply`] reads as [`unexpected_response`]
+/// does, so a verb moved from matching `Response` by hand onto a typed
+/// request keeps what it printed for an answer it did not recognise.
+pub(crate) fn typed_request_error(streams: &mut Streams<'_>, err: &RequestError) -> ExitCode {
+    match err {
+        RequestError::UnexpectedReply { .. } => unexpected_response(streams),
+        other => client_error(streams, other),
+    }
+}
+
 /// Sends `body` with `deadline` (`None` defers to the client's own default)
 /// and pulls the verb's own payload out of the answer.
 ///
