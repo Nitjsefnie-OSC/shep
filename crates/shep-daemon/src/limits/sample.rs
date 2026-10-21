@@ -363,7 +363,8 @@ mod tests {
     };
 
     // Asserts only wiring (refresh flags, Pid->u32, field mapping): an exact
-    // byte count or parent pid would test sysinfo, not us.
+    // byte count would test sysinfo, not us. The parent pid is checked on
+    // unix against `parent_id`, which the sampler does not read.
     #[test]
     fn sysinfo_sampler_finds_this_process_with_nonzero_rss() {
         let sampler = SysinfoSampler::new();
@@ -396,6 +397,12 @@ mod tests {
         let parent = reading
             .parent
             .unwrap_or_else(|| panic!("own reading for pid {pid} carried no parent"));
+        #[cfg(unix)]
+        assert_eq!(
+            reading.parent,
+            Some(std::os::unix::process::parent_id()),
+            "sampler reported a parent other than the one the OS gives this process"
+        );
         assert!(
             tree_rss(&table, parent) > reading.bytes,
             "tree sum rooted at own parent ({parent}) was not larger than this process's own RSS"
