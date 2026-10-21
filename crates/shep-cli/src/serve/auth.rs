@@ -298,19 +298,20 @@ mod tests {
     }
 
     /// fails if a vector from RFC 4648 section 10 decodes to anything else.
+    /// Each vector encodes a prefix of `foobar`, of the length given.
     #[test]
     fn base64_decode_decodes_the_rfc_4648_vectors() {
-        for (encoded, decoded) in [
-            ("Zg==", "f"),
-            ("Zm8=", "fo"),
-            ("Zm9v", "foo"),
-            ("Zm9vYg==", "foob"),
-            ("Zm9vYmE=", "fooba"),
-            ("Zm9vYmFy", "foobar"),
+        for (encoded, prefix_len) in [
+            ("Zg==", 1),
+            ("Zm8=", 2),
+            ("Zm9v", 3),
+            ("Zm9vYg==", 4),
+            ("Zm9vYmE=", 5),
+            ("Zm9vYmFy", 6),
         ] {
             assert_eq!(
                 base64_decode(encoded).as_deref(),
-                Some(decoded.as_bytes()),
+                Some(&b"foobar"[..prefix_len]),
                 "{encoded:?}"
             );
         }
