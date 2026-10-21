@@ -221,7 +221,7 @@ pub(crate) fn base64_encode(input: &[u8]) -> String {
 
 /// Decodes standard base64 (RFC 4648, `=`-padded). `None` for anything that
 /// is not exactly that: wrong length, a byte outside the alphabet, or a `=`
-/// outside the last two positions of its four-byte group.
+/// anywhere but the last one or two bytes of the whole input.
 ///
 /// Written here rather than pulled in from a crate: base64 anywhere in
 /// shep-cli, the `Authorization` header included, goes through this and
@@ -231,22 +231,25 @@ fn base64_decode(input: &str) -> Option<Vec<u8>> {
     if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
         return None;
     }
+    let pad = bytes
+        .iter()
+        .rev()
+        .take(2)
+        .take_while(|&&b| b == b'=')
+        .count();
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
     let (chunks, _) = bytes.as_chunks::<4>();
-    for chunk in chunks {
+    let last = chunks.len() - 1;
+    for (n, chunk) in chunks.iter().enumerate() {
+        let pad = if n == last { pad } else { 0 };
         let mut sextets = [0u8; 4];
-        let mut pad = 0u8;
-        for (i, &byte) in chunk.iter().enumerate() {
+        for (i, &byte) in chunk.iter().enumerate().take(4 - pad) {
             sextets[i] = match byte {
                 b'A'..=b'Z' => byte - b'A',
                 b'a'..=b'z' => byte - b'a' + 26,
                 b'0'..=b'9' => byte - b'0' + 52,
                 b'+' => 62,
                 b'/' => 63,
-                b'=' if i >= 2 => {
-                    pad += 1;
-                    0
-                }
                 _ => return None,
             };
         }
@@ -281,6 +284,35 @@ mod tests {
                 base64_decode(&encoded).as_deref(),
                 Some(input.as_bytes()),
                 "{input:?} did not survive the round trip as {encoded:?}"
+            );
+        }
+    }
+
+    /// fails if `=` is accepted anywhere but the last one or two bytes of the
+    /// whole input, or if the empty input is accepted.
+    #[test]
+    fn base64_decode_refuses_padding_that_is_not_the_end_of_the_input() {
+        for input in ["", "Zm=v", "Zg==Zg==", "Z===", "=Zg=", "Zg=A", "Zm8=Zm8="] {
+            assert_eq!(base64_decode(input), None, "{input:?} was accepted");
+        }
+    }
+
+    /// fails if a vector from RFC 4648 section 10 decodes to anything else.
+    /// Each vector encodes a prefix of `foobar`, of the length given.
+    #[test]
+    fn base64_decode_decodes_the_rfc_4648_vectors() {
+        for (encoded, prefix_len) in [
+            ("Zg==", 1),
+            ("Zm8=", 2),
+            ("Zm9v", 3),
+            ("Zm9vYg==", 4),
+            ("Zm9vYmE=", 5),
+            ("Zm9vYmFy", 6),
+        ] {
+            assert_eq!(
+                base64_decode(encoded).as_deref(),
+                Some(&b"foobar"[..prefix_len]),
+                "{encoded:?}"
             );
         }
     }
