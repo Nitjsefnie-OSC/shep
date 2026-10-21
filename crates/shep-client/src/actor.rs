@@ -199,9 +199,53 @@ fn route_frame(
 #[cfg(test)]
 mod tests {
     use futures_util::FutureExt;
+    use shep_core::protocol::codec;
+    use tokio_util::codec::Framed;
 
     use super::*;
     use crate::client::RequestError;
+    use crate::connection::ByteStream;
+
+    #[tokio::test]
+    async fn the_actor_answers_a_request_over_an_in_memory_stream() {
+        let (near, far) = tokio::io::duplex(1024);
+        let frames = Framed::new(Box::new(near) as Box<dyn ByteStream>, codec());
+        let commands = spawn(frames);
+        let mut far = Framed::new(far, codec());
+
+        let (reply_to, answer) = oneshot::channel();
+        commands
+            .send(Command::Request {
+                body: Request::Ping,
+                deadline_ms: None,
+                reply_to,
+            })
+            .await
+            .unwrap();
+        let sent: Envelope = decode_frame(&far.next().await.unwrap().unwrap()).unwrap();
+        let reply = ServerFrame::Reply(Reply {
+            id: sent.id,
+            result: Ok(Response::Pong),
+        });
+        far.send(encode_frame(&reply).unwrap()).await.unwrap();
+        assert!(matches!(answer.await.unwrap(), Ok(Response::Pong)));
+
+        let (reply_to, answer) = oneshot::channel();
+        commands
+            .send(Command::Request {
+                body: Request::Ping,
+                deadline_ms: None,
+                reply_to,
+            })
+            .await
+            .unwrap();
+        let _second = far.next().await.unwrap().unwrap();
+        drop(far);
+        assert!(
+            matches!(answer.await.unwrap(), Err(RequestError::Closed)),
+            "a request pending when the stream closes must resolve as closed"
+        );
+    }
 
     /// A reply this build cannot decode used to be dropped, leaving the
     /// caller to wait out its deadline for an answer that had already
