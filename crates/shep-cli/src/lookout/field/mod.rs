@@ -270,8 +270,8 @@ fn field_from(key: &str, schema: &Value, defs: &Map<String, Value>) -> Field {
     let init = schema.get("init");
     let help = init
         .and_then(|i| i.get("blurb"))
-        .or_else(|| schema.get("description"))
         .and_then(Value::as_str)
+        .or_else(|| schema.get("description").and_then(Value::as_str))
         .map_or_else(|| key.to_owned(), str::to_owned);
     let group = init
         .and_then(|i| i.get("group"))
@@ -343,11 +343,17 @@ mod tests {
             "a": { "type": "boolean", "description": "desc", "init": { "blurb": "blurb" } },
             "b": { "type": "boolean", "description": "desc" },
             "c": { "type": "boolean" },
+            "d": { "type": "boolean", "description": "desc", "init": { "blurb": 7 } },
+            "e": { "type": "boolean", "init": { "blurb": null } },
+            "f": { "type": "boolean", "description": 7, "init": { "blurb": 7 } },
         }));
         let set = FieldSet::from_properties(&p, &Default::default(), &[]);
         assert_eq!(set.by_key("a").unwrap().help, "blurb");
         assert_eq!(set.by_key("b").unwrap().help, "desc");
         assert_eq!(set.by_key("c").unwrap().help, "c");
+        assert_eq!(set.by_key("d").unwrap().help, "desc");
+        assert_eq!(set.by_key("e").unwrap().help, "e");
+        assert_eq!(set.by_key("f").unwrap().help, "f");
     }
 
     /// They all rank equal, so a stable sort leaves them exactly where the
