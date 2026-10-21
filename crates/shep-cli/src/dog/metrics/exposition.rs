@@ -512,6 +512,40 @@ pub(super) mod tests {
         );
     }
 
+    /// `Adopted` is the only source an operator can produce, and the label
+    /// is what a dashboard filters on. Renaming it silently repoints every
+    /// query built against it.
+    #[test]
+    fn an_adopted_dog_renders_the_adopted_source_label() {
+        let mut dog = sample_info("shep-discord");
+        dog.dog = Some(DogSource::Adopted {
+            path: "/opt/bin/shep-discord".to_string(),
+            channel: false,
+        });
+        let text = render(&Reading {
+            flock: vec![dog],
+            ..reading()
+        });
+        assert!(
+            text.contains(r#"shep_dog_up{dog="shep-discord",source="adopted"} 1"#),
+            "{text}"
+        );
+    }
+
+    /// A sheep in no fold renders an empty label value, not the word
+    /// `None` that an `Option`'s own formatting would have produced.
+    #[test]
+    fn a_sheep_in_no_fold_renders_an_empty_fold_label() {
+        let mut info = sample_info("web");
+        info.fold = None;
+        let text = render(&Reading {
+            flock: vec![info],
+            ..reading()
+        });
+        assert!(text.contains(r#"fold="""#), "{text}");
+        assert!(!text.contains(r#"fold="None""#), "{text}");
+    }
+
     #[test]
     fn every_metric_name_carries_one_help_one_type_and_contiguous_series() {
         let mut dog = sample_info("bark");
