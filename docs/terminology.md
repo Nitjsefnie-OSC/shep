@@ -31,6 +31,8 @@ Free on crates.io (verified 2026-08-07): `shep`, `shepd`, plus reserves `bleat`,
 | resurrect saved state | resurrect | **muster** | `shep muster` assembles the flock from the roll |
 | TUI dashboard | monit/dash | **lookout** | `shep lookout`; `shep dash` alias |
 | host machine | host | **the heft** (sheep bound to their hill) | subtle: docs + host-metrics naming |
+| another machine whose shepherd the CLI talks to, reached over ssh | remote | **host** (pl. hosts), plain, not themed: it appears in flags, config and error text (rule 2). Each host's shepherd owns its own flock; no shepherd supervises a sheep on another host. **heft** stays the docs word for one machine's ground | `--host <name>`, `hosts = [...]` in `shep.toml`, `shep host add/remove` |
+| every host's flock, listed together | fleet view | **the flocks**, the plural of flock, in prose only; not a type or a verb | `shep flock` on a machine with a hosts list, docs |
 | graceful reload (an overlap, not zero downtime) | reload | reload (verb stays) — strategies **come-bye** / **away** if we ever name them | reload internals, maybe strategy flags |
 | kill escalation | kill | kill (stays — clarity beats cuteness on destructive ops) | — |
 | change instance count | scale | **stock** — "stocking rate" is the real husbandry term for how many animals a piece of land runs, not a pun; `shep scale` stays as an alias | `shep stock <name> <count>` |
