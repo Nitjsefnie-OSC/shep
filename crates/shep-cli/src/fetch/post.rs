@@ -9,13 +9,9 @@
 
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
-use tokio_rustls::rustls::pki_types::ServerName;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 
-use super::{
-    FetchError, MAX_HEADER_BYTES, Target, parse_status_line, peer_transport_error, tls_connector,
-};
+use super::{FetchError, MAX_HEADER_BYTES, Target, connect_and_send, parse_status_line};
 
 /// The most response body this reader keeps. A collector's OTLP answer is a
 /// small JSON object; a peer sending more than this gets
@@ -71,26 +67,15 @@ pub async fn post_json(
     }
 }
 
-/// Connects to `target`, over TLS when `target.https`, and runs the POST
-/// over whichever stream results.
+/// Connects to `target`, sends the POST and reads the reply with
+/// [`read_post_reply`].
 async fn post_inner(
     target: &Target,
     headers: &[(String, String)],
     body: &[u8],
 ) -> Result<PostReply, FetchError> {
-    let request = build_post_request(target, headers, body);
-    let tcp = TcpStream::connect((target.host.as_str(), target.port)).await?;
-    if target.https {
-        let domain = ServerName::try_from(target.host.clone())
-            .map_err(|source| FetchError::Transport(std::io::Error::other(source)))?;
-        let tls = tls_connector()
-            .connect(domain, tcp)
-            .await
-            .map_err(peer_transport_error)?;
-        post_exchange(tls, &request).await
-    } else {
-        post_exchange(tcp, &request).await
-    }
+    let stream = connect_and_send(target, &build_post_request(target, headers, body)).await?;
+    read_post_reply(stream).await
 }
 
 /// The request line, headers and body [`post_inner`] sends, as the bytes to
@@ -118,17 +103,6 @@ fn build_post_request(target: &Target, headers: &[(String, String)], body: &[u8]
     let mut request = head.into_bytes();
     request.extend_from_slice(body);
     request
-}
-
-/// Writes `request`, flushes, then reads back the answer. The flush matters
-/// on the TLS branch for the reason [`crate::fetch::exchange`] gives for it.
-async fn post_exchange<S: AsyncRead + AsyncWrite + Unpin>(
-    mut stream: S,
-    request: &[u8],
-) -> Result<PostReply, FetchError> {
-    stream.write_all(request).await?;
-    stream.flush().await?;
-    read_post_reply(stream).await
 }
 
 /// Reads the status line, the header block, and the body that head sized.
