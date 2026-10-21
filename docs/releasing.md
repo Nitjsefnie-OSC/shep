@@ -293,9 +293,10 @@ cargo check --workspace --all-features
 $EDITOR crates/*/CHANGELOG.md
 
 # 3. The task gate, one command at a time, $? read directly and never
-#    through a pipe.
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+#    through a pipe. fmt and clippy run on 1.93 like CI, not on `stable`:
+#    docs/testing.md#why-linting-runs-on-193 (install it once there).
+cargo +1.93 fmt --all -- --check
+cargo +1.93 clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 
@@ -448,8 +449,8 @@ published on 2026-08-26: all five crates went up, in cargo's own order,
 within four seconds. The list below is what held, not what somebody hoped
 would hold.
 
-- The task gate is green: `cargo fmt --all --check`, `cargo clippy --workspace
-  --all-targets --all-features -- -D warnings`, and `cargo test --workspace
+- The task gate is green: `cargo +1.93 fmt --all -- --check`, `cargo +1.93 clippy
+  --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace
   --all-features` at 1716 passed / 0 failed.
 - Every crate has `description`, `readme`, `keywords` and `categories`, and
   every category is a real crates.io slug. A category the registry does not
