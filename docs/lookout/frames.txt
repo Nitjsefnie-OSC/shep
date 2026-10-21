@@ -1358,7 +1358,7 @@ shep lookout   /home/ada/.shep                                                  
                                                                                           out_file  relative paths follow it too                                
                                                                                           watch_options  globs are rooted here                                  
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  = read-only, set it in the Flockfile   ~ no widget for this shape   ! parked, awaits a respawn   * yours   -> changed by you, not yet written   › opens its o…
+  = read-only, set it in the Flockfile   ~ no widget for this shape   ! parked, awaits a respawn   * yours   -> changed by you, not yet written   › opens screen
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
@@ -1407,7 +1407,7 @@ shep lookout   /home/ada/.shep                                                  
    NODE_ENV                   (set)                                                       █ refused: a lowercase unit                                           
    + add a key                                                                            █ refused: a fraction                                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  = read-only, set it in the Flockfile   ~ no widget for this shape   ! parked, awaits a respawn   * yours   -> changed by you, not yet written   › opens its o…
+  = read-only, set it in the Flockfile   ~ no widget for this shape   ! parked, awaits a respawn   * yours   -> changed by you, not yet written   › opens screen
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
@@ -1562,7 +1562,7 @@ shep lookout   /home/ada/.shep                                                  
                                                                                           █ refused: a value that is not a table                                
                                                                                           █ refused: an empty dog name                                          
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  = read-only, set it in the Flockfile   ~ no widget for this shape   ! parked, awaits a respawn   * yours   -> changed by you, not yet written   › opens its o…
+  = read-only, set it in the Flockfile   ~ no widget for this shape   ! parked, awaits a respawn   * yours   -> changed by you, not yet written   › opens screen
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
@@ -2036,7 +2036,7 @@ shep lookout   /home/ada/.shep                                                  
                                     ▐  c   continue         write them and leave it running. They wait for a respawn.      ▌n rule                              
                                     ▐                                                                                      ▌s this path spells {{instance}} out 
   ──────────────────────────────────▐  esc  keep editing, write nothing   ·   this prompt expires in 10s ██████████        ▌────────────────────────────────────
-  = read-only, set it in the Flockfi▙▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▟ou, not yet written   › opens its o…
+  = read-only, set it in the Flockfi▙▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▟ou, not yet written   › opens screen
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
@@ -2190,7 +2190,7 @@ shep lookout   /home/ada/.shep                                                  
                                     ▐                       app sets SO_REUSEPORT itself.                                  ▌ too                                
                                     ▐  c   continue         write them and leave it running. They wait for a respawn.      ▌re                                  
   ──────────────────────────────────▐                                                                                      ▌────────────────────────────────────
-  = read-only, set it in the Flockfi▐  esc  keep editing, write nothing   ·   this prompt expires in 10s ██████████        ▌ou, not yet written   › opens its o…
+  = read-only, set it in the Flockfi▐  esc  keep editing, write nothing   ·   this prompt expires in 10s ██████████        ▌ou, not yet written   › opens screen
                                     ▙▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▟                                    
                                                                                                                                                                 
                                                                                                                                                                 
