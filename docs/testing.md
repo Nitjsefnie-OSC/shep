@@ -85,8 +85,9 @@ nowhere.
 ### The task gate — run once, when the task is otherwise done
 
 ```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+rustup toolchain install 1.93 --profile minimal --component clippy,rustfmt   # once
+cargo +1.93 fmt --all -- --check
+cargo +1.93 clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
@@ -109,6 +110,16 @@ in zsh a pipeline's `$?` is the last command's and `${PIPESTATUS[0]}` is empty.
 **One cargo command at a time**: the workspace shares one target-dir build
 lock, so concurrent runs block rather than parallelise. (A separate worktree,
 or `benches/`, has its own lock and may run alongside.)
+
+### Why linting runs on 1.93
+
+`rust-toolchain.toml` pins `stable`, but fmt and clippy run as `+1.93`, the
+version CI's `lint` job installs. Each stable release adds clippy lints, and
+they fire on code nobody touched, so a branch that is clean in CI would fail
+the local gate on a newer stable. Linting on a fixed version keeps the two
+the same. Tests and docs stay on `stable`. The install line above is
+one-time, and the `+1.93` commands must match the `lint` job in
+`.github/workflows/test.yml`.
 
 ### The two cross-checks — run once per phase, not per task
 
