@@ -20,13 +20,18 @@ cargo test -p shep --lib --bins --all-features -- --skip ::slow::
 `::slow::` tests wait on real FSEvents or wall-clock time. Run unfiltered when
 touching `watch/`, `extras/` or the sampler (`limits/`).
 
-Task gate, once, when the task is otherwise done:
+Task gate, once, when the task is otherwise done. fmt and clippy run on 1.93
+like CI, not `stable` ([why](docs/testing.md#why-linting-runs-on-193)); install
+it once:
 
 ```bash
-cargo fmt --all --check
+rustup toolchain install 1.93 --profile minimal --component clippy,rustfmt
 ```
 ```bash
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo +1.93 fmt --all -- --check
+```
+```bash
+cargo +1.93 clippy --workspace --all-targets --all-features -- -D warnings
 ```
 ```bash
 cargo test --workspace --all-features
