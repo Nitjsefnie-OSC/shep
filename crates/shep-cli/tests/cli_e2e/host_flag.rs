@@ -705,3 +705,33 @@ fn start_over_a_host_resumes_a_stopped_remote_sheep_and_never_boots_a_remote_she
     graceful_kill(local.path());
     graceful_kill(remote.path());
 }
+
+/// A full lookout needs a terminal, which a test does not have. What it can
+/// pin is that `--host` no longer refuses the verb, and that the gate is the
+/// local one: it answers before any ssh is run.
+#[cfg(unix)]
+#[test]
+fn lookout_over_a_host_without_a_terminal_exits_2_like_a_local_one() {
+    let local = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let ran = bin.path().join("ssh-ran");
+    let ssh = bin.path().join("ssh");
+    std::fs::write(
+        &ssh,
+        format!("#!/bin/sh\ntouch '{}'\nexit 255\n", ran.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = shep(local.path())
+        .args(["--host", "amp2", "lookout"])
+        .env("PATH", path_with_first(bin.path()))
+        .timeout(CMD_TIMEOUT)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(said.contains("needs a terminal"), "{said}");
+    assert!(!ran.exists(), "ssh ran before the terminal gate");
+}
