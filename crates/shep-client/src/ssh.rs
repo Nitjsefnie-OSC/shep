@@ -64,6 +64,7 @@ pub struct SshOptions {
     program: PathBuf,
     batch_mode: bool,
     timeout: Option<Duration>,
+    autostart: bool,
 }
 
 impl Default for SshOptions {
@@ -72,6 +73,7 @@ impl Default for SshOptions {
             program: PathBuf::from("ssh"),
             batch_mode: false,
             timeout: None,
+            autostart: false,
         }
     }
 }
@@ -88,6 +90,19 @@ impl SshOptions {
     #[must_use]
     pub fn batch_mode(mut self, batch_mode: bool) -> Self {
         self.batch_mode = batch_mode;
+        self
+    }
+
+    /// Asks the remote `shep dial-stdio` to boot the host's shepherd from its
+    /// saved roll when none answers, by ending the command line in
+    /// `--autostart`.
+    ///
+    /// Off by default: a dial that finds no shepherd reports it. A remote shep
+    /// older than this flag exits with a usage error, which reads as
+    /// [`SshCause::RemoteTooOld`].
+    #[must_use]
+    pub fn autostart(mut self, autostart: bool) -> Self {
+        self.autostart = autostart;
         self
     }
 
@@ -294,8 +309,11 @@ async fn dial(
     if options.batch_mode {
         command.args(["-o", "BatchMode=yes"]);
     }
+    command.args(["--", destination.as_str(), "shep", "dial-stdio"]);
+    if options.autostart {
+        command.arg("--autostart");
+    }
     command
-        .args(["--", destination.as_str(), "shep", "dial-stdio"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -474,6 +492,19 @@ mod tests {
         assert_eq!(
             recorded_args(dir.path()),
             ["-T", "--", "deploy@build-01", "shep", "dial-stdio"]
+        );
+    }
+
+    #[tokio::test]
+    async fn autostart_appends_its_flag_after_dial_stdio() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = stand_in(dir.path(), &format!("{RECORD_ARGS}\nexit 255"));
+
+        let _ = failure("build-01", &options(program).autostart(true)).await;
+
+        assert_eq!(
+            recorded_args(dir.path()),
+            ["-T", "--", "build-01", "shep", "dial-stdio", "--autostart"]
         );
     }
 

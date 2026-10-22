@@ -4,40 +4,82 @@
 //! shepherd, and the existing length-prefixed frames cross unchanged. The verb
 //! copies bytes and nothing else: it does no handshake, no version check, and
 //! never looks inside a frame.
+//!
+//! With `--autostart` it first boots the shepherd when none answers, which is
+//! how `shep --host <dest> muster` brings up a host that has just rebooted.
+//! No other verb asks for it.
 
 use std::convert::Infallible;
 use std::io;
 use std::path::Path;
+use std::process::Child;
 
 use shep_client::HANDSHAKE_TIMEOUT;
+use shep_client::spawn::connect_or_spawn;
+use shep_core::paths::ShepPaths;
 use shep_core::transport;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use crate::cli::Format;
 use crate::client::emit_error_locked;
 use crate::exit::ExitCode;
+use crate::launch::launch_daemon;
 
-/// Copies bytes between stdin/stdout and the shepherd at `socket`, then ends
-/// the process.
+/// Copies bytes between stdin/stdout and the shepherd at `paths.socket`, then
+/// ends the process. With `autostart`, a shepherd is booted first if none
+/// answers.
 ///
 /// Never returns. tokio's stdin read runs on a blocking thread that dropping
 /// the runtime waits for, so returning an [`ExitCode`] would hang the process
 /// on an open stdin after the shepherd side closed. Stdout is flushed by
 /// [`bridge`] before this exits.
-pub(crate) async fn dial_stdio(fmt: Format, socket: &Path) -> Infallible {
-    let code = dial(fmt, socket, tokio::io::stdin(), tokio::io::stdout()).await;
+pub(crate) async fn dial_stdio(fmt: Format, paths: &ShepPaths, autostart: bool) -> Infallible {
+    let launch_paths = paths.clone();
+    let code = dial(
+        fmt,
+        &paths.socket,
+        autostart,
+        move || launch_daemon(&launch_paths),
+        tokio::io::stdin(),
+        tokio::io::stdout(),
+    )
+    .await;
     std::process::exit(i32::from(code as u8));
 }
 
 /// Connects to the shepherd at `socket` and runs [`bridge`] over it.
 ///
-/// Nothing is written to `output` when no shepherd answers: the one error goes
-/// to stderr.
-async fn dial<I, O>(fmt: Format, socket: &Path, input: I, output: O) -> ExitCode
+/// With `autostart`, `launch` boots the shepherd when none answers, through
+/// the state machine a local `muster` uses. Its handshake is spent: the client
+/// it returns is dropped and the bridge dials afresh, so the bridge stays the
+/// same bytes-only copy with or without the flag. Without `autostart`, `launch`
+/// is never called.
+///
+/// Nothing is written to `output` when no shepherd answers or the boot fails:
+/// the one error goes to stderr.
+async fn dial<I, O, L>(
+    fmt: Format,
+    socket: &Path,
+    autostart: bool,
+    launch: L,
+    input: I,
+    output: O,
+) -> ExitCode
 where
     I: AsyncRead + Unpin,
     O: AsyncWrite + Unpin,
+    L: FnOnce() -> io::Result<Child> + Send + 'static,
 {
+    if autostart {
+        match connect_or_spawn(socket, launch).await {
+            Ok(_spent) => {}
+            Err(err) => {
+                let code = ExitCode::from(&err);
+                emit_error_locked(fmt, code, &err.to_string());
+                return code;
+            }
+        }
+    }
     let unreachable = |why: &dyn core::fmt::Display| {
         emit_error_locked(
             fmt,
@@ -225,7 +267,80 @@ mod tests {
         let (_stdin_tx, stdin) = duplex(1024);
         let (stdout, mut stdout_rx) = duplex(1024);
 
-        let code = dial(Format::Table, &socket, stdin, stdout).await;
+        let code = dial(Format::Table, &socket, false, no_launch, stdin, stdout).await;
+
+        assert_eq!(code, ExitCode::DaemonUnreachable);
+        let mut written = Vec::new();
+        stdout_rx.read_to_end(&mut written).await.unwrap();
+        assert!(written.is_empty(), "stdout got {written:?}");
+    }
+
+    /// A launcher for a run that must not boot anything.
+    fn no_launch() -> io::Result<Child> {
+        unreachable!("no flag asked for an autostart")
+    }
+
+    #[tokio::test]
+    async fn without_autostart_nothing_is_launched() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+        let (_stdin_tx, stdin) = duplex(1024);
+        let (stdout, _stdout_rx) = duplex(1024);
+
+        // The launcher panics, and a panic inside it resumes on the caller.
+        let code = dial(Format::Table, &socket, false, no_launch, stdin, stdout).await;
+
+        assert_eq!(code, ExitCode::DaemonUnreachable);
+    }
+
+    /// Unix only: the fake shepherd accepts the autostart handshake alone, and
+    /// a named pipe has no second connection to bridge over.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn autostart_boots_a_shepherd_before_bridging() {
+        use core::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+        let launched = Arc::new(AtomicBool::new(false));
+        let (stdin_tx, stdin) = duplex(1024);
+        let (stdout, mut stdout_rx) = duplex(1024);
+        drop(stdin_tx);
+        let launcher = {
+            let (socket, launched) = (socket.clone(), Arc::clone(&launched));
+            move || {
+                launched.store(true, Ordering::SeqCst);
+                shep_client::testing::start_fake_daemon_answering_on(&socket);
+                // The losing side of a cold-start race: a child that is not
+                // the daemon, which the state machine tolerates.
+                shep_client::testing::child_exiting_with(shep_client::spawn::DAEMON_ALREADY_RUNNING)
+            }
+        };
+
+        let code = tokio::time::timeout(
+            BOUND,
+            dial(Format::Table, &socket, true, launcher, stdin, stdout),
+        )
+        .await
+        .expect("the bridge outlived end of input");
+
+        assert!(launched.load(Ordering::SeqCst), "nothing was launched");
+        assert_eq!(code, ExitCode::Success);
+        let mut written = Vec::new();
+        stdout_rx.read_to_end(&mut written).await.unwrap();
+        assert!(written.is_empty(), "stdout got {written:?}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_autostart_exits_with_its_spawn_code_and_writes_nothing_to_stdout() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+        let (_stdin_tx, stdin) = duplex(1024);
+        let (stdout, mut stdout_rx) = duplex(1024);
+        let refused = || Err(io::Error::other("no such binary"));
+
+        let code = dial(Format::Table, &socket, true, refused, stdin, stdout).await;
 
         assert_eq!(code, ExitCode::DaemonUnreachable);
         let mut written = Vec::new();

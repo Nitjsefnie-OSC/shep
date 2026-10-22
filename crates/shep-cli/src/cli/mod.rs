@@ -50,7 +50,8 @@ pub use sheep::{
 };
 pub use store::{KvGetArgs, KvSetArgs, KvUnsetArgs, SecretArgs, SecretCommand};
 pub use system::{
-    CompletionArgs, DaemonArgs, DaemonCmd, DevArgs, InitArgs, RuntimeArgs, StartupArgs, StyleArgs,
+    CompletionArgs, DaemonArgs, DaemonCmd, DevArgs, DialStdioArgs, InitArgs, RuntimeArgs,
+    StartupArgs, StyleArgs,
 };
 pub use verbs::Commands;
 

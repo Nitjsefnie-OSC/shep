@@ -705,3 +705,124 @@ fn start_over_a_host_resumes_a_stopped_remote_sheep_and_never_boots_a_remote_she
     graceful_kill(local.path());
     graceful_kill(remote.path());
 }
+
+#[cfg(unix)]
+/// Waits for `path` to stop existing, for a shepherd's socket after `kill`.
+fn wait_until_gone(path: &Path) {
+    let deadline = Instant::now() + CMD_TIMEOUT;
+    while path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "{} never went away",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// After a reboot there is no remote shepherd to dial. `muster` is the one
+/// verb that boots it, from the roll on the host's own home, and nothing of
+/// the host's is booted on this machine.
+#[cfg(unix)]
+#[test]
+fn muster_over_a_host_boots_the_remote_shepherd_from_its_roll_and_leaves_the_local_one_down() {
+    let local = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+    start_sheep(&mut guard, &remote, "remote-sheep");
+    assert_success(&shep(remote.path()).arg("save").output().unwrap());
+    graceful_kill(remote.path());
+    let remote_socket = remote.path().join("run").join("shep.sock");
+    wait_until_gone(&remote_socket);
+    write_ssh_stand_in(bin.path(), remote.path());
+
+    let mustered = shep(local.path())
+        .args(["--format", "json", "--host", "amp2", "muster"])
+        .env("PATH", path_with_first(bin.path()))
+        .output()
+        .unwrap();
+
+    assert_success(&mustered);
+    let envelope: serde_json::Value = serde_json::from_slice(&mustered.stdout).unwrap();
+    assert_eq!(envelope["command"], "muster", "{envelope}");
+    let remote_flock = shep(remote.path())
+        .args(["--format", "json", "flock"])
+        .output()
+        .unwrap();
+    assert_success(&remote_flock);
+    assert_eq!(json_names(&remote_flock), ["remote-sheep"]);
+    assert!(
+        !local.path().join("run").join("shep.sock").exists(),
+        "a shepherd came up on this machine"
+    );
+
+    graceful_kill(remote.path());
+}
+
+/// The dial that every other verb makes never asks for a boot, so a host that
+/// is down stays down and the exit code says so.
+#[cfg(unix)]
+#[test]
+fn flock_over_a_host_never_boots_the_remote() {
+    let local = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    write_ssh_stand_in(bin.path(), remote.path());
+
+    let listed = shep(local.path())
+        .args(["--host", "amp2", "flock"])
+        .env("PATH", path_with_first(bin.path()))
+        .output()
+        .unwrap();
+
+    assert_eq!(listed.status.code(), Some(5), "{listed:?}");
+    assert!(
+        !remote.path().join("run").join("shep.sock").exists(),
+        "the remote shepherd was booted"
+    );
+}
+
+/// ssh ends a session only once every copy of its pipes has closed. The
+/// stand-in does the same: its pipeline ends when the last writer to stdout
+/// is gone, and only then does it touch the marker. A shepherd booted by
+/// `dial-stdio` that kept the pipe would hold the marker back for as long as
+/// it lives.
+#[cfg(unix)]
+#[test]
+fn the_ssh_session_ends_after_a_remote_muster() {
+    let local = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+    let marker = bin.path().join("session-ended");
+    let stand_in = write_ssh_stand_in(bin.path(), remote.path());
+    let script = std::fs::read_to_string(&stand_in).unwrap();
+    let waiting = format!("\"$@\" | {{ cat; touch '{}'; }}\n", marker.display());
+    std::fs::write(&stand_in, script.replace("exec \"$@\"\n", &waiting)).unwrap();
+
+    let mustered = shep(local.path())
+        .args(["--host", "amp2", "muster"])
+        .env("PATH", path_with_first(bin.path()))
+        .output()
+        .unwrap();
+    guard.adopt_home(remote.path());
+    assert_success(&mustered);
+
+    wait_until_exists(&marker);
+    graceful_kill(remote.path());
+}
+
+#[cfg(unix)]
+/// Waits for `path` to exist.
+fn wait_until_exists(path: &Path) {
+    let deadline = Instant::now() + CMD_TIMEOUT;
+    while !path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "{} never appeared: the session is still open",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
