@@ -68,6 +68,13 @@ impl App {
         &self.home
     }
 
+    /// The ssh destination this lookout watches, or `None` for this machine's
+    /// own shepherd.
+    #[must_use]
+    pub fn remote_host(&self) -> Option<&str> {
+        self.remote_host.as_deref()
+    }
+
     /// The last host reading, or `None` if there has not been one.
     #[must_use]
     pub fn host(&self) -> Option<crate::lookout::source::HostSample> {

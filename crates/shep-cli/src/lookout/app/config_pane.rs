@@ -139,6 +139,12 @@ impl App {
     /// runs one process and is never a group row, but a group row must
     /// still work with `e`.
     pub(super) fn ask_for_config(&mut self) -> Effect {
+        // A dog's pane is read off its binary and `dogs.toml` on this machine.
+        if self.selected_row().is_some_and(|row| row.info.dog.is_some())
+            && self.refuse_over_host()
+        {
+            return Effect::None;
+        }
         if let Some(row) = self.selected_row()
             && let Some(source) = row.info.dog.as_ref()
         {
