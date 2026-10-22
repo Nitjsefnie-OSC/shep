@@ -16,6 +16,8 @@ use crate::commands::selector::parse_selector;
 use crate::commands::shep_toml::ShepToml;
 use crate::exit::ExitCode;
 use crate::output::{FlockRows, Streams};
+use crate::remote::Link;
+use crate::version_guard::{VersionGuard, connect_client};
 
 /// Which of the two verbs ran
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,25 +55,73 @@ pub(crate) async fn toggle(
     verb: Toggle,
     name: &str,
 ) -> ExitCode {
-    if names_a_dog(paths, name) {
+    toggle_with(
+        streams,
+        Some(paths),
+        async |streams| match dogs::connect_or_absent(paths, streams).await {
+            Ok(Some(client)) => Ok(client),
+            Ok(None) => {
+                let message = format!(
+                    "no shepherd is running; `shep {} {name}` needs one to mark a sheep. \
+                     start one with `shep start <target>`",
+                    verb.verb()
+                );
+                Err(streams.fail(ExitCode::DaemonUnreachable, &message))
+            }
+            Err(code) => Err(code),
+        },
+        verb,
+        name,
+    )
+    .await
+}
+
+/// [`toggle`] over a [`Link::Host`]
+///
+/// There is no dog half: the `shep.toml` here is this machine's, not the
+/// host's, so every name goes to the host's shepherd as a sheep selector and
+/// is answered there.
+pub(crate) async fn toggle_on_host(
+    streams: &mut Streams<'_>,
+    link: &Link<'_>,
+    guard: VersionGuard,
+    verb: Toggle,
+    name: &str,
+) -> ExitCode {
+    toggle_with(
+        streams,
+        None,
+        async |streams| connect_client(streams, link, guard).await,
+        verb,
+        name,
+    )
+    .await
+}
+
+/// [`toggle`] with the dog half's home and the connection decided by the
+/// caller: `local_dogs` is `None` when there is no dog half, and `connect`
+/// is asked only if `name` is a sheep selector.
+pub(crate) async fn toggle_with(
+    streams: &mut Streams<'_>,
+    local_dogs: Option<&ShepPaths>,
+    connect: impl AsyncFnOnce(&mut Streams<'_>) -> Result<Client, ExitCode>,
+    verb: Toggle,
+    name: &str,
+) -> ExitCode {
+    if let Some(paths) = local_dogs
+        && names_a_dog(paths, name)
+    {
         return match verb {
             Toggle::Enable => dogs::enable(streams, paths, name).await,
             Toggle::Disable => dogs::disable(streams, paths, name).await,
         };
     }
-    let client = match dogs::connect_or_absent(paths, streams).await {
-        Ok(Some(client)) => client,
-        Ok(None) => {
-            let message = format!(
-                "no shepherd is running; `shep {} {name}` needs one to mark a sheep. \
-                 start one with `shep start <target>`",
-                verb.verb()
-            );
-            return streams.fail(ExitCode::DaemonUnreachable, &message);
-        }
+    let client = match connect(streams).await {
+        Ok(client) => client,
         Err(code) => return code,
     };
-    toggle_sheep(&client, streams, verb, name, &known_dogs(paths)).await
+    let known = local_dogs.map(known_dogs).unwrap_or_default();
+    toggle_sheep(&client, streams, verb, name, &known).await
 }
 
 /// Every dog the daemon config can resolve: the built-ins, then the adopted
