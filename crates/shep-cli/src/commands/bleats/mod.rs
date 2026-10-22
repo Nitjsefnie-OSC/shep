@@ -17,8 +17,8 @@ use std::path::Path;
 use futures_util::FutureExt;
 use serde::Serialize;
 
-use shep_client::{Client, EventStream, Lagged};
-use shep_core::protocol::{BusEvent, ProcessInfo};
+use shep_client::{Client, EventStream, Lagged, RequestError};
+use shep_core::protocol::{BusEvent, LogStream, LogTail, ProcessInfo, RpcErrorCode};
 use shep_core::selector::ProcessSelector;
 
 use crate::cli::{BleatsArgs, Format};
@@ -26,7 +26,7 @@ use crate::commands::rpc::typed_request_error;
 use crate::commands::selector::parse_selector;
 use crate::exit::ExitCode;
 use crate::output::{self, Streams, write_outcome};
-use crate::remote::interrupt_within_grace;
+use crate::remote::{interrupt_within_grace, ssh_hint};
 
 pub(crate) use shep_core::logtail::read_tail;
 // Only the tests size a file against the window.
@@ -225,12 +225,145 @@ pub(crate) fn missing_log_note(stream: &str, path: &Path) -> String {
     )
 }
 
+/// Where a tail's lines are read from.
+#[derive(Clone, Copy)]
+enum LogSource<'a> {
+    /// The files `out_file`/`err_file` name, opened by this process.
+    Local,
+    /// The shepherd of host `name`, which reads its own files: the paths in
+    /// its rows are not files here.
+    Host {
+        /// The link to that shepherd.
+        client: &'a Client,
+        /// The `--host` destination, for the notices that name it.
+        name: &'a str,
+    },
+}
+
+/// What reading one log file came to, whichever side read it.
+enum FileTail {
+    /// The tail, oldest line first.
+    Lines(Vec<String>),
+    /// The sheep has no path recorded for the stream.
+    NoPath,
+    /// The file is not there. Holds the whole note, since only the source
+    /// knows which machine's directory a relative path names.
+    Missing(String),
+    /// The file is there and could not be read. Holds the whole message.
+    Unreadable(String),
+}
+
+impl LogSource<'_> {
+    /// The last `lines` lines of `stream`'s file for `info`, recorded at `path`.
+    ///
+    /// # Errors
+    /// A host's shepherd did not give an answer: see [`Self::stop`].
+    async fn read(
+        &self,
+        info: &ProcessInfo,
+        stream: LogStream,
+        path: &str,
+        lines: usize,
+    ) -> Result<FileTail, RequestError> {
+        let label = stream_label(stream);
+        match self {
+            Self::Local => {
+                // The row that reaches the file first decides whether it is
+                // stamped: instances of one app share both the path and its
+                // `log_timestamps`.
+                let stamped = info.log_timestamps.unwrap_or(true);
+                Ok(match read_tail(Path::new(path), lines, stamped) {
+                    Ok((lines, _truncated)) => FileTail::Lines(lines),
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                        FileTail::Missing(missing_log_note(label, Path::new(path)))
+                    }
+                    Err(err) => FileTail::Unreadable(format!("failed to read {path}: {err}")),
+                })
+            }
+            Self::Host { client, name } => {
+                let lines = u32::try_from(lines).unwrap_or(u32::MAX);
+                Ok(match client.tail_log(info.id, stream, lines).await? {
+                    LogTail::Lines { lines, .. } => FileTail::Lines(lines),
+                    LogTail::NoPath => FileTail::NoPath,
+                    // The path as the host recorded it, never made absolute
+                    // here: this machine's directory says nothing about it.
+                    LogTail::Missing { path } => {
+                        FileTail::Missing(format!("no {label} log at {path} on {name} yet"))
+                    }
+                    LogTail::Unreadable { path, reason } => {
+                        FileTail::Unreadable(format!("failed to read {path} on {name}: {reason}"))
+                    }
+                    // `LogTail` is `#[non_exhaustive]`: `Unrecognized` and an
+                    // outcome a newer shepherd added are the same here.
+                    _ => FileTail::Unreadable(format!(
+                        "failed to read {path} on {name}: this client does not understand \
+                         the answer"
+                    )),
+                })
+            }
+        }
+    }
+
+    /// Reports a request that got no answer, and hands back the code the
+    /// whole verb stops on.
+    ///
+    /// A shepherd that predates `Request::TailLog` refuses every file alike,
+    /// so it is one failure naming its host and the fix, not a notice per
+    /// file.
+    fn stop(&self, streams: &mut Streams<'_>, err: &RequestError) -> ExitCode {
+        match (self, err) {
+            (Self::Host { name, .. }, RequestError::Rpc(rpc))
+                if rpc.code == RpcErrorCode::Unsupported =>
+            {
+                let words = ["shep", "daemon", "reload"].map(String::from);
+                let message = format!(
+                    "the shepherd on {name} predates remote log reads; run `{}` to load a \
+                     newer one",
+                    ssh_hint(name, &words)
+                );
+                streams.fail(ExitCode::Unsupported, &message)
+            }
+            _ => typed_request_error(streams, err),
+        }
+    }
+}
+
+/// The word `bleats` prints for `stream`, the same one a [`BleatLine`] carries.
+fn stream_label(stream: LogStream) -> &'static str {
+    match stream {
+        LogStream::Err => "err",
+        _ => "out",
+    }
+}
+
+/// The `log_path_unknown` notice for `name`'s `stream`, said once however
+/// many rows share it.
+///
+/// No path to key on, since the missing field is why this fires. The message
+/// already names the pair that varies.
+fn path_unknown_notice(
+    streams: &mut Streams<'_>,
+    quiet: bool,
+    seen_notices: &mut HashSet<String>,
+    name: &str,
+    stream: LogStream,
+) {
+    let message = format!(
+        "{name}: the daemon did not report a {} log path",
+        stream_label(stream)
+    );
+    if seen_notices.insert(message.clone()) {
+        write_notice(streams, quiet, "log_path_unknown", &message);
+    }
+}
+
 /// Renders the selected files of every sheep the selector admits, in flock
 /// order, and returns the exit code that reports how that went.
 ///
 /// Within one sheep, `out_file` (unless `--err`) prints before `err_file`
 /// (unless `--out`), with no merge between them. `cache` is a `HashMap`, so
 /// matched sheep are sorted first, by name, then instance slot, then id.
+/// Each file is read through `source`, one at a time in that order.
 ///
 /// A `None` path (a shepherd predating
 /// [`shep_core::protocol::ProcessInfo::out_file`]) is a `log_path_unknown`
@@ -238,13 +371,18 @@ pub(crate) fn missing_log_note(stream: &str, path: &Path) -> String {
 /// the exit code alone. Any other read failure is a `log_unreadable`
 /// notice and sets [`ExitCode::Failure`]; the rest of the flock still
 /// prints.
-fn tail_log_files(
+///
+/// # Errors
+/// A host's shepherd gave no answer to a read ([`LogSource::stop`]). The
+/// code is already reported, and the files after it are not read.
+async fn tail_log_files(
     streams: &mut Streams<'_>,
     quiet: bool,
     cache: &HashMap<u32, ProcessInfo>,
     selector: &ProcessSelector,
     args: &BleatsArgs,
-) -> ExitCode {
+    source: LogSource<'_>,
+) -> Result<ExitCode, ExitCode> {
     let mut matched: Vec<&ProcessInfo> = cache
         .values()
         .filter(|info| selector.matches(&info.name, info.id, info.fold.as_deref(), info.instance))
@@ -284,94 +422,71 @@ fn tail_log_files(
 
     for info in matched {
         let name = &info.name;
-        let wanted: [(&'static str, Option<&str>, bool); 2] = [
-            ("out", info.out_file.as_deref(), !args.err),
-            ("err", info.err_file.as_deref(), !args.out),
+        let wanted: [(LogStream, Option<&str>, bool); 2] = [
+            (LogStream::Out, info.out_file.as_deref(), !args.err),
+            (LogStream::Err, info.err_file.as_deref(), !args.out),
         ];
-        for (stream_name, path, show) in wanted {
+        for (stream, path, show) in wanted {
             if !show {
                 continue;
             }
-            match path {
-                None => {
-                    // No path to key on, since the missing field is why this
-                    // fires. The message already names the pair that varies.
-                    let message =
-                        format!("{name}: the daemon did not report a {stream_name} log path");
-                    if seen_notices.insert(message.clone()) {
-                        write_notice(streams, quiet, "log_path_unknown", &message);
+            let stream_name = stream_label(stream);
+            let Some(path) = path else {
+                path_unknown_notice(streams, quiet, &mut seen_notices, name, stream);
+                continue;
+            };
+            if !seen_paths.insert(path.to_string()) {
+                continue;
+            }
+            // Only label a backlog line with a slot when this path belongs to
+            // exactly one row: instances sharing one file interleave in it and
+            // no line says who wrote it.
+            let shared = path_owners
+                .get(&(stream_name, path.to_string()))
+                .copied()
+                .unwrap_or(0)
+                > 1;
+            let label_instance = if !shared && instance_count(cache, name) > 1 {
+                info.instance
+            } else {
+                None
+            };
+            match source.read(info, stream, path, args.lines).await {
+                Ok(FileTail::Lines(lines)) => {
+                    for line in lines {
+                        if let Err(write_err) =
+                            write_line(streams, info.id, name, label_instance, stream_name, &line)
+                        {
+                            let code = write_outcome(Err(write_err));
+                            let _ = streams.out.flush();
+                            return Ok(code);
+                        }
                     }
                 }
-                Some(path) => {
-                    if !seen_paths.insert(path.to_string()) {
-                        continue;
-                    }
-                    // Only label a backlog line with a slot when this path
-                    // belongs to exactly one row: instances sharing one file
-                    // interleave in it and no line says who wrote it.
-                    let shared = path_owners
-                        .get(&(stream_name, path.to_string()))
-                        .copied()
-                        .unwrap_or(0)
-                        > 1;
-                    let label_instance = if !shared && instance_count(cache, name) > 1 {
-                        info.instance
-                    } else {
-                        None
-                    };
-                    // The row that reaches the file first decides whether it
-                    // is stamped: instances of one app share both the path
-                    // and its `log_timestamps`.
-                    let stamped = info.log_timestamps.unwrap_or(true);
-                    match read_tail(Path::new(path), args.lines, stamped) {
-                        Ok((lines, _truncated)) => {
-                            for line in lines {
-                                if let Err(write_err) = write_line(
-                                    streams,
-                                    info.id,
-                                    name,
-                                    label_instance,
-                                    stream_name,
-                                    &line,
-                                ) {
-                                    let code = write_outcome(Err(write_err));
-                                    let _ = streams.out.flush();
-                                    return code;
-                                }
-                            }
-                        }
-                        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                            write_notice(
-                                streams,
-                                quiet,
-                                "log_missing",
-                                &format!(
-                                    "{name}: {}",
-                                    missing_log_note(stream_name, Path::new(path))
-                                ),
-                            );
-                        }
-                        Err(err) => {
-                            failure = true;
-                            write_notice(
-                                streams,
-                                quiet,
-                                "log_unreadable",
-                                &format!("failed to read {path}: {err}"),
-                            );
-                        }
-                    }
+                Ok(FileTail::NoPath) => {
+                    path_unknown_notice(streams, quiet, &mut seen_notices, name, stream);
+                }
+                Ok(FileTail::Missing(note)) => {
+                    write_notice(streams, quiet, "log_missing", &format!("{name}: {note}"));
+                }
+                Ok(FileTail::Unreadable(message)) => {
+                    failure = true;
+                    write_notice(streams, quiet, "log_unreadable", &message);
+                }
+                Err(err) => {
+                    let _ = streams.out.flush();
+                    return Err(source.stop(streams, &err));
                 }
             }
         }
     }
 
     let _ = streams.out.flush();
-    if failure {
+    Ok(if failure {
         ExitCode::Failure
     } else {
         ExitCode::Success
-    }
+    })
 }
 
 /// Handles one [`BusEvent`] already known to be `Ok` (a `Lagged` item is
@@ -457,16 +572,17 @@ pub async fn bleats(
     .await
 }
 
-/// [`bleats`] for the shepherd a `--host` names, where `client` is the ssh
-/// link and not a local socket.
+/// [`bleats`] for the shepherd on `host`, where `client` is the ssh link and
+/// not a local socket.
 ///
 /// The caller says so, rather than this reading it off `client`, because the
-/// cost of getting it wrong is a backlog opened from the remote's paths on
-/// this machine.
+/// cost of getting it wrong is a tail opened from the remote's paths on this
+/// machine. Every file is read by that shepherd.
 pub async fn bleats_on_host(
     client: &Client,
     streams: &mut Streams<'_>,
     quiet: bool,
+    host: &str,
     args: &BleatsArgs,
 ) -> ExitCode {
     bleats_over(
@@ -474,7 +590,7 @@ pub async fn bleats_on_host(
         streams,
         quiet,
         args,
-        true,
+        Some(host),
         tokio::signal::ctrl_c().map(|_| ()),
     )
     .await
@@ -500,23 +616,23 @@ pub async fn bleats_with_signal(
     args: &BleatsArgs,
     interrupt: impl std::future::Future<Output = ()> + Send,
 ) -> ExitCode {
-    bleats_over(client, streams, quiet, args, false, interrupt).await
+    bleats_over(client, streams, quiet, args, None, interrupt).await
 }
 
 /// [`bleats_with_signal`] with the host decided by the caller, so a test
 /// needs no ssh.
 ///
-/// `over_host` changes two things. No backlog is printed, because
-/// `out_file`/`err_file` are the remote's paths and [`tail_log_files`] would
-/// open them on this machine. A stream that ends is given
-/// [`crate::remote::HOST_INTERRUPT_GRACE`] to be explained by an interrupt, because the ssh
-/// child dies on the same Ctrl+C.
+/// A `host` changes two things. Every tail is read by that host's shepherd,
+/// because `out_file`/`err_file` are the remote's paths and are not files
+/// here. A stream that ends is given [`crate::remote::HOST_INTERRUPT_GRACE`]
+/// to be explained by an interrupt, because the ssh child dies on the same
+/// Ctrl+C.
 async fn bleats_over(
     client: &Client,
     streams: &mut Streams<'_>,
     quiet: bool,
     args: &BleatsArgs,
-    over_host: bool,
+    host: Option<&str>,
     interrupt: impl std::future::Future<Output = ()> + Send,
 ) -> ExitCode {
     let selector = match parse_selector(streams, &args.selector) {
@@ -532,8 +648,15 @@ async fn bleats_over(
         Err(code) => return code,
     };
 
+    let source = match host {
+        Some(name) => LogSource::Host { client, name },
+        None => LogSource::Local,
+    };
+
     if args.no_follow {
-        return tail_log_files(streams, quiet, &cache, &selector, args);
+        let (Ok(code) | Err(code)) =
+            tail_log_files(streams, quiet, &cache, &selector, args, source).await;
+        return code;
     }
 
     // A follow labels every line it receives, and `cache` cannot change
@@ -542,16 +665,13 @@ async fn bleats_over(
 
     // Backlog before subscribing, so a line in the gap is missed rather
     // than printed twice. The tail's exit code is discarded: an unreadable
-    // log for one sheep must not stop the follow over the whole flock.
-    if over_host {
-        write_notice(
-            streams,
-            quiet,
-            "backlog_not_shown",
-            "no backlog is shown over --host; following live output only",
-        );
-    } else if args.lines > 0 {
-        let _ = tail_log_files(streams, quiet, &cache, &selector, args);
+    // log for one sheep must not stop the follow over the whole flock. A host
+    // that gave no answer to a read stops it, since it would give none to the
+    // subscribe either.
+    if args.lines > 0 {
+        if let Err(code) = tail_log_files(streams, quiet, &cache, &selector, args, source).await {
+            return code;
+        }
     }
 
     let mut stream = match subscribe(client, streams).await {
@@ -585,7 +705,7 @@ async fn bleats_over(
                     }
                     None => {
                         let _ = streams.out.flush();
-                        if over_host && interrupt_within_grace(&mut interrupt).await {
+                        if host.is_some() && interrupt_within_grace(&mut interrupt).await {
                             return ExitCode::Success;
                         }
                         return ExitCode::DaemonUnreachable;

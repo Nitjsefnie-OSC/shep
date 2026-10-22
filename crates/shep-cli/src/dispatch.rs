@@ -613,7 +613,9 @@ async fn run_on_host(
         }
         Commands::Restart(args) => lifecycle::restart(&client, &mut streams, None, args).await,
         Commands::Reload(args) => lifecycle::reload(&client, &mut streams, args).await,
-        Commands::Bleats(args) => bleats::bleats_on_host(&client, &mut streams, quiet, args).await,
+        Commands::Bleats(args) => {
+            bleats::bleats_on_host(&client, &mut streams, quiet, dest, args).await
+        }
         Commands::Stock(args) => lifecycle::stock(&client, &mut streams, args).await,
         Commands::Trigger(args) => trigger::trigger(&client, &mut streams, args).await,
         Commands::Signal(args) => signal::signal(&client, &mut streams, args).await,
