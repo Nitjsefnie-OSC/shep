@@ -704,7 +704,10 @@ cat >/dev/null
         let log = Path::new(file!());
         let mut local = NoLocal;
         assert_eq!(local.host(), None);
-        assert_eq!(local.tail(Some(log), Some(log)), crate::lookout::tail::Tail::default());
+        assert_eq!(
+            local.tail(Some(log), Some(log)),
+            crate::lookout::tail::Tail::default()
+        );
         assert_eq!(local.log_sizes(Some(log), Some(log)), None);
     }
 }

@@ -1,5 +1,7 @@
 use super::app::{App, Control};
-use super::source::{ClientFlock, HostShepherd, Local, LocalReader, NoLocal, Shepherd, UnixShepherd};
+use super::source::{
+    ClientFlock, HostShepherd, Local, LocalReader, NoLocal, Shepherd, UnixShepherd,
+};
 use super::theme::Palette;
 use super::ui_event_loop::run_ui;
 use crate::cli::LookoutArgs;
@@ -49,7 +51,16 @@ pub async fn lookout(
     match link {
         Link::Local(_) => {
             let shepherd = UnixShepherd::new(&paths.socket);
-            watch(streams, shepherd, LocalReader::new(), None, paths, args, style).await
+            watch(
+                streams,
+                shepherd,
+                LocalReader::new(),
+                None,
+                paths,
+                args,
+                style,
+            )
+            .await
         }
         Link::Host { dest, options } => {
             let shepherd = HostShepherd::new(dest, options.clone());
