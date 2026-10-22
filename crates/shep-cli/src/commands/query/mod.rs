@@ -18,5 +18,5 @@ mod terminal_fitting;
 mod testing;
 pub use dog_browsing::{available_dogs, dogs};
 pub use flock_display::{flock, flock_from_roll, fold};
-pub(crate) use flock_display::{flock_follow, read_roll};
+pub(crate) use flock_display::{flock_follow, flock_from, read_roll};
 pub use secret_inspection::describe;

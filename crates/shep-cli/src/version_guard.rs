@@ -316,7 +316,8 @@ pub(crate) async fn connect_client(
 ///
 /// With a `hosts` list in this machine's `shep.toml`, and neither `--host` nor
 /// `--follow`, the arm is [`query::fleet::flock_all`] instead: every host's
-/// flock, this machine's first.
+/// flock, this machine's first. `--host` under `--format json` tags every row
+/// with the host as typed.
 ///
 /// Over a host there is no roll fallback: the roll is this machine's
 /// `flock.json`, so printing it for a dead host would list the wrong flock.
@@ -344,9 +345,9 @@ pub(crate) async fn flock_command_on(
         Link::Host { .. } if args.follow => {
             return follow_flock_command(streams, link, guard, args, stdout_is_terminal).await;
         }
-        Link::Host { .. } => {
+        Link::Host { dest, .. } => {
             return match connect_client(streams, link, guard).await {
-                Ok(client) => query::flock(&client, streams).await,
+                Ok(client) => query::flock_from(&client, streams, Some(dest)).await,
                 Err(code) => code,
             };
         }
