@@ -169,12 +169,20 @@ pub(crate) async fn run(
         }
         // Resolves the home but never creates it: a probe against a machine
         // with no shep home must leave nothing behind and print no welcome.
-        Commands::DialStdio => {
-            let paths = match resolve_paths(&cli.global) {
+        // `--autostart` creates it like a local `start` does, without the
+        // interpreter scaffold or the welcome: stderr crosses ssh to the
+        // operator's terminal.
+        Commands::DialStdio(ref args) => {
+            let resolved = if args.autostart {
+                ensure_home(&cli.global).map(|(paths, _)| paths)
+            } else {
+                resolve_paths(&cli.global)
+            };
+            let paths = match resolved {
                 Ok(paths) => paths,
                 Err(refusal) => return report_home_refusal(fmt, &refusal),
             };
-            match dial_stdio::dial_stdio(fmt, &paths.socket).await {}
+            match dial_stdio::dial_stdio(fmt, &paths, args.autostart).await {}
         }
         // Needs no `$SHEP_HOME` at all, like `Completions` above.
         Commands::Schema => {
@@ -530,7 +538,7 @@ pub(crate) async fn run(
         | Commands::Startup(_)
         | Commands::Unstartup(_)
         | Commands::Schema
-        | Commands::DialStdio
+        | Commands::DialStdio(_)
         | Commands::Bleats(_)
         | Commands::Lookout(_)
         | Commands::Whistle
@@ -578,6 +586,14 @@ async fn run_on_host(
         // Connects for itself: a bare `start` is refused before any dial.
         Commands::Start(args) => {
             return load_command(&mut streams, &link, guard, args, Load::Start).await;
+        }
+        // Dials with `--autostart`: the one verb that boots a host's shepherd.
+        Commands::Muster => {
+            let booting = Link::to_host_booting(dest);
+            return match connect_client(&mut streams, &booting, guard).await {
+                Ok(client) => muster::muster(&client, &mut streams).await,
+                Err(code) => code,
+            };
         }
         _ => {}
     }

@@ -112,7 +112,8 @@ $ echo $?
       ssh runs <code>shep dial-stdio</code> on the host without a terminal, so
       <code>shep</code> must be on the <code>PATH</code> a non-interactive
       shell has. <code>ssh amp2 shep --version</code> checks it. The host's
-      shepherd must be running; <code>ssh amp2 shep muster</code> starts it.
+      shepherd must be running; <code>shep --host amp2 muster</code> starts it
+      from that host's own roll.
     </p>
     <p>
       shep adds no keys or ports. The boundary is ssh's, and{" "}
