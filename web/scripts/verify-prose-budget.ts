@@ -178,7 +178,10 @@ export const BUDGETS: Record<string, number> = {
   //
   // Raised again for the same verb refusing a name it cannot judge, which is
   // an exit an operator hits. Paid for by tightening the sentence above it.
-  lifecycle: 2245,
+  //
+  // Raised from 2245 for #951: `stock`, `enable` and `disable` take `--host`
+  // and read a dog's name as a sheep's there, which the page must say.
+  lifecycle: 2260,
   // Cut from 1900 for the stamps-off tail sentence: the page has to say a
   // sheep with `log_timestamps = false` carries no stamp for `bleats` to
   // strip, and it paid for that line by tightening the sentences around it
@@ -245,7 +248,8 @@ export const BUDGETS: Record<string, number> = {
   // content: what a destination is and that only `flock` takes it so far.
   // Raised from 400 on 2026-10-21 for the verbs `--host` now reaches and
   // `describe` showing no secrets over it. Required content for #949.
-  cli: 420,
+  // Raised from 420 for the six verbs #951 adds to the list `--host` reaches.
+  cli: 430,
   "community-dogs": 300,
   terminology: 210,
   "pm2-verbs": 40,

@@ -37,22 +37,25 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         | Commands::Thatlldo(_)
         | Commands::Restart(_)
         | Commands::Reload(_)
-        | Commands::Delete(_) => HostScope::Reaches,
+        | Commands::Delete(_)
+        | Commands::Disable(_)
+        | Commands::Stock(_)
+        | Commands::Trigger(_)
+        | Commands::Signal(_)
+        | Commands::Whisper(_) => HostScope::Reaches,
+        // The hidden `--exec` spelling is `adopt`, which writes this
+        // machine's `shep.toml`.
+        Commands::Enable(args) if args.exec.is_some() => HostScope::LocalOnly,
+        Commands::Enable(_) => HostScope::Reaches,
         // A static tail opens the remote's log paths on this machine.
         Commands::Bleats(args) if args.no_follow => HostScope::LocalOnly,
         Commands::Bleats(_) => HostScope::Reaches,
         Commands::Start(_)
         | Commands::Add(_)
         | Commands::Serve(_)
-        | Commands::Stock(_)
         | Commands::Dogs(_)
-        | Commands::Enable(_)
-        | Commands::Disable(_)
         | Commands::Adopt(_)
         | Commands::Rehome(_)
-        | Commands::Trigger(_)
-        | Commands::Signal(_)
-        | Commands::Whisper(_)
         | Commands::Lookout(_)
         | Commands::Whistle
         | Commands::Reopen(_)
@@ -238,6 +241,33 @@ mod tests {
         &["delete", "web"],
     ];
 
+    /// Every argv of a verb that marks, restocks or messages a sheep, and
+    /// reaches a host.
+    const MARKING: &[&[&str]] = &[
+        &["enable", "web"],
+        &["disable", "web"],
+        &["stock", "web", "2"],
+        &["signal", "web", "TERM"],
+        &["whisper", "web", "hi"],
+        &["trigger", "web", "run"],
+    ];
+
+    #[test]
+    fn enable_disable_stock_signal_whisper_and_trigger_reach_a_host() {
+        for argv in MARKING {
+            let cli = parsed_with_host(argv);
+            assert_eq!(host_scope(&cli.command), HostScope::Reaches, "{argv:?}");
+        }
+    }
+
+    /// The hidden `--exec` spelling is `adopt`, which writes this machine's
+    /// `shep.toml`.
+    #[test]
+    fn enable_with_the_hidden_exec_form_is_refused_over_a_host() {
+        let cli = parsed_with_host(&["enable", "mydog", "--exec", "/bin/true"]);
+        assert_eq!(host_scope(&cli.command), HostScope::LocalOnly);
+    }
+
     #[test]
     fn stop_restart_reload_and_delete_reach_a_host() {
         for argv in CHANGING {
@@ -258,6 +288,7 @@ mod tests {
             if REACHING
                 .iter()
                 .chain(CHANGING)
+                .chain(MARKING)
                 .any(|argv| argv[0] == sample[0])
             {
                 continue;

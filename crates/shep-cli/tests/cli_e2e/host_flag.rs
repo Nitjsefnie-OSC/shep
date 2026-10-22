@@ -157,7 +157,7 @@ fn another_verb_with_host_exits_2_and_the_remote_sheep_is_untouched() {
     write_ssh_stand_in(bin.path(), remote.path());
 
     let refused = shep(local.path())
-        .args(["--host", "amp2", "stock", "remote-sheep", "2"])
+        .args(["--host", "amp2", "flush", "remote-sheep"])
         .env("PATH", path_with_first(bin.path()))
         .output()
         .unwrap();
@@ -473,6 +473,167 @@ fn stop_restart_reload_and_delete_act_on_the_remote_flock_only() {
     });
     assert_eq!(left, serde_json::json!([]), "the remote sheep survived");
     local_is_untouched("delete");
+
+    graceful_kill(local.path());
+    graceful_kill(remote.path());
+}
+
+#[cfg(unix)]
+/// Starts a sheep named `web` on `home` that writes down a `SIGUSR1` in
+/// `signalled` and every whispered line in `heard`, both inside `home`.
+fn start_listening_sheep(guard: &mut DaemonGuard, home: &TempDir) {
+    let script = write_script(
+        home,
+        "web.sh",
+        &format!(
+            "{}trap 'echo usr1 >> \"{dir}/signalled\"' USR1\n\
+             while :; do\n  if read -r line; then echo \"$line\" >> \"{dir}/heard\"; else sleep 1; fi\ndone\n",
+            script_header(),
+            dir = home.path().display(),
+        ),
+    );
+    let flockfile = write_flockfile(
+        home,
+        &format!(
+            "[[app]]\nname = \"web\"\nscript = '{}'\nstdin = true\n",
+            script.display()
+        ),
+    );
+    let started = shep(home.path())
+        .arg("start")
+        .arg(&flockfile)
+        .output()
+        .unwrap();
+    guard.adopt_home(home.path());
+    assert_success(&started);
+}
+
+#[cfg(unix)]
+/// Waits for `path` to hold `want` on a line, or panics.
+fn await_line(path: &Path, want: &str) {
+    let start = Instant::now();
+    while !std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .any(|l| l == want)
+    {
+        assert!(
+            start.elapsed() < FLOCK_DEADLINE,
+            "`{want}` never reached {}",
+            path.display()
+        );
+        std::thread::sleep(FLOCK_POLL_INTERVAL);
+    }
+}
+
+#[cfg(unix)]
+/// The `data` rows named `name` in a `--format json` flock.
+fn sheep_named_in(home: &Path, name: &str) -> Vec<serde_json::Value> {
+    poll_flock_data(home, FLOCK_DEADLINE, |_| true)
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["name"] == name)
+        .cloned()
+        .collect()
+}
+
+/// The same name runs on both machines and each writes where it lives, so a
+/// verb that fell back to this machine would leave a mark in the local home.
+/// `solo` exists only on the host: this machine's shepherd would answer
+/// `trigger solo` with exit 3.
+#[cfg(unix)]
+#[test]
+fn signal_whisper_trigger_and_stock_reach_the_remote_sheep_only() {
+    let local = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+    start_listening_sheep(&mut guard, &local);
+    start_listening_sheep(&mut guard, &remote);
+    start_sheep(&mut guard, &remote, "solo");
+    write_ssh_stand_in(bin.path(), remote.path());
+    let path = path_with_first(bin.path());
+    let over_host = |args: &[&str]| {
+        let output = shep(local.path())
+            .args(["--format", "json", "--host", "amp2"])
+            .args(args)
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+
+    let signalled = over_host(&["signal", "web", "USR1"]);
+    assert_eq!(
+        signalled["data"][0]["outcome"]["kind"], "delivered",
+        "{signalled}"
+    );
+    await_line(&remote.path().join("signalled"), "usr1");
+
+    over_host(&["whisper", "web", "hello"]);
+    await_line(&remote.path().join("heard"), "hello");
+
+    let triggered = over_host(&["trigger", "solo", "ping"]);
+    assert_eq!(triggered["data"][0]["name"], "solo", "{triggered}");
+    assert_eq!(
+        triggered["data"][0]["outcome"]["kind"], "no_channel",
+        "{triggered}"
+    );
+
+    over_host(&["stock", "solo", "2"]);
+    poll_flock_data(remote.path(), FLOCK_DEADLINE, |data| {
+        data.as_array()
+            .is_some_and(|rows| rows.iter().filter(|row| row["name"] == "solo").count() == 2)
+    });
+
+    assert!(
+        !local.path().join("signalled").exists() && !local.path().join("heard").exists(),
+        "a verb over a host reached the local sheep"
+    );
+    assert_eq!(sheep_named_in(local.path(), "web").len(), 1);
+    assert!(sheep_named_in(local.path(), "solo").is_empty());
+
+    graceful_kill(local.path());
+    graceful_kill(remote.path());
+}
+
+/// Both machines run `web`, so the local sheep staying unmarked is what shows
+/// the verb went to the host.
+#[cfg(unix)]
+#[test]
+fn disable_then_enable_over_a_host_marks_the_remote_sheep() {
+    let local = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+    start_sheep(&mut guard, &local, "web");
+    start_sheep(&mut guard, &remote, "web");
+    write_ssh_stand_in(bin.path(), remote.path());
+    let path = path_with_first(bin.path());
+    let over_host = |verb: &str| {
+        let output = shep(local.path())
+            .args(["--host", "amp2", verb, "web"])
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert_success(&output);
+    };
+    let disabled = |home: &Path| sheep_named_in(home, "web")[0]["disabled"] == true;
+
+    over_host("disable");
+    poll_flock(remote.path(), |sheep| sheep["disabled"] == true);
+    assert!(disabled(remote.path()));
+    assert!(
+        !disabled(local.path()),
+        "`disable` over a host marked the local sheep"
+    );
+
+    over_host("enable");
+    poll_flock(remote.path(), |sheep| sheep["status"] == "online");
+    assert!(!disabled(remote.path()));
+    assert!(!disabled(local.path()));
 
     graceful_kill(local.path());
     graceful_kill(remote.path());
