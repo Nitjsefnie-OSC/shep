@@ -9,6 +9,7 @@ pub(crate) mod bounded;
 pub(crate) mod copy;
 pub mod daemon;
 pub mod dev;
+pub(crate) mod dial_stdio;
 pub(crate) mod dog_migration;
 pub mod dogs;
 pub(crate) mod empty;
