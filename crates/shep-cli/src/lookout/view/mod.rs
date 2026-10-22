@@ -28,6 +28,8 @@ pub mod status;
 #[cfg(test)]
 pub mod fixtures;
 mod layout_budget;
+#[cfg(test)]
+mod over_host;
 mod paint_frame;
 #[cfg(test)]
 mod testing;

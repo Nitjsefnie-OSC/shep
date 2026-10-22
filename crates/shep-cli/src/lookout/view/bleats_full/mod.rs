@@ -17,6 +17,7 @@ use ratatui::text::{Line, Span};
 use super::super::app::{App, RowKey};
 use super::super::pane_bleats::BleatsPane;
 use super::super::tail::FEED_WINDOW_BYTES;
+use super::bleats::unavailable_line;
 use super::cell;
 use super::flock::fit;
 use crate::output::human_bytes;
@@ -78,6 +79,10 @@ pub(crate) fn draw_lines(app: &App, width: u16, rows: usize) -> Vec<Line<'static
 fn lines(app: &App, pane: &BleatsPane, width: u16, rows: usize) -> Vec<Line<'static>> {
     let mut out = Vec::with_capacity(rows);
     out.push(title_line(app, pane, width));
+    if app.remote_host().is_some() {
+        out.push(unavailable_line(app.palette(), width));
+        return out;
+    }
 
     let filters = pane.filters();
     let feed = app.feed();

@@ -62,10 +62,11 @@ impl App {
         self.control
     }
 
-    /// The `$SHEP_HOME` this lookout watches.
+    /// What the title names: the host when watching one, else the
+    /// `$SHEP_HOME` this lookout watches.
     #[must_use]
-    pub fn home(&self) -> &str {
-        &self.home
+    pub fn place(&self) -> &str {
+        self.remote_host().unwrap_or(&self.home)
     }
 
     /// The ssh destination this lookout watches, or `None` for this machine's
