@@ -50,7 +50,8 @@ pub use sheep::{
 };
 pub use store::{KvGetArgs, KvSetArgs, KvUnsetArgs, SecretArgs, SecretCommand};
 pub use system::{
-    CompletionArgs, DaemonArgs, DaemonCmd, DevArgs, InitArgs, RuntimeArgs, StartupArgs, StyleArgs,
+    CompletionArgs, DaemonArgs, DaemonCmd, DevArgs, DialStdioArgs, InitArgs, RuntimeArgs,
+    StartupArgs, StyleArgs,
 };
 pub use verbs::Commands;
 
@@ -117,9 +118,9 @@ pub struct GlobalArgs {
     /// ~/.ssh/config. `flock`, `describe`, `fold`, a followed `bleats`,
     /// `stop`, `restart`, `reload`, `delete`, `stock`, `enable`, `disable`,
     /// `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
-    /// refuses it rather than act on this machine. `describe` shows no secrets over it,
-    /// and `enable` takes no hidden `--exec` form over it. `--home` still
-    /// names this machine's home, never the host's.
+    /// refuses it rather than act on this machine. `describe` shows no
+    /// secrets over it, and `enable` takes no hidden `--exec` form over it.
+    /// `--home` still names this machine's home, never the host's.
     #[arg(long, global = true, value_name = "DEST", value_parser = parse_destination)]
     pub host: Option<String>,
     /// Talk to a different shepherd

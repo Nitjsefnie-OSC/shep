@@ -272,9 +272,10 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
       back up reads it and restores what was up.{" "}
       <a href="/docs/startup">Surviving reboots</a> is the
       full account of <code>save</code> and <code>muster</code>; this
-      section is only the one thing that page doesn't say: what{" "}
-      <code>stop</code> leaves in that file, and what <code>delete</code>{" "}
-      takes out of it.
+      section covers what <code>stop</code> leaves in that file and what{" "}
+      <code>delete</code> takes out. With <code>--host</code>,{" "}
+      <code>muster</code> is the one verb that boots a host's shepherd, from
+      that host's own roll. A Windows host is not supported yet.
     </p>
     <VerbSignature verb="stop" usage="shep stop <selector>...">
       <p>
@@ -293,9 +294,8 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
       <code>stopped</code>. Nothing restarted it, because it wasn't running
       when the roll was written and <code>muster</code>'s rule is "was it up
       when the roll was written," not "does it exist." The{" "}
-      <code>save</code> is only there to show that moment: the shepherd had
-      already written the roll, and <code>kill</code> writes it once more on
-      the way down.
+      <code>save</code> only shows that moment: <code>kill</code> writes the
+      roll once more on the way down anyway.
     </p>
     <VerbSignature verb="delete" usage="shep delete <selector>...">
       <p>

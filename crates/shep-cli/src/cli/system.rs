@@ -101,6 +101,17 @@ pub struct DaemonArgs {
     pub max_cron_sleep: Option<shep_core::values::UpDuration>,
 }
 
+/// Arguments to the hidden `shep dial-stdio` subcommand.
+#[derive(Debug, clap::Args)]
+pub struct DialStdioArgs {
+    /// Boot the shepherd first if none answers
+    ///
+    /// Only `muster` over `--host` asks for it: every other verb must find
+    /// the shepherd already up.
+    #[arg(long, hide = true)]
+    pub autostart: bool,
+}
+
 /// The one thing `shep daemon` can be asked to do rather than be.
 ///
 /// A separate enum rather than a flag on [`DaemonArgs`] because it is a
@@ -280,6 +291,37 @@ mod tests {
             "got {:?}",
             args.cmd
         );
+    }
+
+    /// fails if `dial-stdio` stops parsing, if `--autostart` stops being the
+    /// one flag it takes, or if either becomes visible in `--help`.
+    #[test]
+    fn dial_stdio_autostart_parses_and_stays_hidden() {
+        use clap::{CommandFactory, Parser};
+
+        let bare = Cli::try_parse_from(["shep", "dial-stdio"]).unwrap();
+        let Commands::DialStdio(args) = bare.command else {
+            panic!("expected dial-stdio")
+        };
+        assert!(!args.autostart, "autostart is opt-in");
+
+        let started = Cli::try_parse_from(["shep", "dial-stdio", "--autostart"]).unwrap();
+        let Commands::DialStdio(args) = started.command else {
+            panic!("expected dial-stdio")
+        };
+        assert!(args.autostart);
+
+        assert!(Cli::try_parse_from(["shep", "dial-stdio", "extra"]).is_err());
+        assert!(Cli::try_parse_from(["shep", "dial-stdio", "--anything"]).is_err());
+
+        let cmd = Cli::command();
+        let dial = cmd.find_subcommand("dial-stdio").unwrap();
+        assert!(dial.is_hide_set(), "dial-stdio must stay hidden");
+        let flag = dial
+            .get_arguments()
+            .find(|a| a.get_id().as_str() == "autostart")
+            .expect("DialStdioArgs must carry `autostart`");
+        assert!(flag.is_hide_set(), "--autostart must stay hidden");
     }
 
     /// fails if the flag grammar widens past the env grammar — the exact

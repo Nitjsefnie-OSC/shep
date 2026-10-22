@@ -54,6 +54,9 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         // Reaches for a sheep name only. A token cannot be classed until the
         // remote's flock is listed, so the load path refuses the rest.
         Commands::Start(_) => HostScope::Reaches,
+        // The one verb that boots a host's shepherd, from that host's roll.
+        // `save` needs no boot and is not part of that.
+        Commands::Muster => HostScope::Reaches,
         Commands::Add(_)
         | Commands::Serve(_)
         | Commands::Dogs(_)
@@ -72,7 +75,6 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         | Commands::Ping
         | Commands::Kill
         | Commands::Save
-        | Commands::Muster
         | Commands::Init(_)
         | Commands::Runtime(_)
         | Commands::Dev(_)
@@ -85,7 +87,7 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         | Commands::Daemon(_)
         | Commands::Dog(_)
         | Commands::Schema
-        | Commands::DialStdio => HostScope::LocalOnly,
+        | Commands::DialStdio(_) => HostScope::LocalOnly,
     }
 }
 
@@ -184,6 +186,15 @@ impl<'a> Link<'a> {
         Self::Host {
             dest,
             options: SshOptions::default(),
+        }
+    }
+
+    /// The link to `dest` that boots the host's shepherd from its own roll
+    /// when none answers. Only `muster` takes it.
+    pub(crate) fn to_host_booting(dest: &'a str) -> Self {
+        Self::Host {
+            dest,
+            options: SshOptions::default().autostart(true),
         }
     }
 }
@@ -291,6 +302,9 @@ mod tests {
     /// Every argv of `start`, which reaches a host for a sheep name only.
     const STARTING: &[&[&str]] = &[&["start", "web"], &["start"]];
 
+    /// Every argv of `muster`, the verb that boots a host's shepherd.
+    const MUSTERING: &[&[&str]] = &[&["muster"]];
+
     #[test]
     fn start_reaches_a_host_and_add_does_not() {
         for argv in STARTING {
@@ -305,6 +319,14 @@ mod tests {
     fn lookout_reaches_a_host() {
         let cli = parsed_with_host(&["lookout"]);
         assert_eq!(host_scope(&cli.command), HostScope::Reaches);
+    }
+
+    #[test]
+    fn muster_reaches_a_host_and_save_does_not() {
+        let muster = parsed_with_host(&["muster"]);
+        assert_eq!(host_scope(&muster.command), HostScope::Reaches);
+        let save = parsed_with_host(&["save"]);
+        assert_eq!(host_scope(&save.command), HostScope::LocalOnly);
     }
 
     #[test]
@@ -366,6 +388,7 @@ mod tests {
                 .chain(CHANGING)
                 .chain(MARKING)
                 .chain(STARTING)
+                .chain(MUSTERING)
                 .any(|argv| argv[0] == sample[0])
             {
                 continue;

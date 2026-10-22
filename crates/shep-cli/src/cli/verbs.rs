@@ -7,11 +7,11 @@
 //! are alias and visibility pins rather than grammar ones.
 
 use super::{
-    AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DisableArgs,
-    DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, HostArgs, ImportArgs, InitArgs,
-    KvGetArgs, KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs,
-    SelectorArgs, ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs, TriggerArgs,
-    WhisperArgs,
+    AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DialStdioArgs,
+    DisableArgs, DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, HostArgs,
+    ImportArgs, InitArgs, KvGetArgs, KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs,
+    SecretArgs, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs,
+    TriggerArgs, WhisperArgs,
 };
 
 /// Every verb the binary understands.
@@ -563,7 +563,7 @@ pub enum Commands {
     /// Copy bytes between stdin/stdout and the local shepherd's socket. The
     /// remote end of `ssh <dest> shep dial-stdio`; not for direct use.
     #[command(hide = true)]
-    DialStdio,
+    DialStdio(DialStdioArgs),
 }
 
 #[cfg(test)]
@@ -720,20 +720,6 @@ mod tests {
             Cli::try_parse_from(["shep", "lookout"]).unwrap().command,
             Commands::Lookout(_)
         ));
-    }
-
-    /// fails if `shep dial-stdio` stops parsing, or grows an argument. It is
-    /// the remote end of `ssh <dest> shep dial-stdio`, so the destination and
-    /// the socket are never operator input.
-    #[test]
-    fn dial_stdio_takes_no_arguments() {
-        use clap::Parser;
-        assert!(matches!(
-            Cli::try_parse_from(["shep", "dial-stdio"]).unwrap().command,
-            Commands::DialStdio
-        ));
-        assert!(Cli::try_parse_from(["shep", "dial-stdio", "extra"]).is_err());
-        assert!(Cli::try_parse_from(["shep", "dial-stdio", "--anything"]).is_err());
     }
 
     /// fails if `shep whistle` stops parsing, or grows an argument. The
