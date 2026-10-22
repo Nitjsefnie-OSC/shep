@@ -34,7 +34,7 @@ pub enum DogSource {
     /// to this variant via `#[serde(other)]` instead of failing the whole
     /// row. Nothing constructs one to send, which is a call-site invariant
     /// rather than a type-level one: `#[serde(other)]` governs decoding
-    /// only, so serializing this would emit `"unrecognized"`.
+    /// only, so serializing this would emit `{"kind":"unrecognized"}`.
     #[serde(other)]
     Unrecognized,
 }
