@@ -783,11 +783,11 @@ fn flock_over_a_host_never_boots_the_remote() {
     );
 }
 
-/// ssh ends a session only once every copy of its pipes has closed. The
-/// stand-in does the same: its pipeline ends when the last writer to stdout
-/// is gone, and only then does it touch the marker. A shepherd booted by
-/// `dial-stdio` that kept the pipe would hold the marker back for as long as
-/// it lives.
+/// ssh ends a session only once every copy of its stdout and stderr pipes has
+/// closed. The stand-in does the same: stderr goes down a pipe of its own, and
+/// the marker is touched only once both pipes have no writer left. A shepherd
+/// booted by `dial-stdio` that kept either would hold the marker back for as
+/// long as it lives. Stdin is not watched, since ssh does not wait on it.
 #[cfg(unix)]
 #[test]
 fn the_ssh_session_ends_after_a_remote_muster() {
@@ -798,7 +798,10 @@ fn the_ssh_session_ends_after_a_remote_muster() {
     let marker = bin.path().join("session-ended");
     let stand_in = write_ssh_stand_in(bin.path(), remote.path());
     let script = std::fs::read_to_string(&stand_in).unwrap();
-    let waiting = format!("\"$@\" | {{ cat; touch '{}'; }}\n", marker.display());
+    let waiting = format!(
+        "{{ \"$@\" 2>&1 1>&3 | cat >&2; }} 3>&1 | {{ cat; touch '{}'; }}\n",
+        marker.display()
+    );
     std::fs::write(&stand_in, script.replace("exec \"$@\"\n", &waiting)).unwrap();
 
     let mustered = shep(local.path())

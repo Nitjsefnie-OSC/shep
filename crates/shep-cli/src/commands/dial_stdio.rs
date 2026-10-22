@@ -332,6 +332,34 @@ mod tests {
         assert!(written.is_empty(), "stdout got {written:?}");
     }
 
+    /// A refusal keeps its own code through autostart rather than collapsing
+    /// into the unreachable one every launch failure shares.
+    #[tokio::test]
+    async fn a_protocol_mismatch_keeps_its_own_code_through_autostart() {
+        use shep_core::protocol::{RpcError, RpcErrorCode};
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+        let _served = shep_client::testing::fake_daemon(
+            &socket,
+            Err(RpcError {
+                code: RpcErrorCode::ProtocolMismatch,
+                message: "daemon speaks protocol 2, client speaks 1".into(),
+                daemon_version: None,
+            }),
+        )
+        .await;
+        let (_stdin_tx, stdin) = duplex(1024);
+        let (stdout, mut stdout_rx) = duplex(1024);
+
+        let code = dial(Format::Table, &socket, true, no_launch, stdin, stdout).await;
+
+        assert_eq!(code, ExitCode::ProtocolMismatch);
+        let mut written = Vec::new();
+        stdout_rx.read_to_end(&mut written).await.unwrap();
+        assert!(written.is_empty(), "stdout got {written:?}");
+    }
+
     #[tokio::test]
     async fn a_failed_autostart_exits_with_its_spawn_code_and_writes_nothing_to_stdout() {
         let dir = tempfile::tempdir().unwrap();
