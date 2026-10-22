@@ -30,6 +30,7 @@ use crate::commands::lifecycle::selectors::parse_selectors;
 use crate::commands::shep_toml::{ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
 use crate::output::Streams;
+use crate::remote::Link;
 use crate::version_guard::{VersionGuard, connect_client};
 
 /// `shep delete <selectors...>`
@@ -77,7 +78,7 @@ pub(crate) async fn delete(
     if sheep_tokens.is_empty() {
         return failure.unwrap_or(ExitCode::Success);
     }
-    let client = match connect_client(streams, paths, guard).await {
+    let client = match connect_client(streams, &Link::Local(paths), guard).await {
         Ok(client) => client,
         Err(code) => return code,
     };

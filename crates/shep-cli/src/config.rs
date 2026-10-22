@@ -149,6 +149,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("shep.toml"), "[style]\nlevel = \"plain\"\n").unwrap();
         let global = cli::GlobalArgs {
+            host: None,
             home: Some(dir.path().to_path_buf()),
             format: cli::Format::Table,
             quiet: false,

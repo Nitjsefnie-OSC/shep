@@ -10,9 +10,9 @@ use commands::query;
 use exit::ExitCode;
 use output::Streams;
 use shep_client::Client;
-use shep_core::paths::ShepPaths;
 
 use crate::client::unreachable_message;
+use crate::remote::{HOST_REFUSAL, Link};
 use crate::{cli, commands, exit, output};
 
 /// The verbs a version skew must never refuse, spelled the way an operator
@@ -77,25 +77,47 @@ const VERSION_SKEW_CAUSE: [&str; 2] = [
     "shepherd, which is still running the old code.",
 ];
 
+/// Why a skew happens when the shepherd is on another host, as the two lines
+/// the table form prints.
+///
+/// Not [`VERSION_SKEW_CAUSE`]: `cargo install` on this machine says nothing
+/// about a shepherd that lives elsewhere.
+const VERSION_SKEW_HOST_CAUSE: [&str; 2] = [
+    "The shepherd on that host runs a different shep than this one.",
+    "A reload runs the shep installed there; if they still differ, install the same version on both.",
+];
+
 /// The one command that fixes a skew.
 ///
 /// Read out of [`RECOVERY_VERBS`] because the two have to agree: a remedy the
 /// guard itself refused would be a dead end.
 pub(crate) const VERSION_SKEW_REMEDY: &str = RECOVERY_VERBS[1];
 
-/// The imperative naming [`VERSION_SKEW_REMEDY`], in the two shapes the
+/// The command that fixes a skew, spelled for where the shepherd is.
+///
+/// With a `host` it runs over ssh: the bare [`VERSION_SKEW_REMEDY`] would
+/// reload this machine's shepherd, which is not the one in skew.
+fn version_skew_command(host: Option<&str>) -> String {
+    match host {
+        Some(dest) => format!("ssh {dest} shep {VERSION_SKEW_REMEDY}"),
+        None => format!("shep {VERSION_SKEW_REMEDY}"),
+    }
+}
+
+/// The imperative naming [`version_skew_command`], in the two shapes the
 /// formats need.
 ///
 /// A `--format json` consumer gets a single-line message with the command
 /// inside it. The table form has layout, and its label carries no blank line
 /// after it: it sits directly on the command so the two read as one thing.
-fn version_skew_instruction(fmt: Format) -> String {
+fn version_skew_instruction(fmt: Format, host: Option<&str>) -> String {
+    let command = version_skew_command(host);
     match fmt {
-        Format::Json => format!("Run `shep {VERSION_SKEW_REMEDY}`."),
+        Format::Json => format!("Run `{command}`."),
         // Two spaces of its own, on top of the indent `safe_message` gives
         // every continuation line, so the command sits a level under its
         // label rather than beside it.
-        Format::Table => format!("Run:\n  shep {VERSION_SKEW_REMEDY}"),
+        Format::Table => format!("Run:\n  {command}"),
     }
 }
 
@@ -111,6 +133,9 @@ fn version_skew_instruction(fmt: Format) -> String {
 /// [`ExitCode::VersionSkew`], after writing the refusal to `streams`, when
 /// `guard` is [`VersionGuard::Enforce`] and the shepherd reports a different
 /// version. A [`VersionGuard::Exempt`] verb is always `Ok`.
+///
+/// A client reached over ssh gets a refusal that names its host and a remedy
+/// that runs there.
 pub(crate) fn refuse_version_skew(
     streams: &mut Streams<'_>,
     client: &Client,
@@ -121,42 +146,56 @@ pub(crate) fn refuse_version_skew(
         return Ok(());
     }
     let code = ExitCode::VersionSkew;
+    let host = client.host();
+    let cause = match host {
+        Some(_) => VERSION_SKEW_HOST_CAUSE,
+        None => VERSION_SKEW_CAUSE,
+    };
+    let shepherd = match host {
+        Some(dest) => format!("the shepherd on {dest}"),
+        None => "the running shepherd".to_owned(),
+    };
     let summary = format!(
-        "this shep is {}, the running shepherd is {running}",
+        "this shep is {}, {shepherd} is {running}",
         env!("CARGO_PKG_VERSION")
     );
     match streams.fmt {
         // One line, one envelope. A `--format json` consumer has no use for
         // the layout below, and it still gets every fact in `error.message`.
         Format::Json => {
-            let cause = VERSION_SKEW_CAUSE.join(" ");
-            let instruction = version_skew_instruction(Format::Json);
+            let cause = cause.join(" ");
+            let instruction = version_skew_instruction(Format::Json, host);
             streams.fail(code, &format!("{summary}. {cause} {instruction}"));
         }
         // The remedy has to sit on a line of its own to be copied.
         Format::Table => {
-            let cause = VERSION_SKEW_CAUSE.join("\n");
+            let cause = cause.join("\n");
             // `daemon_version` arrives over the socket, and the table
             // emitter keeps line breaks, so this collapses the one fragment
             // a peer worded before it joins prose that does not.
             let summary = crate::terminal_safe::sanitise(&summary).0;
-            let instruction = version_skew_instruction(Format::Table);
+            let instruction = version_skew_instruction(Format::Table, host);
             streams.fail(code, &format!("{summary}\n\n{cause}\n\n{instruction}"));
         }
     }
     Err(code)
 }
 
-/// Connects to the daemon at `paths.socket`. Never autostarts.
+/// Connects to the shepherd `link` names: the socket at `paths.socket`, or a
+/// host over ssh. Never autostarts.
 ///
 /// The one seam every verb needing a [`Client`] passes through, so a shepherd
 /// of a different version is refused here and no verb has to remember to ask.
 pub(crate) async fn connect_client(
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    link: &Link<'_>,
     guard: VersionGuard,
 ) -> Result<Client, ExitCode> {
-    match Client::connect(&paths.socket).await {
+    let dialled = match link {
+        Link::Local(paths) => Client::connect(&paths.socket).await,
+        Link::Host { dest, options } => Client::connect_ssh_with(dest, options).await,
+    };
+    match dialled {
         Ok(client) => {
             refuse_version_skew(streams, &client, guard)?;
             Ok(client)
@@ -178,14 +217,29 @@ pub(crate) async fn connect_client(
 /// A refusal is not an absence. The roll fallback is for
 /// [`shep_client::ConnectError::Connect`] alone, nothing listening at all;
 /// every other variant means the shepherd is there and answered.
+///
+/// Over a host there is no roll fallback: the roll is this machine's
+/// `flock.json`, so printing it for a dead host would list the wrong flock.
+/// The connect error's own code ends the run instead.
 pub(crate) async fn flock_command(
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    link: &Link<'_>,
     guard: VersionGuard,
     args: &cli::FlockArgs,
 ) -> ExitCode {
+    let paths = match link {
+        Link::Local(paths) => *paths,
+        // Lifted by the slice that gives `--follow` a host.
+        Link::Host { .. } if args.follow => return streams.fail(ExitCode::Usage, HOST_REFUSAL),
+        Link::Host { .. } => {
+            return match connect_client(streams, link, guard).await {
+                Ok(client) => query::flock(&client, streams).await,
+                Err(code) => code,
+            };
+        }
+    };
     if args.follow {
-        return follow_flock_command(streams, paths, guard, args).await;
+        return follow_flock_command(streams, link, guard, args).await;
     }
     match Client::connect(&paths.socket).await {
         Ok(client) => match refuse_version_skew(streams, &client, guard) {
@@ -223,7 +277,7 @@ pub(crate) async fn flock_command(
 /// was asked.
 async fn follow_flock_command(
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    link: &Link<'_>,
     guard: VersionGuard,
     args: &cli::FlockArgs,
 ) -> ExitCode {
@@ -239,7 +293,7 @@ async fn follow_flock_command(
             "`--follow` needs a terminal; stdout is not one",
         );
     }
-    match connect_client(streams, paths, guard).await {
+    match connect_client(streams, link, guard).await {
         Ok(client) => {
             query::flock_follow(&client, streams, Duration::from_secs(args.interval)).await
         }
@@ -259,6 +313,7 @@ mod tests {
     use std::io::IsTerminal;
 
     use cli::{DaemonArgs, StartArgs};
+    use shep_core::paths::ShepPaths;
 
     use super::*;
     use crate::style;
@@ -380,7 +435,13 @@ mod tests {
         let mut err = Vec::new();
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
-            flock_command(&mut streams, &paths, VersionGuard::Enforce, &flock_args()).await
+            flock_command(
+                &mut streams,
+                &Link::Local(&paths),
+                VersionGuard::Enforce,
+                &flock_args(),
+            )
+            .await
         };
 
         assert_ne!(code, ExitCode::Success);
@@ -412,7 +473,13 @@ mod tests {
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
             streams.fmt = Format::Json;
-            flock_command(&mut streams, &paths, VersionGuard::Enforce, &flock_args()).await
+            flock_command(
+                &mut streams,
+                &Link::Local(&paths),
+                VersionGuard::Enforce,
+                &flock_args(),
+            )
+            .await
         };
         daemon.await.unwrap();
 
@@ -433,7 +500,13 @@ mod tests {
         let mut err = Vec::new();
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
-            flock_command(&mut streams, &paths, VersionGuard::Enforce, &flock_args()).await
+            flock_command(
+                &mut streams,
+                &Link::Local(&paths),
+                VersionGuard::Enforce,
+                &flock_args(),
+            )
+            .await
         };
 
         assert_eq!(code, ExitCode::DaemonUnreachable);
@@ -462,7 +535,13 @@ mod tests {
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
             streams.fmt = Format::Json;
-            flock_command(&mut streams, &paths, VersionGuard::Enforce, &args).await
+            flock_command(
+                &mut streams,
+                &Link::Local(&paths),
+                VersionGuard::Enforce,
+                &args,
+            )
+            .await
         };
         assert_eq!(code, ExitCode::Usage);
         let text = String::from_utf8(err).unwrap();
@@ -481,7 +560,13 @@ mod tests {
         let mut err = Vec::new();
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
-            flock_command(&mut streams, &paths, VersionGuard::Enforce, &args).await
+            flock_command(
+                &mut streams,
+                &Link::Local(&paths),
+                VersionGuard::Enforce,
+                &args,
+            )
+            .await
         };
         assert_eq!(code, ExitCode::Usage);
         let text = String::from_utf8(err).unwrap();
@@ -491,6 +576,138 @@ mod tests {
             "a refused follow prints no listing: {}",
             String::from_utf8_lossy(&out)
         );
+    }
+
+    /// Writes an executable `ssh` into `dir` that answers the handshake with
+    /// a shepherd of version 9.9.9 and then reads until the client hangs up.
+    #[cfg(unix)]
+    fn skewed_ssh_stand_in(dir: &std::path::Path) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let ack = shep_core::protocol::HelloAck {
+            daemon_version: "9.9.9".to_owned(),
+            protocol: shep_core::protocol::PROTOCOL_VERSION,
+            pid: 4242,
+            min_supported: None,
+        };
+        let reply: shep_core::protocol::HelloReply = Ok(ack);
+        let payload = shep_core::protocol::encode_frame(&reply).unwrap();
+        let mut framed = u32::try_from(payload.len()).unwrap().to_be_bytes().to_vec();
+        framed.extend_from_slice(&payload);
+        std::fs::write(dir.join("reply.bin"), framed).unwrap();
+        let program = dir.join("ssh");
+        std::fs::write(
+            &program,
+            "#!/bin/sh\ncat \"$(dirname \"$0\")/reply.bin\"\ncat >/dev/null\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        program
+    }
+
+    /// A remedy without `ssh <dest>` would reload this machine's shepherd,
+    /// which is not the one in skew.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_skew_over_a_host_names_the_remote_reload_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = Link::Host {
+            dest: "amp2",
+            options: shep_client::SshOptions::default().program(skewed_ssh_stand_in(dir.path())),
+        };
+
+        for fmt in [Format::Table, Format::Json] {
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            let code = {
+                let mut streams = buffered_streams(&mut out, &mut err);
+                streams.fmt = fmt;
+                flock_command(&mut streams, &link, VersionGuard::Enforce, &flock_args()).await
+            };
+
+            assert_eq!(code, ExitCode::VersionSkew, "{fmt:?}");
+            let text = String::from_utf8(err).unwrap();
+            assert!(text.contains("the shepherd on amp2 is 9.9.9"), "{text}");
+            assert!(text.contains("ssh amp2 shep daemon reload"), "{text}");
+            assert!(
+                !text.contains("`cargo install shep`"),
+                "the local cause does not explain a remote skew: {text}"
+            );
+            assert_eq!(
+                text.matches("shep daemon reload").count(),
+                1,
+                "the remedy is named once: {text}"
+            );
+            assert!(
+                !text.contains("Run `shep daemon reload`")
+                    && !text.contains("Run:\n    shep daemon"),
+                "the bare command would reload this machine's shepherd: {text}"
+            );
+            assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
+        }
+    }
+
+    /// The roll is this machine's `flock.json`. A dead host that printed it
+    /// would list the wrong flock under the right exit code.
+    #[tokio::test]
+    async fn flock_over_a_host_never_falls_back_to_the_local_roll() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ShepPaths::resolve(&|_| None, dir.path());
+        std::fs::create_dir_all(&paths.run).unwrap();
+        let roll = shep_daemon::snapshot::FlockSnapshot::with_apps(vec![
+            shep_daemon::snapshot::SavedApp {
+                app: shep_core::config::AppConfig::minimal("local-sheep", "./srv"),
+                instances_running: 1,
+                disabled: false,
+            },
+        ]);
+        std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
+        let link = Link::Host {
+            dest: "amp2",
+            options: shep_client::SshOptions::default().program(dir.path().join("no-such-ssh")),
+        };
+
+        for fmt in [Format::Table, Format::Json] {
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            let code = {
+                let mut streams = buffered_streams(&mut out, &mut err);
+                streams.fmt = fmt;
+                flock_command(&mut streams, &link, VersionGuard::Enforce, &flock_args()).await
+            };
+
+            assert_eq!(code, ExitCode::DaemonUnreachable, "{fmt:?}");
+            assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
+            let text = String::from_utf8(err).unwrap();
+            assert!(!text.contains("local-sheep"), "{text}");
+            assert!(!text.contains("saved roll"), "{text}");
+        }
+    }
+
+    /// `--follow` over a host waits for the slice that gives it one, and
+    /// refuses with the one message every verb that cannot reach a host gets.
+    #[tokio::test]
+    async fn follow_over_a_host_is_refused_with_the_one_host_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = Link::Host {
+            dest: "amp2",
+            options: shep_client::SshOptions::default().program(dir.path().join("no-such-ssh")),
+        };
+        let args = cli::FlockArgs {
+            follow: true,
+            interval: 1,
+        };
+
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = {
+            let mut streams = buffered_streams(&mut out, &mut err);
+            flock_command(&mut streams, &link, VersionGuard::Enforce, &args).await
+        };
+
+        assert_eq!(code, ExitCode::Usage);
+        let text = String::from_utf8(err).unwrap();
+        assert!(text.contains(HOST_REFUSAL), "{text}");
     }
 
     #[tokio::test]
