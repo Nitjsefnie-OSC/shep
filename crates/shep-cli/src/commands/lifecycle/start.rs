@@ -28,7 +28,7 @@ use crate::commands::lifecycle::staged_start_deadline;
 use crate::commands::selector::parse_selector;
 use crate::exit::ExitCode;
 use crate::output::{FlockRows, Streams};
-use crate::remote::remote_word;
+use crate::remote::{remote_word, ssh_hint};
 
 /// Which of the two verbs that read a Flockfile is running
 ///
@@ -109,6 +109,39 @@ pub(crate) fn reads_this_machine(args: &StartArgs, token: &str) -> bool {
         || ProcessSelector::parse(token).is_ok_and(|selector| !is_reachable_as_a_name(&selector))
 }
 
+/// What the operator typed and the `ssh` line that does the same on `dest`,
+/// each carrying every flag, assignment and target of `args`.
+fn start_commands(dest: &str, args: &StartArgs) -> (String, String) {
+    let mut words = vec!["start".to_string()];
+    let valued = [
+        ("--name", &args.name),
+        ("--fold", &args.fold),
+        ("--cwd", &args.cwd),
+        ("--interpreter", &args.interpreter),
+    ];
+    for (flag, value) in valued {
+        if let Some(value) = value {
+            words.push(flag.to_string());
+            words.push(value.clone());
+        }
+    }
+    if args.flockfile {
+        words.push("--flockfile".to_string());
+    }
+    if args.no_log_timestamps {
+        words.push("--no-log-timestamps".to_string());
+    }
+    words.extend(reset_flag(args));
+    words.extend(args.targets.iter().cloned());
+    let typed: Vec<String> = words.iter().map(|word| remote_word(word)).collect();
+    let mut remote = vec!["shep".to_string()];
+    remote.extend(words);
+    (
+        format!("shep --host {dest} {}", typed.join(" ")),
+        ssh_hint(dest, &remote),
+    )
+}
+
 /// The refusal for a target that would be read on this machine
 ///
 /// `token` is `None` for a bare `start`, which reads the Flockfile in this
@@ -120,16 +153,14 @@ pub(crate) fn refuse_local_read(
     args: &StartArgs,
     token: Option<&str>,
 ) -> ExitCode {
-    let flag = if args.flockfile { " --flockfile" } else { "" };
-    let (word, read) = match token {
-        Some("-") => (format!("{flag} -"), "stdin".to_string()),
-        Some(token) => (format!("{flag} {}", remote_word(token)), token.to_string()),
-        None => (String::new(), "the Flockfile in this directory".to_string()),
+    let read = match token {
+        Some("-") => "stdin".to_string(),
+        Some(token) => token.to_string(),
+        None => "the Flockfile in this directory".to_string(),
     };
-    let message = format!(
-        "`shep --host {dest} start{word}` would read {read} on this machine. \
-         To start it there, run: ssh {dest} shep start{word}"
-    );
+    let (typed, ssh) = start_commands(dest, args);
+    let message =
+        format!("`{typed}` would read {read} on this machine. To start it there, run: {ssh}");
     streams.fail(ExitCode::Usage, &message)
 }
 
@@ -370,16 +401,15 @@ async fn set_log_timestamps_off(
 fn unknown_on_host(
     streams: &mut Streams<'_>,
     dest: &str,
+    args: &StartArgs,
     token: &str,
     selector: &ProcessSelector,
     flock: &[ProcessInfo],
 ) -> ExitCode {
     let miss = selector_miss(token, selector, flock)
         .unwrap_or_else(|| format!("{token} is not a sheep or a fold"));
-    let message = format!(
-        "{miss} on {dest}. If {token} is a script there, run: ssh {dest} shep start {}",
-        remote_word(token)
-    );
+    let (_, ssh) = start_commands(dest, args);
+    let message = format!("{miss} on {dest}. If {token} is a script there, run: {ssh}");
     streams.fail(ExitCode::NotFound, &message)
 }
 
@@ -423,7 +453,16 @@ async fn load_one(
             Err(code) => return code,
         };
         if is_reachable_as_a_name(&selector) {
-            let flock = flock_now(client).await;
+            // Over a host a miss is final, so a listing that failed must not
+            // pass for an empty flock.
+            let flock = if host.is_some() {
+                match client.list_flock().await {
+                    Ok(flock) => flock,
+                    Err(err) => return streams.fail(ExitCode::from(&err), &err.to_string()),
+                }
+            } else {
+                flock_now(client).await
+            };
             let matched = flock_matches(&selector, &flock);
             if !matched.is_empty() {
                 // Returns rather than falling through: a token that resolved
@@ -482,7 +521,7 @@ async fn load_one(
                 };
             }
             if let Some(dest) = host {
-                return unknown_on_host(streams, dest, token, &selector, &flock);
+                return unknown_on_host(streams, dest, args, token, &selector, &flock);
             }
             // Held for the failure path below rather than reported here: the
             // token may still name a Flockfile or a path.

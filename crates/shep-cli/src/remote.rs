@@ -115,6 +115,26 @@ pub(crate) fn remote_word(word: &str) -> String {
     format!("'{}'", word.replace('\'', r"'\''"))
 }
 
+/// The `ssh` line that runs `words` on `dest`, for an operator to paste.
+///
+/// Two shells read it: this machine's, which strips one layer of quoting, and
+/// the host's, which gets the words joined by spaces. A word that needs
+/// quoting is therefore quoted for the host, and the whole command again for
+/// this machine. A line of safe words stays unquoted.
+pub(crate) fn ssh_hint(dest: &str, words: &[String]) -> String {
+    let quoted: Vec<String> = words.iter().map(|word| remote_word(word)).collect();
+    let command = quoted.join(" ");
+    if quoted
+        .iter()
+        .zip(words)
+        .all(|(quoted, word)| quoted == word)
+    {
+        format!("ssh {dest} {command}")
+    } else {
+        format!("ssh {dest} {}", remote_word(&command))
+    }
+}
+
 /// How long a followed host link waits for an interrupt before it reports the
 /// link lost.
 ///
@@ -286,6 +306,19 @@ mod tests {
         assert_eq!(remote_word("my api"), "'my api'");
         assert_eq!(remote_word("it's"), r"'it'\''s'");
         assert_eq!(remote_word(""), "''");
+    }
+
+    #[test]
+    fn an_ssh_hint_quotes_for_both_shells_only_when_a_word_needs_it() {
+        let words = |list: &[&str]| list.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            ssh_hint("amp2", &words(&["shep", "start", "./api"])),
+            "ssh amp2 shep start ./api"
+        );
+        assert_eq!(
+            ssh_hint("amp2", &words(&["shep", "start", "./my api.js"])),
+            r"ssh amp2 'shep start '\''./my api.js'\'''"
+        );
     }
 
     #[test]

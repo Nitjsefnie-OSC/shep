@@ -362,3 +362,80 @@ async fn a_path_target_over_an_unreachable_host_is_refused_not_unreachable() {
         assert!(said.contains("ssh amp2 shep start"), "{targets:?}: {said}");
     }
 }
+
+/// The hint starts the same thing on the host: every flag and assignment the
+/// operator typed rides along.
+#[tokio::test]
+async fn the_ssh_hint_carries_every_flag_and_assignment() {
+    use shep_client::testing::fake_client_answering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let (client, _envelopes) =
+        fake_client_answering(&sock, |_: &Request| Response::Flock(Vec::new())).await;
+    let mut args = start_args("FOO=1");
+    args.targets.push("./api".to_string());
+    args.name = Some("api2".to_string());
+    args.fold = Some("web".to_string());
+    args.no_log_timestamps = true;
+
+    let (code, _printed, said) = start_over_host_with_args(&client, &args).await;
+
+    assert_eq!(code, ExitCode::Usage, "{said}");
+    assert!(
+        said.contains("ssh amp2 shep start --name api2 --fold web --no-log-timestamps FOO=1 ./api"),
+        "{said}"
+    );
+}
+
+/// The hint is pasted into this machine's shell and then read by the host's,
+/// so a token with a space is quoted for both.
+#[tokio::test]
+async fn the_ssh_hint_survives_two_shells_for_a_token_with_a_space() {
+    use shep_client::testing::fake_client_answering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let (client, _envelopes) =
+        fake_client_answering(&sock, |_: &Request| Response::Flock(Vec::new())).await;
+
+    let (code, _printed, said) =
+        start_over_host_with_args(&client, &start_args("./my api.js")).await;
+
+    assert_eq!(code, ExitCode::Usage, "{said}");
+    assert!(
+        said.contains("`shep --host amp2 start './my api.js'` would read ./my api.js"),
+        "{said}"
+    );
+    assert!(
+        said.contains(r"ssh amp2 'shep start '\''./my api.js'\'''"),
+        "{said}"
+    );
+}
+
+/// A listing that failed says nothing about the name, so the failure is what
+/// the operator hears, not a miss.
+#[tokio::test]
+async fn a_failed_listing_over_a_host_is_not_a_not_found() {
+    use shep_client::testing::fake_client_answering_refusals;
+    use shep_core::protocol::RpcError;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let (client, _envelopes) =
+        fake_client_answering_refusals(&sock, |_: &Request| -> Result<Response, RpcError> {
+            Err(RpcError {
+                code: RpcErrorCode::Internal,
+                message: "the roll is unreadable".to_string(),
+                daemon_version: None,
+            })
+        })
+        .await;
+
+    let (code, printed, said) = start_over_host_with_args(&client, &start_args("web")).await;
+
+    assert_eq!(code, ExitCode::Internal, "{said}");
+    assert!(printed.is_empty());
+    assert!(said.contains("the roll is unreadable"), "{said}");
+    assert!(!said.contains("is not a sheep or a fold"), "{said}");
+}
