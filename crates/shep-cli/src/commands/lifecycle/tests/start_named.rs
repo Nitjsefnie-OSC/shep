@@ -248,7 +248,10 @@ async fn stdin_and_flockfile_targets_over_a_host_refuse_the_same_way() {
         said.contains("`shep --host amp2 start --flockfile web` would read web on this machine."),
         "{said}"
     );
-    assert!(said.contains("ssh amp2 shep start --flockfile web"), "{said}");
+    assert!(
+        said.contains("ssh amp2 shep start --flockfile web"),
+        "{said}"
+    );
     assert_eq!(requests_seen(&mut envelopes), 0, "{said}");
 }
 
@@ -267,7 +270,10 @@ async fn an_unknown_name_over_a_host_is_not_found_and_hints_at_ssh() {
 
     assert_eq!(code, ExitCode::NotFound, "{said}");
     assert!(printed.is_empty());
-    assert!(said.contains("ghost is not a sheep or a fold on amp2"), "{said}");
+    assert!(
+        said.contains("ghost is not a sheep or a fold on amp2"),
+        "{said}"
+    );
     assert!(said.contains("ssh amp2 shep start ghost"), "{said}");
     assert!(
         respawns(&mut envelopes).is_empty(),

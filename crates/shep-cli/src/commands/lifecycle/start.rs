@@ -27,8 +27,8 @@ use crate::commands::lifecycle::selectors::{
 use crate::commands::lifecycle::staged_start_deadline;
 use crate::commands::selector::parse_selector;
 use crate::exit::ExitCode;
-use crate::remote::remote_word;
 use crate::output::{FlockRows, Streams};
+use crate::remote::remote_word;
 
 /// Which of the two verbs that read a Flockfile is running
 ///

@@ -201,11 +201,10 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
       All four take <code>--host</code> and act on that host's shepherd only.
     </p>
     <p>
-      <code>start</code> takes <code>--host</code> for a sheep name only,
-      which resumes that sheep on the host. A path, <code>-</code>,{" "}
-      <code>--flockfile</code> or a bare <code>start</code> would be read on
-      this machine, so each is refused with the{" "}
-      <code>ssh &lt;host&gt; shep start</code> command that reads it there.
+      <code>start</code> takes <code>--host</code> for a sheep name only. A
+      path, <code>-</code>, <code>--flockfile</code> or a bare{" "}
+      <code>start</code> is refused with the <code>ssh</code> command that
+      runs it on the host.
     </p>
 
     <h2 id="one-ladder-two-grace-periods">One ladder, two grace periods</h2>
