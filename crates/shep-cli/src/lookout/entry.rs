@@ -30,8 +30,10 @@ use tokio::sync::mpsc;
 /// so the settings screen reports the layer that actually won.
 ///
 /// Over a [`Link::Host`] the dashboard watches that host's shepherd through
-/// [`HostShepherd`] and reads nothing from this machine: [`NoLocal`] is the
-/// backstop for what [`App`] already declines to ask for.
+/// [`HostShepherd`] and reads no log, host sample, settings or secrets from this
+/// machine: [`NoLocal`] is the backstop for what [`App`] already declines to
+/// ask for. Only the operator's own `lookout.allow_control` gate, in
+/// `paths.kv`, is still read here.
 pub async fn lookout(
     streams: &mut Streams<'_>,
     link: &Link<'_>,

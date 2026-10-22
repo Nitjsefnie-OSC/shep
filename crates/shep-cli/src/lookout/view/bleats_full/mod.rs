@@ -81,6 +81,7 @@ fn lines(app: &App, pane: &BleatsPane, width: u16, rows: usize) -> Vec<Line<'sta
     out.push(title_line(app, pane, width));
     if app.remote_host().is_some() {
         out.push(unavailable_line(app.palette(), width));
+        out.truncate(rows);
         return out;
     }
 

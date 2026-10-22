@@ -64,3 +64,15 @@ fn a_sheep_panes_feed_column_says_it_is_not_available_over_a_host() {
     assert!(frame.contains("not available over --host"), "{frame}");
     assert!(!frame.contains("out then err"), "{frame}");
 }
+
+/// The pane is told how many rows it has, and a host's two lines are no
+/// exception on a pane one row tall.
+#[test]
+fn the_full_screen_pane_over_a_host_keeps_to_the_rows_it_is_given() {
+    let app = watching_build_01(fixtures::bleats_pane_with_lines(5));
+
+    for rows in 0..=2 {
+        let lines = crate::lookout::view::bleats_full::draw_lines(&app, 80, rows);
+        assert_eq!(lines.len(), rows.min(2), "{rows} rows");
+    }
+}
