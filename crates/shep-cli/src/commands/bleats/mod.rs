@@ -512,7 +512,7 @@ fn handle_event(
 /// and nothing else. A sheep's own line and a real error both still print.
 ///
 /// Delegates to [`bleats_with_signal`] with a real `SIGINT` as the interrupt
-/// source.
+/// source. The shepherd is this machine's: see [`bleats_on_host`] for a host's.
 pub async fn bleats(
     client: &Client,
     streams: &mut Streams<'_>,
@@ -524,6 +524,29 @@ pub async fn bleats(
         streams,
         quiet,
         args,
+        tokio::signal::ctrl_c().map(|_| ()),
+    )
+    .await
+}
+
+/// [`bleats`] for the shepherd a `--host` names, where `client` is the ssh
+/// link and not a local socket.
+///
+/// The caller says so, rather than this reading it off `client`, because the
+/// cost of getting it wrong is a backlog opened from the remote's paths on
+/// this machine.
+pub async fn bleats_on_host(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    quiet: bool,
+    args: &BleatsArgs,
+) -> ExitCode {
+    bleats_over(
+        client,
+        streams,
+        quiet,
+        args,
+        true,
         tokio::signal::ctrl_c().map(|_| ()),
     )
     .await
@@ -549,15 +572,7 @@ pub async fn bleats_with_signal(
     args: &BleatsArgs,
     interrupt: impl std::future::Future<Output = ()> + Send,
 ) -> ExitCode {
-    bleats_over(
-        client,
-        streams,
-        quiet,
-        args,
-        client.host().is_some(),
-        interrupt,
-    )
-    .await
+    bleats_over(client, streams, quiet, args, false, interrupt).await
 }
 
 /// [`bleats_with_signal`] with the host decided by the caller, so a test
@@ -601,14 +616,12 @@ async fn bleats_over(
     // than printed twice. The tail's exit code is discarded: an unreadable
     // log for one sheep must not stop the follow over the whole flock.
     if over_host {
-        if args.lines > 0 {
-            write_notice(
-                streams,
-                quiet,
-                "backlog_not_shown",
-                "no backlog is shown over --host; following live output only",
-            );
-        }
+        write_notice(
+            streams,
+            quiet,
+            "backlog_not_shown",
+            "no backlog is shown over --host; following live output only",
+        );
     } else if args.lines > 0 {
         let _ = tail_log_files(streams, quiet, &cache, &selector, args);
     }

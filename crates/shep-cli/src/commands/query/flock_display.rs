@@ -235,7 +235,13 @@ pub(crate) async fn flock_follow(
             Ok(procs) => procs,
             // The ssh child dies on the same Ctrl+C as this process, so over
             // a host the failed request can be seen before the interrupt.
-            Err(_) if client.host().is_some() && interrupt_within_grace(interrupt.recv()).await => {
+            Err(_)
+                if client.host().is_some()
+                    && interrupt_within_grace(async {
+                        interrupt.recv().await;
+                    })
+                    .await =>
+            {
                 return ExitCode::Success;
             }
             Err(err) => return typed_request_error(streams, &err),

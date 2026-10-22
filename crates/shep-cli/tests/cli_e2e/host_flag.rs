@@ -365,11 +365,16 @@ fn bleats_over_a_stand_in_ssh_follows_a_remote_sheep_and_exits_0_on_sigint() {
     assert_success(&started);
     write_ssh_stand_in(bin.path(), remote.path());
 
+    use std::os::unix::process::CommandExt;
+
+    // Its own process group, so the SIGINT below reaches the stand-in ssh as
+    // well as `shep`, as a terminal's Ctrl+C reaches both.
     let mut child = std::process::Command::cargo_bin("shep")
         .unwrap()
         .arg("--home")
         .arg(local.path())
         .args(["--host", "amp2", "bleats"])
+        .process_group(0)
         .env("PATH", path_with_first(bin.path()))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -380,7 +385,7 @@ fn bleats_over_a_stand_in_ssh_follows_a_remote_sheep_and_exits_0_on_sigint() {
     let lines = lines_from(child.stdout.take().unwrap());
 
     let seen = lines.recv_timeout(CMD_TIMEOUT);
-    nix::sys::signal::kill(
+    nix::sys::signal::killpg(
         nix::unistd::Pid::from_raw(child.id() as i32),
         nix::sys::signal::Signal::SIGINT,
     )
@@ -391,6 +396,10 @@ fn bleats_over_a_stand_in_ssh_follows_a_remote_sheep_and_exits_0_on_sigint() {
             break status;
         }
         if Instant::now() >= deadline {
+            let _ = nix::sys::signal::killpg(
+                nix::unistd::Pid::from_raw(child.id() as i32),
+                nix::sys::signal::Signal::SIGKILL,
+            );
             let _ = child.kill();
             let _ = child.wait();
             panic!("bleats did not exit after SIGINT");

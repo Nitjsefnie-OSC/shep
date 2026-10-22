@@ -913,6 +913,50 @@ async fn a_followed_host_prints_no_backlog_from_local_paths() {
     }
 }
 
+/// `--lines 0` asks for no backlog, and over a host there is none to give
+/// either way: the notice is the same, so the operator never wonders why.
+#[tokio::test]
+async fn a_followed_host_says_no_backlog_is_shown_even_for_zero_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, daemon) = fake_client_with_push(&path).await;
+    daemon.reply_to_list(vec![info(1, "web")]);
+    daemon.close_after_subscribe().await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        let mut args = bleats_args("all", false, false, false);
+        args.lines = 0;
+        tokio::time::timeout(
+            RUN_TIMEOUT,
+            bleats_over(
+                &client,
+                &mut streams,
+                false,
+                &args,
+                true,
+                std::future::pending(),
+            ),
+        )
+        .await
+        .expect("the grace ends the follow");
+    }
+    let err = String::from_utf8(err).unwrap();
+
+    assert_eq!(
+        err.matches("no backlog is shown over --host").count(),
+        1,
+        "{err}"
+    );
+}
+
 /// The ssh child dies on the same SIGINT as this process, so the stream can
 /// end a moment before the interrupt is delivered.
 #[tokio::test]

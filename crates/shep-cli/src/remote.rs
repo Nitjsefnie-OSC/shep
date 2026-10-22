@@ -104,7 +104,10 @@ pub(crate) fn refuse_host(fmt: Format) -> ExitCode {
 pub(crate) const HOST_INTERRUPT_GRACE: Duration = Duration::from_millis(250);
 
 /// Whether `interrupt` resolves within [`HOST_INTERRUPT_GRACE`].
-pub(crate) async fn interrupt_within_grace<T>(interrupt: impl Future<Output = T>) -> bool {
+///
+/// `interrupt` must resolve only for the operator's interrupt: any other
+/// completion would pass for one and turn a lost link into a success.
+pub(crate) async fn interrupt_within_grace(interrupt: impl Future<Output = ()>) -> bool {
     tokio::time::timeout(HOST_INTERRUPT_GRACE, interrupt)
         .await
         .is_ok()

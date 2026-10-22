@@ -183,25 +183,26 @@ pub async fn describe(
     // One pass per target, each its own detail view: `describe` answers with
     // a tree per sheep, so merging them would lose that shape.
     let mut failure: Option<ExitCode> = None;
-    let mut host: Option<Option<String>> = None;
+    let mut host: Option<String> = None;
+    // Said before any selector is parsed: a malformed one ends the run, and
+    // the operator still learns nothing was resolved against a local store.
+    if matches!(link, Link::Host { .. }) {
+        streams.aside(
+            SECRETS_NOT_SHOWN_NOTICE,
+            "secrets are not shown over --host",
+        );
+    }
     for raw in &args.selectors {
         let selector = match parse_selector_spec(streams, raw) {
             Ok(selector) => selector,
             Err(code) => return code,
         };
-        let host = host.get_or_insert_with(|| match link {
-            Link::Local(paths) => Some(host_environment(streams, paths)),
-            Link::Host { .. } => {
-                streams.aside(
-                    SECRETS_NOT_SHOWN_NOTICE,
-                    "secrets are not shown over --host",
-                );
-                None
+        let secrets = match link {
+            Link::Local(paths) => {
+                let host = host.get_or_insert_with(|| host_environment(streams, paths));
+                Some((*paths, host.as_str()))
             }
-        });
-        let secrets = match (link, host.as_deref()) {
-            (Link::Local(paths), Some(host)) => Some((*paths, host)),
-            _ => None,
+            Link::Host { .. } => None,
         };
         let code = describe_selector(client, streams, "describe", secrets, selector).await;
         if code != ExitCode::Success {
@@ -673,6 +674,43 @@ mod tests {
             "{notices}"
         );
         assert_eq!(notices.matches("not shown over --host").count(), 1);
+    }
+
+    /// The aside is the operator's only sign that nothing was resolved, so a
+    /// selector that fails to parse must not skip it.
+    #[tokio::test]
+    async fn describe_over_a_host_says_secrets_are_not_shown_even_for_a_bad_selector() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = shep_client::testing::control_address(dir.path());
+        let (client, _daemon) = fake_client_with_ack(&path, sample_ack()).await;
+
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = {
+            let mut streams = Streams {
+                out: &mut out,
+                err: &mut err,
+                style: crate::style::Presentation::BARE,
+                fmt: Format::Table,
+            };
+            describe(
+                &client,
+                &mut streams,
+                &Link::to_host("amp2"),
+                &SelectorArgs {
+                    selectors: vec!["/(/".into()],
+                },
+            )
+            .await
+        };
+
+        assert_ne!(code, ExitCode::Success);
+        let notices = String::from_utf8(err).unwrap();
+        assert_eq!(
+            notices.matches("not shown over --host").count(),
+            1,
+            "{notices}"
+        );
     }
 
     /// The whole notice, byte for byte. The old wording said "every

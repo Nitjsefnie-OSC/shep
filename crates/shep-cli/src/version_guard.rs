@@ -227,10 +227,22 @@ pub(crate) async fn flock_command(
     guard: VersionGuard,
     args: &cli::FlockArgs,
 ) -> ExitCode {
+    flock_command_on(streams, link, guard, args, std::io::stdout().is_terminal()).await
+}
+
+/// [`flock_command`] with whether stdout is a terminal decided by the caller,
+/// so a test of the terminal refusal holds under `--nocapture` too.
+async fn flock_command_on(
+    streams: &mut Streams<'_>,
+    link: &Link<'_>,
+    guard: VersionGuard,
+    args: &cli::FlockArgs,
+    stdout_is_terminal: bool,
+) -> ExitCode {
     let paths = match link {
         Link::Local(paths) => *paths,
         Link::Host { .. } if args.follow => {
-            return follow_flock_command(streams, link, guard, args).await;
+            return follow_flock_command(streams, link, guard, args, stdout_is_terminal).await;
         }
         Link::Host { .. } => {
             return match connect_client(streams, link, guard).await {
@@ -240,7 +252,7 @@ pub(crate) async fn flock_command(
         }
     };
     if args.follow {
-        return follow_flock_command(streams, link, guard, args).await;
+        return follow_flock_command(streams, link, guard, args, stdout_is_terminal).await;
     }
     match Client::connect(&paths.socket).await {
         Ok(client) => match refuse_version_skew(streams, &client, guard) {
@@ -281,6 +293,7 @@ async fn follow_flock_command(
     link: &Link<'_>,
     guard: VersionGuard,
     args: &cli::FlockArgs,
+    stdout_is_terminal: bool,
 ) -> ExitCode {
     if streams.fmt == Format::Json {
         return streams.fail(
@@ -288,7 +301,7 @@ async fn follow_flock_command(
             "`--follow` redraws a table; `--format json` has no follow form",
         );
     }
-    if !std::io::stdout().is_terminal() {
+    if !stdout_is_terminal {
         return streams.fail(
             ExitCode::Usage,
             "`--follow` needs a terminal; stdout is not one",
@@ -689,11 +702,6 @@ mod tests {
     /// host's own refusal text would send the operator after the wrong fix.
     #[tokio::test]
     async fn a_host_follow_without_a_terminal_refuses_for_the_terminal_not_the_host() {
-        // `cargo test` captures stdout, so the terminal guard fires on its
-        // own. Under `--nocapture` on a real terminal it cannot.
-        if std::io::stdout().is_terminal() {
-            return;
-        }
         let dir = tempfile::tempdir().unwrap();
         let link = Link::Host {
             dest: "amp2",
@@ -708,7 +716,7 @@ mod tests {
         let mut err = Vec::new();
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
-            flock_command(&mut streams, &link, VersionGuard::Enforce, &args).await
+            flock_command_on(&mut streams, &link, VersionGuard::Enforce, &args, false).await
         };
 
         assert_eq!(code, ExitCode::Usage);

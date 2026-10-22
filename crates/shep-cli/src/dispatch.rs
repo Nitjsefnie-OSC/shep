@@ -574,7 +574,7 @@ async fn run_on_host(
     match command {
         Commands::Describe(args) => query::describe(&client, &mut streams, &link, args).await,
         Commands::Fold(args) => query::fold(&client, &mut streams, args).await,
-        Commands::Bleats(args) => bleats::bleats(&client, &mut streams, quiet, args).await,
+        Commands::Bleats(args) => bleats::bleats_on_host(&client, &mut streams, quiet, args).await,
         other => unreachable!("`host_scope` refused {other:?} before it got here"),
     }
 }
