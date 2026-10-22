@@ -11,6 +11,7 @@
 //! [`install`](step_execution::install) or [`remove`](step_execution::remove) given [`Privilege::Unprivileged`](privilege_check::Privilege::Unprivileged) prints the
 //! command an operator can paste and exits non-zero.
 
+mod install_commands;
 mod privilege_check;
 mod step_execution;
 mod target_resolution;

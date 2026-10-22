@@ -14,6 +14,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use super::shell_quote;
+use crate::exit::ExitCode;
 
 /// Everything a generated init unit carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +47,10 @@ pub(crate) struct UnitSpec {
 /// right one for a flock deep enough to need it, but the number belongs to
 /// the operator's flock and not to this renderer, and a wrong one trades the
 /// loop for a shepherd systemd waits on forever.
+///
+/// `RestartPreventExitStatus` is [`ExitCode::DaemonAlreadyRunning`]: a
+/// shepherd started by hand already holds this home, and restarting into its
+/// lock every `RestartSec` stays under systemd's start limit forever.
 pub(crate) fn systemd_unit(spec: &UnitSpec) -> String {
     let home = systemd_environment_value(&spec.home.display().to_string());
     let path = systemd_environment_value(&spec.path.to_string_lossy());
@@ -66,12 +71,14 @@ pub(crate) fn systemd_unit(spec: &UnitSpec) -> String {
          ExecStop={exec} kill\n\
          Restart=on-failure\n\
          RestartSec=5\n\
+         RestartPreventExitStatus={already_running}\n\
          \n\
          [Install]\n\
          WantedBy=multi-user.target\n",
         user = spec.user,
         working_dir = spec.working_dir.display(),
         exec = spec.exec.display(),
+        already_running = ExitCode::DaemonAlreadyRunning as u8,
     )
 }
 
@@ -402,6 +409,7 @@ mod tests {
              ExecStop=/usr/local/bin/shep kill\n\
              Restart=on-failure\n\
              RestartSec=5\n\
+             RestartPreventExitStatus=10\n\
              \n\
              [Install]\n\
              WantedBy=multi-user.target\n",
