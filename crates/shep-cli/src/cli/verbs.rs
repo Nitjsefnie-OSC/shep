@@ -524,6 +524,9 @@ pub enum Commands {
     /// Under sudo this also warns that PATH may have been replaced by
     /// sudo's own secure_path before shep ever saw it, and shows the exact
     /// PATH about to go into the unit so you can check it yourself.
+    ///
+    /// If a shepherd already holds that $SHEP_HOME, the unit is enabled but
+    /// not started, and a notice names the commands that hand the flock over.
     Startup(StartupArgs),
     /// Disable and remove whichever unit `startup` installed — systemd,
     /// openrc, launchd, or a BSD `rc.d` script.

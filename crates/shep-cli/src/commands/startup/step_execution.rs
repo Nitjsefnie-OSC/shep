@@ -1,9 +1,11 @@
+use super::install_commands::{install_commands, not_started_notice, running_shepherd};
 use super::privilege_check::{Privilege, privilege};
 use super::target_resolution::{StartupPlan, plan};
 use super::unit_layout::{remove_unit, secure_path_warning, unit_file_name, write_unit};
 use crate::cli::{Init, StartupArgs};
 use crate::exit::ExitCode;
 use crate::output::{StartupStep, StartupSteps, Streams, emit, write_outcome};
+use shep_daemon::boot::Shepherd;
 use std::path::Path;
 
 /// A step that did what it was asked.
@@ -71,6 +73,9 @@ pub fn unstartup(streams: &mut Streams<'_>, args: &StartupArgs) -> ExitCode {
 /// [`Privilege::Unprivileged`], which prints the resolved `sudo` command
 /// and exits [`ExitCode::Failure`].
 ///
+/// A shepherd already holding that home is not a refusal: the unit is
+/// enabled but not started, and a notice says how to hand the flock over.
+///
 /// If [`plan`] saw `$SUDO_USER` set, [`secure_path_warning`] also warns:
 /// `sudo` typically replaces `PATH` with its own `secure_path`, and shep
 /// has no login `PATH` left to compare against.
@@ -117,38 +122,25 @@ pub(crate) fn install(
         streams.aside("secure_path", &message);
     }
 
-    let mut steps = vec![write_unit(plan)];
-    match plan.init {
-        Init::Systemd => {
-            steps.push(run_step("systemctl", &["daemon-reload"]));
-            steps.push(run_step(
-                "systemctl",
-                &["enable", "--now", &unit_file_name(plan)],
-            ));
-        }
-        Init::Launchd => steps.push(run_step(
-            "launchctl",
-            &["bootstrap", "system", &plan.unit_path.display().to_string()],
-        )),
-        Init::Openrc => {
-            steps.push(run_step(
-                "rc-update",
-                &["add", &unit_file_name(plan), "default"],
-            ));
-            steps.push(run_step("rc-service", &[&unit_file_name(plan), "start"]));
-        }
-        Init::FreebsdRc => {
-            steps.push(run_step(
-                "sysrc",
-                &[&format!("{}_enable=YES", unit_file_name(plan))],
-            ));
-            steps.push(run_step("service", &[&unit_file_name(plan), "start"]));
-        }
-        Init::OpenbsdRc => {
-            steps.push(run_step("rcctl", &["enable", &unit_file_name(plan)]));
-            steps.push(run_step("rcctl", &["start", &unit_file_name(plan)]));
-        }
+    let shepherd = running_shepherd(&plan.spec.home).unwrap_or_else(|err| {
+        streams.aside(
+            "liveness",
+            &format!("could not tell whether a shepherd already runs; starting the unit: {err}"),
+        );
+        Shepherd::Absent
+    });
+    let start = shepherd == Shepherd::Absent;
+    if !start {
+        streams.aside("already_running", &not_started_notice(plan, shepherd));
     }
+
+    let mut steps = vec![write_unit(plan)];
+    steps.extend(install_commands(plan, start).iter().map(|(program, args)| {
+        run_step(
+            program,
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
+        )
+    }));
     report(streams, "startup", steps)
 }
 

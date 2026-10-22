@@ -3631,6 +3631,9 @@ supervises the flock the operator actually has.
 Under sudo this also warns that PATH may have been replaced by sudo's own secure_path before shep
 ever saw it, and shows the exact PATH about to go into the unit so you can check it yourself.
 
+If a shepherd already holds that $SHEP_HOME, the unit is enabled but not started, and a notice names
+the commands that hand the flock over.
+
 Usage: shep startup [OPTIONS]
 
 Options:
