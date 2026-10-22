@@ -1,9 +1,9 @@
 //! Getting a process running, or taking one over.
 //!
-//! `spawn_fresh` assembles a spec, resolves credentials and secrets, and
-//! hands the runner a process. `install_adopted` is the other door: a
-//! survivor of a previous shepherd arrives already running, and has to be
-//! fitted back into a slot without being restarted.
+//! `spawn_fresh` assembles a spec from the credentials and secret view its
+//! caller resolved, and hands the runner a process. `install_adopted` is the
+//! other door: a survivor of a previous shepherd arrives already running, and
+//! has to be fitted back into a slot without being restarted.
 
 use super::*;
 
@@ -75,13 +75,15 @@ impl<R: ProcessRunner> Actor<R> {
         }
     }
 
-    /// The secret view one spawn of `app` resolves against.
+    /// The secret view one spawn, or one batch of instances, resolves
+    /// against.
     ///
     /// The store is read here rather than inside [`assemble`], the same way
     /// `credentials` is resolved by the caller: real I/O belongs to the
     /// caller so the assembler stays a pure function of its arguments. Read
-    /// per spawn rather than cached, so a `shep secret set` between two
-    /// spawns reaches the second without a daemon restart.
+    /// per spawn call, or per batch of instances of one app, rather than
+    /// cached, so a `shep secret set` between two calls reaches the second
+    /// without a daemon restart.
     ///
     /// A store that cannot be read yields an empty view rather than failing
     /// here, and logs why. A sheep that needs nothing from it still spawns,
@@ -221,21 +223,24 @@ impl<R: ProcessRunner> Actor<R> {
     /// it configures no signal of its own, and `Online` otherwise. `Errored`
     /// with no task on failure. `dog` lands on the entry either way, so a dog
     /// whose binary cannot be spawned still shows up in the dogs table.
+    ///
+    /// `secrets` is the caller's: a `Start` and a scale-up each read the
+    /// operator's store once for the whole batch of instances they spawn.
     pub(super) fn spawn_fresh(
         &mut self,
         app: &ResolvedApp,
         instance: u32,
         credentials: Option<Credentials>,
+        secrets: &SecretView,
         dog: Option<DogSource>,
         gate: &BTreeSet<String>,
     ) -> Result<ProcessInfo, String> {
         // Read before the spawn: a scale-up's new instance must show the same
         // overrides its siblings do, not a blank cell until the next load.
         let overridden = self.overridden_for(&app.config().name);
-        let secrets = self.secret_view(app);
         let id = self.next_id;
         self.next_id += 1;
-        let spec = match assemble(app, instance, &self.paths, credentials, &secrets) {
+        let spec = match assemble(app, instance, &self.paths, credentials, secrets) {
             Ok(spec) => spec,
             Err(err) => {
                 // Registered before the refusal is routed: a sheep that never
@@ -244,7 +249,7 @@ impl<R: ProcessRunner> Actor<R> {
                 // since `assemble` is what just refused. The `Errored` here
                 // is never published: `refuse_spawn` decides the status this
                 // sheep is first seen in, and emits that one.
-                let described = describe(app, instance, &self.paths, credentials, &secrets);
+                let described = describe(app, instance, &self.paths, credentials, secrets);
                 let entry = ProcessEntry {
                     id,
                     spec: app.clone(),

@@ -306,6 +306,41 @@ async fn a_scale_is_refused_while_an_earlier_ones_departures_are_still_leaving()
     );
 }
 
+/// Every instance a scale-up adds resolves the app's `{{secret:...}}`
+/// references as fully as the instance already running.
+///
+/// The pin is the spawn count, not a read count: `assemble` refuses a key
+/// nobody has set, so an instance that resolved nothing never reaches the
+/// runner and lands `Errored` instead.
+#[tokio::test(start_paused = true)]
+async fn a_scale_up_resolves_a_secret_reference_for_every_new_instance() {
+    let dir = tempfile::tempdir().unwrap();
+    shep_core::secrets::set(&test_paths(&dir).secrets, "K", "production", "v").unwrap();
+    let mut config = AppConfig::minimal("web", "./srv");
+    config
+        .env
+        .insert("K".to_string(), "{{secret:K}}".to_string());
+
+    let (handle, runner, _rx) =
+        started_apps(&dir, vec![config], vec![ProcScript::never_exits(); 3], 256).await;
+
+    let scaled = handle.scale("web", 3).await.unwrap();
+
+    assert_eq!(scaled.achieved(), 3);
+    assert_eq!(scaled.shortfall, None);
+    assert_eq!(
+        runner.spawn_count(),
+        3,
+        "an instance whose reference resolved nothing never reaches the runner"
+    );
+    let statuses: Vec<ProcStatus> = scaled.instances.iter().map(|info| info.status).collect();
+    assert_eq!(
+        statuses,
+        vec![ProcStatus::Online; 3],
+        "every new instance came up"
+    );
+}
+
 /// A refusal that never lifts leaves the operator unable to scale the app.
 ///
 /// `never_exits` rather than the case above's wedged scripts: these obey

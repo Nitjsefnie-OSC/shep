@@ -230,6 +230,37 @@ async fn a_value_in_the_store_lets_the_sheep_start() {
     assert_eq!(runner.spawn_count(), 1);
 }
 
+/// One `Start` of a multi-instance app resolves its references once for the
+/// whole batch, and every instance of it still gets the value.
+///
+/// The pin is the spawn count, not a read count: `assemble` refuses a key
+/// nobody has set, so an instance that resolved nothing never reaches the
+/// runner and lands `Errored` instead.
+#[tokio::test(start_paused = true)]
+async fn a_multi_instance_start_resolves_a_secret_reference_for_every_instance() {
+    let dir = tempfile::tempdir().unwrap();
+    shep_core::secrets::set(&test_paths(&dir).secrets, "K", "production", "v").unwrap();
+    let mut config = AppConfig::minimal("web", "./srv");
+    config.instances = 3;
+    config
+        .env
+        .insert("K".to_string(), "{{secret:K}}".to_string());
+
+    let (handle, runner, _rx) = started(&dir, config, vec![ProcScript::never_exits(); 3]).await;
+
+    assert_eq!(
+        runner.spawn_count(),
+        3,
+        "an instance whose reference resolved nothing never reaches the runner"
+    );
+    let listed = handle.list().await;
+    assert_eq!(listed.len(), 3);
+    assert!(
+        listed.iter().all(|info| info.status == ProcStatus::Online),
+        "every instance of the batch came up: {listed:?}"
+    );
+}
+
 /// A sheep's own `environment` picks which slot it reads, and there is no
 /// fallback to another named one: a `staging` value must not answer for a
 /// `production` sheep.
