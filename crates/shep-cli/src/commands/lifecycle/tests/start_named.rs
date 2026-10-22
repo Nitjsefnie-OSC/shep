@@ -322,3 +322,43 @@ async fn a_bare_start_over_a_host_refuses_before_reading_the_working_directory()
     assert!(said.contains("ssh amp2 shep start"), "{said}");
     assert!(out.is_empty());
 }
+
+/// The refusal for a target read on this machine needs no host, so an
+/// unreachable one is not what the operator is told.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_path_target_over_an_unreachable_host_is_refused_not_unreachable() {
+    let dir = tempfile::tempdir().unwrap();
+    let link = crate::remote::Link::Host {
+        dest: "amp2",
+        options: shep_client::SshOptions::default().program(dir.path().join("no-such-ssh")),
+    };
+    for (targets, flockfile) in [(&["./api"][..], false), (&["-"], false), (&["web"], true)] {
+        let mut args = start_args("unused");
+        args.targets = targets.iter().map(ToString::to_string).collect();
+        args.flockfile = flockfile;
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+
+        let code = {
+            let mut streams = Streams {
+                out: &mut out,
+                err: &mut err,
+                style: crate::style::Presentation::BARE,
+                fmt: Format::Table,
+            };
+            crate::client::load_command(
+                &mut streams,
+                &link,
+                crate::version_guard::VersionGuard::Enforce,
+                &args,
+                Load::Start,
+            )
+            .await
+        };
+
+        let said = String::from_utf8(err).unwrap();
+        assert_eq!(code, ExitCode::Usage, "{targets:?}: {said}");
+        assert!(said.contains("ssh amp2 shep start"), "{targets:?}: {said}");
+    }
+}

@@ -98,6 +98,17 @@ pub async fn start_on_host(
     .await
 }
 
+/// Whether `token` would be read on this machine rather than looked up in a
+/// flock: `-`, anything under `--flockfile`, or a word no sheep can be named
+///
+/// Needs no shepherd, so a host link answers it before dialling. A token that
+/// is not a selector at all is left to `load_one`, which reports it.
+pub(crate) fn reads_this_machine(args: &StartArgs, token: &str) -> bool {
+    token == "-"
+        || args.flockfile
+        || ProcessSelector::parse(token).is_ok_and(|selector| !is_reachable_as_a_name(&selector))
+}
+
 /// The refusal for a target that would be read on this machine
 ///
 /// `token` is `None` for a bare `start`, which reads the Flockfile in this
@@ -391,7 +402,7 @@ async fn load_one(
     host: Option<&str>,
 ) -> ExitCode {
     if let Some(dest) = host
-        && (target.is_none() || target == Some("-") || args.flockfile)
+        && (target.is_none() || target.is_some_and(|token| reads_this_machine(args, token)))
     {
         return refuse_local_read(streams, dest, args, target);
     }
@@ -477,8 +488,6 @@ async fn load_one(
             // token may still name a Flockfile or a path.
             missed = selector_miss(token, &selector, &flock);
             listing = Some(flock);
-        } else if let Some(dest) = host {
-            return refuse_local_read(streams, dest, args, target);
         }
     }
 

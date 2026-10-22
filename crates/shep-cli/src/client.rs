@@ -128,6 +128,15 @@ async fn load_on_host(
     if args.targets.is_empty() {
         return lifecycle::refuse_local_read(streams, dest, args, None);
     }
+    // Before the dial: the refusal needs no host, and an unreachable one must
+    // not hide it. A `NAME=VALUE` word is an assignment, not a target.
+    let (_, targets) = crate::commands::lifecycle::resolve::split_assignments(&args.targets);
+    if let Some(token) = targets
+        .iter()
+        .find(|token| lifecycle::reads_this_machine(args, token))
+    {
+        return lifecycle::refuse_local_read(streams, dest, args, Some(token));
+    }
     match connect_client(streams, link, guard).await {
         Ok(client) => lifecycle::start_on_host(&client, streams, args, dest).await,
         Err(code) => code,
