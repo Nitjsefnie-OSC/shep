@@ -11,7 +11,7 @@
 //! and exits. `--follow` prints that same tail first, then subscribes.
 
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io;
 use std::path::Path;
 
 use futures_util::FutureExt;
@@ -26,6 +26,11 @@ use crate::commands::rpc::typed_request_error;
 use crate::commands::selector::parse_selector;
 use crate::exit::ExitCode;
 use crate::output::{self, Streams, write_outcome};
+
+pub(crate) use shep_core::logtail::read_tail;
+// Only the tests size a file against the window.
+#[cfg(test)]
+pub(crate) use shep_core::logtail::TAIL_WINDOW_BYTES;
 
 /// One line of `bleats` output under `--format json`. A stability surface of
 /// its own, not wrapped in [`output::OutputEnvelope`]: a follow has no end.
@@ -200,83 +205,6 @@ fn write_notice(streams: &mut Streams<'_>, quiet: bool, code: &str, message: &st
         return;
     }
     streams.aside(code, message);
-}
-
-/// The most of one log file a tail will read to find the lines it wants.
-///
-/// Binds only when lines average over 5 KiB, so in ordinary use the caller's
-/// line count is the bound that decides. A line count alone cannot bound
-/// memory: one arbitrarily long line with no newline would defeat it.
-const TAIL_WINDOW_BYTES: u64 = 256 * 1024;
-
-/// The last `limit` lines of one log file, bounded twice: a
-/// [`TAIL_WINDOW_BYTES`] window from the end of the file, then `limit`
-/// lines within it. Returns the lines and whether either bound cut them
-/// short.
-///
-/// `std::fs`, not `tokio::fs`: shep-cli's tokio has no `fs` feature. Each
-/// line loses its daemon-added timestamp ([`shep_core::logstamp`]) when
-/// `stamped` says the shepherd added one, so it reads the same as a line
-/// from the bus. A non-zero seek discards bytes up to the first `\n`,
-/// rather than rendering a mid-line fragment.
-///
-/// `stamped` is a row's [`ProcessInfo::log_timestamps`] read the absent way:
-/// an app that turned the stamp off wrote its own prefix, and cutting 30
-/// bytes off an RFC 3339 line of its own cuts into the app's text.
-///
-/// # Errors
-/// The file could not be opened, `stat`ed, seeked, or read.
-pub(crate) fn read_tail(
-    path: &Path,
-    limit: usize,
-    stamped: bool,
-) -> io::Result<(Vec<String>, bool)> {
-    let mut file = std::fs::File::open(path)?;
-    let len = file.metadata()?.len();
-    let start = len.saturating_sub(TAIL_WINDOW_BYTES);
-    // `start > 0` means the byte window itself left content behind, before
-    // a single line has been counted: the file is bigger than the window.
-    let window_truncated = start > 0;
-    if start > 0 {
-        file.seek(SeekFrom::Start(start))?;
-    }
-
-    let mut window = Vec::new();
-    file.read_to_end(&mut window)?;
-
-    let window: &[u8] = if start > 0 {
-        match window.iter().position(|&b| b == b'\n') {
-            Some(newline) => &window[newline + 1..],
-            None => &[],
-        }
-    } else {
-        &window
-    };
-
-    let text = String::from_utf8_lossy(window);
-    // The daemon's per-line stamp comes off here, so a `line` has one
-    // meaning across both of this verb's paths: the follow path reads the
-    // bus, which carries a sheep's own bytes. The stamp stays in the file
-    // for `tail`, `less` and `grep`. Only a row the shepherd stamped has a
-    // stamp to take off.
-    let mut lines: Vec<String> = text
-        .split('\n')
-        .map(|line| {
-            if stamped {
-                shep_core::logstamp::strip(line)
-            } else {
-                line
-            }
-        })
-        .map(str::to_string)
-        .collect();
-    if lines.last().is_some_and(String::is_empty) {
-        lines.pop();
-    }
-    let keep_from = lines.len().saturating_sub(limit);
-    let truncated = window_truncated || keep_from > 0;
-    lines.drain(..keep_from);
-    Ok((lines, truncated))
 }
 
 /// Why a log file is not there, naming the path this process tried.

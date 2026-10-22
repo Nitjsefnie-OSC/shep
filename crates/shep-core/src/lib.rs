@@ -42,6 +42,9 @@ pub mod kv;
 // One definition of the log-line timestamp for the writer and every reader:
 // the daemon stamps, and three different file readers in shep-cli strip.
 pub mod logstamp;
+// The end of one log file, read the same way by `bleats`, `whistle` and the
+// shepherd's `TailLog` answer.
+pub mod logtail;
 pub mod overrides;
 pub mod paths;
 pub mod protocol;
