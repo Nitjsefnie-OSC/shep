@@ -23,7 +23,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 use crate::fetch::{self, Target};
 use crate::terminal_safe;
 
-/// One named entry under `[dog.bark.sinks]`.
+/// One named entry under `[bark.sinks]`.
 ///
 /// `Debug` is REDACTED (IR-41): every variant carries a webhook URL, and a
 /// Discord or Slack webhook URL is a bearer credential — anyone holding it
@@ -96,7 +96,7 @@ impl Sink {
     }
 }
 
-/// Why a `[dog.bark.sinks]` entry was refused at config-load time.
+/// Why a `[bark.sinks]` entry was refused at config-load time.
 ///
 /// `Debug` needs no redaction, unlike [`Sink`]'s own: it carries only the
 /// sink's config key, never its url.
@@ -108,7 +108,7 @@ pub enum SinkConfigError {
     /// Sink `name` is a [`Sink::Discord`] or [`Sink::Slack`] (`kind`) not
     /// configured with `https://`.
     InsecureScheme {
-        /// The sink's config key under `[dog.bark.sinks]`, never the url.
+        /// The sink's config key under `[bark.sinks]`, never the url.
         name: String,
         /// `"discord"` or `"slack"`.
         kind: &'static str,
@@ -118,7 +118,7 @@ pub enum SinkConfigError {
     /// hears about it when the config is read, rather than when a rule
     /// first fires and the delivery fails.
     UrlCredentials {
-        /// The sink's config key under `[dog.bark.sinks]`, never the url.
+        /// The sink's config key under `[bark.sinks]`, never the url.
         name: String,
     },
 }
