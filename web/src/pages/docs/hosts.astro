@@ -1,0 +1,123 @@
+---
+/*
+ * Other hosts (`shep host --help`, `shep flock --help`, docs/decisions.md's
+ * "Reaching another host's shepherd"). The listing below is the output the
+ * `commands::query::fleet` tests pin, with host names changed. The ssh hop
+ * itself is a human check.
+ */
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import ReferencePills from "../../components/docs/ReferencePills.astro";
+import ShortVersion from "../../components/docs/ShortVersion.astro";
+import CodeBlock from "../../components/docs/CodeBlock.astro";
+
+const shortVersion = `$ shep host add amp2
+$ shep host add amp3
+$ shep flock`;
+
+const listing = `$ shep flock
+local
+host  cpu  11%   mem  37.2G / 48.0G   disk  r 1.2M/s w 480.0K/s   net  rx 24.0K/s tx 9.0K/s
+
+ID  NAME  STATUS  PID    RESTARTS  EXIT  CFG  CPU  MEM    UPTIME  FOLD  SMIT
+1   web   online  41873  0         -     -    1%   88.0M  3h      -     -
+
+amp2
+host  cpu  4%   mem  9.1G / 16.0G   disk  r 0B/s w 12.0K/s   net  rx 1.1K/s tx 2.3K/s
+
+ID  NAME   STATUS  PID   RESTARTS  EXIT  CFG  CPU  MEM    UPTIME  FOLD  SMIT
+1   queue  online  2210  0         -     -    0%   41.0M  2d      -     -
+$ echo $?
+0`;
+
+const partial = `$ shep flock
+local
+...
+error[daemon_unreachable]: amp3: did not answer within 5s
+$ echo $?
+5`;
+---
+
+<DocsLayout
+  activeSlug="hosts"
+>
+  <article>
+    <h1>Other hosts</h1>
+    <ReferencePills slug="hosts" />
+    <p class="lede">
+      Each machine has its own shepherd and its own flock. List the machines
+      once in <code>shep.toml</code> and <code>shep flock</code> shows the
+      flocks of all of them, so seven hosts take one command instead of seven.
+    </p>
+
+    <ShortVersion>
+      <CodeBlock>{shortVersion}</CodeBlock>
+    </ShortVersion>
+
+    <h2 id="listing-hosts">Listing hosts</h2>
+    <p>
+      The list is the top-level <code>hosts</code> array in the{" "}
+      <code>shep.toml</code> of the home you run <code>shep</code> from.{" "}
+      <code>shep host add &lt;destination&gt;</code>,{" "}
+      <code>shep host remove</code> and <code>shep host list</code> edit and
+      read it. A destination is whatever <code>ssh</code> takes: a host name,{" "}
+      <code>user@host</code>, or a name from <code>~/.ssh/config</code>. One
+      that starts with <code>-</code> is refused.
+    </p>
+    <p>
+      <code>add</code> keeps the entry and dials it once. A host that does
+      not answer gets a warning, because a host that is down tonight is still
+      a host.
+    </p>
+
+    <h2 id="what-shep-flock-prints">What shep flock prints</h2>
+    <p>
+      With a list, <code>shep flock</code> and <code>shep ls</code> ask this
+      machine and every listed host at once. This machine's flock comes first
+      under <code>local</code>, then each host in list order under its name as
+      listed. The order never depends on which host answered first.
+    </p>
+    <CodeBlock>{listing}</CodeBlock>
+
+    <h2 id="a-host-that-does-not-answer">A host that does not answer</h2>
+    <p>
+      A host that fails prints one line on stderr in place of its table, and
+      the others still print. The exit code is 0 only when every host
+      answered. Otherwise it is the code of the first host that failed, this
+      machine first.
+    </p>
+    <CodeBlock>{partial}</CodeBlock>
+    <p>
+      Each host gets five seconds. Listed hosts are dialled with no prompts,
+      so a key that needs a passphrase must be in <code>ssh-agent</code>. A
+      host running another shep version is listed with a warning, not counted
+      as failed.
+    </p>
+
+    <h2 id="one-host">One host</h2>
+    <p>
+      <code>shep flock --host amp2</code> lists that host alone. It may
+      prompt as plain <code>ssh</code> does, and it takes{" "}
+      <code>--format json</code>. With a list and no <code>--host</code>,{" "}
+      <code>--format json</code> is refused for now, naming{" "}
+      <code>--host &lt;name&gt;</code>, rather than printing this machine's
+      flock alone and hiding the rest.
+    </p>
+    <p>
+      <code>shep flock --follow</code> follows one host: this machine, or the{" "}
+      <code>--host</code> one. It dials no other.
+    </p>
+
+    <h2 id="what-the-remote-needs">What the remote needs</h2>
+    <p>
+      ssh runs <code>shep dial-stdio</code> on the host without a terminal, so
+      <code>shep</code> must be on the <code>PATH</code> a non-interactive
+      shell has. <code>ssh amp2 shep --version</code> checks it. The host's
+      shepherd must be running; <code>ssh amp2 shep muster</code> starts it.
+    </p>
+    <p>
+      shep adds no keys or ports. The boundary is ssh's, and{" "}
+      <a href="https://github.com/shep-pm/shep/blob/main/SECURITY.md#reaching-another-host-over-ssh">SECURITY.md</a>{" "}
+      says what that trusts.
+    </p>
+  </article>
+</DocsLayout>

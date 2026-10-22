@@ -10,6 +10,7 @@
 //! still issues `Request::Ping` as the liveness check.
 
 mod dog_browsing;
+pub(crate) mod fleet;
 mod flock_display;
 mod secret_inspection;
 mod terminal_fitting;

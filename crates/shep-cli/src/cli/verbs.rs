@@ -184,6 +184,18 @@ pub enum Commands {
     #[command(visible_alias = "scale")]
     Stock(StockArgs),
     /// List the flock.
+    ///
+    /// With a `hosts` list in shep.toml (`shep host add` edits it), lists this
+    /// machine's flock and then each listed host's, all asked at once. Each
+    /// table is headed by the host's name as listed, `local` for this machine.
+    ///
+    /// A host that does not answer prints one line on stderr instead of a
+    /// table and does not hide the others. The exit code is 0 only when every
+    /// host answered, otherwise the first failing host's, this machine first.
+    /// Listed hosts are dialled without prompts, so their keys must be in
+    /// ssh-agent. `--host <name>` lists one host and may prompt; `--follow`
+    /// follows this machine, or the `--host` one, and dials no other.
+    /// `--format json` with a hosts list needs `--host`.
     #[command(visible_aliases = ["list", "ls"])]
     Flock(FlockArgs),
     /// List the dogs, and nothing else. `--available` lists the community

@@ -182,6 +182,35 @@ pub(crate) fn version_skew_warning(client: &Client, host: Option<&str>) -> Optio
     Some(crate::terminal_safe::sanitise(&sentence).0)
 }
 
+/// What `guard` makes of a skew on `host`, for a caller that asks several
+/// hosts at once and so cannot write to a [`Streams`] as each answers.
+///
+/// # Errors
+/// The one-line refusal, with the remedy that runs over ssh, when `guard` is
+/// [`VersionGuard::Enforce`] and the shepherd on `host` reports a different
+/// version. Otherwise the warning to print, if there is one: none for
+/// [`VersionGuard::Exempt`].
+pub(crate) fn host_skew(
+    client: &Client,
+    host: &str,
+    guard: VersionGuard,
+) -> Result<Option<String>, String> {
+    match guard {
+        VersionGuard::Exempt => Ok(None),
+        VersionGuard::Warn => Ok(version_skew_warning(client, Some(host))),
+        VersionGuard::Enforce => {
+            let running = client.daemon().daemon_version.as_str();
+            if running == env!("CARGO_PKG_VERSION") {
+                return Ok(None);
+            }
+            let summary = version_skew_summary(running, Some(host));
+            let command = version_skew_command(Some(host));
+            let sentence = format!("{summary}. Run `{command}`.");
+            Err(crate::terminal_safe::sanitise(&sentence).0)
+        }
+    }
+}
+
 /// Refuses a shepherd whose crate version differs from this binary's, or
 /// warns about it for a read verb.
 ///
@@ -285,6 +314,10 @@ pub(crate) async fn connect_client(
 /// [`shep_client::ConnectError::Connect`] alone, nothing listening at all;
 /// every other variant means the shepherd is there and answered.
 ///
+/// With a `hosts` list in this machine's `shep.toml`, and neither `--host` nor
+/// `--follow`, the arm is [`query::fleet::flock_all`] instead: every host's
+/// flock, this machine's first.
+///
 /// Over a host there is no roll fallback: the roll is this machine's
 /// `flock.json`, so printing it for a dead host would list the wrong flock.
 /// The connect error's own code ends the run instead.
@@ -299,7 +332,7 @@ pub(crate) async fn flock_command(
 
 /// [`flock_command`] with whether stdout is a terminal decided by the caller,
 /// so a test of the terminal refusal holds under `--nocapture` too.
-async fn flock_command_on(
+pub(crate) async fn flock_command_on(
     streams: &mut Streams<'_>,
     link: &Link<'_>,
     guard: VersionGuard,
@@ -320,6 +353,10 @@ async fn flock_command_on(
     };
     if args.follow {
         return follow_flock_command(streams, link, guard, args, stdout_is_terminal).await;
+    }
+    let hosts = query::fleet::listed_hosts(streams, paths);
+    if !hosts.is_empty() {
+        return query::fleet::flock_all(streams, paths, guard, &hosts).await;
     }
     match Client::connect(&paths.socket).await {
         Ok(client) => match refuse_version_skew(streams, &client, guard) {
@@ -385,7 +422,7 @@ async fn follow_flock_command(
 /// Renders `err` for [`flock_command`]'s refusal arm: the shepherd is there,
 /// so this reports what it did and names the fix rather than the roll's "no
 /// shepherd running".
-fn flock_connect_refusal_message(err: &shep_client::ConnectError) -> String {
+pub(crate) fn flock_connect_refusal_message(err: &shep_client::ConnectError) -> String {
     format!("{err}; run `shep {VERSION_SKEW_REMEDY}`")
 }
 
