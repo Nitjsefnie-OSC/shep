@@ -14,8 +14,8 @@ use std::io;
 use std::path::Path;
 use std::process::Child;
 
-use shep_client::HANDSHAKE_TIMEOUT;
-use shep_client::spawn::connect_or_spawn;
+use shep_client::spawn::{SpawnError, connect_or_spawn};
+use shep_client::{ConnectError, HANDSHAKE_TIMEOUT};
 use shep_core::paths::ShepPaths;
 use shep_core::transport;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -52,8 +52,9 @@ pub(crate) async fn dial_stdio(fmt: Format, paths: &ShepPaths, autostart: bool) 
 /// With `autostart`, `launch` boots the shepherd when none answers, through
 /// the state machine a local `muster` uses. Its handshake is spent: the client
 /// it returns is dropped and the bridge dials afresh, so the bridge stays the
-/// same bytes-only copy with or without the flag. Without `autostart`, `launch`
-/// is never called.
+/// same bytes-only copy with or without the flag. A shepherd that refuses the
+/// probe on a protocol mismatch is already up, so that case bridges too.
+/// Without `autostart`, `launch` is never called.
 ///
 /// Nothing is written to `output` when no shepherd answers or the boot fails:
 /// the one error goes to stderr.
@@ -73,6 +74,10 @@ where
     if autostart {
         match connect_or_spawn(socket, launch).await {
             Ok(_spent) => {}
+            // A shepherd that refuses on version skew is still answering. The
+            // bridge copies bytes, so the operator's client judges the skew
+            // and names it, as it would without the flag.
+            Err(SpawnError::Connect(ConnectError::ProtocolMismatch { .. })) => {}
             Err(err) => {
                 let code = ExitCode::from(&err);
                 emit_error_locked(fmt, code, &err.to_string());
@@ -332,32 +337,57 @@ mod tests {
         assert!(written.is_empty(), "stdout got {written:?}");
     }
 
-    /// A refusal keeps its own code through autostart rather than collapsing
-    /// into the unreachable one every launch failure shares.
+    /// A shepherd outside this binary's protocol range is still a shepherd:
+    /// the probe's refusal is not the bridge's to report, and the operator's
+    /// client names the skew itself. Unix only, like the autostart test: a
+    /// named pipe has no second connection to bridge over.
+    #[cfg(unix)]
     #[tokio::test]
-    async fn a_protocol_mismatch_keeps_its_own_code_through_autostart() {
-        use shep_core::protocol::{RpcError, RpcErrorCode};
+    async fn a_protocol_mismatch_on_the_probe_still_bridges() {
+        use shep_core::protocol::{HelloReply, RpcError, RpcErrorCode, encode_frame};
+        use tokio::io::AsyncReadExt as _;
 
         let dir = tempfile::tempdir().unwrap();
         let socket = shep_client::testing::control_address(dir.path());
-        let _served = shep_client::testing::fake_daemon(
-            &socket,
-            Err(RpcError {
-                code: RpcErrorCode::ProtocolMismatch,
-                message: "daemon speaks protocol 2, client speaks 1".into(),
-                daemon_version: None,
-            }),
-        )
-        .await;
+        let mut listener = transport::Listener::bind(&socket).unwrap();
+        let refusal: HelloReply = Err(RpcError {
+            code: RpcErrorCode::ProtocolMismatch,
+            message: "daemon speaks protocol 2, client speaks 1".into(),
+            daemon_version: None,
+        });
+        let refusal = encode_frame(&refusal).unwrap();
+        let shepherd = tokio::spawn(async move {
+            // The probe: read its hello frame, refuse it, close.
+            let mut probe = listener.accept().await.unwrap();
+            let mut prefix = [0_u8; 4];
+            probe.read_exact(&mut prefix).await.unwrap();
+            let mut hello = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+            probe.read_exact(&mut hello).await.unwrap();
+            probe
+                .write_all(&u32::try_from(refusal.len()).unwrap().to_be_bytes())
+                .await
+                .unwrap();
+            probe.write_all(&refusal).await.unwrap();
+            drop(probe);
+            // The bridge: bytes the dialler never has to understand.
+            let mut bridged = listener.accept().await.unwrap();
+            bridged.write_all(b"frames").await.unwrap();
+        });
         let (_stdin_tx, stdin) = duplex(1024);
         let (stdout, mut stdout_rx) = duplex(1024);
 
-        let code = dial(Format::Table, &socket, true, no_launch, stdin, stdout).await;
+        let code = tokio::time::timeout(
+            BOUND,
+            dial(Format::Table, &socket, true, no_launch, stdin, stdout),
+        )
+        .await
+        .expect("the bridge outlived the shepherd side");
 
-        assert_eq!(code, ExitCode::ProtocolMismatch);
+        assert_eq!(code, ExitCode::Success);
         let mut written = Vec::new();
         stdout_rx.read_to_end(&mut written).await.unwrap();
-        assert!(written.is_empty(), "stdout got {written:?}");
+        assert_eq!(written, b"frames");
+        shepherd.await.unwrap();
     }
 
     #[tokio::test]
