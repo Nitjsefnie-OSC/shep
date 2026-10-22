@@ -120,7 +120,9 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3130 on 2026-10-15 for "Following logs" saying which stream
   // colour a plain line gets, that a line carrying its own colour is left
   // alone, and that `--format json` stays raw. Required content for #846.
-  output: 3190,
+  // Raised from 3190 on 2026-10-21 for the one sentence saying `--host`
+  // follows the host's flock. Required content for #949.
+  output: 3200,
   // Raised from 2980 on 2026-10-13 for the `log_match` rule: a new `on`
   // value, its `stream` key, and the loss and secrets caveats are
   // operator-facing surface, not prose to trim back out.
@@ -184,7 +186,9 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 1895 on 2026-10-15 for the same #846 rule on this page:
   // which lines are coloured, the fallback for a line that already has its
   // own colour, and what a table strips out of a line.
-  logs: 1995,
+  // Raised from 1995 on 2026-10-21 for the sentence saying a `--host` follow
+  // has no history. Required content for #949.
+  logs: 2010,
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim
   // back out.
@@ -238,7 +242,9 @@ export const BUDGETS: Record<string, number> = {
   serve: 480,
   // Raised from 380 on 2026-10-21 for the global `--host` flag, which is new
   // content: what a destination is and that only `flock` takes it so far.
-  cli: 400,
+  // Raised from 400 on 2026-10-21 for the verbs `--host` now reaches and
+  // `describe` showing no secrets over it. Required content for #949.
+  cli: 420,
   "community-dogs": 300,
   terminology: 210,
   "pm2-verbs": 40,

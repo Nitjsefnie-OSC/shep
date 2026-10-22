@@ -178,6 +178,10 @@ $ shep bleats <name> --no-follow  # tail only`}</CodeBlock>
       boot-looping sheep used to look like it had logged nothing at all.{" "}
       <code>--lines 0</code> is how you ask for the old behaviour.
     </p>
+    <p>
+      With <code>--host</code> a follow shows live output only, with no
+      history, because the log files are on the other machine.
+    </p>
     <CodeBlock>{bleatsDemo}</CodeBlock>
     <p>
       At a terminal a line that carries no colour of its own arrives in the
