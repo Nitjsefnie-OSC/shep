@@ -148,6 +148,11 @@ struct Run {
 
 /// `fleet` over `hosts`, dialled through the stand-in in `dir`.
 async fn run_with(dir: &Path, hosts: &[&str], timeout: Duration) -> Run {
+    run_guarded(dir, hosts, timeout, VersionGuard::Warn).await
+}
+
+/// [`run_with`] under `guard`.
+async fn run_guarded(dir: &Path, hosts: &[&str], timeout: Duration, guard: VersionGuard) -> Run {
     let paths = paths_in(dir);
     let ssh = unattended(timeout).program(dir.join("ssh"));
     let hosts: Vec<String> = hosts.iter().map(|&host| host.to_owned()).collect();
@@ -160,7 +165,7 @@ async fn run_with(dir: &Path, hosts: &[&str], timeout: Duration) -> Run {
             fmt: Format::Table,
         },
         &paths,
-        VersionGuard::Warn,
+        guard,
         &hosts,
         &ssh,
         timeout,
@@ -423,6 +428,115 @@ async fn a_lagging_host_is_listed_with_the_version_warning_and_does_not_change_t
         "{}",
         run.err
     );
+}
+
+#[tokio::test]
+async fn a_local_shepherd_that_never_answers_is_abandoned_at_the_timeout_and_the_hosts_still_print()
+{
+    let dir = tempfile::tempdir().unwrap();
+    write_ssh(dir.path());
+    host_answers(dir.path(), "amp1", "amp1-sheep");
+    let listener = tokio::net::UnixListener::bind(&paths_in(dir.path()).socket).unwrap();
+    // Accepts and holds the connection open without a word, so the handshake
+    // never completes.
+    let held = tokio::spawn(async move {
+        let mut open = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            open.push(stream);
+        }
+    });
+
+    let started = Instant::now();
+    let run = run_with(dir.path(), &["amp1"], Duration::from_millis(500)).await;
+    held.abort();
+
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert_eq!(run.code, ExitCode::DaemonUnreachable);
+    assert_eq!(run.out.lines().next(), Some("amp1"), "{}", run.out);
+    assert!(run.out.contains("amp1-sheep"), "{}", run.out);
+    assert!(
+        run.err.contains("local: did not answer within 500ms"),
+        "{}",
+        run.err
+    );
+}
+
+#[tokio::test]
+async fn a_host_on_another_version_is_refused_when_the_guard_enforces_and_the_rest_still_print() {
+    let (dir, _held) = fixture().await;
+    host_answers_as(dir.path(), "amp1", "0.0.1", "amp1-sheep");
+    host_answers(dir.path(), "amp2", "amp2-sheep");
+
+    let run = run_guarded(dir.path(), &["amp1", "amp2"], ROOMY, VersionGuard::Enforce).await;
+
+    assert_eq!(run.code, ExitCode::VersionSkew);
+    assert!(!run.out.contains("amp1-sheep"), "{}", run.out);
+    assert!(run.out.contains("amp2-sheep"), "{}", run.out);
+    assert!(run.err.contains("amp1: this shep is "), "{}", run.err);
+    assert!(
+        run.err.contains("ssh amp1 shep daemon reload"),
+        "{}",
+        run.err
+    );
+}
+
+#[tokio::test]
+async fn a_host_on_another_version_is_listed_without_a_warning_when_the_guard_is_exempt() {
+    let (dir, _held) = fixture().await;
+    host_answers_as(dir.path(), "amp1", "0.0.1", "amp1-sheep");
+
+    let run = run_guarded(dir.path(), &["amp1"], ROOMY, VersionGuard::Exempt).await;
+
+    assert_eq!(run.code, ExitCode::Success, "{}", run.err);
+    assert!(run.out.contains("amp1-sheep"), "{}", run.out);
+    assert_eq!(run.err, "");
+}
+
+/// A stdout that has been closed under the run.
+struct Closed;
+
+impl std::io::Write for Closed {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::PermissionDenied.into())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_stdout_that_fails_while_the_roll_prints_ends_the_run_with_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    write_ssh(dir.path());
+    let paths = paths_in(dir.path());
+    let roll =
+        shep_daemon::snapshot::FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
+            app: shep_core::config::AppConfig::minimal("rolled-sheep", "./srv"),
+            instances_running: 1,
+            disabled: false,
+        }]);
+    std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
+    host_answers(dir.path(), "amp1", "amp1-sheep");
+    let ssh = unattended(ROOMY).program(dir.path().join("ssh"));
+    let mut err = Vec::new();
+
+    let code = fleet(
+        &mut Streams {
+            out: &mut Closed,
+            err: &mut err,
+            style: Presentation::BARE,
+            fmt: Format::Table,
+        },
+        &paths,
+        VersionGuard::Warn,
+        &["amp1".to_owned()],
+        &ssh,
+        ROOMY,
+    )
+    .await;
+
+    assert_eq!(code, ExitCode::Failure);
 }
 
 /// Dispatch tests: `shep flock` as `flock_command_on` reads this machine's

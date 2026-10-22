@@ -182,6 +182,35 @@ pub(crate) fn version_skew_warning(client: &Client, host: Option<&str>) -> Optio
     Some(crate::terminal_safe::sanitise(&sentence).0)
 }
 
+/// What `guard` makes of a skew on `host`, for a caller that asks several
+/// hosts at once and so cannot write to a [`Streams`] as each answers.
+///
+/// # Errors
+/// The one-line refusal, with the remedy that runs over ssh, when `guard` is
+/// [`VersionGuard::Enforce`] and the shepherd on `host` reports a different
+/// version. Otherwise the warning to print, if there is one: none for
+/// [`VersionGuard::Exempt`].
+pub(crate) fn host_skew(
+    client: &Client,
+    host: &str,
+    guard: VersionGuard,
+) -> Result<Option<String>, String> {
+    match guard {
+        VersionGuard::Exempt => Ok(None),
+        VersionGuard::Warn => Ok(version_skew_warning(client, Some(host))),
+        VersionGuard::Enforce => {
+            let running = client.daemon().daemon_version.as_str();
+            if running == env!("CARGO_PKG_VERSION") {
+                return Ok(None);
+            }
+            let summary = version_skew_summary(running, Some(host));
+            let command = version_skew_command(Some(host));
+            let sentence = format!("{summary}. Run `{command}`.");
+            Err(crate::terminal_safe::sanitise(&sentence).0)
+        }
+    }
+}
+
 /// Refuses a shepherd whose crate version differs from this binary's, or
 /// warns about it for a read verb.
 ///

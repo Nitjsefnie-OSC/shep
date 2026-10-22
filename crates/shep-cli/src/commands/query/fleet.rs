@@ -6,6 +6,8 @@
 //! network's. A host that fails prints one line on stderr instead of a table
 //! and does not hide the others.
 
+use std::future::Future;
+use std::io;
 use std::time::Duration;
 
 use futures_util::future::join_all;
@@ -13,6 +15,7 @@ use shep_client::{Client, ConnectError, RequestError, SshOptions};
 use shep_core::destination::Destination;
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::{HostUsage, ProcessInfo};
+use tokio::time::error::Elapsed;
 
 use super::flock_display::{flock_from_roll, host_usage, print_listing};
 use crate::cli::Format;
@@ -23,7 +26,7 @@ use crate::commands::shep_toml::ShepToml;
 use crate::exit::ExitCode;
 use crate::output::{Streams, write_outcome};
 use crate::version_guard::{
-    VersionGuard, flock_connect_refusal_message, refuse_version_skew, version_skew_warning,
+    VersionGuard, flock_connect_refusal_message, host_skew, refuse_version_skew,
 };
 
 /// What the table form heads this machine's listing with.
@@ -52,6 +55,14 @@ impl Failure {
         Self {
             code: ExitCode::from(err),
             message: unreachable_message(err),
+        }
+    }
+
+    /// A shepherd that did not answer within `timeout`.
+    fn abandoned(timeout: Duration) -> Self {
+        Self {
+            code: ExitCode::DaemonUnreachable,
+            message: format!("did not answer within {timeout:?}"),
         }
     }
 
@@ -127,8 +138,8 @@ pub(super) async fn fleet(
     timeout: Duration,
 ) -> ExitCode {
     let (local, remote) = tokio::join!(
-        Client::connect(&paths.socket),
-        join_all(hosts.iter().map(|host| ask_host(host, ssh, timeout))),
+        tokio::time::timeout(timeout, Client::connect(&paths.socket)),
+        join_all(hosts.iter().map(|host| ask_host(host, ssh, timeout, guard))),
     );
 
     let mut tables = Tables::default();
@@ -137,15 +148,16 @@ pub(super) async fn fleet(
         first_failure.get_or_insert(code);
     };
 
-    match ask_local(streams, guard, local).await {
+    match ask_local(streams, guard, local, timeout).await {
         Local::Listed(answer) => {
             if let Err(done) = tables.print(streams, LOCAL_HEADING, answer, None) {
                 return done;
             }
         }
-        Local::Roll => {
-            note(print_roll(streams, &mut tables, paths));
-        }
+        Local::Roll => match print_roll(streams, &mut tables, paths) {
+            Ok(code) => note(code),
+            Err(done) => return done,
+        },
         Local::Failed(code) => note(code),
     }
     for (host, result) in hosts.iter().zip(remote) {
@@ -163,6 +175,16 @@ pub(super) async fn fleet(
     first_failure.unwrap_or(ExitCode::Success)
 }
 
+/// `ask`, or [`Failure::abandoned`] if it takes longer than `timeout`.
+async fn within<T>(
+    timeout: Duration,
+    ask: impl Future<Output = Result<T, Failure>>,
+) -> Result<T, Failure> {
+    tokio::time::timeout(timeout, ask)
+        .await
+        .unwrap_or_else(|_elapsed| Err(Failure::abandoned(timeout)))
+}
+
 /// Whether a table has been printed yet, so the next one is set apart from it.
 #[derive(Default)]
 struct Tables {
@@ -172,12 +194,12 @@ struct Tables {
 impl Tables {
     /// Writes the blank line that separates this table from the last one, and
     /// the heading that names whose it is.
-    fn open(&mut self, streams: &mut Streams<'_>, heading: &str) {
+    fn open(&mut self, streams: &mut Streams<'_>, heading: &str) -> io::Result<()> {
         if self.printed {
-            let _ = writeln!(streams.out);
+            writeln!(streams.out)?;
         }
         self.printed = true;
-        let _ = writeln!(streams.out, "{heading}");
+        writeln!(streams.out, "{heading}")
     }
 
     /// Prints `answer` under `heading`, after the warning `skew` carries.
@@ -194,11 +216,9 @@ impl Tables {
         if let Some(warning) = skew {
             streams.aside("version_skew", &warning);
         }
-        self.open(streams, heading);
-        match print_listing(streams, answer.procs, answer.usage) {
-            Ok(()) => Ok(()),
-            Err(err) => Err(write_outcome(Err(err))),
-        }
+        self.open(streams, heading)
+            .and_then(|()| print_listing(streams, answer.procs, answer.usage))
+            .map_err(|err| write_outcome(Err(err)))
     }
 }
 
@@ -216,12 +236,17 @@ enum Local {
 async fn ask_local(
     streams: &mut Streams<'_>,
     guard: VersionGuard,
-    connected: Result<Client, ConnectError>,
+    connected: Result<Result<Client, ConnectError>, Elapsed>,
+    timeout: Duration,
 ) -> Local {
     let client = match connected {
-        Ok(client) => client,
-        Err(ConnectError::Connect { .. }) => return Local::Roll,
-        Err(err) => {
+        Ok(Ok(client)) => client,
+        Ok(Err(ConnectError::Connect { .. })) => return Local::Roll,
+        Err(_elapsed) => {
+            let message = format!("{LOCAL_HEADING}: {}", Failure::abandoned(timeout).message);
+            return Local::Failed(streams.fail(ExitCode::DaemonUnreachable, &message));
+        }
+        Ok(Err(err)) => {
             let message = format!("{LOCAL_HEADING}: {}", flock_connect_refusal_message(&err));
             return Local::Failed(streams.fail(ExitCode::from(&err), &message));
         }
@@ -229,7 +254,7 @@ async fn ask_local(
     if let Err(code) = refuse_version_skew(streams, &client, guard) {
         return Local::Failed(code);
     }
-    match fetch(&client).await {
+    match within(timeout, fetch(&client)).await {
         Ok(answer) => Local::Listed(answer),
         Err(Failure { code, message }) => {
             Local::Failed(streams.fail(code, &format!("{LOCAL_HEADING}: {message}")))
@@ -242,7 +267,14 @@ async fn ask_local(
 ///
 /// The roll is printed into a buffer first so an empty one, which prints
 /// nothing, leaves no heading over nothing.
-fn print_roll(streams: &mut Streams<'_>, tables: &mut Tables, paths: &ShepPaths) -> ExitCode {
+///
+/// # Errors
+/// The exit code to end the run with when stdout is closed.
+fn print_roll(
+    streams: &mut Streams<'_>,
+    tables: &mut Tables,
+    paths: &ShepPaths,
+) -> Result<ExitCode, ExitCode> {
     let mut rolled = Vec::new();
     let code = flock_from_roll(
         &mut Streams {
@@ -254,10 +286,12 @@ fn print_roll(streams: &mut Streams<'_>, tables: &mut Tables, paths: &ShepPaths)
         paths,
     );
     if !rolled.is_empty() {
-        tables.open(streams, LOCAL_HEADING);
-        let _ = streams.out.write_all(&rolled);
+        tables
+            .open(streams, LOCAL_HEADING)
+            .and_then(|()| streams.out.write_all(&rolled))
+            .map_err(|err| write_outcome(Err(err)))?;
     }
-    code
+    Ok(code)
 }
 
 /// `Request::ListFlock` and then the host usage request, as `shep flock`
@@ -274,31 +308,36 @@ async fn fetch(client: &Client) -> Result<Answer, Failure> {
 /// One host's listing, or why there is none.
 ///
 /// `host` is parsed as a [`Destination`] before ssh sees it, so a hand-edited
-/// entry that would read as an ssh option is that host's failure alone.
-async fn ask_host(host: &str, ssh: &SshOptions, timeout: Duration) -> Result<HostAnswer, Failure> {
+/// entry that would read as an ssh option is that host's failure alone. A
+/// skew is treated as `guard` treats it for a single `--host`: a warning for
+/// a read verb, a refusal for one that enforces.
+async fn ask_host(
+    host: &str,
+    ssh: &SshOptions,
+    timeout: Duration,
+    guard: VersionGuard,
+) -> Result<HostAnswer, Failure> {
     let destination = Destination::parse(host).map_err(|err| Failure {
         code: ExitCode::InvalidConfig,
         message: format!("not a destination: {err}"),
     })?;
-    let dialled = tokio::time::timeout(timeout, async {
+    within(timeout, async {
         let client = Client::connect_ssh_with(destination.as_str(), ssh)
             .await
             .map_err(|e| Failure::of_connect(&e))?;
-        let skew = version_skew_warning(&client, Some(destination.as_str()));
-        let answer = fetch(&client).await;
+        let answer = match host_skew(&client, destination.as_str(), guard) {
+            Ok(skew) => fetch(&client)
+                .await
+                .map(|answer| HostAnswer { answer, skew }),
+            Err(message) => Err(Failure {
+                code: ExitCode::VersionSkew,
+                message,
+            }),
+        };
         let _ = client.close().await;
-        Ok(HostAnswer {
-            answer: answer?,
-            skew,
-        })
+        answer
     })
-    .await;
-    dialled.unwrap_or_else(|_elapsed| {
-        Err(Failure {
-            code: ExitCode::DaemonUnreachable,
-            message: format!("did not answer within {timeout:?}"),
-        })
-    })
+    .await
 }
 
 #[cfg(all(test, unix))]
