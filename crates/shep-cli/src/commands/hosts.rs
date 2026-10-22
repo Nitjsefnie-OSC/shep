@@ -27,7 +27,7 @@ pub(crate) const HOST_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The ssh settings every unattended dial of a listed host runs under: no
 /// prompts, and bounded by `timeout`.
-fn unattended(timeout: Duration) -> SshOptions {
+pub(crate) fn unattended(timeout: Duration) -> SshOptions {
     SshOptions::default()
         .batch_mode(true)
         .timeout(Some(timeout))
