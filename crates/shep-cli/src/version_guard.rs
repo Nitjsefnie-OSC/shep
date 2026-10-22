@@ -12,7 +12,7 @@ use output::Streams;
 use shep_client::Client;
 
 use crate::client::unreachable_message;
-use crate::remote::{HOST_REFUSAL, Link};
+use crate::remote::Link;
 use crate::{cli, commands, exit, output};
 
 /// The verbs a version skew must never refuse, spelled the way an operator
@@ -227,10 +227,23 @@ pub(crate) async fn flock_command(
     guard: VersionGuard,
     args: &cli::FlockArgs,
 ) -> ExitCode {
+    flock_command_on(streams, link, guard, args, std::io::stdout().is_terminal()).await
+}
+
+/// [`flock_command`] with whether stdout is a terminal decided by the caller,
+/// so a test of the terminal refusal holds under `--nocapture` too.
+async fn flock_command_on(
+    streams: &mut Streams<'_>,
+    link: &Link<'_>,
+    guard: VersionGuard,
+    args: &cli::FlockArgs,
+    stdout_is_terminal: bool,
+) -> ExitCode {
     let paths = match link {
         Link::Local(paths) => *paths,
-        // Lifted by the slice that gives `--follow` a host.
-        Link::Host { .. } if args.follow => return streams.fail(ExitCode::Usage, HOST_REFUSAL),
+        Link::Host { .. } if args.follow => {
+            return follow_flock_command(streams, link, guard, args, stdout_is_terminal).await;
+        }
         Link::Host { .. } => {
             return match connect_client(streams, link, guard).await {
                 Ok(client) => query::flock(&client, streams).await,
@@ -239,7 +252,7 @@ pub(crate) async fn flock_command(
         }
     };
     if args.follow {
-        return follow_flock_command(streams, link, guard, args).await;
+        return follow_flock_command(streams, link, guard, args, stdout_is_terminal).await;
     }
     match Client::connect(&paths.socket).await {
         Ok(client) => match refuse_version_skew(streams, &client, guard) {
@@ -280,6 +293,7 @@ async fn follow_flock_command(
     link: &Link<'_>,
     guard: VersionGuard,
     args: &cli::FlockArgs,
+    stdout_is_terminal: bool,
 ) -> ExitCode {
     if streams.fmt == Format::Json {
         return streams.fail(
@@ -287,7 +301,7 @@ async fn follow_flock_command(
             "`--follow` redraws a table; `--format json` has no follow form",
         );
     }
-    if !std::io::stdout().is_terminal() {
+    if !stdout_is_terminal {
         return streams.fail(
             ExitCode::Usage,
             "`--follow` needs a terminal; stdout is not one",
@@ -684,10 +698,10 @@ mod tests {
         }
     }
 
-    /// `--follow` over a host waits for the slice that gives it one, and
-    /// refuses with the one message every verb that cannot reach a host gets.
+    /// `--follow` reaches a host, so what stops it here is the terminal. The
+    /// host's own refusal text would send the operator after the wrong fix.
     #[tokio::test]
-    async fn follow_over_a_host_is_refused_with_the_one_host_message() {
+    async fn a_host_follow_without_a_terminal_refuses_for_the_terminal_not_the_host() {
         let dir = tempfile::tempdir().unwrap();
         let link = Link::Host {
             dest: "amp2",
@@ -702,12 +716,13 @@ mod tests {
         let mut err = Vec::new();
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
-            flock_command(&mut streams, &link, VersionGuard::Enforce, &args).await
+            flock_command_on(&mut streams, &link, VersionGuard::Enforce, &args, false).await
         };
 
         assert_eq!(code, ExitCode::Usage);
         let text = String::from_utf8(err).unwrap();
-        assert!(text.contains(HOST_REFUSAL), "{text}");
+        assert!(text.contains("needs a terminal"), "{text}");
+        assert!(!text.contains(crate::remote::HOST_REFUSAL), "{text}");
     }
 
     #[tokio::test]

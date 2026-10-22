@@ -7,6 +7,7 @@ use crate::flourish;
 use crate::host;
 use crate::lookout::term;
 use crate::output::{RolledSheep, RolledSheepRows, Streams, emit, emit_flock, write_outcome};
+use crate::remote::interrupt_within_grace;
 use crate::shutdown::Interrupt;
 use crate::style::Presentation;
 use crossterm::QueueableCommand as _;
@@ -184,7 +185,9 @@ pub(super) fn sheep_flourish(listing: &[ProcessInfo]) -> Option<String> {
 ///
 /// An interrupt ends the follow at [`ExitCode::Success`], a shepherd that
 /// goes away mid-follow ends it carrying that refusal's own code. The two
-/// must not read as the same thing.
+/// must not read as the same thing. Over a host the two arrive together, so
+/// a lost link waits [`crate::remote::HOST_INTERRUPT_GRACE`] for the interrupt
+/// before it counts as a lost shepherd.
 ///
 /// Why each of those beat its alternative: `docs/decisions.md`, "Following
 /// the flock".
@@ -230,6 +233,17 @@ pub(crate) async fn flock_follow(
         };
         let procs = match listing {
             Ok(procs) => procs,
+            // The ssh child dies on the same Ctrl+C as this process, so over
+            // a host the failed request can be seen before the interrupt.
+            Err(_)
+                if client.host().is_some()
+                    && interrupt_within_grace(async {
+                        interrupt.recv().await;
+                    })
+                    .await =>
+            {
+                return ExitCode::Success;
+            }
             Err(err) => return typed_request_error(streams, &err),
         };
         let host = tokio::select! {
@@ -302,16 +316,10 @@ fn follow_frame(listing: Vec<ProcessInfo>, style: Presentation, strip: Option<St
 
 /// Lists one fold: `Request::Describe` with `SelectorSpec::Fold(args.name)`,
 /// delegating to [`describe_selector`].
-pub async fn fold(
-    client: &Client,
-    streams: &mut Streams<'_>,
-    paths: &ShepPaths,
-    args: &FoldArgs,
-) -> ExitCode {
+pub async fn fold(client: &Client, streams: &mut Streams<'_>, args: &FoldArgs) -> ExitCode {
     describe_selector(
         client,
         streams,
-        paths,
         "fold",
         None,
         SelectorSpec::Fold(args.name.clone()),
@@ -322,7 +330,6 @@ pub async fn fold(
 #[cfg(test)]
 mod tests {
 
-    use shep_core::paths::ShepPaths;
     use shep_core::protocol::{HostUsage, ProcessInfo, Request, SelectorSpec};
 
     use shep_core::status::ProcStatus;
@@ -573,7 +580,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = shep_client::testing::control_address(dir.path());
         let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
-        let paths = ShepPaths::resolve(&|_| None, dir.path());
         let mut out = Vec::new();
         let mut err = Vec::new();
         let mut streams = Streams {
@@ -582,13 +588,7 @@ mod tests {
             style: crate::style::Presentation::BARE,
             fmt: Format::Table,
         };
-        let _ = fold(
-            &client,
-            &mut streams,
-            &paths,
-            &FoldArgs { name: "api".into() },
-        )
-        .await;
+        let _ = fold(&client, &mut streams, &FoldArgs { name: "api".into() }).await;
         let sent = tokio::time::timeout(RECV_TIMEOUT, envelopes.recv())
             .await
             .expect("fold must reach the wire; it hung instead of sending a request")
@@ -639,11 +639,6 @@ mod tests {
         daemon.reply_to_describe(vec![
             ProcessInfo::builder(1, "web", ProcStatus::Online).build(),
         ]);
-        // Deliberately no `paths.snapshot` on disk: if `fold` ever reads it,
-        // the missing file is tolerated (`read_roll`), which would hide the
-        // bug this test exists to catch. The real guard is the assertion
-        // below, on `command == "fold"` never entering `secret_inspection::gather_secrets`.
-        let paths = ShepPaths::resolve(&|_| None, dir.path());
 
         let mut out = Vec::new();
         let mut err = Vec::new();
@@ -653,13 +648,7 @@ mod tests {
             style: crate::style::Presentation::BARE,
             fmt: Format::Json,
         };
-        let code = fold(
-            &client,
-            &mut streams,
-            &paths,
-            &FoldArgs { name: "api".into() },
-        )
-        .await;
+        let code = fold(&client, &mut streams, &FoldArgs { name: "api".into() }).await;
         assert_eq!(code, ExitCode::Success);
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert!(json.get("secrets").is_none(), "{json}");

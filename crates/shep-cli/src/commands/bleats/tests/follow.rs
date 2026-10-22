@@ -846,3 +846,145 @@ async fn a_broken_pipe_while_writing_a_line_exits_success() {
         "a reader closing the pipe is not a failed command"
     );
 }
+
+// --- over `--host` ---
+// `bleats_over` takes the host as an argument: a fake socket client cannot
+// claim one, and a real ssh link cannot be scripted from here.
+
+/// Runs `bleats_over` as a host follow against a fake shepherd that lists one
+/// sheep, `web`, then pushes `live` and closes. Answers the exit code, stdout
+/// and stderr.
+async fn host_follow(
+    quiet: bool,
+    sheep: ProcessInfo,
+    live: Option<&str>,
+    args: &BleatsArgs,
+    interrupt: impl std::future::Future<Output = ()> + Send,
+) -> (ExitCode, String, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, daemon) = fake_client_with_push(&path).await;
+    daemon.reply_to_list(vec![sheep]);
+    if let Some(line) = live {
+        daemon
+            .push(BusEvent::LogOut {
+                id: 1,
+                line: line.into(),
+            })
+            .await;
+    }
+    daemon.close_after_subscribe().await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let code = {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        tokio::time::timeout(
+            RUN_TIMEOUT,
+            bleats_over(&client, &mut streams, quiet, args, true, interrupt),
+        )
+        .await
+        .expect("the grace ends the follow")
+    };
+    (
+        code,
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
+/// The remote's `ProcessInfo` carries the remote's paths. Opening one here
+/// would print this machine's file as that sheep's output.
+#[tokio::test]
+async fn a_followed_host_prints_no_backlog_from_local_paths() {
+    for quiet in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sheep = info(1, "web");
+        sheep.out_file = Some(write_log(
+            dir.path(),
+            "web-out.log",
+            "text-from-a-local-file\n",
+        ));
+        let args = bleats_args("all", false, false, false);
+        assert!(args.lines > 0, "the default asks for a backlog");
+
+        let (_, out, err) = host_follow(
+            quiet,
+            sheep,
+            Some("live-line"),
+            &args,
+            std::future::pending(),
+        )
+        .await;
+
+        assert!(out.contains("live-line"), "{out}");
+        assert!(!out.contains("text-from-a-local-file"), "{out}");
+        if quiet {
+            assert!(err.is_empty(), "--quiet silences the notice: {err}");
+        } else {
+            assert_eq!(
+                err.matches("no backlog is shown over --host").count(),
+                1,
+                "{err}"
+            );
+        }
+    }
+}
+
+/// `--lines 0` asks for no backlog, and over a host there is none to give
+/// either way: the notice is the same, so the operator never wonders why.
+#[tokio::test]
+async fn a_followed_host_says_no_backlog_is_shown_even_for_zero_lines() {
+    let mut args = bleats_args("all", false, false, false);
+    args.lines = 0;
+
+    let (_, _, err) = host_follow(false, info(1, "web"), None, &args, std::future::pending()).await;
+
+    assert_eq!(
+        err.matches("no backlog is shown over --host").count(),
+        1,
+        "{err}"
+    );
+}
+
+/// The ssh child dies on the same SIGINT as this process, so the stream can
+/// end a moment before the interrupt is delivered.
+#[tokio::test]
+async fn a_stream_that_ends_just_before_an_interrupt_exits_success_over_a_host() {
+    let late_interrupt = async { tokio::time::sleep(Duration::from_millis(50)).await };
+
+    let (code, ..) = host_follow(
+        false,
+        info(1, "web"),
+        None,
+        &follow_args("all"),
+        late_interrupt,
+    )
+    .await;
+
+    assert_eq!(code, ExitCode::Success);
+}
+
+/// A lost link with no interrupt behind it is still a lost shepherd, once
+/// the grace has passed.
+#[tokio::test]
+async fn a_stream_that_ends_alone_over_a_host_is_still_daemon_unreachable_after_the_grace() {
+    let started = std::time::Instant::now();
+
+    let (code, ..) = host_follow(
+        false,
+        info(1, "web"),
+        None,
+        &follow_args("all"),
+        std::future::pending(),
+    )
+    .await;
+
+    assert_eq!(code, ExitCode::DaemonUnreachable);
+    assert!(started.elapsed() >= crate::remote::HOST_INTERRUPT_GRACE);
+}

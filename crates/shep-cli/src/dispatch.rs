@@ -74,21 +74,12 @@ pub(crate) async fn run(
     // so no arm can borrow it to ask this question for itself.
     let guard = VersionGuard::for_command(&cli.command);
 
-    // Before `ensure_home`: the listing is the host's, and nothing of this
+    // Before `ensure_home`: the answer is the host's, and nothing of this
     // machine's is read, so a fresh machine must not get a `~/.shep` or a
-    // first-run banner out of it. `host_scope` above left `flock` as the only
-    // verb that can be here with a host.
-    if let (Some(dest), Commands::Flock(args)) = (cli.global.host.as_deref(), &cli.command) {
-        let link = Link::to_host(dest);
-        let mut out = std::io::stdout().lock();
-        let mut err = std::io::stderr().lock();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style,
-            fmt,
-        };
-        return flock_command(&mut streams, &link, guard, args).await;
+    // first-run banner out of it. `host_scope` above left only the verbs that
+    // reach a host here.
+    if let Some(dest) = cli.global.host.as_deref() {
+        return run_on_host(&cli.command, cli.global.quiet, dest, guard, style, fmt).await;
     }
 
     // `StdoutLock`/`StderrLock` are process-wide, so the locked pair further
@@ -464,11 +455,11 @@ pub(crate) async fn run(
         Commands::Adopt(ref args) => dogs::adopt(&mut streams, &paths, args).await,
         Commands::Rehome(ref args) => dogs::rehome(&mut streams, &paths, &args.name).await,
         Commands::Describe(ref args) => match connect_client(&mut streams, &link, guard).await {
-            Ok(client) => query::describe(&client, &mut streams, &paths, args).await,
+            Ok(client) => query::describe(&client, &mut streams, &link, args).await,
             Err(code) => code,
         },
         Commands::Fold(ref args) => match connect_client(&mut streams, &link, guard).await {
-            Ok(client) => query::fold(&client, &mut streams, &paths, args).await,
+            Ok(client) => query::fold(&client, &mut streams, args).await,
             Err(code) => code,
         },
         // Not `connect_client`: a verb reporting whether a shepherd answers
@@ -549,6 +540,42 @@ pub(crate) async fn run(
         | Commands::Dog(_) => {
             unreachable!("handled above: before the shared $SHEP_HOME gate, or on unlocked handles")
         }
+    }
+}
+
+/// The verbs [`host_scope`] lets reach `dest`, run against its shepherd.
+///
+/// Unlocked handles: `flock --follow` and a followed `bleats` run until
+/// interrupted, and a lock held that long wedges any other thread's write.
+async fn run_on_host(
+    command: &Commands,
+    quiet: bool,
+    dest: &str,
+    guard: VersionGuard,
+    style: style::Presentation,
+    fmt: Format,
+) -> ExitCode {
+    let link = Link::to_host(dest);
+    let mut out = std::io::stdout();
+    let mut err = std::io::stderr();
+    let mut streams = Streams {
+        out: &mut out,
+        err: &mut err,
+        style,
+        fmt,
+    };
+    if let Commands::Flock(args) = command {
+        return flock_command(&mut streams, &link, guard, args).await;
+    }
+    let client = match connect_client(&mut streams, &link, guard).await {
+        Ok(client) => client,
+        Err(code) => return code,
+    };
+    match command {
+        Commands::Describe(args) => query::describe(&client, &mut streams, &link, args).await,
+        Commands::Fold(args) => query::fold(&client, &mut streams, args).await,
+        Commands::Bleats(args) => bleats::bleats_on_host(&client, &mut streams, quiet, args).await,
+        other => unreachable!("`host_scope` refused {other:?} before it got here"),
     }
 }
 

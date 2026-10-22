@@ -173,11 +173,15 @@ if (
     </Callout>
 
     <Callout variant="note">
-      <code>--host DEST</code> runs <code>shep flock</code> on another machine
-      over ssh. A destination is anything you would give <code>ssh</code>:{" "}
-      <code>amp2</code>, <code>user@amp2</code> or an{" "}
-      <code>~/.ssh/config</code> alias. <code>--home</code> still names this
-      machine's home. Every other verb refuses <code>--host</code> and exits 2.
+      <code>--host DEST</code> runs <code>shep flock</code>,{" "}
+      <code>describe</code>, <code>fold</code> and a followed{" "}
+      <code>bleats</code> on another machine over ssh. A destination is
+      anything you would give <code>ssh</code>: <code>amp2</code>,{" "}
+      <code>user@amp2</code> or an <code>~/.ssh/config</code> alias.{" "}
+      <code>--home</code> still names this machine's home. <code>describe</code>{" "}
+      shows no secrets over <code>--host</code>. Every other verb,
+      and <code>bleats --no-follow</code>, refuses <code>--host</code> and
+      exits 2.
     </Callout>
 
     <Callout variant="note">

@@ -5,6 +5,8 @@
 //! verb is refused before it touches anything. The failure this exists to
 //! prevent is a verb that ignores `--host` and acts on this machine.
 
+use std::time::Duration;
+
 use shep_client::SshOptions;
 use shep_core::paths::ShepPaths;
 
@@ -28,7 +30,10 @@ pub(crate) enum HostScope {
 /// [`HostScope::Reaches`] here and nowhere else.
 pub(crate) fn host_scope(command: &Commands) -> HostScope {
     match command {
-        Commands::Flock(_) => HostScope::Reaches,
+        Commands::Flock(_) | Commands::Describe(_) | Commands::Fold(_) => HostScope::Reaches,
+        // A static tail opens the remote's log paths on this machine.
+        Commands::Bleats(args) if args.no_follow => HostScope::LocalOnly,
+        Commands::Bleats(_) => HostScope::Reaches,
         Commands::Start(_)
         | Commands::Add(_)
         | Commands::Serve(_)
@@ -42,12 +47,9 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         | Commands::Disable(_)
         | Commands::Adopt(_)
         | Commands::Rehome(_)
-        | Commands::Describe(_)
         | Commands::Trigger(_)
         | Commands::Signal(_)
         | Commands::Whisper(_)
-        | Commands::Fold(_)
-        | Commands::Bleats(_)
         | Commands::Lookout(_)
         | Commands::Whistle
         | Commands::Reopen(_)
@@ -91,6 +93,24 @@ pub(crate) const HOST_REFUSAL: &str = "`--host` is not supported by this command
 pub(crate) fn refuse_host(fmt: Format) -> ExitCode {
     emit_error_locked(fmt, ExitCode::Usage, HOST_REFUSAL);
     ExitCode::Usage
+}
+
+/// How long a followed host link waits for an interrupt before it reports the
+/// link lost.
+///
+/// The ssh child shares the terminal's process group, so one Ctrl+C ends the
+/// link at the same moment it is delivered to this process, and the link can
+/// be seen ending first.
+pub(crate) const HOST_INTERRUPT_GRACE: Duration = Duration::from_millis(250);
+
+/// Whether `interrupt` resolves within [`HOST_INTERRUPT_GRACE`].
+///
+/// `interrupt` must resolve only for the operator's interrupt: any other
+/// completion would pass for one and turn a lost link into a success.
+pub(crate) async fn interrupt_within_grace(interrupt: impl Future<Output = ()>) -> bool {
+    tokio::time::timeout(HOST_INTERRUPT_GRACE, interrupt)
+        .await
+        .is_ok()
 }
 
 /// Where a verb's shepherd is: this machine's socket, or a host over ssh.
@@ -197,16 +217,30 @@ mod tests {
         Cli::try_parse_from(&argv).unwrap_or_else(|err| panic!("{argv:?} must parse: {err}"))
     }
 
+    /// Every argv that reaches a host. A static `bleats` reads log files, so
+    /// it is absent, and `SAMPLES` already holds the followed form.
+    const REACHING: &[&[&str]] = &[
+        &["flock"],
+        &["flock", "--follow"],
+        &["describe", "web"],
+        &["fold", "web"],
+        &["bleats", "web"],
+    ];
+
     #[test]
-    fn flock_is_the_only_verb_that_reaches_a_host() {
+    fn read_verbs_reach_a_host_except_a_static_bleats() {
+        for argv in REACHING {
+            let cli = parsed_with_host(argv);
+            assert_eq!(host_scope(&cli.command), HostScope::Reaches, "{argv:?}");
+        }
+        let static_bleats = parsed_with_host(&["bleats", "web", "--no-follow"]);
+        assert_eq!(host_scope(&static_bleats.command), HostScope::LocalOnly);
         for sample in SAMPLES {
+            if REACHING.iter().any(|argv| argv[0] == sample[0]) {
+                continue;
+            }
             let cli = parsed_with_host(sample);
-            let want = if sample[0] == "flock" {
-                HostScope::Reaches
-            } else {
-                HostScope::LocalOnly
-            };
-            assert_eq!(host_scope(&cli.command), want, "{sample:?}");
+            assert_eq!(host_scope(&cli.command), HostScope::LocalOnly, "{sample:?}");
         }
     }
 
