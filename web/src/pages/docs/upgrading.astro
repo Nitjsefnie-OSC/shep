@@ -97,8 +97,10 @@ import Callout from "../../components/docs/Callout.astro";
     <Callout variant="careful">
       Skip <code>shep daemon reload</code> and the new binary answers{" "}
       <code>shep --version</code> while the running shepherd is still the
-      old one. shep refuses most verbs against a version-skewed shepherd and
-      names this exact command as the fix.
+      old one. <code>flock</code>, <code>describe</code> and{" "}
+      <code>bleats</code> only warn. <code>kill</code> and{" "}
+      <code>ping</code> always work. Every other verb refuses and names this
+      command.
     </Callout>
     <p class="fine">
       An older <code>shep</code> re-running{" "}

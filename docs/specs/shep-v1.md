@@ -488,7 +488,7 @@ reach processes the operator never named.
 | 9 | internal | An unexpected daemon-side failure. |
 | 10 | daemon already running | Another daemon already holds this `$SHEP_HOME`. |
 | 11 | flock empty | The foreground flock emptied with a sheep in `errored`. `runtime`'s fail-fast status. |
-| 12 | version skew | The handshake succeeded, but this binary and the running shepherd are different crate versions. Not returned for `kill`, `daemon reload` or `ping`. |
+| 12 | version skew | The handshake succeeded, but this binary and the running shepherd are different crate versions. Not returned for `kill`, `daemon reload` or `ping`, nor for `flock`, `describe` or `bleats`, which warn on stderr and proceed. |
 | 13 | unsupported | The daemon understood the handshake but not the request itself; a newer shepherd is the remedy. |
 
 Code 10 is a contract across a process boundary, not merely a CLI detail: a
