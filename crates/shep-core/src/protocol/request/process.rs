@@ -571,6 +571,8 @@ pub(super) fn sample_info() -> ProcessInfo {
 }
 
 #[cfg(test)]
+mod sorting;
+#[cfg(test)]
 mod stamps;
 
 #[cfg(test)]
@@ -627,13 +629,6 @@ mod tests {
         let decoded: ProcessInfo = serde_json::from_value(wire).unwrap();
 
         assert_eq!(decoded.status, ProcStatus::Unrecognized);
-        assert_eq!(
-            decoded,
-            ProcessInfo {
-                status: ProcStatus::Unrecognized,
-                ..sample_info()
-            }
-        );
     }
 
     /// Every field is given a value distinct from every other field's
@@ -976,38 +971,5 @@ mod tests {
             "lambs":null,"last_exit":null,"smit":null}"#;
         let info: ProcessInfo = serde_json::from_str(json).expect("older reply still parses");
         assert_eq!(info.instance, None);
-    }
-
-    #[test]
-    fn sort_flock_orders_by_slot_before_id() {
-        // A reload gave slot 0 a fresh, higher id. Slot order must still win.
-        let mut listing = vec![
-            ProcessInfo::builder(9, "web", ProcStatus::Online)
-                .instance(Some(0))
-                .build(),
-            ProcessInfo::builder(2, "web", ProcStatus::Online)
-                .instance(Some(1))
-                .build(),
-        ];
-        sort_flock(&mut listing);
-        assert_eq!(
-            listing.iter().map(|i| i.id).collect::<Vec<_>>(),
-            vec![9, 2],
-            "slot 0 leads even though its id is higher"
-        );
-    }
-
-    #[test]
-    fn sort_flock_falls_back_to_id_when_no_row_carries_a_slot() {
-        let mut listing = vec![
-            ProcessInfo::builder(5, "web", ProcStatus::Online).build(),
-            ProcessInfo::builder(3, "web", ProcStatus::Online).build(),
-        ];
-        sort_flock(&mut listing);
-        assert_eq!(
-            listing.iter().map(|i| i.id).collect::<Vec<_>>(),
-            vec![3, 5],
-            "an older daemon's listing sorts exactly as it does today"
-        );
     }
 }

@@ -14,12 +14,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use shep_core::protocol::{
     Hello, HelloAck, HelloReply, PROTOCOL_VERSION, WireError, codec, decode_frame, encode_frame,
 };
-use shep_core::transport::{self, ClientStream};
+use shep_core::transport;
 
 /// Budget for one connect-plus-handshake attempt.
 ///
@@ -28,13 +29,20 @@ use shep_core::transport::{self, ClientStream};
 /// `spawn` module's own connect-and-wait budget reads from this constant too.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Any byte stream a [`Connection`] can handshake and run over: the OS
+/// socket, or a pipe to an ssh child.
+pub(crate) trait ByteStream: AsyncRead + AsyncWrite + Unpin + Send {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> ByteStream for T {}
+
 /// The framed transport a [`Connection`] wraps, named so callers past this
-/// module don't have to spell out `Framed<ClientStream, LengthDelimitedCodec>`
-/// themselves.
+/// module don't have to spell out the framed type themselves.
 ///
-/// [`ClientStream`] is the per-platform carrier, so this alias keeps
-/// `crate::actor` free of any platform gate.
-pub(crate) type Frames = Framed<ClientStream, LengthDelimitedCodec>;
+/// Boxed rather than generic: `Connection`, the actor and `Client` stay
+/// non-generic, so the actor compiles once, and one vtable call per read is
+/// noise beside JSON decoding. This alias also keeps `crate::actor` free of
+/// any platform gate.
+pub(crate) type Frames = Framed<Box<dyn ByteStream>, LengthDelimitedCodec>;
 
 /// Why `Connection::open` failed.
 ///
@@ -193,7 +201,25 @@ impl Connection {
                 path: socket.to_path_buf(),
                 source,
             })?;
-        let mut frames = Framed::new(stream, codec());
+        Self::open_over(stream, dog_name).await
+    }
+
+    /// Performs the version handshake (send [`Hello`], read the reply) over
+    /// an already-established `stream`. `dog_name` travels in the `Hello`.
+    ///
+    /// Unbounded: the caller owns the timeout, as [`Self::open`] does.
+    ///
+    /// # Errors
+    ///
+    /// - [`ConnectError::Wire`]: `Hello` failed to encode, or the reply failed to decode.
+    /// - [`ConnectError::Io`]: a framed read or write failed.
+    /// - [`ConnectError::HandshakeClosed`]: the peer closed before a `HelloReply`.
+    /// - [`ConnectError::ProtocolMismatch`]: the daemon refused on protocol-version skew.
+    pub(crate) async fn open_over(
+        stream: impl ByteStream + 'static,
+        dog_name: Option<&str>,
+    ) -> Result<Self, ConnectError> {
+        let mut frames = Framed::new(Box::new(stream) as Box<dyn ByteStream>, codec());
 
         let hello = Hello {
             client_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -488,6 +514,114 @@ mod tests {
             panic!("a backlogged connect must time out, not hang or read as success; got {err:?}");
         };
         assert_eq!(after, Duration::from_millis(150));
+    }
+
+    /// Spawns the far end of an in-memory stream that reads one [`Hello`]
+    /// and answers it with `reply`, then hands the [`Hello`] back.
+    fn serve_hello(
+        far: tokio::io::DuplexStream,
+        reply: HelloReply,
+    ) -> tokio::task::JoinHandle<Hello> {
+        tokio::spawn(async move {
+            let mut frames = Framed::new(far, codec());
+            let first = frames.next().await.unwrap().unwrap();
+            let hello: Hello = decode_frame(&first).unwrap();
+            frames.send(encode_frame(&reply).unwrap()).await.unwrap();
+            hello
+        })
+    }
+
+    #[tokio::test]
+    async fn open_over_completes_the_handshake_on_an_in_memory_stream() {
+        let (near, far) = tokio::io::duplex(1024);
+        let ack = HelloAck {
+            daemon_version: "9.9.9".into(),
+            protocol: PROTOCOL_VERSION,
+            pid: 4242,
+            min_supported: None,
+        };
+        let served = serve_hello(far, Ok(ack.clone()));
+
+        let conn = Connection::open_over(near, None).await.unwrap();
+
+        let (_frames, actual_ack) = conn.into_parts();
+        assert_eq!(actual_ack, ack);
+        let hello = served.await.unwrap();
+        assert_eq!(
+            hello.protocol, PROTOCOL_VERSION,
+            "the client must announce the version it speaks"
+        );
+        assert_eq!(
+            hello.client_version,
+            env!("CARGO_PKG_VERSION"),
+            "the client must identify its own version"
+        );
+        assert_eq!(
+            hello.dog_name, None,
+            "a client that is not a dog must not claim to be one"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_over_carries_a_dogs_name_in_its_hello() {
+        let (near, far) = tokio::io::duplex(1024);
+        let ack = HelloAck {
+            daemon_version: "9.9.9".into(),
+            protocol: PROTOCOL_VERSION,
+            pid: 4242,
+            min_supported: None,
+        };
+        let served = serve_hello(far, Ok(ack));
+
+        let _conn = Connection::open_over(near, Some("metrics")).await.unwrap();
+
+        let hello = served.await.unwrap();
+        assert_eq!(hello.dog_name.as_deref(), Some("metrics"));
+    }
+
+    #[tokio::test]
+    async fn open_over_reports_a_stream_closed_before_the_ack_as_handshake_closed() {
+        let (near, far) = tokio::io::duplex(1024);
+        tokio::spawn(async move {
+            let mut frames = Framed::new(far, codec());
+            let _hello = frames.next().await;
+            // dropped after reading the Hello, so the near half sees a clean EOF
+        });
+
+        let err = Connection::open_over(near, None).await.unwrap_err();
+
+        assert!(
+            matches!(err, ConnectError::HandshakeClosed),
+            "an in-memory EOF carries no OS error to fold into `Io`, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_over_reports_a_protocol_refusal_as_protocol_mismatch() {
+        let (near, far) = tokio::io::duplex(1024);
+        let refusal = RpcError {
+            code: RpcErrorCode::ProtocolMismatch,
+            message: "daemon speaks protocol 2, client speaks 1".into(),
+            daemon_version: Some("0.1.16".into()),
+        };
+        let _served = serve_hello(far, Err(refusal));
+
+        let err = Connection::open_over(near, None).await.unwrap_err();
+
+        let ConnectError::ProtocolMismatch {
+            client,
+            daemon_version,
+            message,
+        } = err
+        else {
+            panic!("a protocol refusal must not be flattened into a generic error, got {err:?}");
+        };
+        assert_eq!(client, PROTOCOL_VERSION);
+        assert_eq!(daemon_version.as_deref(), Some("0.1.16"));
+        assert!(
+            message.contains("protocol 2"),
+            "the daemon's own message must survive: {message}"
+        );
     }
 
     /// A refusal is the one stage an upgrade fixes; every other stage is

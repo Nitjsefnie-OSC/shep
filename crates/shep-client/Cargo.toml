@@ -87,7 +87,7 @@ tokio-stream.workspace = true   # wrappers::BroadcastStream, for the event-bus s
 futures-util.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "io-util"] }
 tempfile.workspace = true
 
 # The zombie reaper needs `waitpid`; dev-only and unix-only, same shape
