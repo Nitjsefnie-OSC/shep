@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-22
+
+### Added
+
+- Connect to another host's shepherd through the system ssh
+- `--host <dest> muster` boots that host's shepherd from its saved roll
+
+### Changed
+
+- Handshake and run a connection over any byte stream
+
+### Fixed
+
+- Bound only the ssh handshake and skip the spawn on a spent timeout
+
+
 ## [0.15.2] - 2026-10-17
 
 

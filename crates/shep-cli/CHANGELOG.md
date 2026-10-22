@@ -13,6 +13,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-22
+
+### Added
+
+- Explain › in the config pane's glyph legend
+- Add hidden dial-stdio verb bridging stdio to the shepherd socket
+- Parse a global --host destination
+- Flock reaches a host over ssh and every other verb refuses --host
+- Shep host add dials the host once and warns when it cannot be reached
+- --host reaches describe, fold, flock --follow and a followed bleats
+- `--host` reaches stop, restart, reload and delete
+- `--host` reaches stock, enable, disable, signal, whisper and trigger
+- `--host` reaches start for a sheep name and refuses a path with the ssh command
+- Emit a fleet flock as one JSON envelope with origin on every row and a hosts map
+- List every host's flock as JSON, tagging each row with its origin
+- Let lookout reach a host with a ssh-dialled shepherd source
+- Refuse the lookout keys that read this machine when watching a host
+- Read no log file or host sample for a lookout watching a host
+- Name the host in the lookout title and say the bleats feed and strip need this machine
+- Let lookout watch a host through HostShepherd
+- Let bleats read a host's log tails through its shepherd
+
+### Changed
+
+- Describe and fold take the link, so a host run reads no local home
+
+### Fixed
+
+- Fit the › legend entry inside the 160-column pane
+- Do not expect a named pipe to half-close in dial-stdio tests
+- Refuse an adopted dog in the asked-for format and keep a host flock off the local home
+- Print no local status line for an argv that names a --host
+- Host add help says it dials a listed host too, and a timeout no longer blames ssh-agent
+- Host add's no-shepherd hint names a command that exists
+- Review round 1 of --host reads: explicit host bleats, aside before parse, interrupt typed, terminal seam
+- Refuse a start target read on this machine before dialling the host
+- Carry every flag in the ssh hint, quote it for two shells, and fail on a bad listing
+- Keep the host bleats pane to its rows and word the lookout doc truly
+- Flush stderr when a remote bleats read stops the verb
+- Read the rest of the flock when a host no longer has one sheep
+
+
 ## [0.15.2] - 2026-10-17
 
 ### Changed
