@@ -74,8 +74,7 @@ mod tests {
     /// An outcome added next year must decode, not fail the whole frame.
     #[test]
     fn an_unknown_tail_outcome_decodes_as_unrecognized() {
-        let tail: LogTail =
-            serde_json::from_str(r#"{"kind":"rotated","generation":3}"#).unwrap();
+        let tail: LogTail = serde_json::from_str(r#"{"kind":"rotated","generation":3}"#).unwrap();
 
         assert_eq!(tail, LogTail::Unrecognized);
     }

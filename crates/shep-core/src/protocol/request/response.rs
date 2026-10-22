@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::DogTable;
 
 use super::{
-    ActionReply, DogSectionToml, LineReply, LogTail, ProcessInfo, SheepApplied, SheepConfigView, SheepDrift,
-    SheepRefusal, SignalReply,
+    ActionReply, DogSectionToml, LineReply, LogTail, ProcessInfo, SheepApplied, SheepConfigView,
+    SheepDrift, SheepRefusal, SignalReply,
 };
 
 // Named by intra-doc links and by nothing rustc compiles, so the

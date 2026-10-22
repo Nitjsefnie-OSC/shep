@@ -41,8 +41,9 @@ pub use frame::ServerFrame;
 pub use request::{
     ActionOutcome, ActionReply, DogSectionToml, DogSource, EnvValue, Envelope, ExitInfo, Hello,
     HelloAck, HelloReply, HostUsage, Lamb, LineOutcome, LineReply, LogStream, LogTail, ProcessInfo,
-    ProcessInfoBuilder, Reply, Request, Response, RpcError, RpcErrorCode, SelectorSpec, SheepApplied, SheepConfigView,
-    SheepDrift, SheepRefusal, SignalOutcome, SignalReply, Smit, SmitError, sort_flock,
+    ProcessInfoBuilder, Reply, Request, Response, RpcError, RpcErrorCode, SelectorSpec,
+    SheepApplied, SheepConfigView, SheepDrift, SheepRefusal, SignalOutcome, SignalReply, Smit,
+    SmitError, sort_flock,
 };
 pub use shep_channel::{
     CHANNEL_VERSION, ChildMessage, LambLabel, LambLabelError, MetricType, ShepherdMessage,

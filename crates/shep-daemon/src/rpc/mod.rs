@@ -46,6 +46,8 @@ mod enrichment;
 
 mod error;
 
+mod log_tail;
+
 #[cfg(test)]
 use error::rpc_error;
 
