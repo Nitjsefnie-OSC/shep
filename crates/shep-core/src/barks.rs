@@ -294,13 +294,23 @@ fn ring_bytes(lines: &[String]) -> u64 {
 /// the second lock for a caller that reaches `write_ring` another way.
 fn write_ring(path: &Path, lines: &[String]) -> Result<(), BarkError> {
     let parent = crate::atomic_file::parent_of(path);
-    let mut tmp = crate::atomic_file::create_staging_file(parent, "barks", ".tmp")?;
+    let file = crate::atomic_file::create_staging_file(parent, "barks", ".tmp")?;
 
+    // The staging file is unbuffered, and `append` rewrites the whole ring
+    // per bark: a `write_all` per line is a syscall per line, twice over.
+    let mut staging = std::io::BufWriter::new(file);
     for line in lines {
-        tmp.write_all(line.as_bytes())?;
-        tmp.write_all(b"\n")?;
+        staging.write_all(line.as_bytes())?;
+        staging.write_all(b"\n")?;
     }
-    crate::atomic_file::publish(tmp, path).map_err(BarkError::Io)
+    // Flushed here rather than left to `into_inner`, so a failed flush is a
+    // `BarkError::Io` naming the flush rather than the buffer it failed in.
+    staging.flush()?;
+    let staging = staging
+        .into_inner()
+        .map_err(|err| BarkError::Io(err.into_error()))?;
+
+    crate::atomic_file::publish(staging, path).map_err(BarkError::Io)
 }
 
 #[cfg(test)]
@@ -562,6 +572,37 @@ mod tests {
                 "limit {limit} must answer exactly what a full read plus a drain answers"
             );
         }
+    }
+
+    /// A ring far larger than a `BufWriter`'s buffer must land whole: the
+    /// tail is exactly what a dropped `flush` loses, and a rewrite is what
+    /// every bark does.
+    #[test]
+    fn a_ring_of_many_lines_reads_back_whole_after_a_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("barks.jsonl");
+        let lines: Vec<String> = (0..4_000u64)
+            .map(|i| serde_json::to_string(&bark_for(&format!("s{i}"), i)).unwrap())
+            .collect();
+
+        write_ring(&path, &lines).unwrap();
+
+        let want = lines.join("\n") + "\n";
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            want,
+            "one line per record, one trailing newline, nothing dropped"
+        );
+
+        let expected: Vec<Bark> = lines
+            .iter()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            read_last(&path, expected.len()).unwrap(),
+            expected,
+            "every record, oldest first"
+        );
     }
 
     /// Env var naming the ring file the re-executed child should append
