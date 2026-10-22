@@ -34,10 +34,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Name the host in the lookout title and say the bleats feed and strip need this machine
 - Let lookout watch a host through HostShepherd
 - Let bleats read a host's log tails through its shepherd
+- Explain `›` in the config pane's glyph legend
+- Decode a status or dog source this build does not know **(BREAKING)**
+- Read a top-level hosts list from shep.toml
+- Add shep host to edit the hosts list in shep.toml
+- Add hidden `shep dial-stdio` bridging stdio to the shepherd socket
+- Connect_ssh reaches another host's shepherd through the system ssh
+- Add a hosts list to shep.toml and shep host add, remove and list
+- `shep --host <dest> flock` lists another host's flock, other verbs refuse `--host`
+- `--host` reaches describe, fold, `flock --follow` and a followed `bleats`
+- Read verbs warn on a crate-version skew instead of refusing
+- List the flock and warn on a crate-version skew for read verbs, refuse the rest
+- Shep flock lists every listed host's flock, local first, and a dead host does not hide the rest
+- List every listed host's flock with plain `shep flock`, local first
+- `--host <dest> muster` boots that host's shepherd from its saved roll
+- Tag fleet flock JSON rows with `origin` and add a `hosts` usage map
+- Boot a host's shepherd from its saved roll with `shep --host <dest> muster`
+- Let `shep --host <dest> lookout` show a host's flock
+- Answer a request for the tail of one sheep's log
+- Let `shep --host <dest> bleats` read a host's log tails through its shepherd
 
 ### Changed
 
 - Describe and fold take the link, so a host run reads no local home
+- Share fetch's connect-and-send and status guards with bark sinks
+- Hold the all-strings list guard in one helper and test its rejection
 
 ### Fixed
 
@@ -53,6 +74,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep the host bleats pane to its rows and word the lookout doc truly
 - Flush stderr when a remote bleats read stops the verb
 - Read the rest of the flock when a host no longer has one sheep
+- Fall back to description when init.blurb is not a string
+- Bound the sink reply's header block and diagnostic line
+- Accept base64 padding only at the end of the whole input
+- Count an unrecognized status in the muster flourish and refuse one in a handover blob
+- Report a malformed hosts key instead of reading it as empty
+- Bound the local dial, apply the guard to listed hosts, report a failed roll write
+- Bridge when the autostart probe meets a protocol mismatch
 
 
 ## [0.15.2] - 2026-10-17

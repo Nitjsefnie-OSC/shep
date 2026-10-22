@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.16.0] - 2026-10-22
 
+### Added
+
+- Answer TailLog from the sheep's own log file
+- Decode a status or dog source this build does not know **(BREAKING)**
+- Answer a request for the tail of one sheep's log
+
 ### Fixed
 
 - Count an unrecognized status in the muster flourish and refuse one in a handover blob

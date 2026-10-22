@@ -16,10 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Read a top-level hosts list from shep.toml
 - Add shep host to edit the hosts list in shep.toml
+- Add the one ssh destination grammar
+- Add the TailLog request and its LogTail answer
+- Answer TailLog from the sheep's own log file
+- Decode a status or dog source this build does not know **(BREAKING)**
+- Add a hosts list to shep.toml and shep host add, remove and list
+- Answer a request for the tail of one sheep's log
 
 ### Fixed
 
 - Keep a whole first line and bound the tail read to the window
+- Spell the non-ASCII destination test sample so typos passes
+- Move sort_flock tests out of the over-long process.rs and drop 'catch-alls'
 
 
 ## [0.15.2] - 2026-10-17
