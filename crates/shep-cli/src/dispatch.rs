@@ -383,9 +383,9 @@ pub(crate) async fn run(
             }
         },
         Commands::Start(ref args) => {
-            load_command(&mut streams, &paths, guard, args, Load::Start).await
+            load_command(&mut streams, &link, guard, args, Load::Start).await
         }
-        Commands::Add(ref args) => load_command(&mut streams, &paths, guard, args, Load::Add).await,
+        Commands::Add(ref args) => load_command(&mut streams, &link, guard, args, Load::Add).await,
         Commands::Stop(ref args) | Commands::Thatlldo(ref args) => {
             match connect_client(&mut streams, &link, guard).await {
                 Ok(client) => lifecycle::stop(&client, &mut streams, args).await,
@@ -574,6 +574,10 @@ async fn run_on_host(
         }
         Commands::Disable(args) => {
             return toggle_on_host(&mut streams, &link, guard, Toggle::Disable, &args.name).await;
+        }
+        // Connects for itself: a bare `start` is refused before any dial.
+        Commands::Start(args) => {
+            return load_command(&mut streams, &link, guard, args, Load::Start).await;
         }
         _ => {}
     }

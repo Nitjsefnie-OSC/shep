@@ -23,7 +23,7 @@ pub(crate) use deadline::staged_start_deadline;
 pub(crate) use operational::{reload, restart, stock, stop};
 pub(crate) use remove::delete;
 pub(crate) use resolve::{resolve_target, target_exit_code};
-pub(crate) use start::{Load, add, start};
+pub(crate) use start::{Load, add, refuse_local_read, start, start_on_host};
 
 #[cfg(test)]
 mod tests;

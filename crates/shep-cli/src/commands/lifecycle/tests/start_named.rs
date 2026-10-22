@@ -134,3 +134,185 @@ async fn a_refused_field_write_on_a_named_sheep_stops_before_the_resume() {
         "and the sheep is not brought back up stamped"
     );
 }
+
+/// Runs `start` over a host link named `amp2`, handing back code, stdout and
+/// stderr.
+async fn start_over_host_with_args(
+    client: &Client,
+    args: &StartArgs,
+) -> (ExitCode, String, String) {
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let code = {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        start_on_host(client, &mut streams, args, "amp2").await
+    };
+    (
+        code,
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
+/// A name the host's flock has is resumed the way a local one is, and
+/// whatever Flockfile sits in this directory is not read.
+#[tokio::test]
+async fn a_known_name_over_a_host_is_resumed_with_no_local_file_read() {
+    use shep_client::testing::fake_client_answering;
+    use shep_core::status::ProcStatus;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let flock = vec![ProcessInfo::builder(0, "api", ProcStatus::Stopped).build()];
+    let (client, mut envelopes) =
+        fake_client_answering(&sock, move |request: &Request| match request {
+            Request::ListFlock => Response::Flock(flock.clone()),
+            Request::Restart { .. } => Response::Restarted {
+                accepted: vec![ProcessInfo::builder(0, "api", ProcStatus::Online).build()],
+                refused: Vec::new(),
+            },
+            _ => Response::Pong,
+        })
+        .await;
+
+    let (code, _printed, said) = start_over_host_with_args(&client, &start_args("api")).await;
+
+    assert_eq!(code, ExitCode::Success, "{said}");
+    assert_eq!(respawns(&mut envelopes).len(), 1, "{said}");
+}
+
+/// Counts the requests of any kind that reached the wire.
+fn requests_seen(
+    envelopes: &mut tokio::sync::mpsc::UnboundedReceiver<shep_core::protocol::Envelope>,
+) -> usize {
+    let mut seen = 0;
+    while envelopes.try_recv().is_ok() {
+        seen += 1;
+    }
+    seen
+}
+
+/// A path would be read on this machine, so it is refused with the command
+/// that reads it on the host, and the host is not asked anything.
+#[tokio::test]
+async fn a_path_target_over_a_host_refuses_with_the_exact_ssh_command() {
+    use shep_client::testing::fake_client_answering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let (client, mut envelopes) =
+        fake_client_answering(&sock, |_: &Request| Response::Flock(Vec::new())).await;
+
+    let (code, printed, said) = start_over_host_with_args(&client, &start_args("./api")).await;
+
+    assert_eq!(code, ExitCode::Usage, "{said}");
+    assert!(printed.is_empty(), "a failed verb leaves stdout empty");
+    assert!(
+        said.contains(
+            "`shep --host amp2 start ./api` would read ./api on this machine. \
+             To start it there, run: ssh amp2 shep start ./api"
+        ),
+        "{said}"
+    );
+    assert_eq!(requests_seen(&mut envelopes), 0, "{said}");
+}
+
+/// `-` and `--flockfile` read this machine too, whatever the token looks like.
+#[tokio::test]
+async fn stdin_and_flockfile_targets_over_a_host_refuse_the_same_way() {
+    use shep_client::testing::fake_client_answering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let (client, mut envelopes) =
+        fake_client_answering(&sock, |_: &Request| Response::Flock(Vec::new())).await;
+
+    let (code, _printed, said) = start_over_host_with_args(&client, &start_args("-")).await;
+    assert_eq!(code, ExitCode::Usage, "{said}");
+    assert!(
+        said.contains("`shep --host amp2 start -` would read stdin on this machine."),
+        "{said}"
+    );
+    assert!(said.contains("ssh amp2 shep start -"), "{said}");
+
+    let mut args = start_args("web");
+    args.flockfile = true;
+    let (code, _printed, said) = start_over_host_with_args(&client, &args).await;
+    assert_eq!(code, ExitCode::Usage, "{said}");
+    assert!(
+        said.contains("`shep --host amp2 start --flockfile web` would read web on this machine."),
+        "{said}"
+    );
+    assert!(said.contains("ssh amp2 shep start --flockfile web"), "{said}");
+    assert_eq!(requests_seen(&mut envelopes), 0, "{said}");
+}
+
+/// A name the host does not know is a miss on the host, with the ssh command
+/// in case it was meant as a script.
+#[tokio::test]
+async fn an_unknown_name_over_a_host_is_not_found_and_hints_at_ssh() {
+    use shep_client::testing::fake_client_answering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock = shep_client::testing::control_address(dir.path());
+    let (client, mut envelopes) =
+        fake_client_answering(&sock, |_: &Request| Response::Flock(Vec::new())).await;
+
+    let (code, printed, said) = start_over_host_with_args(&client, &start_args("ghost")).await;
+
+    assert_eq!(code, ExitCode::NotFound, "{said}");
+    assert!(printed.is_empty());
+    assert!(said.contains("ghost is not a sheep or a fold on amp2"), "{said}");
+    assert!(said.contains("ssh amp2 shep start ghost"), "{said}");
+    assert!(
+        respawns(&mut envelopes).is_empty(),
+        "nothing is started for a name the host lacks"
+    );
+}
+
+/// A bare `start` would discover a Flockfile in this directory, and would
+/// boot a shepherd, so over a host it is refused before either.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_bare_start_over_a_host_refuses_before_reading_the_working_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let link = crate::remote::Link::Host {
+        dest: "amp2",
+        options: shep_client::SshOptions::default().program(dir.path().join("no-such-ssh")),
+    };
+    let mut args = start_args("unused");
+    args.targets.clear();
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+
+    let code = {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        crate::client::load_command(
+            &mut streams,
+            &link,
+            crate::version_guard::VersionGuard::Enforce,
+            &args,
+            Load::Start,
+        )
+        .await
+    };
+
+    let said = String::from_utf8(err).unwrap();
+    assert_eq!(code, ExitCode::Usage, "{said}");
+    assert!(
+        said.contains("`shep --host amp2 start` would read the Flockfile in this directory"),
+        "{said}"
+    );
+    assert!(said.contains("ssh amp2 shep start"), "{said}");
+    assert!(out.is_empty());
+}
