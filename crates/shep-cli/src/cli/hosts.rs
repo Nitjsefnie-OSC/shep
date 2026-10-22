@@ -28,7 +28,7 @@ pub enum HostCommand {
     },
     /// Remove a machine from the list
     ///
-    /// The destination is compared as written. Exits 4 when it is not listed.
+    /// The destination is compared as written. Exits 3 when it is not listed.
     Remove {
         /// The ssh destination, exactly as listed
         destination: String,

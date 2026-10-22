@@ -13,7 +13,7 @@ Run things       start add serve stop restart reload delete stock enable disable
 See what's up    flock describe bleats lookout fold barks
 Survive reboots  save muster startup unstartup
 Talk to a sheep  trigger signal whisper
-The shepherd     ping kill reopen flush set get unset copy secret
+The shepherd     ping kill reopen flush set get unset copy secret host
 Dogs and agents  dogs adopt whistle
 Foreground runs  runtime dev
 Coming from pm2  import
@@ -2233,6 +2233,224 @@ Options:
 List keys and the environments each has a value for
 
 Usage: shep secret list [OPTIONS]
+
+Options:
+      --format <FORMAT>
+          Output format
+
+          Possible values:
+          - table: Human-readable columns (the default)
+          - json:  A versioned JSON envelope, one object per invocation
+          
+          [default: table]
+
+  -q, --quiet
+          Suppress non-essential output
+          
+          Currently narrows `bleats`' own notices (a dropped-events count, a daemon-shutdown notice,
+          ...): diagnostics distinct from a sheep's own line or a real error, both of which still
+          print regardless.
+
+      --style <STYLE>
+          How much this invocation dresses up its output: `full`, `plain`, or `bare`
+          
+          Wins over `$SHEP_STYLE` and `shep.toml`'s `[style] level`. Omit to let those decide; `shep
+          style` reports which one answered.
+
+          Possible values:
+          - full:  Sheep, boxes and colour
+          - plain: Boxes and colour, no sheep
+          - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --home <HOME>
+          Talk to a different shepherd
+          
+          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
+          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
+          flock from every directory.
+          
+          [env: SHEP_HOME=]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+@@VERB:host@@
+Keep the list of machines whose shepherds this CLI reaches.
+
+The list is a top-level `hosts = ["amp2", ...]` array in `$SHEP_HOME/shep.toml`. Each entry is an
+ssh destination, so `~/.ssh/config` aliases, users, ports and ProxyJump all apply. Reads and writes
+that file directly and never connects to a machine.
+
+Usage: shep host [OPTIONS] <COMMAND>
+
+Commands:
+  add     Add a machine to the list
+  remove  Remove a machine from the list
+  list    List the machines, in the order `shep.toml` holds them
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --format <FORMAT>
+          Output format
+
+          Possible values:
+          - table: Human-readable columns (the default)
+          - json:  A versioned JSON envelope, one object per invocation
+          
+          [default: table]
+
+  -q, --quiet
+          Suppress non-essential output
+          
+          Currently narrows `bleats`' own notices (a dropped-events count, a daemon-shutdown notice,
+          ...): diagnostics distinct from a sheep's own line or a real error, both of which still
+          print regardless.
+
+      --style <STYLE>
+          How much this invocation dresses up its output: `full`, `plain`, or `bare`
+          
+          Wins over `$SHEP_STYLE` and `shep.toml`'s `[style] level`. Omit to let those decide; `shep
+          style` reports which one answered.
+
+          Possible values:
+          - full:  Sheep, boxes and colour
+          - plain: Boxes and colour, no sheep
+          - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --home <HOME>
+          Talk to a different shepherd
+          
+          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
+          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
+          flock from every directory.
+          
+          [env: SHEP_HOME=]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+@@VERB:host add@@
+Add a machine to the list
+
+A destination is what you would hand to `ssh`: a host name or an `~/.ssh/config` alias, optionally
+with a `user@` in front. Letters, digits, `.`, `_` and `-` only, and neither part may start with
+`-`. Ports, jump hosts and IPv6 literals go in `~/.ssh/config`, where `Port` and `ProxyJump` already
+apply.
+
+The remote `shep` must be on the PATH that a non-interactive ssh session sees. Adding a host that is
+already listed changes nothing.
+
+Usage: shep host add [OPTIONS] <DESTINATION>
+
+Arguments:
+  <DESTINATION>
+          The ssh destination, such as `amp2` or `deploy@build.example.com`
+
+Options:
+      --format <FORMAT>
+          Output format
+
+          Possible values:
+          - table: Human-readable columns (the default)
+          - json:  A versioned JSON envelope, one object per invocation
+          
+          [default: table]
+
+  -q, --quiet
+          Suppress non-essential output
+          
+          Currently narrows `bleats`' own notices (a dropped-events count, a daemon-shutdown notice,
+          ...): diagnostics distinct from a sheep's own line or a real error, both of which still
+          print regardless.
+
+      --style <STYLE>
+          How much this invocation dresses up its output: `full`, `plain`, or `bare`
+          
+          Wins over `$SHEP_STYLE` and `shep.toml`'s `[style] level`. Omit to let those decide; `shep
+          style` reports which one answered.
+
+          Possible values:
+          - full:  Sheep, boxes and colour
+          - plain: Boxes and colour, no sheep
+          - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --home <HOME>
+          Talk to a different shepherd
+          
+          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
+          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
+          flock from every directory.
+          
+          [env: SHEP_HOME=]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+@@VERB:host remove@@
+Remove a machine from the list
+
+The destination is compared as written. Exits 3 when it is not listed.
+
+Usage: shep host remove [OPTIONS] <DESTINATION>
+
+Arguments:
+  <DESTINATION>
+          The ssh destination, exactly as listed
+
+Options:
+      --format <FORMAT>
+          Output format
+
+          Possible values:
+          - table: Human-readable columns (the default)
+          - json:  A versioned JSON envelope, one object per invocation
+          
+          [default: table]
+
+  -q, --quiet
+          Suppress non-essential output
+          
+          Currently narrows `bleats`' own notices (a dropped-events count, a daemon-shutdown notice,
+          ...): diagnostics distinct from a sheep's own line or a real error, both of which still
+          print regardless.
+
+      --style <STYLE>
+          How much this invocation dresses up its output: `full`, `plain`, or `bare`
+          
+          Wins over `$SHEP_STYLE` and `shep.toml`'s `[style] level`. Omit to let those decide; `shep
+          style` reports which one answered.
+
+          Possible values:
+          - full:  Sheep, boxes and colour
+          - plain: Boxes and colour, no sheep
+          - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --home <HOME>
+          Talk to a different shepherd
+          
+          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
+          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
+          flock from every directory.
+          
+          [env: SHEP_HOME=]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+@@VERB:host list@@
+List the machines, in the order `shep.toml` holds them
+
+Reads `shep.toml` only and never connects to a machine.
+
+Usage: shep host list [OPTIONS]
 
 Options:
       --format <FORMAT>
