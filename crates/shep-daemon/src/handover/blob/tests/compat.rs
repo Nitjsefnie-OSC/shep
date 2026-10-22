@@ -326,6 +326,27 @@ fn a_dogs_marker_crosses_the_blob() {
     );
 }
 
+/// A status or dog kind this build cannot read must fail the load, as it
+/// did before the wire enums grew a decode-only fallback: adopting it would
+/// supervise a sheep in a state the shepherd cannot act on, and send
+/// `"unrecognized"` to every client.
+#[test]
+fn a_blob_row_this_build_cannot_read_refuses_the_handover() {
+    let mut entry = entry_fixture(|_| {});
+    entry.dog = Some(DogSource::BuiltIn);
+    let mut blob = sample_handover();
+    blob.sheep[0] = CarriedSheep::from_entry(&entry, 7, fds_at(11), false, None, false, None);
+    let wire = serde_json::to_value(&blob).unwrap();
+
+    let mut future_status = wire.clone();
+    future_status["sheep"][0]["status"] = serde_json::json!("invented_next_year");
+    assert!(Handover::load_value(future_status).is_err());
+
+    let mut future_dog = wire;
+    future_dog["sheep"][0]["dog"] = serde_json::json!({"kind": "invented_next_year"});
+    assert!(Handover::load_value(future_dog).is_err());
+}
+
 /// Not implied by the case above: a `from_entry` that hardcoded a source
 /// would pass that one and turn every carried app into a dog.
 #[test]

@@ -40,6 +40,9 @@ pub(crate) const fn role_of(status: ProcStatus) -> Role {
         ProcStatus::Starting | ProcStatus::WaitingRestart => Role::Butter,
         ProcStatus::Errored => Role::Bark,
         ProcStatus::Stopping | ProcStatus::Stopped => Role::Ink3,
+        // `Unrecognized`, and any status added after this build: neither
+        // healthy nor known to be wrong.
+        _ => Role::Butter,
     }
 }
 
@@ -62,6 +65,8 @@ pub(crate) const fn face(status: ProcStatus) -> &'static str {
         ProcStatus::WaitingRestart => "(>_<)",
         ProcStatus::Stopping | ProcStatus::Stopped => "(-.-)",
         ProcStatus::Errored => "(x.x)",
+        // A question mark, and not `Reported::Silent`'s `(?_?)`.
+        _ => "(?.?)",
     }
 }
 
@@ -73,7 +78,7 @@ pub(crate) const fn face(status: ProcStatus) -> &'static str {
 /// never completed a handshake is not doing its job however alive it is.
 /// [`Self::Silent`] is that fact.
 ///
-/// Not a seventh `ProcStatus` variant: `ProcStatus` is the wire contract
+/// Not a `ProcStatus` variant: `ProcStatus` is the wire contract
 /// for what the supervisor knows about a process, and silence is a fact
 /// about a connection that only a reader joining two fields can see.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,6 +220,7 @@ mod tests {
             ProcStatus::Stopping,
             ProcStatus::Stopped,
             ProcStatus::Errored,
+            ProcStatus::Unrecognized,
         ] {
             let face = Reported::Live(status).face();
             assert_eq!(
@@ -236,6 +242,29 @@ mod tests {
         let silent = Reported::Silent.face();
         assert_eq!(silent.chars().count(), 5, "silent face {silent:?}");
         assert!(silent.is_ascii(), "silent face {silent:?}");
+    }
+
+    /// An unreadable status must not pass for a known one, nor for a dog's
+    /// silence, in the face or in the word.
+    #[test]
+    fn an_unrecognized_status_looks_like_no_other() {
+        let unrecognized = Reported::Live(ProcStatus::Unrecognized);
+        let others = [
+            Reported::Live(ProcStatus::Online),
+            Reported::Live(ProcStatus::Starting),
+            Reported::Live(ProcStatus::WaitingRestart),
+            Reported::Live(ProcStatus::Stopping),
+            Reported::Live(ProcStatus::Stopped),
+            Reported::Live(ProcStatus::Errored),
+            Reported::Silent,
+            Reported::Disabled,
+        ];
+        for other in others {
+            assert_ne!(unrecognized.face(), other.face(), "{other:?} face");
+            assert_ne!(unrecognized.word(), other.word(), "{other:?} word");
+        }
+        assert_eq!(unrecognized.face(), "(?.?)");
+        assert_eq!(unrecognized.word(), "unrecognized");
     }
 
     /// fails if a silence stops overriding `online`, or starts overriding a

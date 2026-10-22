@@ -124,8 +124,9 @@ impl fmt::Display for StatusLabels<'_> {
 }
 
 /// `ProcStatus`'s label value, the same spelling [`ProcStatus`]'s own
-/// `Display` and wire form use. `ProcStatus` is `#[non_exhaustive]`, so a kind
-/// this client predates renders `unknown` rather than failing to build.
+/// `Display` and wire form use. A status this client predates decodes as
+/// `Unrecognized` and reads `unrecognized`; [`ALL_STATUSES`] has no entry for
+/// it, so it makes no series.
 ///
 /// A `&'static str` so the status loop pays no `to_string` for a spelling
 /// fixed at compile time. The dog-source spelling lives in `shep-core`'s own
@@ -139,6 +140,8 @@ pub(super) fn status_label(status: ProcStatus) -> &'static str {
         ProcStatus::Stopped => "stopped",
         ProcStatus::Errored => "errored",
         ProcStatus::WaitingRestart => "waiting-restart",
+        // `Unrecognized`, and any status added after this build.
+        _ => "unrecognized",
     }
 }
 
@@ -446,6 +449,22 @@ pub(super) mod tests {
             r#"shep_sheep_status{sheep="web",id="3",fold="backend",status="errored"} 1"#
         ));
         assert!(text.contains(r#"status="online"} 0"#));
+    }
+
+    #[test]
+    fn an_unrecognized_status_makes_no_series_and_does_not_panic() {
+        let mut info = sample_info("web");
+        info.status = ProcStatus::Unrecognized;
+        let text = render(&Reading {
+            flock: vec![info],
+            ..reading()
+        });
+        assert!(!text.contains(r#"status="unrecognized""#));
+        assert!(text.contains(r#"status="online"} 0"#));
+        assert_eq!(
+            super::status_label(ProcStatus::Unrecognized),
+            "unrecognized"
+        );
     }
 
     #[test]

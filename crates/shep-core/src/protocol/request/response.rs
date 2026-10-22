@@ -966,4 +966,35 @@ mod tests {
         assert_eq!(serde_json::to_string(&reply).unwrap(), wire);
         assert_eq!(serde_json::from_str::<Response>(wire).unwrap(), reply);
     }
+
+    /// One row's new status word must cost that row its status, not the
+    /// whole listing.
+    #[test]
+    fn a_flock_reply_with_one_row_of_unknown_status_still_decodes() {
+        let known = sample_info();
+        let mut odd = serde_json::to_value(ProcessInfo {
+            id: 4,
+            ..sample_info()
+        })
+        .unwrap();
+        odd["status"] = serde_json::json!("invented_next_year");
+        let wire = serde_json::json!({
+            "kind": "flock",
+            "data": [serde_json::to_value(&known).unwrap(), odd],
+        });
+
+        let decoded: Response = serde_json::from_value(wire).unwrap();
+
+        assert_eq!(
+            decoded,
+            Response::Flock(vec![
+                known,
+                ProcessInfo {
+                    id: 4,
+                    status: ProcStatus::Unrecognized,
+                    ..sample_info()
+                },
+            ])
+        );
+    }
 }
