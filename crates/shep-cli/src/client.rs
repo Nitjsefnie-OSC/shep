@@ -269,4 +269,18 @@ mod tests {
             "a permission failure must not send the operator to `shep start`, got {text:?}"
         );
     }
+
+    /// The socket-specific sentence names a path, and an ssh failure has none.
+    #[test]
+    fn an_ssh_failure_keeps_its_own_wording() {
+        let err = shep_client::ConnectError::Ssh {
+            destination: "amp2".to_owned(),
+            cause: shep_client::SshCause::Spawn {
+                program: std::path::PathBuf::from("ssh"),
+                source: std::io::Error::from(std::io::ErrorKind::NotFound),
+            },
+        };
+        assert_eq!(unreachable_message(&err), err.to_string());
+        assert!(!unreachable_message(&err).contains("no socket at"));
+    }
 }

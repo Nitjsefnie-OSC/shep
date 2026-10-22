@@ -55,7 +55,9 @@ pub(crate) fn dispatch_adopted_dog(
     // An adopted dog is a local binary: running it here for a `--host` the
     // operator aimed elsewhere would be the substitution `--host` refuses.
     if host_before(&argv[1..index]).is_some() {
-        return Some(std::process::ExitCode::from(refuse_host(Format::Table) as u8));
+        return Some(std::process::ExitCode::from(
+            refuse_host(Format::Table) as u8
+        ));
     }
     let dog_argv = argv[index + 1..].to_vec();
     Some(run_adopted_dog(&path, &paths.home, name, &dog_argv))

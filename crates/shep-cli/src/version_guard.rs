@@ -435,7 +435,13 @@ mod tests {
         let mut err = Vec::new();
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
-            flock_command(&mut streams, &Link::Local(&paths), VersionGuard::Enforce, &flock_args()).await
+            flock_command(
+                &mut streams,
+                &Link::Local(&paths),
+                VersionGuard::Enforce,
+                &flock_args(),
+            )
+            .await
         };
 
         assert_ne!(code, ExitCode::Success);
@@ -467,7 +473,13 @@ mod tests {
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
             streams.fmt = Format::Json;
-            flock_command(&mut streams, &Link::Local(&paths), VersionGuard::Enforce, &flock_args()).await
+            flock_command(
+                &mut streams,
+                &Link::Local(&paths),
+                VersionGuard::Enforce,
+                &flock_args(),
+            )
+            .await
         };
         daemon.await.unwrap();
 
@@ -488,7 +500,13 @@ mod tests {
         let mut err = Vec::new();
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
-            flock_command(&mut streams, &Link::Local(&paths), VersionGuard::Enforce, &flock_args()).await
+            flock_command(
+                &mut streams,
+                &Link::Local(&paths),
+                VersionGuard::Enforce,
+                &flock_args(),
+            )
+            .await
         };
 
         assert_eq!(code, ExitCode::DaemonUnreachable);
@@ -517,7 +535,13 @@ mod tests {
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
             streams.fmt = Format::Json;
-            flock_command(&mut streams, &Link::Local(&paths), VersionGuard::Enforce, &args).await
+            flock_command(
+                &mut streams,
+                &Link::Local(&paths),
+                VersionGuard::Enforce,
+                &args,
+            )
+            .await
         };
         assert_eq!(code, ExitCode::Usage);
         let text = String::from_utf8(err).unwrap();
@@ -536,7 +560,13 @@ mod tests {
         let mut err = Vec::new();
         let code = {
             let mut streams = buffered_streams(&mut out, &mut err);
-            flock_command(&mut streams, &Link::Local(&paths), VersionGuard::Enforce, &args).await
+            flock_command(
+                &mut streams,
+                &Link::Local(&paths),
+                VersionGuard::Enforce,
+                &args,
+            )
+            .await
         };
         assert_eq!(code, ExitCode::Usage);
         let text = String::from_utf8(err).unwrap();
@@ -609,7 +639,8 @@ mod tests {
                 "the remedy is named once: {text}"
             );
             assert!(
-                !text.contains("Run `shep daemon reload`") && !text.contains("Run:\n    shep daemon"),
+                !text.contains("Run `shep daemon reload`")
+                    && !text.contains("Run:\n    shep daemon"),
                 "the bare command would reload this machine's shepherd: {text}"
             );
             assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
@@ -633,8 +664,7 @@ mod tests {
         std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
         let link = Link::Host {
             dest: "amp2",
-            options: shep_client::SshOptions::default()
-                .program(dir.path().join("no-such-ssh")),
+            options: shep_client::SshOptions::default().program(dir.path().join("no-such-ssh")),
         };
 
         for fmt in [Format::Table, Format::Json] {
@@ -661,8 +691,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let link = Link::Host {
             dest: "amp2",
-            options: shep_client::SshOptions::default()
-                .program(dir.path().join("no-such-ssh")),
+            options: shep_client::SshOptions::default().program(dir.path().join("no-such-ssh")),
         };
         let args = cli::FlockArgs {
             follow: true,

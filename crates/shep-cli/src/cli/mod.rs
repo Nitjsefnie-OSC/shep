@@ -259,7 +259,11 @@ mod tests {
             vec!["shep", "--host", "a b", "flock"],
         ] {
             let err = Cli::try_parse_from(&argv).expect_err(&format!("{argv:?}"));
-            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation, "{argv:?}");
+            assert_eq!(
+                err.kind(),
+                clap::error::ErrorKind::ValueValidation,
+                "{argv:?}"
+            );
         }
     }
 
