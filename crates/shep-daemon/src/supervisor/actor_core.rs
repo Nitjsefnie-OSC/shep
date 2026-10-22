@@ -422,7 +422,8 @@ impl<R: ProcessRunner> Actor<R> {
         }
         // One sequence rather than two: a zip against `apps` misaligns the
         // moment a failure is skipped.
-        let mut ready: Vec<(ResolvedApp, Option<Credentials>)> = Vec::with_capacity(apps.len());
+        let mut ready: Vec<(ResolvedApp, Option<Credentials>, SecretView)> =
+            Vec::with_capacity(apps.len());
         // `AllOrNothing` only: a non-empty `refusals` returns before anything
         // is registered.
         let mut refusals = Vec::new();
@@ -464,7 +465,8 @@ impl<R: ProcessRunner> Actor<R> {
                 }
             };
             // Instance 0 and no credentials: neither changes which file exec
-            // names, which is all `preflight` reads.
+            // names, which is all `preflight` reads. One read of the store per
+            // app, and the view travels to every instance of it below.
             let view = self.secret_view(&app);
             let described = match assemble(&app, 0, &self.paths, None, &view) {
                 Ok(spec) => spec,
@@ -500,7 +502,7 @@ impl<R: ProcessRunner> Actor<R> {
                     tracing::warn!(sheep = %name, "{reason}");
                 }
             }
-            ready.push((app, credentials));
+            ready.push((app, credentials, view));
         }
         if !refusals.is_empty() {
             return Err(SupervisorError::CannotStart(format!(
@@ -512,7 +514,7 @@ impl<R: ProcessRunner> Actor<R> {
         }
 
         let mut results = Vec::new();
-        'apps: for (app, credentials) in ready {
+        'apps: for (app, credentials, secrets) in ready {
             let name = app.config().name.clone();
             let mut existing: Vec<u32> = self
                 .sheep
@@ -524,7 +526,7 @@ impl<R: ProcessRunner> Actor<R> {
             let slots = instance_slots(&existing, app.config().instances);
 
             for instance in slots {
-                match self.spawn_fresh(&app, instance, credentials, dog.clone(), gate) {
+                match self.spawn_fresh(&app, instance, credentials, &secrets, dog.clone(), gate) {
                     Ok(info) => results.push(info),
                     Err(message) => {
                         let failure = format!("{name}: {message}");

@@ -291,13 +291,25 @@ pub(super) fn env_override_map<'a>(
         })
 }
 
-/// `app` with its instance count set to `instances`, or `None` if the result
-/// does not normalize.
+/// `app` with its instance count set to `instances`.
 ///
 /// Re-normalized rather than mutated in place: a [`ResolvedApp`] is a proof
 /// token that its config passed `normalize`.
-pub(super) fn with_count(app: &ResolvedApp, instances: u32) -> Option<ResolvedApp> {
+///
+/// # Errors
+///
+/// Whatever `normalize` refused. Only `instances` moves here, so a config
+/// that normalized before can fail this on that count alone.
+pub(super) fn try_with_count(
+    app: &ResolvedApp,
+    instances: u32,
+) -> Result<ResolvedApp, NormalizeError> {
     let mut config = app.config().clone();
     config.instances = instances;
-    normalize(config).ok()
+    normalize(config)
+}
+
+/// [`try_with_count`], with the refusal collapsed to `None`.
+pub(super) fn with_count(app: &ResolvedApp, instances: u32) -> Option<ResolvedApp> {
+    try_with_count(app, instances).ok()
 }

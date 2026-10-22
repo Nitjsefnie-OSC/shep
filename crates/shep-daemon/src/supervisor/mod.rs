@@ -26,8 +26,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
 use shep_core::config::{
-    AppConfig, ApplyGroup, DeclaredApp, DogTable, ResetDepth, ResolvedApp, apply_group, normalize,
-    reaches_running,
+    AppConfig, ApplyGroup, DeclaredApp, DogTable, NormalizeError, ResetDepth, ResolvedApp,
+    apply_group, normalize, reaches_running,
 };
 use shep_core::overrides::{self, AppOverrides};
 use shep_core::paths::ShepPaths;
@@ -107,7 +107,7 @@ use command::ReplyKind;
 pub(crate) use command::{Command, Msg};
 use config_merge::{
     EXTRAS_FIELDS, dog_config_refusal, env_override_map, merge_declared, pending_fields,
-    reached_spec, with_count,
+    reached_spec, try_with_count, with_count,
 };
 #[cfg(unix)]
 pub(crate) use error::AdoptError;
