@@ -417,7 +417,7 @@ mod tests {
         assert_eq!(std::fs::read(&paths.dogs_config).unwrap(), dogs_before);
         assert!(
             err.contains("deleted 1 sheep, id 7") && !err.contains("kept"),
-            "the dog half ran: {err}"
+            "the shepherd's answer is reported and no dog is kept: {err}"
         );
     }
 
