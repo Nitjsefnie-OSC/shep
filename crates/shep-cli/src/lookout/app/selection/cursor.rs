@@ -12,31 +12,33 @@ impl App {
     /// lost one falls to whatever now occupies that position, clamped to the
     /// last row rather than to row 0.
     pub(in crate::lookout::app) fn reseat(&mut self, previous_index: Option<usize>) -> bool {
-        // `selected_index`, not `flock.contains_key`: a selection the filter
-        // hides is not seated, however present its id is. Must come before the
-        // emptiness check below, which would otherwise return early for a query
-        // that matches no sheep.
-        if self.selected_index().is_some() {
+        let rows = self.visible_rows();
+        // `index_in`, not `flock.contains_key`: a selection the filter hides is
+        // not seated, however present its id is. Must come before the emptiness
+        // check below, which would otherwise return early for a query that
+        // matches no sheep.
+        if self.index_in(&rows).is_some() {
             return false;
         }
         let before = self.selected.clone();
-        if self.visible_rows().is_empty() {
+        if rows.is_empty() {
             self.selected = None;
             return before != self.selected;
         }
-        self.select_at(previous_index.unwrap_or(0), 1);
+        self.select_in(&rows, previous_index.unwrap_or(0), 1);
         before != self.selected
     }
 
     /// Moves the selection by `delta` rows and reports whether it moved.
     /// Clamped rather than wrapping.
     pub(in crate::lookout::app) fn select_by(&mut self, delta: isize) -> Effect {
-        let Some(index) = self.selected_index() else {
+        let rows = self.visible_rows();
+        let Some(index) = self.index_in(&rows) else {
             return Effect::None;
         };
         let next = index.saturating_add_signed(delta);
         let direction = if delta < 0 { -1 } else { 1 };
-        self.select_at(next, direction)
+        self.select_in(&rows, next, direction)
     }
 
     /// Selects the row at `index`, clamped to the flock, and reports whether
@@ -48,20 +50,34 @@ impl App {
     /// `Effect::None` when nothing changed: [`Effect::RefreshSelected`] reads
     /// two files and asks the shepherd for lambs, and a held `k` at the top
     /// must not do that once per keypress.
+    ///
+    /// Builds the row sequence itself. A caller that already holds it goes
+    /// through [`Self::select_in`].
     pub(in crate::lookout::app) fn select_at(&mut self, index: usize, direction: isize) -> Effect {
-        let visible = self.visible_rows();
-        if visible.is_empty() {
+        let rows = self.visible_rows();
+        self.select_in(&rows, index, direction)
+    }
+
+    /// [`Self::select_at`] over a row sequence the caller already built, so a
+    /// move that has to read the sequence anyway reads it once rather than
+    /// once per step it takes.
+    ///
+    /// `rows` must be [`Self::visible_rows`] read before anything in the flock
+    /// or the filter changed: a sequence taken at another moment seats the
+    /// cursor on a row the table no longer draws.
+    fn select_in(&mut self, rows: &[RowKey], index: usize, direction: isize) -> Effect {
+        if rows.is_empty() {
             return Effect::None;
         }
-        let mut index = index.min(visible.len() - 1);
-        if matches!(visible[index], RowKey::Section(_)) {
+        let mut index = index.min(rows.len() - 1);
+        if matches!(rows[index], RowKey::Section(_)) {
             index = if direction < 0 && index > 0 {
                 index - 1
             } else {
                 index + 1
             };
         }
-        let next = visible[index].clone();
+        let next = rows[index].clone();
         if Some(&next) == self.selected.as_ref() {
             return Effect::None;
         }
@@ -85,8 +101,14 @@ impl App {
     /// call rather than stored.
     #[must_use]
     pub fn selected_index(&self) -> Option<usize> {
-        let key = self.selected.clone()?;
-        self.visible_rows().iter().position(|row| *row == key)
+        self.index_in(&self.visible_rows())
+    }
+
+    /// [`Self::selected_index`]'s search over a sequence the caller already
+    /// built, on the same terms as [`Self::select_in`].
+    fn index_in(&self, rows: &[RowKey]) -> Option<usize> {
+        let key = self.selected.as_ref()?;
+        rows.iter().position(|row| row == key)
     }
 
     /// The selected sheep's row, which the detail pane and the feed read.
