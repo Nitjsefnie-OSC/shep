@@ -169,7 +169,7 @@ fn remove(streams: &mut Streams<'_>, paths: &ShepPaths, text: &str) -> ExitCode 
 fn list(streams: &mut Streams<'_>, paths: &ShepPaths) -> ExitCode {
     let names = ShepToml::read_only(&paths.daemon_config)
         .map_err(HostError::from)
-        .and_then(|doc| Ok(validated(doc.host_names()?)?));
+        .and_then(|doc| validated(doc.host_names()?));
     match names {
         Ok(names) => emit_hosts(streams, names),
         Err(err) => fail(streams, &err),
