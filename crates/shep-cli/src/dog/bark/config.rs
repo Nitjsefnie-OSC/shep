@@ -6,7 +6,7 @@ use shep_core::barks;
 use shep_core::values::UpDuration;
 use std::collections::BTreeMap;
 
-/// `[dog.bark]`.
+/// `[bark]`.
 ///
 /// `deny_unknown_fields`: a misspelled key must be a startup error naming
 /// it, the same reasoning [`super::super::metrics::MetricsConfig`] gives for its
@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct BarkConfig {
-    /// Named sinks, `[dog.bark.sinks]`.
+    /// Named sinks, `[bark.sinks]`.
     ///
     /// Marked whole AS WELL AS per URL, which is belt and braces rather
     /// than redundancy: [`Sink`]'s own marks redact each URL inside the
@@ -24,7 +24,7 @@ pub struct BarkConfig {
     /// direction.
     #[shep(secret)]
     pub sinks: BTreeMap<String, Sink>,
-    /// Named rules, `[[dog.bark.rules]]`. Empty means
+    /// Named rules, `[[bark.rules]]`. Empty means
     /// [`Rules::default_rules`].
     pub rules: Vec<Rule>,
     /// How often the reconciliation poll runs when nothing has gone wrong.
@@ -135,7 +135,7 @@ mod tests {
         }
     }
 
-    /// Fails if an unconfigured `[dog.bark]` polls in a hot loop, keeps no
+    /// Fails if an unconfigured `[bark]` polls in a hot loop, keeps no
     /// history, or times every delivery out instantly: what
     /// `#[derive(Default)]` would give this struct.
     #[test]
@@ -150,9 +150,9 @@ mod tests {
         assert_eq!(BarkConfig::default().sink_timeout.as_millis(), 10_000);
     }
 
-    /// Fails if `[dog.bark]` cannot parse the fragment `docs/dogs.md` and
+    /// Fails if `[bark]` cannot parse the fragment `docs/dogs.md` and
     /// `web/src/pages/docs/dogs.astro` publish, copy-pasted here relative
-    /// to `[dog.bark]` the way `runtime.config::<BarkConfig>()` sees it,
+    /// to `[bark]` the way `runtime.config::<BarkConfig>()` sees it,
     /// so `[sinks]`/`[[rules]]` rather than the full paths.
     ///
     /// The only other `toml::from_str::<BarkConfig>` in this module parses
@@ -175,7 +175,7 @@ mod tests {
     sinks = ["oncall"]
     "#;
         let config: BarkConfig =
-            toml::from_str(toml_str).expect("the documented [dog.bark] example must parse");
+            toml::from_str(toml_str).expect("the documented [bark] example must parse");
         assert_eq!(config.sinks.len(), 2);
         assert_eq!(config.rules.len(), 2);
         assert_eq!(

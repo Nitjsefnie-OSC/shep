@@ -121,7 +121,7 @@ fn gave_up_message(name: &str) -> String {
 }
 
 /// The rule-kind name [`Bark::rule`] records for a firing: the same
-/// snake_case spelling a `[dog.bark.rules]` entry's own `on = "..."` key
+/// snake_case spelling a `[bark.rules]` entry's own `on = "..."` key
 /// uses, so an operator reading `barks.jsonl` sees no vocabulary mismatch
 /// against what they configured.
 fn trigger_name(when: &Trigger) -> &'static str {
@@ -341,13 +341,13 @@ impl Rules {
     ///
     /// # Errors
     /// - [`RulesError::UnknownSink`]: a rule routes to a sink
-    ///   `[dog.bark.sinks]` does not define.
+    ///   `[bark.sinks]` does not define.
     /// - [`RulesError::NoSinks`]: a rule routes to no sink.
     /// - [`RulesError::UnknownKind`]: an `Event` rule names a kind that is
     ///   not on the wire.
     /// - [`RulesError::BadPattern`]: a `LogMatch` rule's pattern is empty,
     ///   not a regex, or compiles to more than 1 MiB.
-    /// - [`RulesError::UnusableSink`]: a `[dog.bark.sinks]` entry is a
+    /// - [`RulesError::UnusableSink`]: a `[bark.sinks]` entry is a
     ///   Discord or Slack webhook using `http://`, or carries credentials
     ///   before its host. Both are checked whether or not any rule routes
     ///   to that sink.
@@ -393,7 +393,7 @@ impl Rules {
         })
     }
 
-    /// The default rule set, for a `[dog.bark]` that configured none: one
+    /// The default rule set, for a `[bark]` that configured none: one
     /// `GaveUp` rule routed to every configured sink.
     #[must_use]
     pub fn default_rules(sinks: &BTreeMap<String, Sink>) -> Vec<Rule> {

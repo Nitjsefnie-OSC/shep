@@ -172,7 +172,7 @@ fn a_rule_routed_at_a_sink_that_does_not_exist_is_refused_at_startup() {
 }
 
 /// The name promises an alert, so the test asks for one. The rules come in
-/// through [`rules_for`], the door the dog itself uses for a `[dog.bark]`
+/// through [`rules_for`], the door the dog itself uses for a `[bark]`
 /// that has sinks and no rules, and both routes the dog walks are driven:
 /// an `Errored` event on the bus, and an errored entry in the
 /// reconciliation poll. Reading the default rule's own fields instead
