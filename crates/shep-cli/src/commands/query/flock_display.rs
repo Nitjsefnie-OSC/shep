@@ -6,7 +6,9 @@ use crate::exit::ExitCode;
 use crate::flourish;
 use crate::host;
 use crate::lookout::term;
-use crate::output::{RolledSheep, RolledSheepRows, Streams, emit, emit_flock, write_outcome};
+use crate::output::{
+    RolledSheep, RolledSheepRows, Streams, emit, emit_flock, emit_origin_flock, write_outcome,
+};
 use crate::remote::interrupt_within_grace;
 use crate::shutdown::Interrupt;
 use crate::style::Presentation;
@@ -102,6 +104,19 @@ pub fn flock_from_roll(streams: &mut Streams<'_>, paths: &ShepPaths) -> ExitCode
 /// one [`crate::output::Render`] type per verb rather than two tables from one
 /// `Vec<ProcessInfo>`.
 pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
+    flock_from(client, streams, None).await
+}
+
+/// [`flock`] for the shepherd `origin` names, as typed after `--host`, or this
+/// machine's for `None`.
+///
+/// Under `--format json` every row of a named origin carries it; see
+/// [`print_listing`].
+pub async fn flock_from(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    origin: Option<&str>,
+) -> ExitCode {
     match client.list_flock().await {
         Ok(procs) => {
             // Read before `procs` moves into `emit_flock`.
@@ -112,7 +127,7 @@ pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
                 let _ = write!(streams.out, "{art}");
             }
             let host = host_usage(client).await;
-            write_outcome(print_listing(streams, procs, host))
+            write_outcome(print_listing(streams, procs, host, origin))
         }
         Err(err) => typed_request_error(streams, &err),
     }
@@ -123,11 +138,19 @@ pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
 ///
 /// The one place a local listing and a host's go through, so a fleet listing
 /// prints each shepherd exactly as `shep flock` prints one.
+///
+/// A JSON listing with an `origin` tags every row with it, and one without
+/// is byte-identical to what [`emit_flock`] writes.
 pub(super) fn print_listing(
     streams: &mut Streams<'_>,
     procs: Vec<ProcessInfo>,
     host: Option<Option<HostUsage>>,
+    origin: Option<&str>,
 ) -> io::Result<()> {
+    if let (Format::Json, Some(origin)) = (streams.fmt, origin) {
+        emit_origin_flock(&mut *streams.out, "flock", origin, &procs, host)?;
+        return Ok(());
+    }
     if streams.fmt == Format::Table
         && let Some(usage) = host
     {

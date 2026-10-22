@@ -153,6 +153,17 @@ async fn run_with(dir: &Path, hosts: &[&str], timeout: Duration) -> Run {
 
 /// [`run_with`] under `guard`.
 async fn run_guarded(dir: &Path, hosts: &[&str], timeout: Duration, guard: VersionGuard) -> Run {
+    run_formatted(dir, hosts, timeout, guard, Format::Table).await
+}
+
+/// [`run_guarded`] in `fmt`.
+async fn run_formatted(
+    dir: &Path,
+    hosts: &[&str],
+    timeout: Duration,
+    guard: VersionGuard,
+    fmt: Format,
+) -> Run {
     let paths = paths_in(dir);
     let ssh = unattended(timeout).program(dir.join("ssh"));
     let hosts: Vec<String> = hosts.iter().map(|&host| host.to_owned()).collect();
@@ -162,7 +173,7 @@ async fn run_guarded(dir: &Path, hosts: &[&str], timeout: Duration, guard: Versi
             out: &mut out,
             err: &mut err,
             style: Presentation::BARE,
-            fmt: Format::Table,
+            fmt,
         },
         &paths,
         guard,
@@ -229,6 +240,77 @@ async fn a_fleet_listing_prints_local_first_then_each_host_in_list_order_under_i
     ]
     .join("\n");
     assert_eq!(run.out, expected);
+}
+
+#[tokio::test]
+async fn a_fleet_listing_as_json_is_one_envelope_in_list_order() {
+    let (dir, _held) = fixture().await;
+    host_answers(dir.path(), "amp2", "amp2-sheep");
+    host_refuses(dir.path(), "amp3");
+    host_answers(dir.path(), "amp1", "amp1-sheep");
+
+    let run = run_formatted(
+        dir.path(),
+        &["amp2", "amp3", "amp1"],
+        ROOMY,
+        VersionGuard::Warn,
+        Format::Json,
+    )
+    .await;
+
+    assert_eq!(run.code, ExitCode::DaemonUnreachable);
+    assert_eq!(run.out.lines().count(), 1, "one envelope: {}", run.out);
+    let json: serde_json::Value = serde_json::from_str(&run.out).unwrap();
+    assert_eq!(json["schema_version"], 1);
+    let rows: Vec<(&str, &serde_json::Value)> = json["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| (row["name"].as_str().unwrap(), &row["origin"]))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("local-sheep", &serde_json::Value::Null),
+            ("amp2-sheep", &serde_json::json!("amp2")),
+            ("amp1-sheep", &serde_json::json!("amp1")),
+        ]
+    );
+    assert_eq!(json["host"]["memory_total_bytes"], 51_539_607_552_u64);
+    let hosts = json["hosts"].as_object().unwrap();
+    assert_eq!(hosts.keys().collect::<Vec<_>>(), ["amp1", "amp2"]);
+    assert_eq!(hosts["amp2"]["memory_total_bytes"], 51_539_607_552_u64);
+    assert_eq!(run.err.lines().count(), 1, "{}", run.err);
+    assert!(run.err.contains("amp3: "), "{}", run.err);
+}
+
+#[tokio::test]
+async fn a_host_flag_listing_as_json_carries_origin_on_every_row() {
+    let (dir, _held) = fixture().await;
+    host_answers(dir.path(), "amp2", "amp2-sheep");
+    let single = Link::Host {
+        dest: "amp2",
+        options: SshOptions::default().program(dir.path().join("ssh")),
+    };
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let mut streams = Streams {
+        out: &mut out,
+        err: &mut err,
+        style: Presentation::BARE,
+        fmt: Format::Json,
+    };
+    let args = FlockArgs {
+        follow: false,
+        interval: crate::cli::FOLLOW_INTERVAL_FLOOR_SECONDS,
+    };
+
+    let code = flock_command_on(&mut streams, &single, VersionGuard::Warn, &args, false).await;
+
+    assert_eq!(code, ExitCode::Success, "{}", String::from_utf8_lossy(&err));
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["data"][0]["name"], "amp2-sheep");
+    assert_eq!(json["data"][0]["origin"], "amp2");
+    assert_eq!(json["host"]["memory_total_bytes"], 51_539_607_552_u64);
 }
 
 #[tokio::test]
@@ -592,20 +674,6 @@ mod dispatch {
             run.err
         );
         assert!(!run.err.contains("amp1"), "{}", run.err);
-    }
-
-    #[tokio::test]
-    async fn json_with_a_hosts_list_and_no_host_flag_is_refused_naming_host() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = paths_in(dir.path());
-        let _held = local_shepherd(&paths, env!("CARGO_PKG_VERSION"), "local-sheep").await;
-        list_hosts(&paths, "hosts = [\"amp1\"]\n");
-
-        let run = flock(&paths, Format::Json, false, false).await;
-
-        assert_eq!(run.code, ExitCode::Usage);
-        assert_eq!(run.out, "", "no local-only envelope may hide the hosts");
-        assert!(run.err.contains("--host <name>"), "{}", run.err);
     }
 
     #[tokio::test]
