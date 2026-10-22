@@ -283,8 +283,8 @@ mod tests {
         }
     }
 
-    /// Each field stays inside the range chrono renders it in, which is what
-    /// keeps a stamp-shaped prefix that no clock writes off limits.
+    /// The field ranges are what keep a stamp-shaped prefix that no clock
+    /// writes unstripped.
     #[test]
     fn a_stamp_shaped_prefix_with_an_impossible_field_is_left_alone() {
         for line in [
@@ -304,18 +304,37 @@ mod tests {
         }
     }
 
-    /// The check is the layout and its field ranges, not the calendar: a
-    /// stamp is only some clock's claim about the date, written down.
+    /// The check is the layout and its field ranges, not the calendar.
     #[test]
     fn a_stamp_shaped_prefix_on_a_date_no_calendar_has_is_stripped() {
         const SAID: &str = "the sheep said this";
         for stamp in [
             "2026-04-31T00:00:00.000+00:00 ",
             "2026-02-30T00:00:00.000+00:00 ",
-            "2026-01-01T00:00:60.000+00:00 ",
         ] {
             let line = format!("{stamp}{SAID}");
             assert_eq!(strip(&line), SAID, "{line:?}");
+        }
+    }
+
+    /// Second 60 is the one value `chrono` renders that a stricter reading of
+    /// the clock would refuse.
+    #[test]
+    fn a_leap_second_stamp_is_stripped() {
+        const SAID: &str = "the sheep said this";
+        let line = format!("2026-06-30T23:59:60.000+00:00 {SAID}");
+        assert_eq!(strip(&line), SAID, "{line:?}");
+    }
+
+    /// `shaped_like_a_stamp` reads `STAMP_FIELDS` by index, so every offset
+    /// it names has to be a two-digit field inside the width `strip` cuts.
+    #[test]
+    fn every_stamp_field_is_a_two_digit_field_inside_the_stamp_width() {
+        for &(at, low, high) in &STAMP_FIELDS {
+            assert!(low <= high, "{at} names an empty range");
+            assert!(at + 1 < LOG_STAMP_BYTES, "{at} is past the stamp's width");
+            assert_eq!(STAMP_SHAPE[at], b'#', "{at} is not a digit");
+            assert_eq!(STAMP_SHAPE[at + 1], b'#', "{} is not a digit pair", at + 1);
         }
     }
 
