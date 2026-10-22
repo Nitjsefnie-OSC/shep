@@ -506,3 +506,30 @@ fn an_absolute_home_directory_still_resolves_the_default_home() {
         std::path::Path::new(EXPLICIT_HOME).join(".shep")
     );
 }
+
+/// fails if the status line comes back for an invocation that named a
+/// shepherd: `shep --host amp2` would then print whether *this* machine's
+/// shepherd is running, an answer to a question nobody asked.
+#[test]
+fn a_status_line_is_skipped_for_any_argv_that_names_a_home_or_a_host() {
+    let argv = |tokens: &[&str]| tokens.iter().map(OsString::from).collect::<Vec<_>>();
+    for named in [
+        &["shep", "--host", "amp2"][..],
+        &["shep", "--host=amp2"],
+        &["shep", "--host", "amp2", "--help"],
+        &["shep", "--format", "json", "--host", "amp2"],
+        &["shep", "--home", "/tmp/h"],
+        &["shep", "--home=/tmp/h"],
+    ] {
+        assert!(names_another_shepherd(&argv(named)), "{named:?}");
+    }
+    for unnamed in [
+        &["shep"][..],
+        &["shep", "--help"],
+        &["shep", "--format", "json"],
+        &["shep", "--hostile"],
+        &["shep", "--homes=1"],
+    ] {
+        assert!(!names_another_shepherd(&argv(unnamed)), "{unnamed:?}");
+    }
+}

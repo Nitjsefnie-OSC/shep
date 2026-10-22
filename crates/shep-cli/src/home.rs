@@ -22,11 +22,11 @@ use crate::{cli, commands, exit, output, status, welcome};
 /// meant to be sourced, which would execute a status line as code.
 ///
 /// Silent when stderr is not a terminal, and silent when `argv` names a
-/// `--home`, since the parse that would say which home is the one that just
-/// failed.
+/// `--home` or a `--host`: the parse that would say which one is the one that
+/// just failed, and this machine's status line would answer for neither.
 #[cfg_attr(windows, allow(dead_code))]
 pub(crate) async fn print_shepherd_status(argv: &[OsString]) {
-    if !std::io::stderr().is_terminal() || argv.iter().any(|a| a == "--home") {
+    if !std::io::stderr().is_terminal() || names_another_shepherd(argv) {
         return;
     }
     let global = GlobalArgs {
@@ -44,6 +44,21 @@ pub(crate) async fn print_shepherd_status(argv: &[OsString]) {
     let status = status::ShepherdStatus::probe(&paths).await;
     let mut err = std::io::stderr();
     let _ = writeln!(err, "{}", status::one_line(&status));
+}
+
+/// Whether `argv` points at a shepherd other than the default one: `--home`
+/// or `--host`, spelled `--flag value` or `--flag=value`.
+///
+/// Only the flag's presence matters, so a value clap would have refused still
+/// counts.
+fn names_another_shepherd(argv: &[OsString]) -> bool {
+    argv.iter().any(|arg| {
+        let arg = arg.to_string_lossy();
+        ["--home", "--host"].iter().any(|flag| {
+            arg.strip_prefix(flag)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('='))
+        })
+    })
 }
 
 /// Turns `--home`/`$SHEP_HOME`/the user's home directory into a resolved
