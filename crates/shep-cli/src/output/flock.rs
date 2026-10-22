@@ -4,10 +4,11 @@
 //! `Option<Option<HostUsage>>` reasoning right beside it, and the two no
 //! longer fit in one file together with the rest of the module.
 
+use std::collections::BTreeMap;
 use std::io;
 
 use serde::Serialize;
-use shep_core::protocol::{HostUsage, ProcessInfo};
+use shep_core::protocol::{HostUsage, ProcessInfo, sort_flock};
 
 use crate::cli::Format;
 use crate::style::Presentation;
@@ -40,6 +41,138 @@ struct FlockEnvelope<'a> {
     data: FlockRows,
     #[serde(skip_serializing_if = "Option::is_none")]
     host: Option<Option<HostUsage>>,
+}
+
+/// One row of a listing that names where it came from: the shepherd's own
+/// [`ProcessInfo`], flattened, and `origin`.
+///
+/// Output-only. The shepherd does not know which host a client reached it
+/// through, so the wire stays as it is. `origin` is `null` for this machine's
+/// row and the `hosts` entry exactly as written for a remote one, and is
+/// never skipped, so a script can read `.origin` on every row.
+#[derive(Serialize)]
+struct OriginRow<'a> {
+    #[serde(flatten)]
+    info: &'a ProcessInfo,
+    origin: Option<&'a str>,
+}
+
+/// The `--format json` shape of a listing whose rows name their `origin`:
+/// [`FlockEnvelope`]'s fields with `data` as [`OriginRow`]s, and `hosts`
+/// beside `host`.
+///
+/// `host` is the same three-way answer [`FlockEnvelope`] documents, and
+/// `hosts` repeats it per remote host: an object is a reading, `null` a
+/// platform `sysinfo` cannot read, no entry a shepherd that would not answer
+/// or a host that failed. `hosts` is absent for a single `--host` listing,
+/// which keeps its `host` as it always had.
+///
+/// `#[cfg_attr(windows, allow(dead_code))]` for `FlockEnvelope`'s reason.
+#[derive(Serialize)]
+#[cfg_attr(windows, allow(dead_code))]
+struct OriginEnvelope<'a> {
+    schema_version: u32,
+    command: &'a str,
+    data: Vec<OriginRow<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host: Option<Option<HostUsage>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hosts: Option<BTreeMap<&'a str, Option<HostUsage>>>,
+}
+
+/// One shepherd's answer to a fleet listing.
+pub(crate) struct HostListing {
+    /// The host as written in the hosts list, or `None` for this machine.
+    pub host: Option<String>,
+    pub procs: Vec<ProcessInfo>,
+    /// As [`emit_flock`]'s `host`.
+    pub usage: Option<Option<HostUsage>>,
+}
+
+/// Writes a fleet listing as one JSON envelope: every shepherd's rows in
+/// `listings` order under `data`, each tagged with its `origin`, and every
+/// remote host's usage under `hosts`.
+///
+/// Each shepherd's rows go through [`sort_flock`], so `data` reads like the
+/// table form. A host that failed is simply not in `listings`.
+///
+/// # Errors
+/// The underlying write failed.
+#[cfg_attr(windows, allow(dead_code))]
+pub(crate) fn emit_fleet_flock(
+    out: &mut dyn io::Write,
+    command: &str,
+    mut listings: Vec<HostListing>,
+) -> io::Result<()> {
+    for listing in &mut listings {
+        sort_flock(&mut listing.procs);
+    }
+    let mut hosts = BTreeMap::new();
+    let mut local = None;
+    for listing in &listings {
+        match (&listing.host, listing.usage) {
+            (None, usage) => local = usage,
+            (Some(name), Some(usage)) => {
+                hosts.insert(name.as_str(), usage);
+            }
+            (Some(_), None) => {}
+        }
+    }
+    let data = listings
+        .iter()
+        .flat_map(|listing| {
+            listing.procs.iter().map(|info| OriginRow {
+                info,
+                origin: listing.host.as_deref(),
+            })
+        })
+        .collect();
+    write_envelope(
+        out,
+        &OriginEnvelope {
+            schema_version: SCHEMA_VERSION,
+            command,
+            data,
+            host: local,
+            hosts: Some(hosts),
+        },
+    )
+}
+
+/// Writes one shepherd's listing as JSON with `origin` on every row: what
+/// `--host <name>` prints, `host` being that shepherd's own usage.
+///
+/// # Errors
+/// The underlying write failed.
+#[cfg_attr(windows, allow(dead_code))]
+pub(crate) fn emit_origin_flock(
+    out: &mut dyn io::Write,
+    command: &str,
+    origin: &str,
+    listing: &[ProcessInfo],
+    host: Option<Option<HostUsage>>,
+) -> io::Result<()> {
+    write_envelope(
+        out,
+        &OriginEnvelope {
+            schema_version: SCHEMA_VERSION,
+            command,
+            data: listing
+                .iter()
+                .map(|info| OriginRow {
+                    info,
+                    origin: Some(origin),
+                })
+                .collect(),
+            host,
+            hosts: None,
+        },
+    )
+}
+
+fn write_envelope(out: &mut dyn io::Write, envelope: &OriginEnvelope<'_>) -> io::Result<()> {
+    serde_json::to_writer(&mut *out, envelope)?;
+    writeln!(out)
 }
 
 /// Renders one flock listing: the sheep table, then the dogs table
@@ -323,5 +456,141 @@ mod tests {
         .unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(!text.contains("Dogs"));
+    }
+
+    fn usage(cpu: f32) -> HostUsage {
+        HostUsage {
+            cpu_percent: Some(cpu),
+            memory_used_bytes: 4,
+            memory_total_bytes: 8,
+            disk_bytes_per_second: None,
+            network_bytes_per_second: None,
+        }
+    }
+
+    fn listing(
+        host: Option<&str>,
+        names: &[&str],
+        usage: Option<Option<HostUsage>>,
+    ) -> HostListing {
+        HostListing {
+            host: host.map(str::to_owned),
+            procs: names.iter().map(|name| sheep_info(name)).collect(),
+            usage,
+        }
+    }
+
+    fn fleet_json(listings: Vec<HostListing>) -> serde_json::Value {
+        let mut out = Vec::new();
+        emit_fleet_flock(&mut out, "flock", listings).unwrap();
+        serde_json::from_slice(&out).unwrap()
+    }
+
+    #[test]
+    fn origin_is_null_for_a_local_row_and_the_entry_as_written_for_a_remote_one() {
+        let json = fleet_json(vec![
+            listing(None, &["web"], None),
+            listing(Some("Deploy@AMP2"), &["api"], None),
+        ]);
+
+        assert_eq!(json["data"][0]["name"], "web");
+        assert_eq!(json["data"][0]["origin"], serde_json::Value::Null);
+        assert!(json["data"][0].as_object().unwrap().contains_key("origin"));
+        assert_eq!(json["data"][1]["name"], "api");
+        assert_eq!(json["data"][1]["origin"], "Deploy@AMP2");
+    }
+
+    #[test]
+    fn schema_version_stays_one_and_the_local_envelope_gains_no_key() {
+        let mut out = Vec::new();
+        emit_flock(
+            &mut out,
+            Format::Json,
+            "flock",
+            vec![sheep_info("web")],
+            Some(Some(usage(1.0))),
+            Presentation::BARE,
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+
+        assert_eq!(json["schema_version"], 1);
+        let mut keys: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["command", "data", "host", "schema_version"]);
+        assert!(!json["data"][0].as_object().unwrap().contains_key("origin"));
+    }
+
+    #[test]
+    fn a_failed_host_has_no_rows_and_no_hosts_entry() {
+        // A host that failed never reaches `emit_fleet_flock`: the caller
+        // lists only the shepherds that answered.
+        let json = fleet_json(vec![
+            listing(None, &["web"], None),
+            listing(Some("amp2"), &["api"], Some(Some(usage(2.0)))),
+        ]);
+
+        let rows: Vec<&str> = json["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["origin"].as_str().unwrap_or("local"))
+            .collect();
+        assert_eq!(rows, ["local", "amp2"]);
+        let hosts: Vec<&str> = json["hosts"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(hosts, ["amp2"], "amp1 failed and is nowhere");
+    }
+
+    #[test]
+    fn hosts_distinguishes_a_reading_from_an_unreadable_platform_from_a_shepherd_that_would_not_answer()
+     {
+        let json = fleet_json(vec![
+            listing(Some("reads"), &[], Some(Some(usage(3.0)))),
+            listing(Some("unreadable"), &[], Some(None)),
+            listing(Some("silent"), &[], None),
+        ]);
+
+        let hosts = json["hosts"].as_object().unwrap();
+        assert_eq!(hosts["reads"]["memory_total_bytes"], 8);
+        assert_eq!(hosts["unreadable"], serde_json::Value::Null);
+        assert!(hosts.contains_key("unreadable"));
+        assert!(!hosts.contains_key("silent"));
+    }
+
+    #[test]
+    fn rows_are_sorted_within_each_host_and_local_leads() {
+        let json = fleet_json(vec![
+            listing(None, &["web", "db"], None),
+            listing(Some("amp2"), &["zed", "api"], None),
+        ]);
+        let names: Vec<&str> = json["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["db", "web", "api", "zed"], "list order, each host sorted");
+    }
+
+    #[test]
+    fn a_single_host_listing_carries_origin_and_keeps_host_without_hosts() {
+        let mut out = Vec::new();
+        emit_origin_flock(
+            &mut out,
+            "flock",
+            "amp2",
+            &[sheep_info("web")],
+            Some(Some(usage(1.0))),
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(json["data"][0]["origin"], "amp2");
+        assert_eq!(json["host"]["memory_total_bytes"], 8);
+        assert!(!json.as_object().unwrap().contains_key("hosts"));
     }
 }
