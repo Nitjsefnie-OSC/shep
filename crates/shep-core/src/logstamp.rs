@@ -113,31 +113,118 @@ impl Stamper {
 /// `line` with its stamp removed, or `line` unchanged if it does not carry
 /// one.
 ///
-/// Recognises the stamp by parsing the first [`LOG_STAMP_BYTES`] as RFC
-/// 3339, rather than blindly cutting a fixed prefix: a line predating this
-/// format, or one appended by other tooling, keeps its first 30 characters
-/// instead of losing them.
+/// Recognises the stamp by its shape: the fixed layout [`stamp_into`] writes,
+/// byte for byte, each field inside the range chrono renders it in (month 01
+/// to 12, day 01 to 31, hour 00 to 23, minute 00 to 59, second 00 to 60,
+/// offset hour 00 to 23, offset minute 00 to 59). A line predating this
+/// format, or one appended by other tooling, keeps its first 30 characters.
 ///
-/// Cheap on the common path: a line too short or missing the separator
-/// space is rejected before parsing runs.
+/// The ranges are the layout's, not the calendar's: `2026-04-31` is a stamp,
+/// `2026-99-99T99:99:99.999+99:99` is not. No parse: the check is one pass
+/// over 30 bytes.
 #[must_use]
 pub fn strip(line: &str) -> &str {
     let Some((stamp, rest)) = line.split_at_checked(LOG_STAMP_BYTES) else {
         return line;
     };
-    let Some(stamp) = stamp.strip_suffix(' ') else {
-        return line;
-    };
-    if chrono::DateTime::parse_from_rfc3339(stamp).is_ok() {
+    if shaped_like_a_stamp(stamp.as_bytes()) {
         rest
     } else {
         line
     }
 }
 
+/// The stamp's shape, one entry per byte [`stamp_into`] writes: `#` is a
+/// digit, `z` is the offset's sign, every other byte is a literal.
+///
+/// Its width is [`LOG_STAMP_BYTES`] by type, so a format whose width diverges
+/// from the constant fails to compile rather than tripping a `debug_assert`.
+const STAMP_SHAPE: [u8; LOG_STAMP_BYTES] = *b"####-##-##T##:##:##.###z##:## ";
+
+/// Each two-digit field of the stamp: its byte offset, and the range chrono
+/// renders it in. Second 60 is a leap second.
+const STAMP_FIELDS: [(usize, u32, u32); 7] = [
+    (5, 1, 12),  // month
+    (8, 1, 31),  // day
+    (11, 0, 23), // hour
+    (14, 0, 59), // minute
+    (17, 0, 60), // second
+    (24, 0, 23), // offset hour
+    (27, 0, 59), // offset minute
+];
+
+/// Whether `bytes` is the stamp [`stamp_into`] writes.
+///
+/// [`STAMP_FIELDS`] holds every offset this reads, each inside
+/// [`LOG_STAMP_BYTES`].
+fn shaped_like_a_stamp(bytes: &[u8]) -> bool {
+    let Some(stamp) = bytes.first_chunk::<LOG_STAMP_BYTES>() else {
+        return false;
+    };
+    let shape = |byte: u8, marker: u8| match marker {
+        b'#' => byte.is_ascii_digit(),
+        b'z' => byte == b'+' || byte == b'-',
+        literal => byte == literal,
+    };
+    if !stamp
+        .iter()
+        .zip(&STAMP_SHAPE)
+        .all(|(byte, marker)| shape(*byte, *marker))
+    {
+        return false;
+    }
+    let field = |at: usize| u32::from(stamp[at] - b'0') * 10 + u32::from(stamp[at + 1] - b'0');
+    STAMP_FIELDS
+        .iter()
+        .all(|&(at, low, high)| (low..=high).contains(&field(at)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The zones the two stamper tests share.
+    const ZONES: [chrono_tz::Tz; 4] = [
+        chrono_tz::UTC,
+        chrono_tz::America::New_York,
+        chrono_tz::Asia::Kolkata,
+        chrono_tz::Australia::Lord_Howe,
+    ];
+
+    /// The instants they share, in Unix milliseconds: before 1970, twice
+    /// inside one second, and each side of New York's 2026 changes and Lord
+    /// Howe's half-hour one.
+    const INSTANTS: [i64; 9] = [
+        -1_500,
+        1_788_351_751_001,
+        1_788_351_751_999,
+        1_772_953_199_999,
+        1_772_953_200_000,
+        1_793_512_799_999,
+        1_793_512_800_000,
+        1_775_314_799_999,
+        1_775_314_800_000,
+    ];
+
+    /// Every stamp [`INSTANTS`] produces in `zone`, one [`Stamper`] per zone
+    /// so each instant after the first is either a reuse inside one second or
+    /// a re-render across an offset change.
+    fn stamps_written_in<Tz>(zone: &Tz) -> Vec<(i64, String)>
+    where
+        Tz: TimeZone,
+        Tz::Offset: fmt::Display,
+    {
+        let mut stamper = Stamper::default();
+        INSTANTS
+            .iter()
+            .map(|&millis| {
+                let now = DateTime::from_timestamp_millis(millis).expect("in chrono's range");
+                let mut written = String::new();
+                stamper.stamp_at(now, zone, &mut written);
+                (millis, written)
+            })
+            .collect()
+    }
 
     #[test]
     fn a_stamped_line_comes_back_the_way_it_went_in() {
@@ -157,34 +244,78 @@ mod tests {
             format!("{STAMP_HEAD}%.3f{STAMP_TAIL}"),
             LOG_TIMESTAMP_FORMAT
         );
-        let zones = [
-            chrono_tz::UTC,
-            chrono_tz::America::New_York,
-            chrono_tz::Asia::Kolkata,
-            chrono_tz::Australia::Lord_Howe,
-        ];
-        // Unix millis: before 1970, twice inside one second, and each side
-        // of New York's 2026 changes and Lord Howe's half-hour one.
-        let instants = [
-            -1_500,
-            1_788_351_751_001,
-            1_788_351_751_999,
-            1_772_953_199_999,
-            1_772_953_200_000,
-            1_793_512_799_999,
-            1_793_512_800_000,
-            1_775_314_799_999,
-            1_775_314_800_000,
-        ];
-        for zone in zones {
-            let mut stamper = Stamper::default();
-            for millis in instants {
+        for zone in ZONES {
+            for (millis, written) in stamps_written_in(&zone) {
                 let now = DateTime::from_timestamp_millis(millis).expect("in chrono's range");
-                let mut written = String::new();
-                stamper.stamp_at(now, &zone, &mut written);
                 let whole = format!("{} ", now.with_timezone(&zone).format(LOG_TIMESTAMP_FORMAT));
                 assert_eq!(written, whole, "{millis} in {zone}");
             }
+        }
+    }
+
+    /// What [`strip`] must keep agreeing on: every stamp a [`Stamper`] writes
+    /// is a prefix an RFC 3339 parse accepts, and [`strip`] takes it off.
+    #[test]
+    fn strip_agrees_with_the_rfc_3339_parse_for_every_stamp_a_stamper_writes() {
+        const SAID: &str = "the sheep said this";
+        // A negative offset and `+00:00`, spelled as fixed offsets rather
+        // than read out of a zone's rules.
+        let fixed = [
+            chrono::FixedOffset::east_opt(-11 * 60 * 60).expect("an offset chrono accepts"),
+            chrono::FixedOffset::east_opt(0).expect("an offset chrono accepts"),
+        ];
+        let mut written = Vec::new();
+        for zone in ZONES {
+            written.extend(stamps_written_in(&zone));
+        }
+        for zone in fixed {
+            written.extend(stamps_written_in(&zone));
+        }
+        assert_eq!(written.len(), (ZONES.len() + fixed.len()) * INSTANTS.len());
+        for (millis, stamp) in &written {
+            let line = format!("{stamp}{SAID}");
+            assert_eq!(stamp.len(), LOG_STAMP_BYTES, "{millis}: {stamp:?}");
+            assert!(
+                chrono::DateTime::parse_from_rfc3339(stamp.trim_end()).is_ok(),
+                "{millis}: {stamp:?} is what the stamper wrote, so the parse must take it"
+            );
+            assert_eq!(strip(&line), SAID, "{millis}: {stamp:?}");
+        }
+    }
+
+    /// Each field stays inside the range chrono renders it in, which is what
+    /// keeps a stamp-shaped prefix that no clock writes off limits.
+    #[test]
+    fn a_stamp_shaped_prefix_with_an_impossible_field_is_left_alone() {
+        for line in [
+            "2026-13-01T00:00:00.000+00:00 month 13",
+            "2026-00-01T00:00:00.000+00:00 month 00",
+            "2026-01-00T00:00:00.000+00:00 day 00",
+            "2026-01-01T24:00:00.000+00:00 hour 24",
+            "2026-01-01T00:60:00.000+00:00 minute 60",
+            "2026-01-01T00:00:00.000+24:00 offset hour 24",
+            "2026-01-01T00:00:00.000+00:60 offset minute 60",
+        ] {
+            assert_eq!(
+                strip(line),
+                line,
+                "{line:?} is shaped like a stamp, and is not one"
+            );
+        }
+    }
+
+    /// The check is the layout and its field ranges, not the calendar: a
+    /// stamp is only some clock's claim about the date, written down.
+    #[test]
+    fn a_stamp_shaped_prefix_on_a_date_no_calendar_has_is_stripped() {
+        const SAID: &str = "the sheep said this";
+        for stamp in [
+            "2026-04-31T00:00:00.000+00:00 ",
+            "2026-02-30T00:00:00.000+00:00 ",
+            "2026-01-01T00:00:60.000+00:00 ",
+        ] {
+            let line = format!("{stamp}{SAID}");
+            assert_eq!(strip(&line), SAID, "{line:?}");
         }
     }
 
