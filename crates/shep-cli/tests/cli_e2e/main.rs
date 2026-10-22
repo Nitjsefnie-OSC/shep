@@ -35,9 +35,14 @@ use tempfile::TempDir;
 mod adopt;
 mod assertions;
 mod available_dogs;
+// Shared with `init.rs` and `term_panic_order.rs`, which are separate targets.
+// The file gates itself to unix.
+#[path = "../common/mod.rs"]
+mod common;
 mod constants;
 mod daemon_log;
 mod dev;
+mod dial_stdio;
 mod dispatch;
 mod dog_channel;
 mod dog_channel_samples;
