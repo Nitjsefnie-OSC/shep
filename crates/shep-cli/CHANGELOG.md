@@ -13,6 +13,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-22
+
+### Added
+
+- Explain › in the config pane's glyph legend
+- Add hidden dial-stdio verb bridging stdio to the shepherd socket
+- Parse a global --host destination
+- Flock reaches a host over ssh and every other verb refuses --host
+- Shep host add dials the host once and warns when it cannot be reached
+- --host reaches describe, fold, flock --follow and a followed bleats
+- `--host` reaches stop, restart, reload and delete
+- `--host` reaches stock, enable, disable, signal, whisper and trigger
+- `--host` reaches start for a sheep name and refuses a path with the ssh command
+- Emit a fleet flock as one JSON envelope with origin on every row and a hosts map
+- List every host's flock as JSON, tagging each row with its origin
+- Let lookout reach a host with a ssh-dialled shepherd source
+- Refuse the lookout keys that read this machine when watching a host
+- Read no log file or host sample for a lookout watching a host
+- Name the host in the lookout title and say the bleats feed and strip need this machine
+- Let lookout watch a host through HostShepherd
+- Let bleats read a host's log tails through its shepherd
+- Explain `›` in the config pane's glyph legend
+- Decode a status or dog source this build does not know **(BREAKING)**
+- Read a top-level hosts list from shep.toml
+- Add shep host to edit the hosts list in shep.toml
+- Add hidden `shep dial-stdio` bridging stdio to the shepherd socket
+- Connect_ssh reaches another host's shepherd through the system ssh
+- Add a hosts list to shep.toml and shep host add, remove and list
+- `shep --host <dest> flock` lists another host's flock, other verbs refuse `--host`
+- `--host` reaches describe, fold, `flock --follow` and a followed `bleats`
+- Read verbs warn on a crate-version skew instead of refusing
+- List the flock and warn on a crate-version skew for read verbs, refuse the rest
+- Shep flock lists every listed host's flock, local first, and a dead host does not hide the rest
+- List every listed host's flock with plain `shep flock`, local first
+- `--host <dest> muster` boots that host's shepherd from its saved roll
+- Tag fleet flock JSON rows with `origin` and add a `hosts` usage map
+- Boot a host's shepherd from its saved roll with `shep --host <dest> muster`
+- Let `shep --host <dest> lookout` show a host's flock
+- Answer a request for the tail of one sheep's log
+- Let `shep --host <dest> bleats` read a host's log tails through its shepherd
+
+### Changed
+
+- Describe and fold take the link, so a host run reads no local home
+- Share fetch's connect-and-send and status guards with bark sinks
+- Hold the all-strings list guard in one helper and test its rejection
+
+### Fixed
+
+- Fit the › legend entry inside the 160-column pane
+- Do not expect a named pipe to half-close in dial-stdio tests
+- Refuse an adopted dog in the asked-for format and keep a host flock off the local home
+- Print no local status line for an argv that names a --host
+- Host add help says it dials a listed host too, and a timeout no longer blames ssh-agent
+- Host add's no-shepherd hint names a command that exists
+- Review round 1 of --host reads: explicit host bleats, aside before parse, interrupt typed, terminal seam
+- Refuse a start target read on this machine before dialling the host
+- Carry every flag in the ssh hint, quote it for two shells, and fail on a bad listing
+- Keep the host bleats pane to its rows and word the lookout doc truly
+- Flush stderr when a remote bleats read stops the verb
+- Read the rest of the flock when a host no longer has one sheep
+- Fall back to description when init.blurb is not a string
+- Bound the sink reply's header block and diagnostic line
+- Accept base64 padding only at the end of the whole input
+- Count an unrecognized status in the muster flourish and refuse one in a handover blob
+- Report a malformed hosts key instead of reading it as empty
+- Bound the local dial, apply the guard to listed hosts, report a failed roll write
+- Bridge when the autostart probe meets a protocol mismatch
+
+
 ## [0.15.2] - 2026-10-17
 
 ### Changed

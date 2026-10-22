@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-22
+
+### Added
+
+- Connect to another host's shepherd through the system ssh
+- `--host <dest> muster` boots that host's shepherd from its saved roll
+- Add tail_log to Client and ReconnectingClient
+- Decode a status or dog source this build does not know **(BREAKING)**
+- Connect_ssh reaches another host's shepherd through the system ssh
+- Boot a host's shepherd from its saved roll with `shep --host <dest> muster`
+- Answer a request for the tail of one sheep's log
+
+### Changed
+
+- Handshake and run a connection over any byte stream
+
+### Fixed
+
+- Bound only the ssh handshake and skip the spawn on a spent timeout
+- Move sort_flock tests out of the over-long process.rs and drop 'catch-alls'
+
+
 ## [0.15.2] - 2026-10-17
 
 

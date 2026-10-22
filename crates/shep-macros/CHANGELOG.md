@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-22
+
+### Fixed
+
+- Refuse an empty #[shep()] like a bare #[shep]
+
+
 ## [0.15.2] - 2026-10-17
 
 
