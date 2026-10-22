@@ -46,7 +46,8 @@ impl LogSource<'_> {
     /// The last `lines` lines of `stream`'s file for `info`, recorded at `path`.
     ///
     /// # Errors
-    /// A host's shepherd did not give an answer: see [`Self::stop`].
+    /// A host's shepherd did not give an answer: see [`Self::stop`]. A sheep
+    /// the host no longer has is not one: it reads as [`FileTail::Missing`].
     pub(super) async fn read(
         &self,
         info: &ProcessInfo,
@@ -71,7 +72,19 @@ impl LogSource<'_> {
             }
             Self::Host { client, name } => {
                 let lines = u32::try_from(lines).unwrap_or(u32::MAX);
-                Ok(match client.tail_log(info.id, stream, lines).await? {
+                let tail = match client.tail_log(info.id, stream, lines).await {
+                    Ok(tail) => tail,
+                    // The host is answering, only this sheep left its rows
+                    // between the listing and the read: skip it, as a local
+                    // run does not stop over one sheep.
+                    Err(RequestError::Rpc(rpc)) if rpc.code == RpcErrorCode::NotFound => {
+                        return Ok(FileTail::Missing(format!(
+                            "no {label} log to read: the sheep is gone from {name}"
+                        )));
+                    }
+                    Err(err) => return Err(err),
+                };
+                Ok(match tail {
                     LogTail::Lines { lines, .. } => FileTail::Lines(lines),
                     LogTail::NoPath => FileTail::NoPath,
                     // The path as the host recorded it, never made absolute

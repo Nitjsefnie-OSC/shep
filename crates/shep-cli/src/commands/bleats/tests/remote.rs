@@ -373,6 +373,37 @@ async fn an_unsupported_answer_fails_once_naming_the_host_and_the_remedy() {
     assert_eq!(remote.out, "");
 }
 
+#[tokio::test]
+async fn a_sheep_gone_from_the_host_is_a_notice_and_the_rest_are_still_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let rows = flock_on_disk(dir.path());
+    let files = serving_files(&rows);
+
+    let remote = run(
+        Some(HOST),
+        Format::Table,
+        &rows,
+        &no_follow_args("all"),
+        move |id, stream, lines| {
+            if id == 1 {
+                Err(refusing(RpcErrorCode::NotFound))
+            } else {
+                files(id, stream, lines)
+            }
+        },
+    )
+    .await;
+
+    assert_eq!(remote.code, ExitCode::Success);
+    assert_eq!(
+        remote.err,
+        "notice[log_missing]: web: no out log to read: the sheep is gone from amp2\n\
+         notice[log_missing]: web: no err log to read: the sheep is gone from amp2\n"
+    );
+    assert!(remote.out.contains("web 2 out line 1"), "{}", remote.out);
+    assert!(remote.out.contains("solo 3 out line 1"), "{}", remote.out);
+}
+
 /// A stderr that holds what it is given until it is flushed, as a buffered
 /// one does.
 #[derive(Default)]
