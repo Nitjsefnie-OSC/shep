@@ -958,7 +958,8 @@ Questions a design would have to answer, roughly in the order they bite:
   shepherd that runs these is a long-lived privileged daemon executing
   arbitrary shell out of a config file. A CLI that runs them uses the
   operator's own shell and privileges, which is far easier to reason about,
-  and costs nothing that matters while multi-host remains a non-goal.
+  and costs nothing that matters while a shepherd supervising a process on another
+  host remains a non-goal.
 - **Which directory.** Mostly already decided: Phase 17 resolved a
   Flockfile's relative `script` against the app's own directory rather than
   the daemon's cwd, and an app's `cwd` defaults to the Flockfile's directory.

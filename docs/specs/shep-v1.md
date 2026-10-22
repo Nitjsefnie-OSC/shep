@@ -16,10 +16,12 @@ policies, log capture, graceful reload, file watching, native
 observability (Prometheus, webhooks, TUI, MCP), and first-party plugins
 (dogs). Clean-room build inspired by pm2's feature list; MIT OR Apache-2.0.
 
-**Non-goals (v1):** container orchestration; multi-host anything; a
-third-party module registry (the dog contract replaces it); pm2 artifact
-compatibility (formats live only in `shep import`); deployment tooling;
-in-process Node instrumentation.
+**Non-goals (v1):** container orchestration; a shepherd supervising a
+process on another host; a third-party module registry (the dog contract
+replaces it); pm2 artifact compatibility (formats live only in `shep
+import`); deployment tooling; in-process Node instrumentation. The CLI may
+still reach another host's shepherd over ssh, see "A shepherd supervises only
+its own host" in `docs/decisions.md`.
 
 ## 2. Versioned scope
 

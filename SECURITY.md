@@ -52,6 +52,28 @@ uses a per-user named pipe with equivalent access-control semantics. A stale
 socket file from a crashed daemon is probe-connected before being unlinked,
 so a live daemon's socket is never clobbered by a second instance.
 
+### Reaching another host over ssh
+
+`shep --host <dest>` reaches another host's shepherd by running
+`ssh -- <dest> shep dial-stdio`.
+
+- The control plane still listens on no network port. The socket stays a unix
+  socket or a named pipe.
+- `dial-stdio` runs as the ssh login user and connects to that user's own
+  socket, so the same-uid peer check applies unchanged.
+- The boundary is ssh's authentication, the remote account and `known_hosts`.
+  shep adds no keys, certificates or credentials and weakens none of the
+  above.
+- Anyone who can ssh in as that user can already control that user's flock,
+  so nothing widens.
+- The destination reaches ssh after `--`, and a leading `-` is refused, so a
+  destination cannot smuggle an ssh option.
+- `~/.ssh/config` applies in full, `ProxyCommand` and `LocalCommand`
+  included, and runs as the operator. That is the same trust as typing `ssh`
+  by hand.
+- The remote finds `shep` through that account's non-interactive `PATH`, so
+  the first `shep` on it is what runs.
+
 ### Spawned-process environment
 
 Each managed sheep inherits an environment built from its Flockfile `env`
@@ -313,6 +335,8 @@ TLS termination, auth).
   (metrics, serve, or a supervised app) to a non-loopback address is the
   operator's decision and outside shep's threat model until 1.0. shep does
   not audit, filter, or rate-limit traffic to processes it supervises.
+- No shep-owned transport security between hosts. It is ssh's. shep adds
+  no listener, key store or certificate.
 - **No protection against a compromised managed process.** A sheep that is
   itself compromised can do anything its own OS-level permissions allow,
   including reading files the daemon's user can read.
