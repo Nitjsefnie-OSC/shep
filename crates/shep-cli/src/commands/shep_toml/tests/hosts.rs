@@ -27,7 +27,7 @@ fn add_host_writes_a_top_level_array_and_keeps_comments_and_order() {
     assert_eq!(cfg.hosts, ["amp2", "deploy@build"], "top level: {written}");
     assert!(!cfg.daemon.log_json);
     assert_eq!(
-        ShepToml::read_only(&path).unwrap().host_names(),
+        ShepToml::read_only(&path).unwrap().host_names().unwrap(),
         ["amp2", "deploy@build"]
     );
 }
@@ -40,7 +40,10 @@ fn add_host_twice_keeps_one_entry() {
     assert!(ShepToml::try_edit(&path, |doc| doc.add_host("amp2")).unwrap());
     assert!(!ShepToml::try_edit(&path, |doc| doc.add_host("amp2")).unwrap());
 
-    assert_eq!(ShepToml::read_only(&path).unwrap().host_names(), ["amp2"]);
+    assert_eq!(
+        ShepToml::read_only(&path).unwrap().host_names().unwrap(),
+        ["amp2"]
+    );
 }
 
 #[test]
@@ -50,13 +53,16 @@ fn remove_host_leaves_every_other_key_alone() {
     let original = "hosts = [\"amp2\", \"amp3\"]  # the fleet\n[daemon]\nlog_json = true\n";
     std::fs::write(&path, original).unwrap();
 
-    assert!(ShepToml::edit(&path, |doc| doc.remove_host("amp2")).unwrap());
-    assert!(!ShepToml::edit(&path, |doc| doc.remove_host("stranger")).unwrap());
+    assert!(ShepToml::try_edit(&path, |doc| doc.remove_host("amp2")).unwrap());
+    assert!(!ShepToml::try_edit(&path, |doc| doc.remove_host("stranger")).unwrap());
 
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(written.contains("[daemon]\nlog_json = true"), "{written}");
     assert!(written.contains("# the fleet"), "{written}");
-    assert_eq!(ShepToml::read_only(&path).unwrap().host_names(), ["amp3"]);
+    assert_eq!(
+        ShepToml::read_only(&path).unwrap().host_names().unwrap(),
+        ["amp3"]
+    );
 }
 
 #[test]
@@ -75,4 +81,29 @@ fn a_hosts_key_that_is_not_an_array_is_wrong_shape_and_the_file_is_untouched() {
         std::fs::read_to_string(&path).unwrap(),
         "hosts = \"amp2\"\n"
     );
+}
+
+#[test]
+fn reading_or_removing_from_a_malformed_hosts_key_is_wrong_shape() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("shep.toml");
+
+    for original in ["hosts = \"amp2\"\n", "hosts = [\"amp2\", 5]\n"] {
+        std::fs::write(&path, original).unwrap();
+
+        let doc = ShepToml::read_only(&path).unwrap();
+        assert!(
+            matches!(
+                doc.host_names(),
+                Err(ShepTomlError::WrongShape { key: "hosts", .. })
+            ),
+            "{original}"
+        );
+        let removed = ShepToml::try_edit(&path, |doc| doc.remove_host("amp2"));
+        assert!(
+            matches!(removed, Err(ShepTomlError::WrongShape { key: "hosts", .. })),
+            "{original}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
 }

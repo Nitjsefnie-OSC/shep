@@ -122,11 +122,11 @@ fn add(streams: &mut Streams<'_>, paths: &ShepPaths, text: &str) -> ExitCode {
         Err(code) => return code,
     };
     let edited = ShepToml::try_edit(&paths.daemon_config, |doc| {
-        validated(doc.host_names())?;
+        validated(doc.host_names()?)?;
         if !doc.add_host(destination.as_str())? {
-            return Err(HostError::AlreadyListed(doc.host_names()));
+            return Err(HostError::AlreadyListed(doc.host_names()?));
         }
-        Ok(doc.host_names())
+        Ok(doc.host_names()?)
     });
     match edited {
         Ok(names) => emit_hosts(streams, names),
@@ -149,11 +149,11 @@ fn remove(streams: &mut Streams<'_>, paths: &ShepPaths, text: &str) -> ExitCode 
         Err(code) => return code,
     };
     let edited = ShepToml::try_edit(&paths.daemon_config, |doc| {
-        validated(doc.host_names())?;
-        if !doc.remove_host(destination.as_str()) {
+        validated(doc.host_names()?)?;
+        if !doc.remove_host(destination.as_str())? {
             return Err(HostError::Absent);
         }
-        Ok(doc.host_names())
+        Ok(doc.host_names()?)
     });
     match edited {
         Ok(names) => emit_hosts(streams, names),
@@ -169,7 +169,7 @@ fn remove(streams: &mut Streams<'_>, paths: &ShepPaths, text: &str) -> ExitCode 
 fn list(streams: &mut Streams<'_>, paths: &ShepPaths) -> ExitCode {
     let names = ShepToml::read_only(&paths.daemon_config)
         .map_err(HostError::from)
-        .and_then(|doc| validated(doc.host_names()));
+        .and_then(|doc| Ok(validated(doc.host_names()?)?));
     match names {
         Ok(names) => emit_hosts(streams, names),
         Err(err) => fail(streams, &err),
@@ -335,14 +335,22 @@ mod tests {
     }
 
     #[test]
-    fn a_hosts_key_that_is_not_an_array_exits_invalid_config() {
+    fn a_malformed_hosts_key_exits_invalid_config_whatever_the_verb() {
         let dir = tempfile::tempdir().unwrap();
         let paths = paths_in(&dir);
-        std::fs::write(&paths.daemon_config, "hosts = \"amp2\"\n").unwrap();
 
-        let (code, _, err) = run(&paths, Format::Json, &["add", "amp3"]);
-
-        assert_eq!(code, ExitCode::InvalidConfig, "{err}");
-        assert!(err.contains("hosts"), "{err}");
+        for original in ["hosts = \"amp2\"\n", "hosts = [\"amp2\", 5]\n"] {
+            std::fs::write(&paths.daemon_config, original).unwrap();
+            for words in [&["list"][..], &["add", "amp3"], &["remove", "amp2"]] {
+                let (code, out, err) = run(&paths, Format::Json, words);
+                assert_eq!(code, ExitCode::InvalidConfig, "{original} {words:?}: {err}");
+                assert!(out.is_empty(), "{original} {words:?}: {out}");
+                assert!(err.contains("hosts"), "{original} {words:?}: {err}");
+            }
+            assert_eq!(
+                std::fs::read_to_string(&paths.daemon_config).unwrap(),
+                original
+            );
+        }
     }
 }

@@ -412,51 +412,65 @@ impl ShepToml {
     ///
     /// # Errors
     ///
-    /// [`ShepTomlError::WrongShape`] when `hosts` is not an array.
+    /// [`ShepTomlError::WrongShape`] when `hosts` is not an array of strings.
     pub fn add_host(&mut self, entry: &str) -> Result<bool, ShepTomlError> {
-        let path = self.path.clone();
+        if self.host_names()?.iter().any(|name| name == entry) {
+            return Ok(false);
+        }
         let item = self
             .doc
             .entry("hosts")
             .or_insert_with(|| Item::Value(Value::Array(Array::new())));
-        let found = item.type_name();
-        let hosts = item.as_array_mut().ok_or(ShepTomlError::WrongShape {
-            path,
-            key: "hosts",
-            expected: "an array",
-            found,
-        })?;
-        if hosts.iter().any(|v| v.as_str() == Some(entry)) {
-            return Ok(false);
+        if let Some(hosts) = item.as_array_mut() {
+            hosts.push(entry);
         }
-        hosts.push(entry);
         Ok(true)
     }
 
     /// Removes `entry` from the top-level `hosts` array and returns whether
     /// it was there. Touches nothing else.
-    pub fn remove_host(&mut self, entry: &str) -> bool {
-        let Some(hosts) = self.doc.get_mut("hosts").and_then(Item::as_array_mut) else {
-            return false;
-        };
-        let before = hosts.len();
-        hosts.retain(|v| v.as_str() != Some(entry));
-        hosts.len() != before
+    ///
+    /// # Errors
+    ///
+    /// [`ShepTomlError::WrongShape`] when `hosts` is not an array of strings.
+    pub fn remove_host(&mut self, entry: &str) -> Result<bool, ShepTomlError> {
+        if !self.host_names()?.iter().any(|name| name == entry) {
+            return Ok(false);
+        }
+        if let Some(hosts) = self.doc.get_mut("hosts").and_then(Item::as_array_mut) {
+            hosts.retain(|v| v.as_str() != Some(entry));
+        }
+        Ok(true)
     }
 
-    /// The entries in the top-level `hosts` array, in file order.
-    #[must_use]
-    pub fn host_names(&self) -> Vec<String> {
-        self.doc
-            .get("hosts")
-            .and_then(Item::as_array)
-            .map(|hosts| {
-                hosts
-                    .iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
+    /// The entries in the top-level `hosts` array, in file order. A missing
+    /// key is an empty list.
+    ///
+    /// # Errors
+    ///
+    /// [`ShepTomlError::WrongShape`] when `hosts` is not an array, or holds
+    /// anything but strings: dropping such an entry would hide it.
+    pub fn host_names(&self) -> Result<Vec<String>, ShepTomlError> {
+        let Some(item) = self.doc.get("hosts") else {
+            return Ok(Vec::new());
+        };
+        let wrong_shape = |found| ShepTomlError::WrongShape {
+            path: self.path.clone(),
+            key: "hosts",
+            expected: "an array of strings",
+            found,
+        };
+        let hosts = item
+            .as_array()
+            .ok_or_else(|| wrong_shape(item.type_name()))?;
+        hosts
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(String::from)
+                    .ok_or_else(|| wrong_shape(v.type_name()))
             })
-            .unwrap_or_default()
+            .collect()
     }
 
     /// [`Self::adopted_dog_path`] without the write side, for `lib.rs`'s
