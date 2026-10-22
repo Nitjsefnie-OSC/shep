@@ -21,7 +21,9 @@
 //! change here to subtract a field rather than add one.
 //! [`Request::HostUsage`] and [`Response::HostUsage`] rode in after it
 //! and forced nothing either, on the terms [`Request::PutSecrets`] set
-//! above. Version 10 bumped on a third new `AppConfig` field, `dogs`, for
+//! above. [`Request::TailLog`] and [`Response::LogTail`] rode in on the
+//! same terms: an older shepherd decodes [`Request::Unrecognized`] and
+//! answers [`RpcErrorCode::Unsupported`] by name. Version 10 bumped on a third new `AppConfig` field, `dogs`, for
 //! the reason version 5 did, and version 11 on a fourth, `log_timestamps`.
 //! The `Unrecognized` fallbacks on [`crate::status::ProcStatus`] and
 //! [`DogSource`] rode in the same way and forced nothing: this build only
@@ -41,9 +43,10 @@ pub use events::{BusEvent, ProcessEventKind};
 pub use frame::ServerFrame;
 pub use request::{
     ActionOutcome, ActionReply, DogSectionToml, DogSource, EnvValue, Envelope, ExitInfo, Hello,
-    HelloAck, HelloReply, HostUsage, Lamb, LineOutcome, LineReply, ProcessInfo, ProcessInfoBuilder,
-    Reply, Request, Response, RpcError, RpcErrorCode, SelectorSpec, SheepApplied, SheepConfigView,
-    SheepDrift, SheepRefusal, SignalOutcome, SignalReply, Smit, SmitError, sort_flock,
+    HelloAck, HelloReply, HostUsage, Lamb, LineOutcome, LineReply, LogStream, LogTail, ProcessInfo,
+    ProcessInfoBuilder, Reply, Request, Response, RpcError, RpcErrorCode, SelectorSpec,
+    SheepApplied, SheepConfigView, SheepDrift, SheepRefusal, SignalOutcome, SignalReply, Smit,
+    SmitError, sort_flock,
 };
 pub use shep_channel::{
     CHANNEL_VERSION, ChildMessage, LambLabel, LambLabelError, MetricType, ShepherdMessage,

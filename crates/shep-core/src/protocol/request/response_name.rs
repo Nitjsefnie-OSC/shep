@@ -38,6 +38,7 @@ impl Response {
             Self::Deleted(_) => "Deleted",
             Self::Reopened(_) => "Reopened",
             Self::Flushed(_) => "Flushed",
+            Self::LogTail(_) => "LogTail",
             Self::Triggered(_) => "Triggered",
             Self::Signalled(_) => "Signalled",
             Self::SentLine(_) => "SentLine",

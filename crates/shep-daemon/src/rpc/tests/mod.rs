@@ -144,6 +144,7 @@ mod dog_secrets_rotation;
 mod dog_table_events;
 mod dog_tables;
 mod lambs_staleness;
+mod log_tail;
 mod misc_verbs;
 mod push;
 mod sheep_dog_names;

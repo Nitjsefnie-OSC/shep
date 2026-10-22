@@ -252,6 +252,11 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         Request::Flush { selector } => {
             selector_call(id, selector, |s| ctx.supervisor.flush(s), Response::Flushed).await
         }
+        Request::TailLog {
+            id: sheep,
+            stream,
+            lines,
+        } => reply(super::log_tail::answer(sheep, stream, lines, ctx).await),
         Request::Trigger {
             selector,
             action,

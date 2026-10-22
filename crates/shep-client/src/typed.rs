@@ -7,7 +7,8 @@
 use core::future::Future;
 
 use shep_core::protocol::{
-    DogSectionToml, HostUsage, ProcessInfo, Request, Response, RpcError, RpcErrorCode, SelectorSpec,
+    DogSectionToml, HostUsage, LogStream, LogTail, ProcessInfo, Request, Response, RpcError,
+    RpcErrorCode, SelectorSpec,
 };
 use shep_core::secrets::references_in;
 
@@ -67,6 +68,26 @@ impl Client {
     pub async fn host_usage(&self) -> Result<Option<HostUsage>, RequestError> {
         host(self.request(Request::HostUsage).await?)
     }
+
+    /// The last `lines` lines of one sheep's out or err log, read by the
+    /// shepherd on its own host.
+    ///
+    /// A file that is absent, unreadable or not recorded is a [`LogTail`]
+    /// variant, not an error.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::request`], including [`RpcErrorCode::NotFound`] for an id
+    /// no sheep holds, and [`RequestError::UnexpectedReply`] for any answer
+    /// but [`Response::LogTail`].
+    pub async fn tail_log(
+        &self,
+        id: u32,
+        stream: LogStream,
+        lines: u32,
+    ) -> Result<LogTail, RequestError> {
+        log_tail(self.request(Request::TailLog { id, stream, lines }).await?)
+    }
 }
 
 impl ReconnectingClient {
@@ -108,6 +129,20 @@ impl ReconnectingClient {
     /// As [`Client::host_usage`].
     pub async fn host_usage(&self) -> Result<Option<HostUsage>, RequestError> {
         host(self.request(Request::HostUsage).await?)
+    }
+
+    /// Shorthand for [`Client::tail_log`] on the current generation.
+    ///
+    /// # Errors
+    ///
+    /// As [`Client::tail_log`].
+    pub async fn tail_log(
+        &self,
+        id: u32,
+        stream: LogStream,
+        lines: u32,
+    ) -> Result<LogTail, RequestError> {
+        log_tail(self.request(Request::TailLog { id, stream, lines }).await?)
     }
 }
 
@@ -180,6 +215,13 @@ fn host(answer: Response) -> Result<Option<HostUsage>, RequestError> {
     match answer {
         Response::HostUsage(usage) => Ok(usage),
         other => Err(unexpected("HostUsage", &other)),
+    }
+}
+
+fn log_tail(answer: Response) -> Result<LogTail, RequestError> {
+    match answer {
+        Response::LogTail(tail) => Ok(tail),
+        other => Err(unexpected("TailLog", &other)),
     }
 }
 
@@ -335,6 +377,96 @@ mod tests {
         .await;
 
         assert_eq!(client.host_usage().await.unwrap(), Some(reading));
+    }
+
+    fn two_lines() -> LogTail {
+        LogTail::Lines {
+            lines: vec!["listening".to_owned(), "ready".to_owned()],
+            truncated: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn tail_log_sends_the_request_and_returns_the_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let (client, mut envelopes) = fake_client_answering(&control_address(dir.path()), |_| {
+            Response::LogTail(two_lines())
+        })
+        .await;
+
+        let tail = client.tail_log(3, LogStream::Err, 20).await.unwrap();
+
+        assert_eq!(tail, two_lines());
+        let envelope = sent(&mut envelopes).await;
+        assert_eq!(
+            envelope.body,
+            Request::TailLog {
+                id: 3,
+                stream: LogStream::Err,
+                lines: 20
+            }
+        );
+        let budget = u64::try_from(crate::client::DEFAULT_DEADLINE.as_millis()).unwrap();
+        assert_eq!(envelope.deadline_ms, Some(budget), "the default deadline");
+    }
+
+    #[tokio::test]
+    async fn tail_log_refuses_any_other_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let (client, _envelopes) =
+            fake_client_answering(&control_address(dir.path()), |_| Response::Pong).await;
+
+        let err = client.tail_log(3, LogStream::Out, 20).await.unwrap_err();
+
+        assert_eq!(
+            err,
+            RequestError::UnexpectedReply {
+                asked: "TailLog",
+                answered: "Pong",
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reconnecting_client_tail_log_sends_the_request_and_returns_the_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = control_address(dir.path());
+        let served = serve_one_request(&socket, sample_ack(), Response::LogTail(two_lines())).await;
+        let client = ReconnectingClient::connect(&socket).await.unwrap();
+
+        let tail = client.tail_log(3, LogStream::Out, 5).await.unwrap();
+
+        assert_eq!(tail, two_lines());
+        let envelope = tokio::time::timeout(Duration::from_secs(5), served)
+            .await
+            .expect("the request reached the fake daemon")
+            .unwrap();
+        assert_eq!(
+            envelope.body,
+            Request::TailLog {
+                id: 3,
+                stream: LogStream::Out,
+                lines: 5
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reconnecting_client_tail_log_refuses_any_other_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = control_address(dir.path());
+        let _served = serve_one_request(&socket, sample_ack(), Response::Pong).await;
+        let client = ReconnectingClient::connect(&socket).await.unwrap();
+
+        let err = client.tail_log(3, LogStream::Out, 5).await.unwrap_err();
+
+        assert_eq!(
+            err,
+            RequestError::UnexpectedReply {
+                asked: "TailLog",
+                answered: "Pong",
+            }
+        );
     }
 
     /// The error names both variants and never the section's body.
