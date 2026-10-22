@@ -223,7 +223,10 @@ fn unreachable_hint(destination: &Destination, err: &ConnectError) -> String {
             ..
         } => format!("{KEPT} {AGENT}"),
         ConnectError::HandshakeTimeout { after } => {
-            format!("{KEPT} `{destination}` did not answer in time ({after:?}). {AGENT}")
+            format!(
+                "{KEPT} `{destination}` did not answer in time ({after:?}). Check that it is up \
+                 and reachable from here."
+            )
         }
         _ => KEPT.to_owned(),
     }
@@ -567,6 +570,10 @@ mod tests {
         assert_eq!(code, ExitCode::Success, "{err}");
         assert!(started.elapsed() < Duration::from_secs(10));
         assert!(err.contains("did not answer in time"), "{err}");
+        assert!(
+            !err.contains("ssh-agent"),
+            "a timeout is not a key problem: {err}"
+        );
         assert!(saved(&paths).contains("amp2"));
     }
 
