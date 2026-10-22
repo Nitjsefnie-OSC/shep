@@ -10,7 +10,8 @@
 use std::os::fd::RawFd;
 use std::time::SystemTime;
 
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 use shep_core::config::AppConfig;
 use shep_core::protocol::{DogSource, ExitInfo};
 use shep_core::status::ProcStatus;
@@ -18,6 +19,33 @@ use shep_core::status::ProcStatus;
 use crate::entry::{ProcessEntry, ReloadState};
 use crate::privilege::SpawnIdentity;
 use crate::supervisor::PendingManual;
+
+/// Refuses the decode-only `Unrecognized` fallback in a blob.
+///
+/// A blob is read back into live supervisor state, which no code path
+/// handles an unreadable status in: adopting one would leave a sheep that
+/// `stop` silently ignores and that every client is sent as `"unrecognized"`.
+/// Failing the load keeps the handover's rollback, as it did before the wire
+/// enum grew a fallback.
+fn known_status<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ProcStatus, D::Error> {
+    match ProcStatus::deserialize(deserializer)? {
+        ProcStatus::Unrecognized => Err(D::Error::custom(
+            "a carried sheep's status is not one this build knows",
+        )),
+        status => Ok(status),
+    }
+}
+
+/// [`known_status`] for [`CarriedSheep::dog`]: an unreadable source would
+/// lose the marker `shep dogs` and the dog watch read.
+fn known_dog<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<DogSource>, D::Error> {
+    match Option::<DogSource>::deserialize(deserializer)? {
+        Some(DogSource::Unrecognized) => Err(D::Error::custom(
+            "a carried dog's source is not one this build knows",
+        )),
+        source => Ok(source),
+    }
+}
 
 /// One sheep, as the successor will find it.
 ///
@@ -45,6 +73,9 @@ pub struct CarriedSheep {
     /// is still recognised as stale afterwards.
     pub(super) epoch: u64,
     /// The instance's lifecycle status.
+    ///
+    /// A status this build cannot read fails the load, see [`known_status`].
+    #[serde(deserialize_with = "known_status")]
     pub(super) status: ProcStatus,
     /// How this instance most recently stopped existing, if it has.
     pub(super) last_exit: Option<ExitInfo>,
@@ -96,6 +127,7 @@ pub struct CarriedSheep {
     ///
     /// Losing the marker is invisible to a pid check: `Actor::matching_ids`,
     /// `dogs::spawn_dog_watch` and `rpc::dog_staleness` all read it.
+    #[serde(default, deserialize_with = "known_dog")]
     pub(super) dog: Option<DogSource>,
     /// The config a load parked for this instance's next spawn, or `None`
     /// for an instance nothing is owed.

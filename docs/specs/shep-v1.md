@@ -104,6 +104,8 @@ view, killed with the sheep by the process-group/Job-Object tree kill.
 **States:** `starting`, `online`, `stopping`, `stopped`, plus `errored`
 (restart budget exhausted or spawn failure) and `waiting-restart` (backoff
 delay pending). Serialized exactly as these strings on the wire.
+A listing from a newer shepherd can also show `unrecognized` for a status
+this build does not know, instead of failing the whole listing.
 
 `stopping` is not a step every stop passes through — it is reachable from
 exactly one place: a reload's `SpawnNew` step marks the instance being
