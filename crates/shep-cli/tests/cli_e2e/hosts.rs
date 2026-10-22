@@ -34,7 +34,7 @@ fn host_add_list_remove_round_trip_on_a_fresh_home() {
         assert_success(&added);
         let warning = String::from_utf8(added.stderr).unwrap();
         assert!(warning.contains("host_unreachable"), "{warning}");
-        assert!(warning.contains("shep --host"), "{warning}");
+        assert!(warning.contains("shep muster"), "{warning}");
     }
     assert!(
         !home.join("run").join("shep.sock").exists(),

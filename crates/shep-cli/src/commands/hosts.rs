@@ -216,7 +216,7 @@ fn unreachable_hint(destination: &Destination, err: &ConnectError) -> String {
             ..
         } => format!(
             "{KEPT} The remote shepherd is not running. \
-             `shep --host {destination} muster` boots it from its roll."
+             `ssh {destination} shep muster` boots it from its roll."
         ),
         ConnectError::Ssh {
             cause: SshCause::Transport { .. },
@@ -555,7 +555,7 @@ mod tests {
 
         assert_eq!(code, ExitCode::Success, "{err}");
         assert!(err.contains("not running"), "{err}");
-        assert!(err.contains("`shep --host amp2 muster`"), "{err}");
+        assert!(err.contains("`ssh amp2 shep muster`"), "{err}");
     }
 
     #[tokio::test]
