@@ -53,9 +53,9 @@ VERBS=(
   start add serve stop restart reload delete stock flock dogs enable disable
   adopt describe trigger signal whisper fold bleats lookout whistle
   reopen flush barks set get unset secret "secret set" "secret get"
-  "secret unset" "secret list" copy ping kill save muster runtime dev import
-  "import pm2" "import env" startup unstartup completions init style
-  welcome
+  "secret unset" "secret list" host "host add" "host remove" "host list" copy
+  ping kill save muster runtime dev import "import pm2" "import env" startup
+  unstartup completions init style welcome
 )
 
 {

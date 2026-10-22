@@ -41,7 +41,7 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "The shepherd",
         &[
-            "ping", "kill", "reopen", "flush", "set", "get", "unset", "copy", "secret",
+            "ping", "kill", "reopen", "flush", "set", "get", "unset", "copy", "secret", "host",
         ],
     ),
     ("Dogs and agents", &["dogs", "adopt", "whistle"]),
@@ -71,7 +71,7 @@ Run things       start add serve stop restart reload delete stock enable disable
 See what's up    flock describe bleats lookout fold barks
 Survive reboots  save muster startup unstartup
 Talk to a sheep  trigger signal whisper
-The shepherd     ping kill reopen flush set get unset copy secret
+The shepherd     ping kill reopen flush set get unset copy secret host
 Dogs and agents  dogs adopt whistle
 Foreground runs  runtime dev
 Coming from pm2  import

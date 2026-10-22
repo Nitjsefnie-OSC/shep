@@ -17,6 +17,7 @@
 mod dogs;
 mod flock;
 mod help;
+mod hosts;
 mod import;
 mod logs;
 mod sheep;
@@ -30,6 +31,7 @@ use help::{HELP_TEMPLATE, version_text};
 
 pub use dogs::{AdoptArgs, DisableArgs, DogArgs, DogsArgs, EnableArgs};
 pub use flock::{FlockArgs, FoldArgs, LookoutArgs};
+pub use hosts::{HostArgs, HostCommand};
 pub use import::{ImportArgs, ImportCommand, ImportEnvArgs, ImportPm2Args};
 pub use logs::{BarksArgs, BleatsArgs, FlushArgs, ReopenArgs};
 // Two defaults whose only caller outside their own module is a test

@@ -8,6 +8,7 @@ use commands::admin;
 use commands::bleats;
 use commands::dev;
 use commands::dogs;
+use commands::hosts;
 use commands::import;
 use commands::kv;
 use commands::lifecycle;
@@ -474,6 +475,9 @@ pub(crate) async fn run(
         // Same rule, same file-first reason: `shep secret set` before a
         // first `shep start` is the ordinary first-run order.
         Commands::Secret(ref args) => secret::secret(&mut streams, &paths, args),
+        // Reads and writes `shep.toml` and never connects: the list names
+        // machines to ask later, and editing it needs no shepherd running.
+        Commands::Host(ref args) => hosts::host(&mut streams, &paths, args),
         // Reads two sheep's configs and writes one, so it needs the shepherd:
         // the copy is of what the running flock holds, not of a file.
         Commands::Copy(ref args) => match connect_client(&mut streams, &paths, guard).await {

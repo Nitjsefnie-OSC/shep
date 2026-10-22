@@ -641,8 +641,8 @@ mod tests {
     // in file order.
     #[test]
     fn a_hosts_key_parses_as_a_list_of_strings() {
-        let cfg = DaemonConfig::load(Some("hosts = [\"amp2\", \"deploy@build\"]\n"), &no_env)
-            .unwrap();
+        let cfg =
+            DaemonConfig::load(Some("hosts = [\"amp2\", \"deploy@build\"]\n"), &no_env).unwrap();
         assert_eq!(cfg.hosts, ["amp2", "deploy@build"]);
     }
 

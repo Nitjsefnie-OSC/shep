@@ -71,5 +71,8 @@ fn a_hosts_key_that_is_not_an_array_is_wrong_shape_and_the_file_is_untouched() {
         matches!(err, ShepTomlError::WrongShape { key: "hosts", .. }),
         "{err}"
     );
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "hosts = \"amp2\"\n");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "hosts = \"amp2\"\n"
+    );
 }
