@@ -117,7 +117,7 @@ impl LogSource<'_> {
     }
 }
 
-/// The word `bleats` prints for `stream`, the same one a [`BleatLine`] carries.
+/// The word `bleats` prints for `stream`, the same one a `BleatLine` carries.
 pub(super) fn stream_label(stream: LogStream) -> &'static str {
     match stream {
         LogStream::Err => "err",

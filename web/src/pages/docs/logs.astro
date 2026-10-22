@@ -179,8 +179,8 @@ $ shep bleats <name> --no-follow  # tail only`}</CodeBlock>
       <code>--lines 0</code> is how you ask for the old behaviour.
     </p>
     <p>
-      With <code>--host</code> a follow shows live output only, with no
-      history, because the log files are on the other machine.
+      With <code>--host</code> the host's shepherd reads its own files, so
+      every flag here works and a follow prints the same history first.
     </p>
     <CodeBlock>{bleatsDemo}</CodeBlock>
     <p>

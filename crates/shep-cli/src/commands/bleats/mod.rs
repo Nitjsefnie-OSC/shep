@@ -9,6 +9,9 @@
 //!
 //! `--no-follow` never subscribes: it tails each matched sheep's log files
 //! and exits. `--follow` prints that same tail first, then subscribes.
+//!
+//! Under `--host` those files are the remote's, so [`source::LogSource`] asks
+//! its shepherd for each tail and the rest of the loop is shared.
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -560,10 +563,10 @@ async fn bleats_over(
     // log for one sheep must not stop the follow over the whole flock. A host
     // that gave no answer to a read stops it, since it would give none to the
     // subscribe either.
-    if args.lines > 0 {
-        if let Err(code) = tail_log_files(streams, quiet, &cache, &selector, args, source).await {
-            return code;
-        }
+    if args.lines > 0
+        && let Err(code) = tail_log_files(streams, quiet, &cache, &selector, args, source).await
+    {
+        return code;
     }
 
     let mut stream = match subscribe(client, streams).await {
