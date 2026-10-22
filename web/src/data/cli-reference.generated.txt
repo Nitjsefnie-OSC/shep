@@ -49,6 +49,13 @@ Upgrading        cargo install shep replaces the binary, not the running shepher
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -144,14 +151,12 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
-      --home <HOME>
-          Talk to a different shepherd
+      --host <DEST>
+          Reach another host's shepherd over ssh
           
-          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
-          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
-          flock from every directory.
-          
-          [env: SHEP_HOME=]
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --interpreter <INTERPRETER>
           Interpreter to run the script with, overriding both shep.toml's extension mapping and a
@@ -170,6 +175,15 @@ Options:
           running it through node, which is arbitrary code execution, so it never happens because a
           file merely has that extension. Without this flag `shep start server.js` starts
           `server.js` as a script, which is what it has always meant.
+
+      --home <HOME>
+          Talk to a different shepherd
+          
+          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
+          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
+          flock from every directory.
+          
+          [env: SHEP_HOME=]
 
       --no-log-timestamps
           Write this sheep's log lines without the timestamp shep puts in front of each one.
@@ -287,14 +301,12 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
-      --home <HOME>
-          Talk to a different shepherd
+      --host <DEST>
+          Reach another host's shepherd over ssh
           
-          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
-          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
-          flock from every directory.
-          
-          [env: SHEP_HOME=]
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --interpreter <INTERPRETER>
           Interpreter to run the script with, overriding both shep.toml's extension mapping and a
@@ -313,6 +325,15 @@ Options:
           running it through node, which is arbitrary code execution, so it never happens because a
           file merely has that extension. Without this flag `shep start server.js` starts
           `server.js` as a script, which is what it has always meant.
+
+      --home <HOME>
+          Talk to a different shepherd
+          
+          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
+          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
+          flock from every directory.
+          
+          [env: SHEP_HOME=]
 
       --no-log-timestamps
           Write this sheep's log lines without the timestamp shep puts in front of each one.
@@ -411,6 +432,13 @@ Options:
       --fold <FOLD>
           Fold to place this sheep in
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -497,6 +525,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -576,6 +611,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -680,6 +722,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -751,6 +800,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -817,6 +873,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -886,6 +949,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -942,6 +1012,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1004,6 +1081,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -1064,6 +1148,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1135,6 +1226,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -1199,6 +1297,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1265,6 +1370,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -1329,6 +1441,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1395,6 +1514,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -1445,6 +1571,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1519,6 +1652,16 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
+      --out
+          Only stdout
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -1527,9 +1670,6 @@ Options:
           flock from every directory.
           
           [env: SHEP_HOME=]
-
-      --out
-          Only stdout
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1590,6 +1730,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -1649,6 +1796,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -1701,6 +1855,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1756,6 +1917,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -1809,6 +1977,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1871,6 +2046,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -1921,6 +2103,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1975,6 +2164,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2043,6 +2239,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -2106,6 +2309,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -2161,6 +2371,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -2215,6 +2432,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -2261,6 +2485,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2357,6 +2588,16 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
+      --yes
+          Write without asking
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -2365,9 +2606,6 @@ Options:
           flock from every directory.
           
           [env: SHEP_HOME=]
-
-      --yes
-          Write without asking
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2406,6 +2644,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2453,6 +2698,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2504,6 +2756,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -2550,6 +2809,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2618,6 +2884,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -2682,6 +2955,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -2733,6 +3013,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2798,6 +3085,13 @@ Options:
 
       --force
           Overwrite an existing Flockfile
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2888,6 +3182,16 @@ Options:
           environment` when it has none, and so is never the `all` slot that every environment
           reads. Naming `all` here writes that slot, as `shep secret set --env all` does.
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
+      --dry-run
+          Print what would be written, and write nothing
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -2896,9 +3200,6 @@ Options:
           flock from every directory.
           
           [env: SHEP_HOME=]
-
-      --dry-run
-          Print what would be written, and write nothing
 
       --force
           Overwrite keys that already hold a different value
@@ -2974,6 +3275,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -3042,6 +3350,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -3096,6 +3411,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3154,6 +3476,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3217,6 +3546,13 @@ Options:
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
 
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
+
       --home <HOME>
           Talk to a different shepherd
           
@@ -3266,6 +3602,13 @@ Options:
           - full:  Sheep, boxes and colour
           - plain: Boxes and colour, no sheep
           - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. Only
+          `flock` takes it so far; any other verb refuses it rather than act on this machine.
+          `--home` still names this machine's home, never the host's.
 
       --home <HOME>
           Talk to a different shepherd
