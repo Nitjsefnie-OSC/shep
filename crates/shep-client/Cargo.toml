@@ -78,7 +78,10 @@ serde_json.workspace = true
 schemars = { workspace = true, optional = true }
 # `signal` is `dogs::Stop`'s: every dog needs a handler installed before its
 # loop starts, and adds no crate shep-cli has not already pulled in.
-tokio = { workspace = true, features = ["net", "rt", "time", "sync", "macros", "signal"] }
+# `process` and `io-util` are `ssh`'s: `Client::connect_ssh` spawns the system
+# `ssh` and joins the child's two pipes into one stream with `tokio::io::join`.
+# Both are already in the tree through shep-cli, so this adds no crate.
+tokio = { workspace = true, features = ["net", "rt", "time", "sync", "macros", "signal", "process", "io-util"] }
 # `dogs::parse_section`: a dog's section arrives as TOML text, and the
 # parse is shared so none of them can quote a credential in its error.
 toml.workspace = true

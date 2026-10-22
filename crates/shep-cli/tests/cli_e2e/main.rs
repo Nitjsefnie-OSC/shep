@@ -69,6 +69,7 @@ mod rendering;
 mod runtime;
 mod serve;
 mod spawn_failures;
+mod ssh_stand_in;
 mod startup;
 
 pub(crate) use assertions::*;

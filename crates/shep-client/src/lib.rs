@@ -32,6 +32,7 @@ mod connection;
 pub mod dogs;
 mod events;
 mod reconnect;
+mod ssh;
 // inherent methods on `Client` and `ReconnectingClient`, one per typed request
 mod typed;
 // public module, not a flattened re-export, so `spawn::DAEMON_ALREADY_RUNNING`
@@ -75,6 +76,7 @@ pub use futures_util::Stream;
 pub use reconnect::{
     LinkLost, LinkState, RECONNECT_MAX_DELAY, RECONNECT_MIN_DELAY, Reconnected, ReconnectingClient,
 };
+pub use ssh::{SshCause, SshOptions};
 
 // Portable for the same reason as `connection` above: every fake here binds
 // a `shep_core::transport::Listener` rather than a `UnixListener`.
