@@ -13,11 +13,13 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
 
+use shep_core::destination::Destination;
 use shep_core::protocol::{HelloAck, Request, Response, RpcError, WireError};
 
 use crate::actor::{self, Command};
 use crate::connection::{ConnectError, Connection, HANDSHAKE_TIMEOUT};
 use crate::events::EventStream;
+use crate::ssh::{self, SshOptions};
 
 /// Daemon-side budget applied when a caller names none. Mirrors the daemon's
 /// own `DEFAULT_DEADLINE_MS = 5_000` (`shep-daemon/src/rpc.rs`).
@@ -165,6 +167,18 @@ impl core::error::Error for RequestError {
     }
 }
 
+/// How a [`Client`] was dialled, kept so a reconnect dials the same way.
+#[derive(Debug, Clone)]
+pub(crate) enum Dial {
+    /// A shepherd's socket on this host.
+    Socket(PathBuf),
+    /// A shepherd on another host, through the system ssh.
+    Ssh {
+        destination: Destination,
+        options: SshOptions,
+    },
+}
+
 /// A live connection to the daemon.
 ///
 /// Backed by one actor task (see the crate's `actor` module) that owns the
@@ -174,19 +188,20 @@ impl core::error::Error for RequestError {
 pub struct Client {
     commands: mpsc::Sender<Command>,
     ack: HelloAck,
-    socket: PathBuf,
+    dial: Dial,
     /// The name this client announces itself as a dog under, re-sent on
     /// every [`Client::reconnect`]. See [`Self::connect_as`].
     dog_name: Option<String>,
 }
 
-// Manual, not derived: a path, an ack and a dog's name carry no secret, and
-// none of the three is what a derived impl would lead with. The command
+// Manual, not derived: a path, a host, an ack and a dog's name carry no
+// secret, and none of them is what a derived impl would lead with. The command
 // channel says nothing a reader can act on.
 impl fmt::Debug for Client {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Client")
-            .field("socket", &self.socket)
+            .field("socket", &self.socket())
+            .field("host", &self.host())
             .field("ack", &self.ack)
             .field("dog_name", &self.dog_name)
             .finish_non_exhaustive()
@@ -238,14 +253,130 @@ impl Client {
         dog_name: Option<&str>,
     ) -> Result<Self, ConnectError> {
         let connection = Connection::open(socket, timeout, dog_name).await?;
+        Ok(Self::from_connection(
+            connection,
+            Dial::Socket(socket.to_path_buf()),
+            dog_name,
+        ))
+    }
+
+    fn from_connection(connection: Connection, dial: Dial, dog_name: Option<&str>) -> Self {
         let (frames, ack) = connection.into_parts();
         let commands = actor::spawn(frames);
-        Ok(Self {
+        Self {
             commands,
             ack,
-            socket: socket.to_path_buf(),
+            dial,
             dog_name: dog_name.map(str::to_owned),
-        })
+        }
+    }
+
+    /// Connects to the shepherd on another host through the system `ssh`,
+    /// with [`SshOptions::default`].
+    ///
+    /// Shorthand for [`Self::connect_ssh_with`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use shep_client::Client;
+    /// use shep_client::shep_core::protocol::Request;
+    ///
+    /// # async fn list() -> Result<(), Box<dyn core::error::Error>> {
+    /// let client = Client::connect_ssh("deploy@build-01").await?;
+    /// let flock = client.request(Request::ListFlock).await?;
+    /// # let _ = flock;
+    /// # Ok(())
+    /// # }
+    /// # let _ = list;
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::connect_ssh_with`].
+    pub async fn connect_ssh(dest: &str) -> Result<Self, ConnectError> {
+        Self::connect_ssh_with(dest, &SshOptions::default()).await
+    }
+
+    /// Connects to the shepherd on another host by running
+    /// `ssh -T [-o BatchMode=yes] -- <dest> shep dial-stdio` and handshaking
+    /// over the child's pipes.
+    ///
+    /// `dest` is checked with [`Destination::parse`] before anything runs:
+    /// ssh would read `-oProxyCommand=..` as an option and run it. With
+    /// [`SshOptions::timeout`] unset nothing bounds the ssh phase, so a person
+    /// may answer a passphrase or host-key prompt. The ssh child ends with
+    /// the returned client.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use shep_client::{Client, SshOptions};
+    ///
+    /// # async fn dial() -> Result<(), Box<dyn core::error::Error>> {
+    /// let options = SshOptions::default()
+    ///     .batch_mode(true)
+    ///     .timeout(Some(Duration::from_secs(10)));
+    /// let client = Client::connect_ssh_with("build-01", &options).await?;
+    /// assert_eq!(client.host(), Some("build-01"));
+    /// # Ok(())
+    /// # }
+    /// # let _ = dial;
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`ConnectError::Destination`]: `dest` is not a destination ssh can be handed safely.
+    /// - [`ConnectError::Ssh`]: ssh could not run, could not reach the host, or the
+    ///   far side could not serve the connection; the cause says which.
+    /// - [`ConnectError::Wire`]: `Hello` failed to encode, or the reply failed to decode.
+    /// - [`ConnectError::Io`]: a framed read or write failed.
+    /// - [`ConnectError::HandshakeClosed`]: the stream closed before a `HelloReply`.
+    /// - [`ConnectError::HandshakeTimeout`]: ssh and the handshake took longer than
+    ///   [`SshOptions::timeout`].
+    /// - [`ConnectError::ProtocolMismatch`]: the shepherd refused on protocol-version skew.
+    pub async fn connect_ssh_with(dest: &str, options: &SshOptions) -> Result<Self, ConnectError> {
+        let destination = Destination::parse(dest).map_err(ConnectError::Destination)?;
+        let dial = Dial::Ssh {
+            destination,
+            options: options.clone(),
+        };
+        Self::connect_dial(&dial, options.timeout_or(None), None).await
+    }
+
+    /// Dials `dial` again, as a reconnect does, or for the first time.
+    ///
+    /// `budget` bounds the attempt: a socket dial takes it as is, and an ssh
+    /// dial takes the smaller of it and [`SshOptions::timeout`]. `None` leaves
+    /// an ssh dial to its options alone.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::connect_with_timeout`] and [`Self::connect_ssh_with`].
+    pub(crate) async fn connect_dial(
+        dial: &Dial,
+        budget: Option<Duration>,
+        dog_name: Option<&str>,
+    ) -> Result<Self, ConnectError> {
+        match dial {
+            Dial::Socket(socket) => {
+                Self::connect_as(socket, budget.unwrap_or(HANDSHAKE_TIMEOUT), dog_name).await
+            }
+            Dial::Ssh {
+                destination,
+                options,
+            } => {
+                let connection =
+                    ssh::open(destination, options, options.timeout_or(budget), dog_name).await?;
+                Ok(Self::from_connection(connection, dial.clone(), dog_name))
+            }
+        }
+    }
+
+    /// How this client was dialled.
+    pub(crate) fn dial(&self) -> &Dial {
+        &self.dial
     }
 
     /// The name this client announces itself as a dog under, or `None` for
@@ -288,10 +419,24 @@ impl Client {
     ///
     /// `HelloAck` doesn't carry the socket path, so the `Client` keeps the
     /// `PathBuf` it connected with, for a caller that needs it after
-    /// teardown.
+    /// teardown. Empty for a client from [`Self::connect_ssh`], which has no
+    /// socket on this host: see [`Self::host`].
     #[must_use]
     pub fn socket(&self) -> &Path {
-        &self.socket
+        match &self.dial {
+            Dial::Socket(socket) => socket,
+            Dial::Ssh { .. } => Path::new(""),
+        }
+    }
+
+    /// The destination this client reached over ssh, or `None` for a client
+    /// connected to a socket on this host.
+    #[must_use]
+    pub fn host(&self) -> Option<&str> {
+        match &self.dial {
+            Dial::Socket(_) => None,
+            Dial::Ssh { destination, .. } => Some(destination.as_str()),
+        }
     }
 
     /// Sends `body` with [`DEFAULT_DEADLINE`].

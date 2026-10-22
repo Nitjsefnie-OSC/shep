@@ -17,10 +17,13 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
+use shep_core::destination::DestinationError;
 use shep_core::protocol::{
     Hello, HelloAck, HelloReply, PROTOCOL_VERSION, WireError, codec, decode_frame, encode_frame,
 };
 use shep_core::transport;
+
+use crate::ssh::SshCause;
 
 /// Budget for one connect-plus-handshake attempt.
 ///
@@ -85,18 +88,33 @@ pub enum ConnectError {
         /// The daemon's refusal message, verbatim.
         message: String,
     },
+    /// The destination handed to [`Client::connect_ssh_with`] is not one
+    /// [`Destination::parse`] accepts. Nothing was spawned.
+    ///
+    /// [`Client::connect_ssh_with`]: crate::Client::connect_ssh_with
+    /// [`Destination::parse`]: shep_core::destination::Destination::parse
+    Destination(DestinationError),
+    /// Dialling `destination` through ssh failed; `cause` says how.
+    Ssh {
+        /// The destination that was dialled.
+        destination: String,
+        /// What went wrong, on this side or the far one.
+        cause: SshCause,
+    },
 }
 
 impl ConnectError {
     /// The [`shep_core::exit`] code a process stopping on this error uses:
-    /// a refusal is a protocol mismatch, and every other stage is nothing
-    /// usable answering.
+    /// a refusal is a protocol mismatch, a destination ssh would misread is a
+    /// usage error, and every other stage is nothing usable answering.
     #[must_use]
     pub const fn exit_code(&self) -> u8 {
         use shep_core::exit;
         match self {
             Self::ProtocolMismatch { .. } => exit::PROTOCOL_MISMATCH,
+            Self::Destination(_) => exit::USAGE,
             Self::Connect { .. }
+            | Self::Ssh { .. }
             | Self::Io(_)
             | Self::Wire(_)
             | Self::HandshakeClosed
@@ -119,6 +137,8 @@ impl fmt::Display for ConnectError {
             Self::HandshakeTimeout { after } => {
                 write!(f, "the handshake did not complete within {after:?}")
             }
+            Self::Destination(err) => write!(f, "invalid destination: {err}"),
+            Self::Ssh { destination, cause } => cause.write_for(f, destination),
             // `message` states the daemon's side of the skew; this arm adds
             // what it cannot: what to do, and which shep to do it against.
             // Both directions of the remedy are named, since `client` and
@@ -148,6 +168,10 @@ impl core::error::Error for ConnectError {
         match self {
             Self::Connect { source, .. } | Self::Io(source) => Some(source),
             Self::Wire(err) => Some(err),
+            Self::Destination(err) => Some(err),
+            // the cause's own source, not the cause: `Display` already
+            // spelled the cause out, and a chain would print it twice
+            Self::Ssh { cause, .. } => core::error::Error::source(cause),
             Self::HandshakeClosed
             | Self::HandshakeTimeout { .. }
             | Self::ProtocolMismatch { .. } => None,
