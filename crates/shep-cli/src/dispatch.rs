@@ -14,7 +14,7 @@ use commands::import;
 use commands::kv;
 use commands::lifecycle;
 use commands::lifecycle::Load;
-use commands::lifecycle::toggle::{Toggle, toggle};
+use commands::lifecycle::toggle::{Toggle, toggle, toggle_on_host};
 use commands::logs;
 use commands::muster;
 use commands::query;
@@ -568,6 +568,13 @@ async fn run_on_host(
         Commands::Flock(args) => return flock_command(&mut streams, &link, guard, args).await,
         // Connects for itself, for a dog half that has no host to run on.
         Commands::Delete(args) => return lifecycle::delete(&mut streams, &link, guard, args).await,
+        // Connects for itself, to skip the dog half a host has no `shep.toml` for.
+        Commands::Enable(args) => {
+            return toggle_on_host(&mut streams, &link, guard, Toggle::Enable, &args.name).await;
+        }
+        Commands::Disable(args) => {
+            return toggle_on_host(&mut streams, &link, guard, Toggle::Disable, &args.name).await;
+        }
         _ => {}
     }
     let client = match connect_client(&mut streams, &link, guard).await {
@@ -583,6 +590,10 @@ async fn run_on_host(
         Commands::Restart(args) => lifecycle::restart(&client, &mut streams, None, args).await,
         Commands::Reload(args) => lifecycle::reload(&client, &mut streams, args).await,
         Commands::Bleats(args) => bleats::bleats_on_host(&client, &mut streams, quiet, args).await,
+        Commands::Stock(args) => lifecycle::stock(&client, &mut streams, args).await,
+        Commands::Trigger(args) => trigger::trigger(&client, &mut streams, args).await,
+        Commands::Signal(args) => signal::signal(&client, &mut streams, args).await,
+        Commands::Whisper(args) => whisper::whisper(&client, &mut streams, args).await,
         other => unreachable!("`host_scope` refused {other:?} before it got here"),
     }
 }
@@ -757,9 +768,8 @@ mod tests {
                 home.to_str().unwrap(),
                 "--host",
                 "amp2",
-                "stock",
+                "flush",
                 "web",
-                "2",
             ])
             .unwrap();
             assert_eq!(

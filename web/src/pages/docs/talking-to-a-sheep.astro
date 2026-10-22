@@ -96,7 +96,9 @@ ID  NAME    OUTCOME   DETAIL
         line to its stdin, for an app that set <code>stdin = true</code>.{" "}
         <code>shep trigger &lt;selector&gt; &lt;action&gt;</code> sends a
         named action over the shepherd channel and reports what the app
-        answered.
+        answered. All three take <code>--host</code> and reach that host's
+        sheep only; <code>signal</code> sends the canonical name, so no local
+        signal number crosses to another OS.
       </p>
     </ShortVersion>
 
