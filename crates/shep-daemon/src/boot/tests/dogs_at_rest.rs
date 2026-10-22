@@ -4,10 +4,11 @@
 //! operator switched on. The rest is registered `Stopped` and disabled, after
 //! the restored flock so no saved sheep's id moves.
 
+use super::seed_roll;
 use crate::boot::*;
 use crate::dogs::DogSpec;
 use crate::fake::{ProcScript, ScriptedRunner};
-use crate::testing::{roll_of, test_paths};
+use crate::testing::test_paths;
 use shep_core::config::AppConfig;
 use shep_core::protocol::{DogSource, ProcessInfo};
 use shep_core::status::ProcStatus;
@@ -62,12 +63,13 @@ async fn at_rest_dogs_register_after_the_restored_flock_so_sheep_ids_hold() {
     let _guard = SIGNAL_TEST_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let paths = test_paths(&dir);
-    init_dirs(&paths).unwrap();
-    let roll = roll_of(vec![
-        AppConfig::minimal("api", "./srv"),
-        AppConfig::minimal("web", "./srv"),
-    ]);
-    crate::snapshot::write_atomic(&paths.snapshot, &roll).unwrap();
+    seed_roll(
+        &paths,
+        vec![
+            AppConfig::minimal("api", "./srv"),
+            AppConfig::minimal("web", "./srv"),
+        ],
+    );
 
     let daemon = boot_with_idle_sweep(
         // The two restored sheep, nothing else.
@@ -164,9 +166,7 @@ async fn a_boot_first_dog_still_spawns_first_and_is_not_registered_twice() {
     let _guard = SIGNAL_TEST_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let paths = test_paths(&dir);
-    init_dirs(&paths).unwrap();
-    let roll = roll_of(vec![AppConfig::minimal("web", "./srv")]);
-    crate::snapshot::write_atomic(&paths.snapshot, &roll).unwrap();
+    seed_roll(&paths, vec![AppConfig::minimal("web", "./srv")]);
 
     let daemon = boot_with_idle_sweep(
         ScriptedRunner::new(vec![ProcScript::never_exits(), ProcScript::never_exits()]),
