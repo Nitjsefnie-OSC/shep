@@ -7,6 +7,7 @@ use cli::{AdoptArgs, Cli, Commands, Format, ImportCommand};
 use commands::admin;
 use commands::bleats;
 use commands::dev;
+use commands::dial_stdio;
 use commands::dogs;
 use commands::import;
 use commands::kv;
@@ -150,6 +151,15 @@ pub(crate) async fn run(
             return startup::unstartup(&mut streams, args);
             #[cfg(windows)]
             return streams.fail(ExitCode::Failure, WINDOWS_NO_SERVICE);
+        }
+        // Resolves the home but never creates it: a probe against a machine
+        // with no shep home must leave nothing behind and print no welcome.
+        Commands::DialStdio => {
+            let paths = match resolve_paths(&cli.global) {
+                Ok(paths) => paths,
+                Err(refusal) => return report_home_refusal(fmt, &refusal),
+            };
+            match dial_stdio::dial_stdio(fmt, &paths.socket).await {}
         }
         // Needs no `$SHEP_HOME` at all, like `Completions` above.
         Commands::Schema => {
@@ -498,6 +508,7 @@ pub(crate) async fn run(
         | Commands::Startup(_)
         | Commands::Unstartup(_)
         | Commands::Schema
+        | Commands::DialStdio
         | Commands::Bleats(_)
         | Commands::Lookout(_)
         | Commands::Whistle
