@@ -30,6 +30,7 @@ pub(crate) async fn print_shepherd_status(argv: &[OsString]) {
         return;
     }
     let global = GlobalArgs {
+        host: None,
         home: None,
         format: Format::Table,
         quiet: false,
@@ -754,6 +755,7 @@ mod tests {
 
     fn global_with_home(home: Option<&str>) -> cli::GlobalArgs {
         cli::GlobalArgs {
+            host: None,
             home: home.map(Into::into),
             format: cli::Format::Table,
             quiet: false,
@@ -784,6 +786,7 @@ mod tests {
     fn a_home_that_is_not_utf8_is_refused_before_any_path_is_derived() {
         let home = non_utf8_home();
         let global = cli::GlobalArgs {
+            host: None,
             home: Some(home.clone()),
             format: cli::Format::Table,
             quiet: false,
@@ -823,6 +826,7 @@ mod tests {
         let home =
             std::path::PathBuf::from(std::ffi::OsString::from_vec(b"rel-\xff-home".to_vec()));
         let global = cli::GlobalArgs {
+            host: None,
             home: Some(home),
             format: cli::Format::Table,
             quiet: false,

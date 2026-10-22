@@ -38,6 +38,7 @@ pub(crate) fn dispatch_adopted_dog(
     // that position is this dog's own argv.
     let index = argv.iter().position(|arg| arg.to_str() == Some(name))?;
     let global = GlobalArgs {
+        host: None,
         home: home_before(&argv[1..index]),
         format: Format::Table,
         quiet: false,
