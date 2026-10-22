@@ -63,8 +63,10 @@ where
 /// Copies `input` to `shepherd` and `shepherd` to `output` until either side
 /// reaches end of file or errors, then flushes `output`.
 ///
-/// End of `input` closes the write half toward the shepherd, so the shepherd
-/// sees an orderly end rather than a reset.
+/// End of `input` shuts down the write half toward the shepherd, so the
+/// shepherd sees an orderly end rather than a reset. A Windows named pipe has
+/// no half-close: its shutdown only flushes, and the shepherd sees the end when
+/// the pipe handle closes, which for [`dial_stdio`] is the process exiting.
 ///
 /// # Errors
 ///
@@ -125,13 +127,15 @@ mod tests {
     #[tokio::test]
     async fn bytes_cross_both_ways_unchanged() {
         for payload in payloads() {
-            // stdin to the shepherd: the bridge ends on end of input.
-            let (mut server, mut client) = transport::connected_pair().await.unwrap();
+            // stdin to the shepherd: the bridge ends on end of input. The
+            // bridge owns `client`, so the shepherd's end of file arrives on
+            // every platform when it returns.
+            let (mut server, client) = transport::connected_pair().await.unwrap();
             let (mut stdin_tx, stdin) = duplex(64 * 1024);
             let (stdout, _stdout_rx) = duplex(64 * 1024);
             let (bridged, (), received) = tokio::time::timeout(BOUND, async {
                 tokio::join!(
-                    bridge(stdin, stdout, &mut client),
+                    bridge(stdin, stdout, client),
                     async {
                         stdin_tx.write_all(&payload).await.unwrap();
                         drop(stdin_tx);
@@ -194,12 +198,17 @@ mod tests {
         stdin_tx.write_all(b"last words").await.unwrap();
         drop(stdin_tx);
 
-        // `client` is lent, so it is still open when the bridge returns: the
-        // shepherd's end of file below comes from the shutdown, not a drop.
+        // `client` is lent, so it is still open when the bridge returns: on
+        // unix the shepherd's end of file below comes from the shutdown, not a
+        // drop.
         let bridged = tokio::time::timeout(BOUND, bridge(stdin, stdout, &mut client))
             .await
             .expect("the bridge outlived end of input");
         bridged.unwrap();
+        // A named pipe has no half-close, so only closing the handle ends the
+        // shepherd's read there.
+        #[cfg(windows)]
+        drop(client);
 
         let mut received = Vec::new();
         tokio::time::timeout(BOUND, server.read_to_end(&mut received))
