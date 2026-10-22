@@ -246,6 +246,7 @@ export const BUDGETS: Record<string, number> = {
   // as good as the run that wrote it.
   "getting-started": 500,
   serve: 480,
+  hosts: 500,
   // Raised from 380 on 2026-10-21 for the global `--host` flag, which is new
   // content: what a destination is and that only `flock` takes it so far.
   // Raised from 400 on 2026-10-21 for the verbs `--host` now reaches and

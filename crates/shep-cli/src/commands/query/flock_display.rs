@@ -112,26 +112,39 @@ pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
                 let _ = write!(streams.out, "{art}");
             }
             let host = host_usage(client).await;
-            if streams.fmt == Format::Table
-                && let Some(usage) = host
-            {
-                // Above the table and separated from it, exactly where a
-                // followed listing puts the same line. `Presentation::width`
-                // is the terminal's, resolved once at the seam.
-                let strip = host::strip(usage, streams.style, streams.style.width);
-                let _ = writeln!(streams.out, "{strip}\n");
-            }
-            write_outcome(emit_flock(
-                &mut *streams.out,
-                streams.fmt,
-                "flock",
-                procs,
-                host,
-                streams.style,
-            ))
+            write_outcome(print_listing(streams, procs, host))
         }
         Err(err) => typed_request_error(streams, &err),
     }
+}
+
+/// One listing's tables: the host strip and a blank line above them in the
+/// table form, then the sheep table and the dogs table when there are dogs.
+///
+/// The one place a local listing and a host's go through, so a fleet listing
+/// prints each shepherd exactly as `shep flock` prints one.
+pub(super) fn print_listing(
+    streams: &mut Streams<'_>,
+    procs: Vec<ProcessInfo>,
+    host: Option<Option<HostUsage>>,
+) -> io::Result<()> {
+    if streams.fmt == Format::Table
+        && let Some(usage) = host
+    {
+        // Above the table and separated from it, exactly where a followed
+        // listing puts the same line. `Presentation::width` is the
+        // terminal's, resolved once at the seam.
+        let strip = host::strip(usage, streams.style, streams.style.width);
+        writeln!(streams.out, "{strip}\n")?;
+    }
+    emit_flock(
+        &mut *streams.out,
+        streams.fmt,
+        "flock",
+        procs,
+        host,
+        streams.style,
+    )
 }
 
 /// What the shepherd says the machine is doing, or `None` where it will not
@@ -148,7 +161,7 @@ pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
 /// before this existed. Not a warning line, which would fire on every
 /// listing for as long as the skew lasts, on the verb an operator types
 /// most.
-async fn host_usage(client: &Client) -> Option<Option<HostUsage>> {
+pub(super) async fn host_usage(client: &Client) -> Option<Option<HostUsage>> {
     match client.request(Request::HostUsage).await {
         Ok(Response::HostUsage(usage)) => Some(usage),
         // A shepherd that answered something else, and one that refused.
