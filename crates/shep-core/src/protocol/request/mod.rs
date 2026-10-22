@@ -4,6 +4,7 @@ mod config_reply;
 mod dog_source;
 mod envelope;
 mod handshake;
+mod log_tail;
 mod outcomes;
 mod process;
 mod redacted;
@@ -17,6 +18,7 @@ pub use config_reply::{SheepApplied, SheepConfigView, SheepDrift, SheepRefusal};
 pub use dog_source::DogSource;
 pub use envelope::{Envelope, HelloReply, Reply, RpcError, RpcErrorCode};
 pub use handshake::{Hello, HelloAck};
+pub use log_tail::{LogStream, LogTail};
 pub use outcomes::{
     ActionOutcome, ActionReply, LineOutcome, LineReply, SignalOutcome, SignalReply,
 };

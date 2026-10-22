@@ -482,8 +482,32 @@ fn request_wire_snapshots() {
                 name: "bark".to_string(),
             },
         ),
+        // By id and stream, never by path.
+        envelope(
+            39,
+            Request::TailLog {
+                id: 3,
+                stream: LogStream::Err,
+                lines: 50,
+            },
+        ),
     ];
     insta::assert_json_snapshot!("request_wire_v11", requests);
+}
+
+/// The request names a sheep and a stream. A `path` key here would make the
+/// shepherd a reader of arbitrary files.
+#[test]
+fn tail_log_request_wire_v11() {
+    assert_eq!(
+        serde_json::to_string(&Request::TailLog {
+            id: 3,
+            stream: LogStream::Out,
+            lines: 20,
+        })
+        .unwrap(),
+        r#"{"kind":"tail_log","id":3,"stream":"out","lines":20}"#
+    );
 }
 
 #[test]

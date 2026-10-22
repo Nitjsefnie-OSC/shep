@@ -517,5 +517,15 @@ expression: requests
       "kind": "dog_config_resolved",
       "name": "bark"
     }
+  },
+  {
+    "id": 39,
+    "deadline_ms": null,
+    "body": {
+      "kind": "tail_log",
+      "id": 3,
+      "stream": "err",
+      "lines": 50
+    }
   }
 ]

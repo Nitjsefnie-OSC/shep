@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::DogTable;
 
 use super::{
-    ActionReply, DogSectionToml, LineReply, ProcessInfo, SheepApplied, SheepConfigView, SheepDrift,
+    ActionReply, DogSectionToml, LineReply, LogTail, ProcessInfo, SheepApplied, SheepConfigView, SheepDrift,
     SheepRefusal, SignalReply,
 };
 
@@ -316,6 +316,9 @@ pub enum Response {
     /// One row per sheep, not per file emptied: several sheep can share one
     /// log path, and the daemon truncates each distinct path once.
     Flushed(Vec<ProcessInfo>),
+    /// Answer to `TailLog`: the end of one sheep's log file, or the reason
+    /// there is none to read.
+    LogTail(LogTail),
     /// Answer to `Trigger`: one [`ActionReply`] row per matched sheep, rather
     /// than a flock listing, since `ProcessInfo` has nowhere to hold a reply
     /// body.
@@ -881,6 +884,30 @@ mod tests {
                     name: "web".to_string(),
                     dog: "jobs".to_string(),
                 }),
+            },
+            Reply {
+                id: 45,
+                result: Ok(Response::LogTail(LogTail::Lines {
+                    lines: vec!["listening".to_string(), "ready".to_string()],
+                    truncated: true,
+                })),
+            },
+            Reply {
+                id: 46,
+                result: Ok(Response::LogTail(LogTail::NoPath)),
+            },
+            Reply {
+                id: 47,
+                result: Ok(Response::LogTail(LogTail::Missing {
+                    path: "/var/log/web-err.log".to_string(),
+                })),
+            },
+            Reply {
+                id: 48,
+                result: Ok(Response::LogTail(LogTail::Unreadable {
+                    path: "/var/log/web-err.log".to_string(),
+                    reason: "Is a directory (os error 21)".to_string(),
+                })),
             },
         ];
         insta::assert_json_snapshot!("reply_wire_v11", replies);

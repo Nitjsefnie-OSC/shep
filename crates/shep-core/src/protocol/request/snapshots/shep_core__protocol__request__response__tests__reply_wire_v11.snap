@@ -1,6 +1,5 @@
 ---
 source: crates/shep-core/src/protocol/request/response.rs
-assertion_line: 872
 expression: replies
 ---
 [
@@ -943,6 +942,58 @@ expression: replies
         "data": {
           "name": "web",
           "dog": "jobs"
+        }
+      }
+    }
+  },
+  {
+    "id": 45,
+    "result": {
+      "Ok": {
+        "kind": "log_tail",
+        "data": {
+          "kind": "lines",
+          "lines": [
+            "listening",
+            "ready"
+          ],
+          "truncated": true
+        }
+      }
+    }
+  },
+  {
+    "id": 46,
+    "result": {
+      "Ok": {
+        "kind": "log_tail",
+        "data": {
+          "kind": "no_path"
+        }
+      }
+    }
+  },
+  {
+    "id": 47,
+    "result": {
+      "Ok": {
+        "kind": "log_tail",
+        "data": {
+          "kind": "missing",
+          "path": "/var/log/web-err.log"
+        }
+      }
+    }
+  },
+  {
+    "id": 48,
+    "result": {
+      "Ok": {
+        "kind": "log_tail",
+        "data": {
+          "kind": "unreadable",
+          "path": "/var/log/web-err.log",
+          "reason": "Is a directory (os error 21)"
         }
       }
     }

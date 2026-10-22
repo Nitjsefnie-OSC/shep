@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{AppConfig, DeclaredApp, DogTable, ResetDepth};
 
-use super::{DogSectionToml, DogSource, EnvValue, SelectorSpec, Smit};
+use super::{DogSectionToml, DogSource, EnvValue, LogStream, SelectorSpec, Smit};
 
 // Named by intra-doc links and by nothing rustc compiles, so the
 // import is behind `cfg(doc)` rather than flagged unused.
@@ -403,6 +403,27 @@ pub enum Request {
     Flush {
         /// Which sheep. No default: this destroys log data.
         selector: SelectorSpec,
+    },
+    /// Read the end of one sheep's out or err log, so a client on another
+    /// host reads what the shepherd's own disk holds.
+    ///
+    /// Names the file by sheep and stream and never by path: the request is
+    /// not a way to make the shepherd read an arbitrary file. The shepherd
+    /// reads the `out_file` or `err_file` of the row, and sees only what the
+    /// log pump has flushed to it. An id no sheep holds fails with
+    /// [`RpcErrorCode::NotFound`]; a missing or unreadable file is an
+    /// answer, not an error.
+    ///
+    /// Answers [`Response::LogTail`]. Not a protocol bump, as
+    /// [`Self::HostUsage`] was not: a shepherd that has never heard of this
+    /// one decodes [`Self::Unrecognized`] and refuses by name.
+    TailLog {
+        /// The sheep's id; a dog's id counts
+        id: u32,
+        /// Which of its two log files
+        stream: LogStream,
+        /// How many lines to return at most
+        lines: u32,
     },
     /// Send a named action to every matched sheep over its shepherd channel
     /// and report what each app says back (see `shep trigger`).
