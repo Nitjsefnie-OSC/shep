@@ -2,9 +2,7 @@
 //! is refused before it, and what the operator is told.
 
 use super::*;
-use crate::commands::lifecycle::toggle::{
-    Toggle, toggle, toggle_on_host, toggle_sheep, toggle_with,
-};
+use crate::commands::lifecycle::toggle::{Toggle, toggle, toggle_sheep, toggle_with};
 
 fn stopped_api(disabled: bool) -> ProcessInfo {
     ProcessInfo::builder(0, "api", shep_core::status::ProcStatus::Stopped)
@@ -411,6 +409,8 @@ async fn enable_over_a_host_treats_a_dog_name_as_a_sheep_selector_and_reads_no_l
 #[tokio::test]
 async fn disable_over_a_host_with_no_remote_shepherd_names_the_host_not_shep_start() {
     use std::os::unix::fs::PermissionsExt as _;
+
+    use crate::commands::lifecycle::toggle::toggle_on_host;
 
     let dir = tempfile::tempdir().unwrap();
     let program = dir.path().join("ssh");
