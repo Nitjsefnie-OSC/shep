@@ -56,7 +56,7 @@ pub(crate) fn dispatch_adopted_dog(
     // operator aimed elsewhere would be the substitution `--host` refuses.
     if host_before(&argv[1..index]).is_some() {
         return Some(std::process::ExitCode::from(
-            refuse_host(Format::Table) as u8
+            refuse_host(format_before(&argv[1..index])) as u8,
         ));
     }
     let dog_argv = argv[index + 1..].to_vec();
@@ -105,6 +105,29 @@ fn host_before(prefix: &[OsString]) -> Option<String> {
         }
     }
     None
+}
+
+/// Scans `prefix`, the argv tokens before the one clap could not place, for
+/// `--format` in either `--format value` or `--format=value` form.
+///
+/// Only the refusal reads it: clap never finished parsing this argv, so
+/// [`cli::GlobalArgs::format`] was never filled in, and a JSON consumer would
+/// otherwise get table text. A missing or unknown value answers
+/// [`Format::Table`], the flag's own default.
+fn format_before(prefix: &[OsString]) -> Format {
+    let mut tokens = prefix.iter();
+    while let Some(arg) = tokens.next() {
+        let value = match arg.to_string_lossy().strip_prefix("--format=") {
+            Some(value) => value.to_owned(),
+            None if arg == "--format" => match tokens.next() {
+                Some(value) => value.to_string_lossy().into_owned(),
+                None => break,
+            },
+            None => continue,
+        };
+        return <Format as clap::ValueEnum>::from_str(&value, true).unwrap_or(Format::Table);
+    }
+    Format::Table
 }
 
 /// The value in a `--home=value` token, or `None` when `arg` is not one.
@@ -238,6 +261,34 @@ mod tests {
             host_before(&[OsString::from("--host")]),
             Some(String::new()),
             "a flag with no value is still a flag that was typed"
+        );
+    }
+
+    #[test]
+    fn format_before_reads_a_separate_value_and_an_equals_form() {
+        let spaced = [OsString::from("--format"), OsString::from("json")];
+        assert_eq!(format_before(&spaced), Format::Json);
+
+        let equals = [OsString::from("--format=json")];
+        assert_eq!(format_before(&equals), Format::Json);
+
+        let after_others = [
+            OsString::from("--host"),
+            OsString::from("amp2"),
+            OsString::from("--format"),
+            OsString::from("json"),
+        ];
+        assert_eq!(format_before(&after_others), Format::Json);
+
+        assert_eq!(format_before(&[]), Format::Table);
+        assert_eq!(format_before(&[OsString::from("--format")]), Format::Table);
+        assert_eq!(
+            format_before(&[OsString::from("--format=xml")]),
+            Format::Table
+        );
+        assert_eq!(
+            format_before(&[OsString::from("--host=amp2")]),
+            Format::Table
         );
     }
 

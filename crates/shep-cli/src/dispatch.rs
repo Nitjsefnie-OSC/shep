@@ -73,6 +73,23 @@ pub(crate) async fn run(
     // so no arm can borrow it to ask this question for itself.
     let guard = VersionGuard::for_command(&cli.command);
 
+    // Before `ensure_home`: the listing is the host's, and nothing of this
+    // machine's is read, so a fresh machine must not get a `~/.shep` or a
+    // first-run banner out of it. `host_scope` above left `flock` as the only
+    // verb that can be here with a host.
+    if let (Some(dest), Commands::Flock(args)) = (cli.global.host.as_deref(), &cli.command) {
+        let link = Link::to_host(dest);
+        let mut out = std::io::stdout().lock();
+        let mut err = std::io::stderr().lock();
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style,
+            fmt,
+        };
+        return flock_command(&mut streams, &link, guard, args).await;
+    }
+
     // `StdoutLock`/`StderrLock` are process-wide, so the locked pair further
     // down is right only for a verb that finishes in milliseconds. A guard
     // held on the main thread for a process lifetime blocks the first record

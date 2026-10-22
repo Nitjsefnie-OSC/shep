@@ -112,11 +112,17 @@ impl<'a> Link<'a> {
     /// The link `--host` selects: the host when one is named, else `paths`.
     pub(crate) fn new(paths: &'a ShepPaths, host: Option<&'a str>) -> Self {
         match host {
-            Some(dest) => Self::Host {
-                dest,
-                options: SshOptions::default(),
-            },
+            Some(dest) => Self::to_host(dest),
             None => Self::Local(paths),
+        }
+    }
+
+    /// The link to `dest`, for a verb that runs before this machine's home is
+    /// resolved because it never uses it.
+    pub(crate) fn to_host(dest: &'a str) -> Self {
+        Self::Host {
+            dest,
+            options: SshOptions::default(),
         }
     }
 }

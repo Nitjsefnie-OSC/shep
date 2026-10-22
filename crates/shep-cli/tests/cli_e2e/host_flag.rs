@@ -197,3 +197,72 @@ fn another_verb_with_host_exits_2_and_the_remote_sheep_is_untouched() {
     graceful_kill(local.path());
     graceful_kill(remote.path());
 }
+
+/// A fresh machine has no `~/.shep`, and the listing is the host's. Creating
+/// one here would leave a home (and, on a terminal, a first-run banner)
+/// behind a command that read nothing of this machine's.
+#[cfg(unix)]
+#[test]
+fn flock_over_a_host_creates_no_home_on_this_machine() {
+    let fake_user_home = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+    start_sheep(&mut guard, &remote, "remote-sheep");
+    write_ssh_stand_in(bin.path(), remote.path());
+
+    let listed = Command::cargo_bin("shep")
+        .unwrap()
+        .env("HOME", fake_user_home.path())
+        .env_remove("SHEP_HOME")
+        .env("PATH", path_with_first(bin.path()))
+        .args(["--format", "json", "--host", "amp2", "flock"])
+        .timeout(CMD_TIMEOUT)
+        .output()
+        .unwrap();
+    assert_success(&listed);
+    assert_eq!(json_names(&listed), ["remote-sheep"]);
+    assert!(
+        !fake_user_home.path().join(".shep").exists(),
+        "the listing created a home on this machine"
+    );
+
+    graceful_kill(remote.path());
+}
+
+/// An adopted dog is refused behind `--host`, and a JSON consumer gets the
+/// JSON envelope: clap never finished parsing this argv, so the refusal reads
+/// `--format` off it by hand.
+#[cfg(unix)]
+#[test]
+fn an_adopted_dog_behind_host_is_refused_in_the_format_asked_for() {
+    let home = TempDir::new().unwrap();
+    let bin = TempDir::new().unwrap();
+    let binary = write_script(&bin, "mydog", "#!/bin/sh\nexit 0\n");
+    assert_success(
+        &shep(home.path())
+            .arg("adopt")
+            .arg(&binary)
+            .args(["--name", "mydog"])
+            .output()
+            .unwrap(),
+    );
+
+    let json = shep(home.path())
+        .args(["--format", "json", "--host", "amp2", "mydog"])
+        .output()
+        .unwrap();
+    assert_json_error(&json, 2, "usage");
+
+    let table = shep(home.path())
+        .args(["--host=amp2", "mydog"])
+        .output()
+        .unwrap();
+    assert_eq!(table.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&table.stderr);
+    assert!(
+        err.contains("`--host` is not supported by this command yet"),
+        "{err}"
+    );
+    assert!(!err.trim_start().starts_with('{'), "{err}");
+}
