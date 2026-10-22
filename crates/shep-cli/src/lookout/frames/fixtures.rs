@@ -313,6 +313,8 @@ pub(super) fn sheep(
             }),
             // Running, or on its way in or out: nothing has exited yet.
             ProcStatus::Online | ProcStatus::Starting | ProcStatus::Stopping => None,
+            // No scene depicts a status this build cannot read.
+            _ => unreachable!("no scene depicts an unrecognized status"),
         })
         .build()
 }

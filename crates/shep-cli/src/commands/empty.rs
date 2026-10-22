@@ -28,7 +28,8 @@ pub enum Sample {
 ///
 /// Dogs do not count: counting one would keep a container alive forever after
 /// its app died. `Stopping` counts as busy, so a reload in progress does not
-/// read as the flock having gone away.
+/// read as the flock having gone away. So does a status this build cannot
+/// read, so an emptying flock is never declared empty over such a row.
 #[must_use]
 pub fn sample(flock: &[ProcessInfo]) -> Sample {
     let mut any_errored = false;
@@ -43,6 +44,8 @@ pub fn sample(flock: &[ProcessInfo]) -> Sample {
             | ProcStatus::WaitingRestart => return Sample::Busy,
             ProcStatus::Errored => any_errored = true,
             ProcStatus::Stopped => {}
+            // `Unrecognized`, and any status added after this build.
+            _ => return Sample::Busy,
         }
     }
     if any_errored {
@@ -113,6 +116,21 @@ mod tests {
     fn a_sheep_waiting_to_restart_is_busy() {
         assert_eq!(
             sample(&[sheep_info("web", ProcStatus::WaitingRestart)]),
+            Sample::Busy
+        );
+    }
+
+    #[test]
+    fn a_flock_with_an_unrecognized_status_is_not_called_empty() {
+        assert_eq!(
+            sample(&[sheep_info("web", ProcStatus::Unrecognized)]),
+            Sample::Busy
+        );
+        assert_eq!(
+            sample(&[
+                sheep_info("a", ProcStatus::Errored),
+                sheep_info("b", ProcStatus::Unrecognized)
+            ]),
             Sample::Busy
         );
     }
