@@ -65,12 +65,12 @@ pub struct Bark {
 
 /// What one sink made of one alert.
 ///
-/// Names the sink by its `[dog.bark.sinks]` config key, never by its
+/// Names the sink by its `[bark.sinks]` config key, never by its
 /// webhook URL or bearer token, so [`Bark`] stays safe to print with a
 /// derived `Debug`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SinkOutcome {
-    /// The sink's name from `[dog.bark.sinks]`.
+    /// The sink's name from `[bark.sinks]`.
     pub sink: String,
     /// `None` when it was delivered; the failure otherwise.
     pub error: Option<String>,
