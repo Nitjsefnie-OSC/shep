@@ -54,10 +54,10 @@ Upgrading        cargo install shep replaces the binary, not the running shepher
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -159,10 +159,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --interpreter <INTERPRETER>
           Interpreter to run the script with, overriding both shep.toml's extension mapping and a
@@ -312,10 +312,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --interpreter <INTERPRETER>
           Interpreter to run the script with, overriding both shep.toml's extension mapping and a
@@ -446,10 +446,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -542,10 +542,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -632,10 +632,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -745,10 +745,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -826,10 +826,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -903,10 +903,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -991,10 +991,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1058,10 +1058,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1129,10 +1129,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1200,10 +1200,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1280,10 +1280,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1355,10 +1355,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1430,10 +1430,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1505,10 +1505,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1580,10 +1580,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1641,10 +1641,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1724,10 +1724,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --out
           Only stdout
@@ -1805,10 +1805,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1874,10 +1874,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -1937,10 +1937,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2001,10 +2001,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2065,10 +2065,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2136,10 +2136,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2197,10 +2197,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2261,10 +2261,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2338,10 +2338,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2411,10 +2411,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2476,10 +2476,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2540,10 +2540,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2597,10 +2597,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2664,10 +2664,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2736,10 +2736,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2799,10 +2799,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2858,10 +2858,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -2963,10 +2963,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --yes
           Write without asking
@@ -3023,10 +3023,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3080,10 +3080,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3140,10 +3140,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3197,10 +3197,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3274,10 +3274,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3348,10 +3348,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3410,10 +3410,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3485,10 +3485,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3584,10 +3584,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --dry-run
           Print what would be written, and write nothing
@@ -3680,10 +3680,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3758,10 +3758,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3823,10 +3823,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3891,10 +3891,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -3963,10 +3963,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
@@ -4023,10 +4023,10 @@ Options:
           
           DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
           `describe`, `fold`, a followed `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`,
-          `enable`, `disable`, `signal`, `whisper` and `trigger` take it; any other verb refuses it
-          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
-          no hidden `--exec` form over it. `--home` still names this machine's home, never the
-          host's.
+          `enable`, `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+          refuses it rather than act on this machine. `describe` shows no secrets over it, and
+          `enable` takes no hidden `--exec` form over it. `--home` still names this machine's home,
+          never the host's.
 
       --home <HOME>
           Talk to a different shepherd
