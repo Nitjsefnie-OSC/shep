@@ -435,7 +435,8 @@ pub(crate) mod tests {
 
     /// Pins the fleet envelope's exact shape: a local row, a row from `amp2`,
     /// a host with usage, one whose platform `sysinfo` cannot read (`null`)
-    /// and one that would not answer (no entry).
+    /// and one that listed its rows but would not answer the usage request
+    /// (no entry).
     #[test]
     fn the_fleet_json_envelope_shape_is_pinned() {
         let reading = HostUsage {

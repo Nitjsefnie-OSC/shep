@@ -126,8 +126,8 @@ import CodeBlock from "../../components/docs/CodeBlock.astro";
       <code>null</code> for this machine, else the host as written.{" "}
       <code>--host &lt;name&gt;</code> tags its rows the same way.{" "}
       <code>hosts</code> maps each host to its usage, answering as{" "}
-      <code>host</code> does, which stays this machine's. A host that failed
-      has no rows and no entry; stderr and the exit code say which. Here{" "}
+      <code>host</code> does, which stays this machine's. No entry beside
+      rows means no usage answer; a failed host has neither, and stderr and the exit code say which. Here{" "}
       <code>amp3</code> failed:
     </p>
     <CodeBlock label="shep flock --format json, two hosts listed">{`{

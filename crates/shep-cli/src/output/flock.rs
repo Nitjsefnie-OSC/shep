@@ -64,7 +64,8 @@ struct OriginRow<'a> {
 /// `host` is the same three-way answer [`FlockEnvelope`] documents, and
 /// `hosts` repeats it per remote host: an object is a reading, `null` a
 /// platform `sysinfo` cannot read, no entry a shepherd that would not answer
-/// or a host that failed. `hosts` is absent for a single `--host` listing,
+/// the usage request (its rows are still in `data`) or a host that failed
+/// (no rows either). `hosts` is absent for a single `--host` listing,
 /// which keeps its `host` as it always had.
 ///
 /// `#[cfg_attr(windows, allow(dead_code))]` for `FlockEnvelope`'s reason.
