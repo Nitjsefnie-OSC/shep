@@ -44,6 +44,31 @@ fn recovery_verb(command: &Commands) -> Option<&'static str> {
     }
 }
 
+/// The verbs that only read the flock, spelled the way an operator types
+/// them, which a version skew warns about and does not refuse.
+///
+/// `bleats` is the whole verb: both its forms send one `ListFlock` and then
+/// read. A verb belongs here only if it changes nothing, so a pane or a tool
+/// that can write (`lookout`, `whistle`) stays out whatever it mostly does.
+///
+/// Read only by the test that holds it against [`read_verb`].
+#[allow(dead_code)]
+const READ_VERBS: [&str; 3] = ["flock", "describe", "bleats"];
+
+/// Which [`READ_VERBS`] entry `command` is, or `None` for a verb that
+/// changes the flock or is a recovery verb.
+///
+/// Returns the name rather than a bool so a test can hold this mapping and
+/// that list against each other.
+fn read_verb(command: &Commands) -> Option<&'static str> {
+    match command {
+        Commands::Flock(_) => Some("flock"),
+        Commands::Describe(_) => Some("describe"),
+        Commands::Bleats(_) => Some("bleats"),
+        _ => None,
+    }
+}
+
 /// Whether a shepherd of a different version refuses this invocation.
 ///
 /// `pub(crate)`: `lookout`, `whistle` and `foreground` call `Client::connect`
@@ -56,14 +81,18 @@ pub(crate) enum VersionGuard {
     /// Never refuse, whatever the shepherd answers: one of
     /// [`RECOVERY_VERBS`].
     Exempt,
+    /// Proceed and say so on stderr: one of [`READ_VERBS`], which change
+    /// nothing, so a shepherd on another version can still be listed.
+    Warn,
 }
 
 impl VersionGuard {
     /// The guard that applies to `command`.
     pub(crate) fn for_command(command: &Commands) -> Self {
-        match recovery_verb(command) {
-            Some(_) => Self::Exempt,
-            None => Self::Enforce,
+        match (recovery_verb(command), read_verb(command)) {
+            (Some(_), _) => Self::Exempt,
+            (None, Some(_)) => Self::Warn,
+            (None, None) => Self::Enforce,
         }
     }
 }
@@ -121,7 +150,40 @@ fn version_skew_instruction(fmt: Format, host: Option<&str>) -> String {
     }
 }
 
-/// Refuses a shepherd whose crate version differs from this binary's.
+/// The opening clause of a skew message: both versions, and where the
+/// shepherd runs.
+fn version_skew_summary(running: &str, host: Option<&str>) -> String {
+    let shepherd = match host {
+        Some(dest) => format!("the shepherd on {dest}"),
+        None => "the running shepherd".to_owned(),
+    };
+    format!(
+        "this shep is {}, {shepherd} is {running}",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
+/// The one line a read verb prints when the shepherd runs another version,
+/// or `None` when the versions match.
+///
+/// With a `host` the remedy runs over ssh, as the refusal's does.
+pub(crate) fn version_skew_warning(client: &Client, host: Option<&str>) -> Option<String> {
+    let running = client.daemon().daemon_version.as_str();
+    if running == env!("CARGO_PKG_VERSION") {
+        return None;
+    }
+    let summary = version_skew_summary(running, host);
+    let command = version_skew_command(host);
+    // `daemon_version` arrives over the socket, so the sentence is
+    // collapsed as the table refusal's is.
+    let sentence = format!(
+        "{summary}. Listing works, but verbs that change the flock refuse until it is reloaded. Run `{command}`."
+    );
+    Some(crate::terminal_safe::sanitise(&sentence).0)
+}
+
+/// Refuses a shepherd whose crate version differs from this binary's, or
+/// warns about it for a read verb.
 ///
 /// Any difference, not only a protocol difference: `cargo install shep`
 /// replaces the binary and leaves the shepherd running the old code, so the
@@ -129,21 +191,33 @@ fn version_skew_instruction(fmt: Format, host: Option<&str>) -> String {
 /// verb does. Compares [`shep_core::protocol::HelloAck::daemon_version`]
 /// against `CARGO_PKG_VERSION`, read from a handshake that already succeeded.
 ///
+/// [`VersionGuard::Warn`] writes [`version_skew_warning`] to stderr as a
+/// notice and proceeds, so stdout stays whatever the verb prints.
+///
 /// # Errors
 /// [`ExitCode::VersionSkew`], after writing the refusal to `streams`, when
 /// `guard` is [`VersionGuard::Enforce`] and the shepherd reports a different
-/// version. A [`VersionGuard::Exempt`] verb is always `Ok`.
+/// version. A [`VersionGuard::Exempt`] or [`VersionGuard::Warn`] verb is
+/// always `Ok`.
 ///
-/// A client reached over ssh gets a refusal that names its host and a remedy
-/// that runs there.
+/// A client reached over ssh gets a refusal or a warning that names its host
+/// and a remedy that runs there.
 pub(crate) fn refuse_version_skew(
     streams: &mut Streams<'_>,
     client: &Client,
     guard: VersionGuard,
 ) -> Result<(), ExitCode> {
     let running = client.daemon().daemon_version.as_str();
-    if guard == VersionGuard::Exempt || running == env!("CARGO_PKG_VERSION") {
-        return Ok(());
+    match guard {
+        VersionGuard::Exempt => return Ok(()),
+        VersionGuard::Warn => {
+            if let Some(warning) = version_skew_warning(client, client.host()) {
+                streams.aside("version_skew", &warning);
+            }
+            return Ok(());
+        }
+        VersionGuard::Enforce if running == env!("CARGO_PKG_VERSION") => return Ok(()),
+        VersionGuard::Enforce => {}
     }
     let code = ExitCode::VersionSkew;
     let host = client.host();
@@ -151,14 +225,7 @@ pub(crate) fn refuse_version_skew(
         Some(_) => VERSION_SKEW_HOST_CAUSE,
         None => VERSION_SKEW_CAUSE,
     };
-    let shepherd = match host {
-        Some(dest) => format!("the shepherd on {dest}"),
-        None => "the running shepherd".to_owned(),
-    };
-    let summary = format!(
-        "this shep is {}, {shepherd} is {running}",
-        env!("CARGO_PKG_VERSION")
-    );
+    let summary = version_skew_summary(running, host);
     match streams.fmt {
         // One line, one envelope. A `--format json` consumer has no use for
         // the layout below, and it still gets every fact in `error.message`.

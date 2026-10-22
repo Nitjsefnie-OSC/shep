@@ -429,6 +429,33 @@ async fn the_recovery_verbs_are_not_refused() {
     assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
 }
 
+/// The shepherd's version is announced as `0.1.8`, which this build is not.
+const SKEWED_WARNING: &str = concat!(
+    "this shep is ",
+    env!("CARGO_PKG_VERSION"),
+    ", the running shepherd is 0.1.8. Listing works, but verbs that change the flock refuse \
+     until it is reloaded. Run `shep daemon reload`."
+);
+
+#[tokio::test]
+async fn a_read_verb_against_a_skewed_shepherd_proceeds_and_names_the_remedy() {
+    let dir = tempfile::tempdir().unwrap();
+    let addr = shep_client::testing::control_address(dir.path());
+    let (client, _fake) = client_announcing(&addr, "0.1.8").await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    {
+        let mut streams = buffered_streams(&mut out, &mut err);
+        refuse_version_skew(&mut streams, &client, VersionGuard::Warn)
+            .expect("a read verb proceeds against a skewed shepherd");
+    }
+    assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
+    let text = String::from_utf8(err).unwrap();
+    assert!(text.contains(SKEWED_WARNING), "{text}");
+    assert_eq!(text.lines().count(), 1, "one notice, one line: {text}");
+}
+
 /// An empty [`StartArgs`], for asking which guard `add` gets. The guard
 /// reads the verb alone, so no field here reaches it.
 fn add_args() -> StartArgs {
@@ -496,7 +523,7 @@ fn every_exempt_verb_is_one_of_the_documented_recovery_verbs() {
     assert_eq!(recovery_verb(&Commands::Flock(flock_args())), None);
     assert_eq!(
         VersionGuard::for_command(&Commands::Flock(flock_args())),
-        VersionGuard::Enforce
+        VersionGuard::Warn
     );
     assert_eq!(
         VersionGuard::for_command(&Commands::Kill),
@@ -508,4 +535,71 @@ fn every_exempt_verb_is_one_of_the_documented_recovery_verbs() {
         VersionGuard::for_command(&Commands::Add(add_args())),
         VersionGuard::Enforce
     );
+}
+
+/// The verb `argv` names, parsed the way the binary parses it.
+fn verb(argv: &[&str]) -> Commands {
+    use clap::Parser as _;
+
+    let argv = std::iter::once("shep").chain(argv.iter().copied());
+    cli::Cli::try_parse_from(argv).unwrap().command
+}
+
+/// Fails if a verb leaves [`READ_VERBS`], or arrives without being listed
+/// there.
+#[test]
+fn every_read_verb_is_one_of_the_documented_read_verbs() {
+    for (argv, name) in [
+        (&["flock"][..], "flock"),
+        (&["describe", "web"], "describe"),
+        (&["bleats", "web"], "bleats"),
+        (&["bleats", "web", "--no-follow"], "bleats"),
+    ] {
+        let command = verb(argv);
+        let found = read_verb(&command).unwrap_or_else(|| panic!("{command:?} must stay a read"));
+        assert_eq!(found, name);
+        assert!(
+            READ_VERBS.contains(&found),
+            "{found} warns but is undocumented"
+        );
+        assert_eq!(VersionGuard::for_command(&command), VersionGuard::Warn);
+    }
+    assert_eq!(
+        read_verb(&Commands::Kill),
+        None,
+        "a recovery verb is not a read verb"
+    );
+}
+
+/// A verb that writes must not be widened into a warning by accident: each
+/// of these changes the flock, or reaches a surface that can.
+#[test]
+fn every_verb_that_changes_the_flock_still_enforces() {
+    for argv in [
+        &["start", "web"][..],
+        &["add", "web"],
+        &["stop", "web"],
+        &["restart", "web"],
+        &["reload", "web"],
+        &["delete", "web"],
+        &["stock", "web", "2"],
+        &["enable", "web"],
+        &["disable", "web"],
+        &["trigger", "web", "go"],
+        &["signal", "web", "TERM"],
+        &["whisper", "web", "hi"],
+        &["reopen", "web"],
+        &["flush", "web"],
+        &["save"],
+        &["muster"],
+        &["copy", "web", "web2"],
+        &["set", "key", "value"],
+    ] {
+        let command = verb(argv);
+        assert_eq!(
+            VersionGuard::for_command(&command),
+            VersionGuard::Enforce,
+            "{argv:?}"
+        );
+    }
 }
