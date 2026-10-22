@@ -384,8 +384,8 @@ async fn the_tail_is_bounded_by_bytes_and_never_shows_half_a_line() {
 /// with an explicit `out_file`) must be read once, not once per
 /// instance: reading per row printed the whole file once per instance
 /// pointing at it.
-#[test]
-fn instances_sharing_one_log_file_are_read_once_not_once_each() {
+#[tokio::test]
+async fn instances_sharing_one_log_file_are_read_once_not_once_each() {
     let dir = tempfile::tempdir().expect("tempdir");
     let shared = dir.path().join("talker-out.log");
     std::fs::write(&shared, "line one\nline two\n").expect("write");
@@ -413,7 +413,16 @@ fn instances_sharing_one_log_file_are_read_once_not_once_each() {
     let args = no_follow_args_out("talker");
     let selector = ProcessSelector::parse("talker").expect("selector");
 
-    tail_log_files(&mut streams, false, &cache, &selector, &args);
+    tail_log_files(
+        &mut streams,
+        false,
+        &cache,
+        &selector,
+        &args,
+        LogSource::Local,
+    )
+    .await
+    .unwrap();
 
     let printed = String::from_utf8(out).expect("utf8");
     assert_eq!(
@@ -426,7 +435,7 @@ fn instances_sharing_one_log_file_are_read_once_not_once_each() {
 /// Builds a cache of `count` rows for one app, and returns it with the
 /// printed backlog. `shared` puts every instance on one file, the way
 /// `merge_logs` does.
-fn backlog_of(dir: &Path, app: &str, count: u32, shared: bool) -> String {
+async fn backlog_of(dir: &Path, app: &str, count: u32, shared: bool) -> String {
     let mut cache = HashMap::new();
     for slot in 0..count {
         let stem = if shared {
@@ -454,22 +463,31 @@ fn backlog_of(dir: &Path, app: &str, count: u32, shared: bool) -> String {
     };
     let args = no_follow_args_out(app);
     let selector = ProcessSelector::parse(app).expect("selector");
-    tail_log_files(&mut streams, false, &cache, &selector, &args);
+    tail_log_files(
+        &mut streams,
+        false,
+        &cache,
+        &selector,
+        &args,
+        LogSource::Local,
+    )
+    .await
+    .unwrap();
     String::from_utf8(out).expect("utf8")
 }
 
-#[test]
-fn a_multi_instance_app_labels_its_backlog_lines_with_the_slot() {
+#[tokio::test]
+async fn a_multi_instance_app_labels_its_backlog_lines_with_the_slot() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let printed = backlog_of(dir.path(), "web", 2, false);
+    let printed = backlog_of(dir.path(), "web", 2, false).await;
     assert!(printed.contains("web:0 |"), "{printed}");
     assert!(printed.contains("web:1 |"), "{printed}");
 }
 
-#[test]
-fn a_single_instance_app_keeps_the_bare_name() {
+#[tokio::test]
+async fn a_single_instance_app_keeps_the_bare_name() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let printed = backlog_of(dir.path(), "solo", 1, false);
+    let printed = backlog_of(dir.path(), "solo", 1, false).await;
     assert!(printed.contains("solo |"), "{printed}");
     assert!(
         !printed.contains("solo:0"),
@@ -477,10 +495,10 @@ fn a_single_instance_app_keeps_the_bare_name() {
     );
 }
 
-#[test]
-fn a_shared_backlog_file_is_labelled_with_the_app_not_a_slot() {
+#[tokio::test]
+async fn a_shared_backlog_file_is_labelled_with_the_app_not_a_slot() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let printed = backlog_of(dir.path(), "talker", 2, true);
+    let printed = backlog_of(dir.path(), "talker", 2, true).await;
     assert!(printed.contains("talker |"), "{printed}");
     assert!(
         !printed.contains("talker:"),

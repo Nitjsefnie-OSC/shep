@@ -116,4 +116,5 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(5);
 
 mod colour;
 mod follow;
+mod remote;
 mod tail;

@@ -115,7 +115,7 @@ pub struct GlobalArgs {
     /// Reach another host's shepherd over ssh
     ///
     /// DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from
-    /// ~/.ssh/config. `flock`, `describe`, `fold`, a followed `bleats`,
+    /// ~/.ssh/config. `flock`, `describe`, `fold`, `bleats`,
     /// `stop`, `restart`, `reload`, `delete`, `stock`, `enable`, `disable`,
     /// `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
     /// refuses it rather than act on this machine. `describe` shows no

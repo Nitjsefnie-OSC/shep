@@ -317,6 +317,9 @@ pub enum Commands {
     /// List one fold.
     Fold(FoldArgs),
     /// Show or follow bleats (log output) for one or more sheep.
+    ///
+    /// Works under `--host`: the host's shepherd reads its own log files and
+    /// sends back each tail, so this machine opens none of them.
     #[command(visible_alias = "logs")]
     Bleats(BleatsArgs),
     /// Watch the flock on a live dashboard.

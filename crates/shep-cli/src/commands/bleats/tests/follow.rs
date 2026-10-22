@@ -886,7 +886,7 @@ async fn host_follow(
         };
         tokio::time::timeout(
             RUN_TIMEOUT,
-            bleats_over(&client, &mut streams, quiet, args, true, interrupt),
+            bleats_over(&client, &mut streams, quiet, args, Some("amp2"), interrupt),
         )
         .await
         .expect("the grace ends the follow")
@@ -896,60 +896,6 @@ async fn host_follow(
         String::from_utf8(out).unwrap(),
         String::from_utf8(err).unwrap(),
     )
-}
-
-/// The remote's `ProcessInfo` carries the remote's paths. Opening one here
-/// would print this machine's file as that sheep's output.
-#[tokio::test]
-async fn a_followed_host_prints_no_backlog_from_local_paths() {
-    for quiet in [false, true] {
-        let dir = tempfile::tempdir().unwrap();
-        let mut sheep = info(1, "web");
-        sheep.out_file = Some(write_log(
-            dir.path(),
-            "web-out.log",
-            "text-from-a-local-file\n",
-        ));
-        let args = bleats_args("all", false, false, false);
-        assert!(args.lines > 0, "the default asks for a backlog");
-
-        let (_, out, err) = host_follow(
-            quiet,
-            sheep,
-            Some("live-line"),
-            &args,
-            std::future::pending(),
-        )
-        .await;
-
-        assert!(out.contains("live-line"), "{out}");
-        assert!(!out.contains("text-from-a-local-file"), "{out}");
-        if quiet {
-            assert!(err.is_empty(), "--quiet silences the notice: {err}");
-        } else {
-            assert_eq!(
-                err.matches("no backlog is shown over --host").count(),
-                1,
-                "{err}"
-            );
-        }
-    }
-}
-
-/// `--lines 0` asks for no backlog, and over a host there is none to give
-/// either way: the notice is the same, so the operator never wonders why.
-#[tokio::test]
-async fn a_followed_host_says_no_backlog_is_shown_even_for_zero_lines() {
-    let mut args = bleats_args("all", false, false, false);
-    args.lines = 0;
-
-    let (_, _, err) = host_follow(false, info(1, "web"), None, &args, std::future::pending()).await;
-
-    assert_eq!(
-        err.matches("no backlog is shown over --host").count(),
-        1,
-        "{err}"
-    );
 }
 
 /// The ssh child dies on the same SIGINT as this process, so the stream can

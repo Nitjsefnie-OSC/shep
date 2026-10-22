@@ -134,8 +134,8 @@ fn a_pipe_no_color_and_json_add_no_colour() {
     );
 }
 
-#[test]
-fn a_followed_line_and_a_replayed_line_render_the_same() {
+#[tokio::test]
+async fn a_followed_line_and_a_replayed_line_render_the_same() {
     let dir = tempfile::tempdir().unwrap();
     let out_path = write_log(
         dir.path(),
@@ -164,7 +164,10 @@ fn a_followed_line_and_a_replayed_line_render_the_same() {
             &cache,
             &selector,
             &follow_args_out("all"),
-        );
+            LogSource::Local,
+        )
+        .await
+        .unwrap();
     }
 
     // The followed half: the same two lines arriving on the bus.

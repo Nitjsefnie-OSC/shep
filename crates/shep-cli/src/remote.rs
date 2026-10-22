@@ -43,14 +43,12 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         | Commands::Trigger(_)
         | Commands::Signal(_)
         | Commands::Whisper(_)
+        | Commands::Bleats(_)
         | Commands::Lookout(_) => HostScope::Reaches,
         // The hidden `--exec` spelling is `adopt`, which writes this
         // machine's `shep.toml`.
         Commands::Enable(args) if args.exec.is_some() => HostScope::LocalOnly,
         Commands::Enable(_) => HostScope::Reaches,
-        // A static tail opens the remote's log paths on this machine.
-        Commands::Bleats(args) if args.no_follow => HostScope::LocalOnly,
-        Commands::Bleats(_) => HostScope::Reaches,
         // Reaches for a sheep name only. A token cannot be classed until the
         // remote's flock is listed, so the load path refuses the rest.
         Commands::Start(_) => HostScope::Reaches,
@@ -268,14 +266,14 @@ mod tests {
         Cli::try_parse_from(&argv).unwrap_or_else(|err| panic!("{argv:?} must parse: {err}"))
     }
 
-    /// Every argv that reaches a host. A static `bleats` reads log files, so
-    /// it is absent, and `SAMPLES` already holds the followed form.
+    /// Every argv that reaches a host.
     const REACHING: &[&[&str]] = &[
         &["flock"],
         &["flock", "--follow"],
         &["describe", "web"],
         &["fold", "web"],
         &["bleats", "web"],
+        &["bleats", "web", "--no-follow"],
         &["lookout"],
     ];
 
@@ -375,13 +373,11 @@ mod tests {
     }
 
     #[test]
-    fn read_verbs_reach_a_host_except_a_static_bleats() {
+    fn read_verbs_reach_a_host() {
         for argv in REACHING {
             let cli = parsed_with_host(argv);
             assert_eq!(host_scope(&cli.command), HostScope::Reaches, "{argv:?}");
         }
-        let static_bleats = parsed_with_host(&["bleats", "web", "--no-follow"]);
-        assert_eq!(host_scope(&static_bleats.command), HostScope::LocalOnly);
         for sample in SAMPLES {
             if REACHING
                 .iter()
