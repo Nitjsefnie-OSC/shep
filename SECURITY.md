@@ -335,7 +335,7 @@ TLS termination, auth).
   (metrics, serve, or a supervised app) to a non-loopback address is the
   operator's decision and outside shep's threat model until 1.0. shep does
   not audit, filter, or rate-limit traffic to processes it supervises.
-- **No shep-owned transport security between hosts.** It is ssh's. shep adds
+- No shep-owned transport security between hosts. It is ssh's. shep adds
   no listener, key store or certificate.
 - **No protection against a compromised managed process.** A sheep that is
   itself compromised can do anything its own OS-level permissions allow,
