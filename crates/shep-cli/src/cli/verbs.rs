@@ -8,9 +8,10 @@
 
 use super::{
     AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DisableArgs,
-    DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, ImportArgs, InitArgs, KvGetArgs,
-    KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs, SelectorArgs,
-    ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs, TriggerArgs, WhisperArgs,
+    DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, HostArgs, ImportArgs, InitArgs,
+    KvGetArgs, KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs,
+    SelectorArgs, ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs, TriggerArgs,
+    WhisperArgs,
 };
 
 /// Every verb the binary understands.
@@ -382,6 +383,13 @@ pub enum Commands {
     /// `$SHEP_HOME/shep.toml`. `secret list` needs nothing: it names keys and
     /// the environments each has a value for, never a value.
     Secret(SecretArgs),
+    /// Keep the list of machines whose shepherds this CLI reaches.
+    ///
+    /// The list is a top-level `hosts = ["amp2", ...]` array in
+    /// `$SHEP_HOME/shep.toml`. Each entry is an ssh destination, so
+    /// `~/.ssh/config` aliases, users, ports and ProxyJump all apply. Reads
+    /// and writes that file directly and never connects to a machine.
+    Host(HostArgs),
     /// Copy one setting, or one dog's table, from one sheep onto another.
     ///
     /// Each side is an address: a sheep name, then a path in its config.
