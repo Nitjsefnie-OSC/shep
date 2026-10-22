@@ -515,7 +515,12 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
 
         assert_eq!(json["schema_version"], 1);
-        let mut keys: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
+        let mut keys: Vec<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
         keys.sort_unstable();
         assert_eq!(keys, ["command", "data", "host", "schema_version"]);
         assert!(!json["data"][0].as_object().unwrap().contains_key("origin"));
@@ -574,7 +579,11 @@ mod tests {
             .iter()
             .map(|row| row["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["db", "web", "api", "zed"], "list order, each host sorted");
+        assert_eq!(
+            names,
+            ["db", "web", "api", "zed"],
+            "list order, each host sorted"
+        );
     }
 
     #[test]
