@@ -757,8 +757,9 @@ mod tests {
                 home.to_str().unwrap(),
                 "--host",
                 "amp2",
-                "stop",
+                "stock",
                 "web",
+                "2",
             ])
             .unwrap();
             assert_eq!(

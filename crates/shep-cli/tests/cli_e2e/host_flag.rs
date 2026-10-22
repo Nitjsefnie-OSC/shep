@@ -1,5 +1,5 @@
-//! `--host`: `flock` lists the host's flock through a stand-in `ssh`, and
-//! every other verb refuses before it acts on this machine.
+//! `--host`: the verbs that reach a host act on its flock through a stand-in
+//! `ssh`, and every other verb refuses before it acts on this machine.
 //!
 //! Unix only, like [`super::ssh_stand_in`], whose script this reuses.
 
@@ -157,7 +157,7 @@ fn another_verb_with_host_exits_2_and_the_remote_sheep_is_untouched() {
     write_ssh_stand_in(bin.path(), remote.path());
 
     let refused = shep(local.path())
-        .args(["--host", "amp2", "stop", "remote-sheep"])
+        .args(["--host", "amp2", "stock", "remote-sheep", "2"])
         .env("PATH", path_with_first(bin.path()))
         .output()
         .unwrap();
@@ -411,5 +411,69 @@ fn bleats_over_a_stand_in_ssh_follows_a_remote_sheep_and_exits_0_on_sigint() {
     assert!(seen.contains("remote-line"), "{seen}");
     assert_eq!(status.code(), Some(0), "{status:?}");
 
+    graceful_kill(remote.path());
+}
+
+/// The same name runs on both machines, so a verb that fell back to this one
+/// would show as a changed local pid. Each verb is waited out on the remote
+/// before the local sheep is read, so a late local change cannot hide.
+#[cfg(unix)]
+#[test]
+fn stop_restart_reload_and_delete_act_on_the_remote_flock_only() {
+    let local = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+    start_sheep(&mut guard, &local, "web");
+    start_sheep(&mut guard, &remote, "web");
+    write_ssh_stand_in(bin.path(), remote.path());
+    let path = path_with_first(bin.path());
+    let online = |sheep: &serde_json::Value| sheep["status"] == "online";
+    let local_sheep = poll_flock(local.path(), online);
+    let mut remote_pid = poll_flock(remote.path(), online)["pid"].clone();
+    let over_host = |verb: &str| {
+        let output = shep(local.path())
+            .args(["--host", "amp2", verb, "web"])
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert_success(&output);
+    };
+    let local_is_untouched = |verb: &str| {
+        let here = poll_flock(local.path(), |_| true);
+        assert_eq!(
+            (&here["pid"], &here["status"]),
+            (&local_sheep["pid"], &local_sheep["status"]),
+            "`{verb}` over a host changed the local sheep"
+        );
+    };
+
+    for verb in ["restart", "reload"] {
+        over_host(verb);
+        let before = remote_pid.clone();
+        let moved = poll_flock(remote.path(), |sheep| {
+            online(sheep) && sheep["pid"] != before
+        });
+        assert_ne!(
+            moved["pid"], remote_pid,
+            "`{verb}` left the remote sheep on its pid"
+        );
+        remote_pid = moved["pid"].clone();
+        local_is_untouched(verb);
+    }
+
+    over_host("stop");
+    let stopped = poll_flock(remote.path(), |sheep| sheep["status"] == "stopped");
+    assert_eq!(stopped["status"], "stopped", "{stopped}");
+    local_is_untouched("stop");
+
+    over_host("delete");
+    let left = poll_flock_data(remote.path(), FLOCK_DEADLINE, |data| {
+        data.as_array().is_some_and(Vec::is_empty)
+    });
+    assert_eq!(left, serde_json::json!([]), "the remote sheep survived");
+    local_is_untouched("delete");
+
+    graceful_kill(local.path());
     graceful_kill(remote.path());
 }
