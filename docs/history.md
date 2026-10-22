@@ -269,6 +269,17 @@ where an operator reads. `every_exempt_verb_is_one_of_the_documented_recovery_ve
 pins `add` at `Enforce`, since it reaches that through the `_` arm rather
 than by being named.
 
+**This paragraph said the guard "refuses every verb but the three in
+`RECOVERY_VERBS`", and that is wrong now: three read verbs warn instead.**
+`VersionGuard::Warn` is a third guard beside `Enforce` and `Exempt`, and
+`read_verb` gives it to `flock`, `describe` and `bleats`, all of `bleats`
+and not only `--follow`, since both forms send one `ListFlock` and then
+read. `refuse_version_skew` writes one `version_skew` notice to stderr for
+them and proceeds, so a fleet upgraded one host at a time can still be
+listed. Every other verb, `lookout` and `whistle` included, stays at
+`Enforce`: a pane and a tool can write. `every_exempt_verb_is_one_of_the_documented_recovery_verbs`
+now pins `flock` at `Warn`, and `add` is still `Enforce`.
+
 **`PROTOCOL_VERSION` and `MIN_SUPPORTED` moved to 8 on 2026-09-07, for
 `AppConfig::environment`.** Not for `Request::PutSecrets` and
 `Response::SecretsPut`, which arrived on the same branch and moved nothing.
