@@ -384,18 +384,16 @@ async fn explain(
     }
 }
 
+/// Stand-ins for ssh that tests across this crate run in its place.
 #[cfg(all(test, unix))]
-mod tests {
+pub(crate) mod stand_in {
     use std::os::unix::fs::PermissionsExt as _;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use shep_core::protocol::{HelloAck, HelloReply, PROTOCOL_VERSION, encode_frame};
 
-    use super::*;
-    use crate::client::Client;
-
     /// Writes an executable `#!/bin/sh` stand-in for ssh into `dir`.
-    fn stand_in(dir: &Path, body: &str) -> PathBuf {
+    pub(crate) fn stand_in(dir: &Path, body: &str) -> PathBuf {
         let path = dir.join("ssh");
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -410,7 +408,7 @@ mod tests {
         bytes
     }
 
-    fn ack() -> HelloAck {
+    pub(crate) fn ack() -> HelloAck {
         HelloAck {
             daemon_version: "9.9.9".into(),
             protocol: PROTOCOL_VERSION,
@@ -420,9 +418,18 @@ mod tests {
     }
 
     /// Writes `reply.bin` into `dir`: a framed ack a stand-in can `cat`.
-    fn write_reply(dir: &Path) {
+    pub(crate) fn write_reply(dir: &Path) {
         std::fs::write(dir.join("reply.bin"), framed(&Ok(ack()))).unwrap();
     }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::path::Path;
+
+    use super::stand_in::{ack, stand_in, write_reply};
+    use super::*;
+    use crate::client::Client;
 
     fn options(program: PathBuf) -> SshOptions {
         SshOptions::default().program(program)

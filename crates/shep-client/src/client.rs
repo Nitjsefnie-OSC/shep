@@ -569,4 +569,35 @@ mod tests {
             assert_eq!(err.exit_code(), code, "{err}");
         }
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_ssh_client_has_a_host_and_no_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::ssh::stand_in::write_reply(dir.path());
+        let program = crate::ssh::stand_in::stand_in(
+            dir.path(),
+            "cat \"$(dirname \"$0\")/reply.bin\"\ncat >/dev/null",
+        );
+
+        let client =
+            Client::connect_ssh_with("deploy@build-01", &SshOptions::default().program(program))
+                .await
+                .unwrap();
+
+        assert_eq!(client.host(), Some("deploy@build-01"));
+        assert_eq!(client.socket(), Path::new(""));
+        let shown = format!("{client:?}");
+        assert!(shown.contains("host: Some(\"deploy@build-01\")"), "{shown}");
+    }
+
+    #[tokio::test]
+    async fn a_socket_client_has_a_socket_and_no_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate::testing::control_address(dir.path());
+        let (client, _daemon) = crate::testing::fake_client_on(&path).await;
+
+        assert_eq!(client.host(), None);
+        assert_eq!(client.socket(), path);
+    }
 }

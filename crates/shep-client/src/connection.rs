@@ -665,4 +665,82 @@ mod tests {
             assert_eq!(unreachable.exit_code(), shep_core::exit::DAEMON_UNREACHABLE);
         }
     }
+
+    /// Every ssh failure is nothing usable answering, whatever its cause; a
+    /// refusal through ssh is still the refusal, and keeps its own code.
+    #[test]
+    fn ssh_failures_exit_daemon_unreachable_and_a_refusal_keeps_protocol_mismatch() {
+        let causes = [
+            SshCause::Spawn {
+                program: PathBuf::from("ssh"),
+                source: std::io::Error::other("no such file"),
+            },
+            SshCause::Transport {
+                stderr: "Connection refused".to_owned(),
+            },
+            SshCause::CommandNotFound,
+            SshCause::NoShepherd,
+            SshCause::RemoteTooOld,
+            SshCause::LoginOutput(Box::new(ConnectError::HandshakeClosed)),
+        ];
+        for cause in causes {
+            let err = ConnectError::Ssh {
+                destination: "build-01".to_owned(),
+                cause,
+            };
+            assert_eq!(
+                err.exit_code(),
+                shep_core::exit::DAEMON_UNREACHABLE,
+                "{err}"
+            );
+        }
+
+        let refused = ConnectError::ProtocolMismatch {
+            client: 1,
+            daemon_version: None,
+            message: "too old".to_owned(),
+        };
+        assert_eq!(refused.exit_code(), shep_core::exit::PROTOCOL_MISMATCH);
+    }
+
+    /// `Display` names the host, and `source` reaches the cause underneath
+    /// without repeating the message `Display` already printed.
+    #[test]
+    fn an_ssh_failure_names_its_host_and_exposes_the_cause_beneath_it() {
+        let spawn = ConnectError::Ssh {
+            destination: "build-01".to_owned(),
+            cause: SshCause::Spawn {
+                program: PathBuf::from("/opt/ssh"),
+                source: std::io::Error::other("denied"),
+            },
+        };
+        assert!(spawn.to_string().contains("`/opt/ssh`"), "{spawn}");
+        assert_eq!(
+            core::error::Error::source(&spawn).unwrap().to_string(),
+            "denied"
+        );
+
+        let wrapped = ConnectError::Ssh {
+            destination: "build-01".to_owned(),
+            cause: SshCause::LoginOutput(Box::new(ConnectError::HandshakeClosed)),
+        };
+        assert!(wrapped.to_string().contains("`build-01`"), "{wrapped}");
+        assert_eq!(
+            core::error::Error::source(&wrapped).unwrap().to_string(),
+            ConnectError::HandshakeClosed.to_string()
+        );
+
+        let transport = ConnectError::Ssh {
+            destination: "build-01".to_owned(),
+            cause: SshCause::NoShepherd,
+        };
+        assert!(core::error::Error::source(&transport).is_none());
+    }
+
+    #[test]
+    fn a_refused_destination_is_a_usage_error() {
+        let err = ConnectError::Destination(DestinationError::Empty);
+        assert_eq!(err.exit_code(), shep_core::exit::USAGE);
+        assert!(core::error::Error::source(&err).is_some());
+    }
 }

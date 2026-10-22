@@ -903,7 +903,7 @@ mod tests {
     /// stops naming the dog it announces itself as. A derived impl would do
     /// both, and the channel says nothing a reader can act on.
     #[tokio::test]
-    async fn client_debug_names_the_socket_the_ack_and_the_dog() {
+    async fn client_debug_names_the_socket_the_host_the_ack_and_the_dog() {
         let dir = tempfile::tempdir().unwrap();
         let path = control_address(dir.path());
         let ack = ack_from(11);
@@ -914,7 +914,9 @@ mod tests {
 
         assert_eq!(
             format!("{client:?}"),
-            format!("Client {{ socket: {path:?}, ack: {ack:?}, dog_name: Some(\"metrics\"), .. }}")
+            format!(
+                "Client {{ socket: {path:?}, host: None, ack: {ack:?}, dog_name: Some(\"metrics\"), .. }}"
+            )
         );
     }
 }

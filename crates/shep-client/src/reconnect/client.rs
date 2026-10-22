@@ -648,4 +648,37 @@ mod tests {
 
         assert_eq!(verdict, Reconnected::NewDaemon);
     }
+
+    /// fails if a reconnect of an ssh client reads `socket()` (empty) instead of
+    /// running the same ssh again.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reconnect_over_ssh_redials_through_the_same_stand_in() {
+        use crate::ssh::SshOptions;
+        use crate::ssh::stand_in::{stand_in, write_reply};
+
+        let dir = tempfile::tempdir().unwrap();
+        write_reply(dir.path());
+        let program = stand_in(
+            dir.path(),
+            "echo run >> \"$(dirname \"$0\")/runs.txt\"\ncat \"$(dirname \"$0\")/reply.bin\"",
+        );
+        let mut client =
+            Client::connect_ssh_with("build-01", &SshOptions::default().program(program))
+                .await
+                .unwrap();
+        tokio::time::timeout(BOUND, client.closed())
+            .await
+            .expect("the stand-in exits after its reply, ending the connection");
+
+        let verdict = tokio::time::timeout(BOUND, client.reconnect_within(HANDSHAKE_TIMEOUT))
+            .await
+            .expect("the redial must not hang")
+            .unwrap();
+
+        assert_eq!(verdict, Reconnected::SameDaemon);
+        assert_eq!(client.host(), Some("build-01"));
+        let runs = std::fs::read_to_string(dir.path().join("runs.txt")).unwrap();
+        assert_eq!(runs.lines().count(), 2, "{runs:?}");
+    }
 }
