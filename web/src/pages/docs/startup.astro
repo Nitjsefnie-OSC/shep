@@ -89,6 +89,14 @@ removed  /Library/LaunchDaemons/io.github.turtiesocks.shep.deploy.plist  absent`
       <code>absent</code> and exits successfully. Nothing left to guess at.
     </p>
 
+    <h2 id="already-running">Already running</h2>
+    <p>
+      If a shepherd already holds the home, <code>startup</code> enables the
+      unit without starting it and prints how to hand over now. On systemd,{" "}
+      <code>RestartPreventExitStatus=10</code> stops a unit started anyway
+      from looping.
+    </p>
+
     <h2 id="the-muster-roll">The muster roll</h2>
     <p>
       The unit brings the shepherd back. What brings the <em>flock</em> back
