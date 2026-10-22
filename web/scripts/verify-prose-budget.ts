@@ -181,7 +181,10 @@ export const BUDGETS: Record<string, number> = {
   //
   // Raised from 2245 for #951: `stock`, `enable` and `disable` take `--host`
   // and read a dog's name as a sheep's there, which the page must say.
-  lifecycle: 2260,
+  //
+  // Raised from 2260 for #952: `start` takes `--host` for a sheep name only,
+  // and the page has to say what a path target does instead.
+  lifecycle: 2300,
   // Cut from 1900 for the stamps-off tail sentence: the page has to say a
   // sheep with `log_timestamps = false` carries no stamp for `bleats` to
   // strip, and it paid for that line by tightening the sentences around it

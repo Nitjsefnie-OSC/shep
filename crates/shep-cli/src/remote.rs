@@ -50,8 +50,10 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         // A static tail opens the remote's log paths on this machine.
         Commands::Bleats(args) if args.no_follow => HostScope::LocalOnly,
         Commands::Bleats(_) => HostScope::Reaches,
-        Commands::Start(_)
-        | Commands::Add(_)
+        // Reaches for a sheep name only. A token cannot be classed until the
+        // remote's flock is listed, so the load path refuses the rest.
+        Commands::Start(_) => HostScope::Reaches,
+        Commands::Add(_)
         | Commands::Serve(_)
         | Commands::Dogs(_)
         | Commands::Adopt(_)
@@ -98,6 +100,39 @@ pub(crate) const HOST_REFUSAL: &str = "`--host` is not supported by this command
 pub(crate) fn refuse_host(fmt: Format) -> ExitCode {
     emit_error_locked(fmt, ExitCode::Usage, HOST_REFUSAL);
     ExitCode::Usage
+}
+
+/// `word` as one argument of a command line the remote's POSIX shell reads,
+/// for a hint an operator pastes after `ssh <dest>`.
+///
+/// Not [`crate::commands`]'s own quoting: that one is unix-only, and this
+/// machine's OS says nothing about the host's shell.
+pub(crate) fn remote_word(word: &str) -> String {
+    let safe = |b: &u8| b.is_ascii_alphanumeric() || b"_./:@%+=-".contains(b);
+    if !word.is_empty() && word.as_bytes().iter().all(safe) {
+        return word.to_string();
+    }
+    format!("'{}'", word.replace('\'', r"'\''"))
+}
+
+/// The `ssh` line that runs `words` on `dest`, for an operator to paste.
+///
+/// Two shells read it: this machine's, which strips one layer of quoting, and
+/// the host's, which gets the words joined by spaces. A word that needs
+/// quoting is therefore quoted for the host, and the whole command again for
+/// this machine. A line of safe words stays unquoted.
+pub(crate) fn ssh_hint(dest: &str, words: &[String]) -> String {
+    let quoted: Vec<String> = words.iter().map(|word| remote_word(word)).collect();
+    let command = quoted.join(" ");
+    if quoted
+        .iter()
+        .zip(words)
+        .all(|(quoted, word)| quoted == word)
+    {
+        format!("ssh {dest} {command}")
+    } else {
+        format!("ssh {dest} {}", remote_word(&command))
+    }
 }
 
 /// How long a followed host link waits for an interrupt before it reports the
@@ -252,6 +287,40 @@ mod tests {
         &["trigger", "web", "run"],
     ];
 
+    /// Every argv of `start`, which reaches a host for a sheep name only.
+    const STARTING: &[&[&str]] = &[&["start", "web"], &["start"]];
+
+    #[test]
+    fn start_reaches_a_host_and_add_does_not() {
+        for argv in STARTING {
+            let cli = parsed_with_host(argv);
+            assert_eq!(host_scope(&cli.command), HostScope::Reaches, "{argv:?}");
+        }
+        let add = parsed_with_host(&["add", "web"]);
+        assert_eq!(host_scope(&add.command), HostScope::LocalOnly);
+    }
+
+    #[test]
+    fn a_remote_word_is_quoted_only_when_the_shell_would_split_it() {
+        assert_eq!(remote_word("./api"), "./api");
+        assert_eq!(remote_word("my api"), "'my api'");
+        assert_eq!(remote_word("it's"), r"'it'\''s'");
+        assert_eq!(remote_word(""), "''");
+    }
+
+    #[test]
+    fn an_ssh_hint_quotes_for_both_shells_only_when_a_word_needs_it() {
+        let words = |list: &[&str]| list.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            ssh_hint("amp2", &words(&["shep", "start", "./api"])),
+            "ssh amp2 shep start ./api"
+        );
+        assert_eq!(
+            ssh_hint("amp2", &words(&["shep", "start", "./my api.js"])),
+            r"ssh amp2 'shep start '\''./my api.js'\'''"
+        );
+    }
+
     #[test]
     fn enable_disable_stock_signal_whisper_and_trigger_reach_a_host() {
         for argv in MARKING {
@@ -289,6 +358,7 @@ mod tests {
                 .iter()
                 .chain(CHANGING)
                 .chain(MARKING)
+                .chain(STARTING)
                 .any(|argv| argv[0] == sample[0])
             {
                 continue;

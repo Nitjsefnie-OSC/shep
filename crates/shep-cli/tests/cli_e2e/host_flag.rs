@@ -638,3 +638,70 @@ fn disable_then_enable_over_a_host_marks_the_remote_sheep() {
     graceful_kill(local.path());
     graceful_kill(remote.path());
 }
+
+/// Both machines run `web`, and the remote one is stopped, so only a start
+/// that reached the host brings it back. A second host with no shepherd shows
+/// the connect never boots one: exit 5, and no socket appears there.
+#[cfg(unix)]
+#[test]
+fn start_over_a_host_resumes_a_stopped_remote_sheep_and_never_boots_a_remote_shepherd() {
+    let local = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    let dead = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let dead_bin = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+    start_sheep(&mut guard, &local, "web");
+    start_sheep(&mut guard, &remote, "web");
+    write_ssh_stand_in(bin.path(), remote.path());
+    write_ssh_stand_in(dead_bin.path(), dead.path());
+    let local_sheep = poll_flock(local.path(), |sheep| sheep["status"] == "online");
+    assert_success(&shep(remote.path()).args(["stop", "web"]).output().unwrap());
+    poll_flock(remote.path(), |sheep| sheep["status"] == "stopped");
+
+    let resumed = shep(local.path())
+        .args(["--host", "amp2", "start", "web"])
+        .env("PATH", path_with_first(bin.path()))
+        .output()
+        .unwrap();
+    assert_success(&resumed);
+    let back = poll_flock(remote.path(), |sheep| sheep["status"] == "online");
+    assert_eq!(back["status"], "online", "{back}");
+    let here = poll_flock(local.path(), |_| true);
+    assert_eq!(
+        (&here["pid"], &here["status"]),
+        (&local_sheep["pid"], &local_sheep["status"]),
+        "`start` over a host touched the local sheep"
+    );
+
+    let refused = shep(local.path())
+        .args(["--host", "amp2", "start", "./api"])
+        .env("PATH", path_with_first(bin.path()))
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(2));
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(said.contains("ssh amp2 shep start ./api"), "{said}");
+
+    let unreachable = shep(local.path())
+        .args(["--host", "amp2", "start", "web"])
+        .env("PATH", path_with_first(dead_bin.path()))
+        .output()
+        .unwrap();
+    assert_eq!(unreachable.status.code(), Some(5));
+    let bare = shep(local.path())
+        .args(["--host", "amp2", "start"])
+        .env("PATH", path_with_first(dead_bin.path()))
+        .output()
+        .unwrap();
+    assert_eq!(bare.status.code(), Some(2));
+    assert!(
+        !shep_client::shep_core::paths::ShepPaths::at(dead.path().to_owned())
+            .socket
+            .exists(),
+        "`start` over a host booted a shepherd there"
+    );
+
+    graceful_kill(local.path());
+    graceful_kill(remote.path());
+}

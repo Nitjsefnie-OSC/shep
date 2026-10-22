@@ -10,6 +10,7 @@ use std::path::Path;
 use shep_client::{Client, START_DEADLINE};
 use shep_core::config::{AppConfig, DeclaredApp, ResetDepth};
 use shep_core::protocol::{EnvValue, ProcessInfo, Request, Response, SelectorSpec};
+use shep_core::selector::ProcessSelector;
 
 use crate::cli::StartArgs;
 use crate::commands::lifecycle::configure::{
@@ -27,6 +28,7 @@ use crate::commands::lifecycle::staged_start_deadline;
 use crate::commands::selector::parse_selector;
 use crate::exit::ExitCode;
 use crate::output::{FlockRows, Streams};
+use crate::remote::{remote_word, ssh_hint};
 
 /// Which of the two verbs that read a Flockfile is running
 ///
@@ -61,7 +63,105 @@ pub async fn start(
     discovered: Option<&Path>,
     interpreters: &BTreeMap<String, String>,
 ) -> ExitCode {
-    load(client, streams, args, discovered, interpreters, Load::Start).await
+    load(
+        client,
+        streams,
+        args,
+        discovered,
+        interpreters,
+        Load::Start,
+        None,
+    )
+    .await
+}
+
+/// [`start`] against the shepherd on `dest`
+///
+/// Only a sheep or fold the host's flock has can mean the same thing there. A
+/// path, `-`, `--flockfile` and a bare `start` would be read on this machine,
+/// so each is refused with the `ssh` command that reads it on the host.
+pub async fn start_on_host(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    args: &StartArgs,
+    dest: &str,
+) -> ExitCode {
+    load(
+        client,
+        streams,
+        args,
+        None,
+        &BTreeMap::new(),
+        Load::Start,
+        Some(dest),
+    )
+    .await
+}
+
+/// Whether `token` would be read on this machine rather than looked up in a
+/// flock: `-`, anything under `--flockfile`, or a word no sheep can be named
+///
+/// Needs no shepherd, so a host link answers it before dialling. A token that
+/// is not a selector at all is left to `load_one`, which reports it.
+pub(crate) fn reads_this_machine(args: &StartArgs, token: &str) -> bool {
+    token == "-"
+        || args.flockfile
+        || ProcessSelector::parse(token).is_ok_and(|selector| !is_reachable_as_a_name(&selector))
+}
+
+/// What the operator typed and the `ssh` line that does the same on `dest`,
+/// each carrying every flag, assignment and target of `args`.
+fn start_commands(dest: &str, args: &StartArgs) -> (String, String) {
+    let mut words = vec!["start".to_string()];
+    let valued = [
+        ("--name", &args.name),
+        ("--fold", &args.fold),
+        ("--cwd", &args.cwd),
+        ("--interpreter", &args.interpreter),
+    ];
+    for (flag, value) in valued {
+        if let Some(value) = value {
+            words.push(flag.to_string());
+            words.push(value.clone());
+        }
+    }
+    if args.flockfile {
+        words.push("--flockfile".to_string());
+    }
+    if args.no_log_timestamps {
+        words.push("--no-log-timestamps".to_string());
+    }
+    words.extend(reset_flag(args));
+    words.extend(args.targets.iter().cloned());
+    let typed: Vec<String> = words.iter().map(|word| remote_word(word)).collect();
+    let mut remote = vec!["shep".to_string()];
+    remote.extend(words);
+    (
+        format!("shep --host {dest} {}", typed.join(" ")),
+        ssh_hint(dest, &remote),
+    )
+}
+
+/// The refusal for a target that would be read on this machine
+///
+/// `token` is `None` for a bare `start`, which reads the Flockfile in this
+/// directory.
+///
+pub(crate) fn refuse_local_read(
+    streams: &mut Streams<'_>,
+    dest: &str,
+    args: &StartArgs,
+    token: Option<&str>,
+) -> ExitCode {
+    let read = match token {
+        Some("-") => "stdin".to_string(),
+        Some(token) => token.to_string(),
+        None => "the Flockfile in this directory".to_string(),
+    };
+    let (typed, ssh) = start_commands(dest, args);
+    let message =
+        format!("`{typed}` would read {read} on this machine. To start it there, run: {ssh}");
+    streams.fail(ExitCode::Usage, &message)
 }
 
 /// Registers what `args` resolves to and starts none of it
@@ -80,7 +180,16 @@ pub async fn add(
     discovered: Option<&Path>,
     interpreters: &BTreeMap<String, String>,
 ) -> ExitCode {
-    load(client, streams, args, discovered, interpreters, Load::Add).await
+    load(
+        client,
+        streams,
+        args,
+        discovered,
+        interpreters,
+        Load::Add,
+        None,
+    )
+    .await
 }
 
 /// The body [`start`] and [`add`] share; see [`Load`] for what they do not
@@ -91,6 +200,7 @@ async fn load(
     discovered: Option<&Path>,
     interpreters: &BTreeMap<String, String>,
     mode: Load,
+    host: Option<&str>,
 ) -> ExitCode {
     let (assignments, targets) = split_assignments(&args.targets);
     // An environment belongs to one sheep for the reason a name does, and
@@ -137,6 +247,7 @@ async fn load(
             &mut started,
             mode,
             &assignments,
+            host,
         )
         .await;
         // Printed whenever the verb succeeded, not only when it touched a
@@ -164,6 +275,7 @@ async fn load(
             &mut started,
             mode,
             &assignments,
+            host,
         )
         .await;
         if code != ExitCode::Success {
@@ -282,9 +394,30 @@ async fn set_log_timestamps_off(
     ExitCode::Success
 }
 
+/// The miss for a name the host's flock does not have
+///
+/// Hints at the `ssh` command too, since the token may have been a script
+/// that lives on the host.
+fn unknown_on_host(
+    streams: &mut Streams<'_>,
+    dest: &str,
+    args: &StartArgs,
+    token: &str,
+    selector: &ProcessSelector,
+    flock: &[ProcessInfo],
+) -> ExitCode {
+    let miss = selector_miss(token, selector, flock)
+        .unwrap_or_else(|| format!("{token} is not a sheep or a fold"));
+    let (_, ssh) = start_commands(dest, args);
+    let message = format!("{miss} on {dest}. If {token} is a script there, run: {ssh}");
+    streams.fail(ExitCode::NotFound, &message)
+}
+
 /// One target's worth of [`load`]
 ///
-/// `interpreters` is read once by the caller rather than per target.
+/// `interpreters` is read once by the caller rather than per target. `host` is
+/// the destination whose shepherd `client` speaks to, and with one set the
+/// function returns before anything is read on this machine.
 #[allow(clippy::too_many_arguments)]
 async fn load_one(
     client: &Client,
@@ -296,7 +429,13 @@ async fn load_one(
     started: &mut Vec<shep_core::protocol::ProcessInfo>,
     mode: Load,
     assignments: &BTreeMap<String, String>,
+    host: Option<&str>,
 ) -> ExitCode {
+    if let Some(dest) = host
+        && (target.is_none() || target.is_some_and(|token| reads_this_machine(args, token)))
+    {
+        return refuse_local_read(streams, dest, args, target);
+    }
     // Everything from here to `resolve_target` is the precedence in
     // `StartArgs::targets`' own help: a sheep by id or name, then a fold,
     // then a Flockfile, then a path. Each tier claims the token only if it
@@ -314,7 +453,16 @@ async fn load_one(
             Err(code) => return code,
         };
         if is_reachable_as_a_name(&selector) {
-            let flock = flock_now(client).await;
+            // Over a host a miss is final, so a listing that failed must not
+            // pass for an empty flock.
+            let flock = if host.is_some() {
+                match client.list_flock().await {
+                    Ok(flock) => flock,
+                    Err(err) => return streams.fail(ExitCode::from(&err), &err.to_string()),
+                }
+            } else {
+                flock_now(client).await
+            };
             let matched = flock_matches(&selector, &flock);
             if !matched.is_empty() {
                 // Returns rather than falling through: a token that resolved
@@ -371,6 +519,9 @@ async fn load_one(
                     // for. Said anyway, so a printed table is explained.
                     Load::Add => already_registered(streams, &matched),
                 };
+            }
+            if let Some(dest) = host {
+                return unknown_on_host(streams, dest, args, token, &selector, &flock);
             }
             // Held for the failure path below rather than reported here: the
             // token may still name a Flockfile or a path.
