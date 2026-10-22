@@ -393,7 +393,7 @@ pub(crate) async fn run(
             }
         }
         Commands::Restart(ref args) => match connect_client(&mut streams, &link, guard).await {
-            Ok(client) => lifecycle::restart(&client, &mut streams, &paths, args).await,
+            Ok(client) => lifecycle::restart(&client, &mut streams, Some(&paths), args).await,
             Err(code) => code,
         },
         Commands::Reload(ref args) => match connect_client(&mut streams, &link, guard).await {
@@ -402,7 +402,7 @@ pub(crate) async fn run(
         },
         // Not `connect_client` at this arm: `delete` removes a dog from
         // `shep.toml` too, and that half works with no shepherd running.
-        Commands::Delete(ref args) => lifecycle::delete(&mut streams, &paths, guard, args).await,
+        Commands::Delete(ref args) => lifecycle::delete(&mut streams, &link, guard, args).await,
         Commands::Stock(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => lifecycle::stock(&client, &mut streams, args).await,
             Err(code) => code,
@@ -564,8 +564,11 @@ async fn run_on_host(
         style,
         fmt,
     };
-    if let Commands::Flock(args) = command {
-        return flock_command(&mut streams, &link, guard, args).await;
+    match command {
+        Commands::Flock(args) => return flock_command(&mut streams, &link, guard, args).await,
+        // Connects for itself, for a dog half that has no host to run on.
+        Commands::Delete(args) => return lifecycle::delete(&mut streams, &link, guard, args).await,
+        _ => {}
     }
     let client = match connect_client(&mut streams, &link, guard).await {
         Ok(client) => client,
@@ -574,6 +577,11 @@ async fn run_on_host(
     match command {
         Commands::Describe(args) => query::describe(&client, &mut streams, &link, args).await,
         Commands::Fold(args) => query::fold(&client, &mut streams, args).await,
+        Commands::Stop(args) | Commands::Thatlldo(args) => {
+            lifecycle::stop(&client, &mut streams, args).await
+        }
+        Commands::Restart(args) => lifecycle::restart(&client, &mut streams, None, args).await,
+        Commands::Reload(args) => lifecycle::reload(&client, &mut streams, args).await,
         Commands::Bleats(args) => bleats::bleats_on_host(&client, &mut streams, quiet, args).await,
         other => unreachable!("`host_scope` refused {other:?} before it got here"),
     }

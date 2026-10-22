@@ -30,17 +30,20 @@ pub(crate) enum HostScope {
 /// [`HostScope::Reaches`] here and nowhere else.
 pub(crate) fn host_scope(command: &Commands) -> HostScope {
     match command {
-        Commands::Flock(_) | Commands::Describe(_) | Commands::Fold(_) => HostScope::Reaches,
+        Commands::Flock(_)
+        | Commands::Describe(_)
+        | Commands::Fold(_)
+        | Commands::Stop(_)
+        | Commands::Thatlldo(_)
+        | Commands::Restart(_)
+        | Commands::Reload(_)
+        | Commands::Delete(_) => HostScope::Reaches,
         // A static tail opens the remote's log paths on this machine.
         Commands::Bleats(args) if args.no_follow => HostScope::LocalOnly,
         Commands::Bleats(_) => HostScope::Reaches,
         Commands::Start(_)
         | Commands::Add(_)
         | Commands::Serve(_)
-        | Commands::Stop(_)
-        | Commands::Restart(_)
-        | Commands::Reload(_)
-        | Commands::Delete(_)
         | Commands::Stock(_)
         | Commands::Dogs(_)
         | Commands::Enable(_)
@@ -74,7 +77,6 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         | Commands::Completions(_)
         | Commands::Welcome
         | Commands::Style(_)
-        | Commands::Thatlldo(_)
         | Commands::Daemon(_)
         | Commands::Dog(_)
         | Commands::Schema
@@ -227,6 +229,23 @@ mod tests {
         &["bleats", "web"],
     ];
 
+    /// Every argv of a verb that changes the flock and reaches a host.
+    const CHANGING: &[&[&str]] = &[
+        &["stop", "web"],
+        &["thatlldo", "web"],
+        &["restart", "web"],
+        &["reload", "web"],
+        &["delete", "web"],
+    ];
+
+    #[test]
+    fn stop_restart_reload_and_delete_reach_a_host() {
+        for argv in CHANGING {
+            let cli = parsed_with_host(argv);
+            assert_eq!(host_scope(&cli.command), HostScope::Reaches, "{argv:?}");
+        }
+    }
+
     #[test]
     fn read_verbs_reach_a_host_except_a_static_bleats() {
         for argv in REACHING {
@@ -236,7 +255,11 @@ mod tests {
         let static_bleats = parsed_with_host(&["bleats", "web", "--no-follow"]);
         assert_eq!(host_scope(&static_bleats.command), HostScope::LocalOnly);
         for sample in SAMPLES {
-            if REACHING.iter().any(|argv| argv[0] == sample[0]) {
+            if REACHING
+                .iter()
+                .chain(CHANGING)
+                .any(|argv| argv[0] == sample[0])
+            {
                 continue;
             }
             let cli = parsed_with_host(sample);
