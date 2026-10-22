@@ -540,6 +540,10 @@ pub enum Commands {
     /// regenerated.
     #[command(hide = true)]
     Schema,
+    /// Copy bytes between stdin/stdout and the local shepherd's socket. The
+    /// remote end of `ssh <dest> shep dial-stdio`; not for direct use.
+    #[command(hide = true)]
+    DialStdio,
 }
 
 #[cfg(test)]
@@ -613,7 +617,7 @@ mod tests {
         let lookout = cmd.find_subcommand("lookout").unwrap();
         assert_eq!(lookout.get_visible_aliases().collect::<Vec<_>>(), ["dash"]);
 
-        for hidden in ["thatlldo", "daemon", "dog", "rehome"] {
+        for hidden in ["thatlldo", "daemon", "dog", "rehome", "dial-stdio"] {
             assert!(
                 cmd.find_subcommand(hidden).unwrap().is_hide_set(),
                 "{hidden} must stay hidden from --help"
@@ -696,6 +700,20 @@ mod tests {
             Cli::try_parse_from(["shep", "lookout"]).unwrap().command,
             Commands::Lookout(_)
         ));
+    }
+
+    /// fails if `shep dial-stdio` stops parsing, or grows an argument. It is
+    /// the remote end of `ssh <dest> shep dial-stdio`, so the destination and
+    /// the socket are never operator input.
+    #[test]
+    fn dial_stdio_takes_no_arguments() {
+        use clap::Parser;
+        assert!(matches!(
+            Cli::try_parse_from(["shep", "dial-stdio"]).unwrap().command,
+            Commands::DialStdio
+        ));
+        assert!(Cli::try_parse_from(["shep", "dial-stdio", "extra"]).is_err());
+        assert!(Cli::try_parse_from(["shep", "dial-stdio", "--anything"]).is_err());
     }
 
     /// fails if `shep whistle` stops parsing, or grows an argument. The
