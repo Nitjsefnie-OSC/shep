@@ -275,7 +275,7 @@ async fn restart_against_in(
         restart_within(
             client,
             &mut streams,
-            &paths,
+            Some(&paths),
             &SelectorArgs {
                 selectors: vec![selector.to_string()],
             },
@@ -374,6 +374,22 @@ fn adopted_dog(dir: &Path, name: &str, answer: &str) -> ShepPaths {
     })
     .unwrap();
     paths
+}
+
+/// The answer a dog gives when its binary was built against a
+/// protocol below the floor this shep's handshake still accepts.
+///
+/// Was `PROTOCOL_VERSION + 1` under the name `stale_answer`, back
+/// when the restart check compared for exact equality. The
+/// handshake now accepts anything at or above
+/// [`shep_core::protocol::MIN_SUPPORTED`], so a newer protocol is
+/// no longer stale; only one below the floor is.
+#[cfg(unix)]
+fn below_floor_answer() -> String {
+    format!(
+        "echo 'shep-log-rotate 0.1.3'\necho 'shep-protocol: {}'",
+        shep_core::protocol::MIN_SUPPORTED.saturating_sub(1)
+    )
 }
 
 /// A daemon that registers what it is asked to: an `Add` answers one

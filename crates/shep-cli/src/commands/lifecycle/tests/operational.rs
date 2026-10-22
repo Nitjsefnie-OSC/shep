@@ -473,3 +473,51 @@ fn a_load_that_did_nothing_to_an_app_says_nothing_about_it() {
         Some("zam: zam is not registered")
     );
 }
+
+/// fails if a restart over `--host` reads this machine's dog config: the dog
+/// here is adopted locally, its binary would warn, and the restart goes to a
+/// shepherd that has never heard of it.
+// Unix only for the reason `slow`'s fixture is: `adopted_dog` writes a
+// `#!/bin/sh` script, and on Windows the probe this guards would answer
+// unknown anyway.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_restart_over_a_host_probes_no_local_dog() {
+    let dir = tempfile::tempdir().unwrap();
+    let _local = adopted_dog(dir.path(), "log-rotate", &below_floor_answer());
+    let sock = shep_client::testing::control_address(dir.path());
+    let (client, _daemon) =
+        shep_client::testing::fake_client_answering(&sock, |request| match request {
+            Request::Restart { .. } => Response::Restarted {
+                accepted: Vec::new(),
+                refused: Vec::new(),
+            },
+            _ => Response::Flock(Vec::new()),
+        })
+        .await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        let args = SelectorArgs {
+            selectors: vec!["log-rotate".into()],
+        };
+        // Long enough that a probe cannot run out of budget and pass for
+        // silence.
+        let code =
+            restart_within(&client, &mut streams, None, &args, Duration::from_secs(30)).await;
+        assert_eq!(code, ExitCode::Success);
+    }
+
+    let said = String::from_utf8(err).unwrap();
+    assert!(
+        !said.contains("dog_binary_skew") && !said.contains("log-rotate"),
+        "no local dog is warned about on a restart that goes to a host: {said}"
+    );
+}

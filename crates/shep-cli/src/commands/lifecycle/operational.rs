@@ -47,7 +47,9 @@ pub async fn stop(client: &Client, streams: &mut Streams<'_>, args: &SelectorArg
 /// Restarts the sheep matching `args.selector`
 ///
 /// `paths` is here so a restart that names a dog is warned about before the
-/// request goes out. See [`dogs::warn_of_a_dog_a_restart_would_break`].
+/// request goes out. See [`dogs::warn_of_a_dog_a_restart_would_break`]. It is
+/// `None` over a host: the dogs it would probe are this machine's, and the
+/// restart goes to another one.
 ///
 /// Sent with [`START_DEADLINE`] rather than the client's 5s default. A
 /// restart matching several sheep now walks the dependency stages INSIDE the
@@ -70,7 +72,7 @@ pub async fn stop(client: &Client, streams: &mut Streams<'_>, args: &SelectorArg
 pub async fn restart(
     client: &Client,
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    paths: Option<&ShepPaths>,
     args: &SelectorArgs,
 ) -> ExitCode {
     restart_within(client, streams, paths, args, dogs::VERSION_BUDGET).await
@@ -83,7 +85,7 @@ pub async fn restart(
 pub async fn restart_within(
     client: &Client,
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    paths: Option<&ShepPaths>,
     args: &SelectorArgs,
     probe: Duration,
 ) -> ExitCode {
@@ -93,7 +95,9 @@ pub async fn restart_within(
     };
     // Before `request_each`: a warning that arrives after the restart is a
     // description of a state the operator is already in.
-    dogs::warn_of_a_dog_a_restart_would_break(streams, paths, &selectors, probe);
+    if let Some(paths) = paths {
+        dogs::warn_of_a_dog_a_restart_would_break(streams, paths, &selectors, probe);
+    }
     let mut refused: Vec<SheepRefusal> = Vec::new();
     let (procs, failure) = request_each(
         client,
