@@ -45,8 +45,11 @@ use crate::version_guard::{VersionGuard, connect_client};
 /// not worth a row type neither verb asked for.
 ///
 /// Over a [`Link::Host`] there is no dog half. The `shep.toml` here is this
-/// machine's, not the host's, so every selector goes to the host's shepherd,
-/// which answers `NotFound` for a name it holds no sheep under.
+/// machine's, not the host's, so every selector goes to the host's shepherd.
+/// It answers `NotFound` for a name it holds no entry under. A dog it has
+/// registered is deregistered, but nothing strikes its adoption from the
+/// host's `shep.toml`, so the next boot there brings it back; that file is
+/// edited by running `shep delete` on the host itself.
 ///
 /// # Errors
 /// [`ExitCode::InvalidConfig`] or [`ExitCode::Failure`] after writing what
