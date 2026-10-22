@@ -4,7 +4,8 @@
 //! The hosts are asked at once and nothing is printed until all of them have
 //! answered, so the order of the output is the list's and never the
 //! network's. A host that fails prints one line on stderr instead of a table
-//! and does not hide the others.
+//! and does not hide the others. Under `--format json` the answers are one
+//! envelope instead of one table apiece.
 
 use std::future::Future;
 use std::io;
@@ -24,7 +25,7 @@ use crate::commands::hosts::{HOST_CONNECT_TIMEOUT, unattended};
 use crate::commands::rpc::UNRECOGNISED;
 use crate::commands::shep_toml::ShepToml;
 use crate::exit::ExitCode;
-use crate::output::{Streams, write_outcome};
+use crate::output::{HostListing, Streams, emit_fleet_flock, write_outcome};
 use crate::version_guard::{
     VersionGuard, flock_connect_refusal_message, host_skew, refuse_version_skew,
 };
@@ -103,32 +104,26 @@ pub(crate) fn listed_hosts(streams: &mut Streams<'_>, paths: &ShepPaths) -> Vec<
 /// unattended dial shares.
 ///
 /// # Errors
-/// Returns [`ExitCode::Usage`] under `--format json`, which has no fleet form
-/// yet. Otherwise as [`fleet`].
+/// As [`fleet`].
 pub(crate) async fn flock_all(
     streams: &mut Streams<'_>,
     paths: &ShepPaths,
     guard: VersionGuard,
     hosts: &[String],
 ) -> ExitCode {
-    if streams.fmt == Format::Json {
-        return streams.fail(
-            ExitCode::Usage,
-            "a hosts list is set, and `--format json` has no listing of every host yet; \
-             `--host <name>` lists one host as JSON",
-        );
-    }
     let ssh = unattended(HOST_CONNECT_TIMEOUT);
     fleet(streams, paths, guard, hosts, &ssh, HOST_CONNECT_TIMEOUT).await
 }
 
-/// This machine's flock and then each of `hosts`, one table apiece.
+/// This machine's flock and then each of `hosts`, one table apiece, or under
+/// `--format json` one envelope of every row.
 ///
 /// Every host is dialled through `ssh` and given `timeout` for the dial and
 /// both requests together: a box that accepts the connection and then says
 /// nothing is abandoned, and the others still print. Returns
 /// [`ExitCode::Success`] only when every shepherd answered, otherwise the
-/// code of the first one that did not, this machine's first.
+/// code of the first one that did not, this machine's first. A shepherd that
+/// did not answer has no rows in the JSON envelope; its failure is on stderr.
 pub(super) async fn fleet(
     streams: &mut Streams<'_>,
     paths: &ShepPaths,
@@ -142,7 +137,7 @@ pub(super) async fn fleet(
         join_all(hosts.iter().map(|host| ask_host(host, ssh, timeout, guard))),
     );
 
-    let mut tables = Tables::default();
+    let mut tables = Tables::new(streams.fmt);
     let mut first_failure = None;
     let mut note = |code: ExitCode| {
         first_failure.get_or_insert(code);
@@ -150,9 +145,13 @@ pub(super) async fn fleet(
 
     match ask_local(streams, guard, local, timeout).await {
         Local::Listed(answer) => {
-            if let Err(done) = tables.print(streams, LOCAL_HEADING, answer, None) {
+            if let Err(done) = tables.print(streams, None, answer, None) {
                 return done;
             }
+        }
+        Local::Roll if streams.fmt == Format::Json => {
+            let message = format!("{LOCAL_HEADING}: no shepherd running");
+            note(streams.fail(ExitCode::DaemonUnreachable, &message));
         }
         Local::Roll => match print_roll(streams, &mut tables, paths) {
             Ok(code) => note(code),
@@ -163,7 +162,7 @@ pub(super) async fn fleet(
     for (host, result) in hosts.iter().zip(remote) {
         match result {
             Ok(HostAnswer { answer, skew }) => {
-                if let Err(done) = tables.print(streams, host, answer, skew) {
+                if let Err(done) = tables.print(streams, Some(host), answer, skew) {
                     return done;
                 }
             }
@@ -171,6 +170,9 @@ pub(super) async fn fleet(
                 note(streams.fail(code, &format!("{host}: {message}")));
             }
         }
+    }
+    if let Err(done) = tables.finish(streams) {
+        return done;
     }
     first_failure.unwrap_or(ExitCode::Success)
 }
@@ -185,13 +187,23 @@ async fn within<T>(
         .unwrap_or_else(|_elapsed| Err(Failure::abandoned(timeout)))
 }
 
-/// Whether a table has been printed yet, so the next one is set apart from it.
-#[derive(Default)]
+/// What a fleet listing has written so far: under `--format table`, whether
+/// a table has been printed yet, so the next one is set apart from it; under
+/// `--format json`, the answers held back for [`Tables::finish`] to write as
+/// one envelope.
 struct Tables {
     printed: bool,
+    held: Option<Vec<HostListing>>,
 }
 
 impl Tables {
+    fn new(fmt: Format) -> Self {
+        Self {
+            printed: false,
+            held: (fmt == Format::Json).then(Vec::new),
+        }
+    }
+
     /// Writes the blank line that separates this table from the last one, and
     /// the heading that names whose it is.
     fn open(&mut self, streams: &mut Streams<'_>, heading: &str) -> io::Result<()> {
@@ -202,23 +214,45 @@ impl Tables {
         writeln!(streams.out, "{heading}")
     }
 
-    /// Prints `answer` under `heading`, after the warning `skew` carries.
+    /// Prints `answer` under `host`'s name, or this machine's under `local`,
+    /// after the warning `skew` carries. Under `--format json` the answer is
+    /// held for [`Self::finish`] and only the warning is written.
     ///
     /// # Errors
     /// The exit code to end the run with when stdout is closed.
     fn print(
         &mut self,
         streams: &mut Streams<'_>,
-        heading: &str,
+        host: Option<&str>,
         answer: Answer,
         skew: Option<String>,
     ) -> Result<(), ExitCode> {
         if let Some(warning) = skew {
             streams.aside("version_skew", &warning);
         }
-        self.open(streams, heading)
-            .and_then(|()| print_listing(streams, answer.procs, answer.usage))
+        if let Some(held) = &mut self.held {
+            held.push(HostListing {
+                host: host.map(str::to_owned),
+                procs: answer.procs,
+                usage: answer.usage,
+            });
+            return Ok(());
+        }
+        self.open(streams, host.unwrap_or(LOCAL_HEADING))
+            .and_then(|()| print_listing(streams, answer.procs, answer.usage, None))
             .map_err(|err| write_outcome(Err(err)))
+    }
+
+    /// Writes the held answers as one envelope, when any are held.
+    ///
+    /// # Errors
+    /// The exit code to end the run with when stdout is closed.
+    fn finish(self, streams: &mut Streams<'_>) -> Result<(), ExitCode> {
+        match self.held {
+            Some(held) => emit_fleet_flock(&mut *streams.out, "flock", held)
+                .map_err(|err| write_outcome(Err(err))),
+            None => Ok(()),
+        }
     }
 }
 
