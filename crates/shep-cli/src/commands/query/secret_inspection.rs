@@ -5,6 +5,7 @@ use crate::commands::secret::host_environment;
 use crate::commands::selector::parse_selector_spec;
 use crate::exit::ExitCode;
 use crate::output::{DescribedSecret, SecretStatus, Streams, emit_described, write_outcome};
+use crate::remote::Link;
 use shep_client::Client;
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::{ProcessInfo, Request, Response, SelectorSpec};
@@ -18,8 +19,8 @@ use std::collections::BTreeMap;
 /// each sheep's lamb tree beneath it. `command` is the verb name the output
 /// envelope reports.
 ///
-/// `secrets_host` alone gates [`gather_secrets`], and is the host
-/// environment it resolves against: `flock_display::fold` passes `None`
+/// `secrets` alone gates [`gather_secrets`]: this machine's home and the host
+/// environment it resolves against. `flock_display::fold` passes `None`
 /// and stays byte-identical to before this section existed, because `flock_display::fold`
 /// is a group view across a selector's sheep, not the single-sheep
 /// diagnostic this feature was built for. The caller reads it, so a
@@ -32,14 +33,13 @@ use std::collections::BTreeMap;
 pub(super) async fn describe_selector(
     client: &Client,
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
     command: &str,
-    secrets_host: Option<&str>,
+    secrets: Option<(&ShepPaths, &str)>,
     selector: SelectorSpec,
 ) -> ExitCode {
     match client.request(Request::Describe { selector }).await {
         Ok(Response::Described(procs)) => {
-            let secrets = if let Some(host_environment) = secrets_host {
+            let secrets = if let Some((paths, host_environment)) = secrets {
                 let (rows, unreadable) = gather_secrets(paths, host_environment, &procs);
                 if let Some(error) = unreadable {
                     let message = format!(
@@ -169,29 +169,16 @@ const SECRETS_NOT_SHOWN_NOTICE: &str = "secrets_not_shown";
 
 /// Describes the sheep matching `args.selector` in detail.
 ///
-/// Over a host (`client.host()`) it draws no secrets section: see
-/// [`describe_over`].
+/// Over a [`Link::Host`] it draws no secrets section. [`host_environment`]
+/// and [`gather_secrets`] read this machine's `shep.toml`, secret store,
+/// provider cache and muster roll, and resolving those against another
+/// machine's sheep would report what the wrong machine holds. One aside says
+/// so, once per run.
 pub async fn describe(
     client: &Client,
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    link: &Link<'_>,
     args: &SelectorArgs,
-) -> ExitCode {
-    describe_over(client, streams, paths, args, client.host().is_some()).await
-}
-
-/// [`describe`] with the host decided by the caller, so a test needs no ssh.
-///
-/// `over_host` skips [`host_environment`] and [`gather_secrets`] outright.
-/// Both read this machine's `shep.toml`, secret store, provider cache and
-/// muster roll, and resolving those against another machine's sheep would
-/// report what the wrong machine holds. One aside says so, once per run.
-async fn describe_over(
-    client: &Client,
-    streams: &mut Streams<'_>,
-    paths: &ShepPaths,
-    args: &SelectorArgs,
-    over_host: bool,
 ) -> ExitCode {
     // One pass per target, each its own detail view: `describe` answers with
     // a tree per sheep, so merging them would lose that shape.
@@ -202,26 +189,21 @@ async fn describe_over(
             Ok(selector) => selector,
             Err(code) => return code,
         };
-        let host = host.get_or_insert_with(|| {
-            if over_host {
+        let host = host.get_or_insert_with(|| match link {
+            Link::Local(paths) => Some(host_environment(streams, paths)),
+            Link::Host { .. } => {
                 streams.aside(
                     SECRETS_NOT_SHOWN_NOTICE,
                     "secrets are not shown over --host",
                 );
                 None
-            } else {
-                Some(host_environment(streams, paths))
             }
         });
-        let code = describe_selector(
-            client,
-            streams,
-            paths,
-            "describe",
-            host.as_deref(),
-            selector,
-        )
-        .await;
+        let secrets = match (link, host.as_deref()) {
+            (Link::Local(paths), Some(host)) => Some((*paths, host)),
+            _ => None,
+        };
+        let code = describe_selector(client, streams, "describe", secrets, selector).await;
         if code != ExitCode::Success {
             failure = failure.or(Some(code));
         }
@@ -277,7 +259,7 @@ mod tests {
             let args = SelectorArgs {
                 selectors: vec![input.into()],
             };
-            let _ = describe(&client, &mut streams, &paths, &args).await;
+            let _ = describe(&client, &mut streams, &Link::Local(&paths), &args).await;
             let sent = tokio::time::timeout(RECV_TIMEOUT, envelopes.recv())
                     .await
                     .unwrap_or_else(|_| {
@@ -312,7 +294,7 @@ mod tests {
             describe(
                 &client,
                 &mut streams,
-                &paths,
+                &Link::Local(&paths),
                 &SelectorArgs {
                     selectors: vec!["/[/".into()],
                 },
@@ -346,7 +328,7 @@ mod tests {
             describe(
                 &client,
                 &mut streams,
-                &paths,
+                &Link::Local(&paths),
                 &SelectorArgs {
                     selectors: vec!["all".into()],
                 },
@@ -469,7 +451,7 @@ mod tests {
             describe(
                 &client,
                 &mut streams,
-                &paths,
+                &Link::Local(&paths),
                 &SelectorArgs {
                     selectors: vec!["all".into()],
                 },
@@ -539,7 +521,7 @@ mod tests {
             describe(
                 &client,
                 &mut streams,
-                &paths,
+                &Link::Local(&paths),
                 &SelectorArgs {
                     selectors: vec!["all".into()],
                 },
@@ -606,7 +588,7 @@ mod tests {
             describe(
                 &client,
                 &mut streams,
-                &paths,
+                &Link::Local(&paths),
                 &SelectorArgs {
                     selectors: vec!["all".into()],
                 },
@@ -665,14 +647,13 @@ mod tests {
                 style: crate::style::Presentation::BARE,
                 fmt: Format::Json,
             };
-            describe_over(
+            describe(
                 &client,
                 &mut streams,
-                &paths,
+                &Link::to_host("amp2"),
                 &SelectorArgs {
                     selectors: vec!["all".into()],
                 },
-                true,
             )
             .await
         };
@@ -740,7 +721,7 @@ mod tests {
             describe(
                 &client,
                 &mut streams,
-                &paths,
+                &Link::Local(&paths),
                 &SelectorArgs {
                     selectors: vec!["all".into()],
                 },
@@ -813,7 +794,7 @@ mod tests {
             describe(
                 &client,
                 &mut streams,
-                &paths,
+                &Link::Local(&paths),
                 &SelectorArgs {
                     selectors: vec!["all".into()],
                 },

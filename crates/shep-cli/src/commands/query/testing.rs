@@ -5,6 +5,7 @@ use super::secret_inspection::describe;
 use crate::cli::{Format, SelectorArgs};
 use crate::exit::ExitCode;
 use crate::output::Streams;
+use crate::remote::Link;
 use shep_client::Client;
 use shep_client::testing::{fake_client_answering, fake_client_with_ack, sample_ack, sample_info};
 use shep_core::paths::ShepPaths;
@@ -118,7 +119,7 @@ pub(super) async fn describe_with_a_seeded_web(
         describe(
             &client,
             &mut streams,
-            &paths,
+            &Link::Local(&paths),
             &SelectorArgs {
                 selectors: vec!["all".into()],
             },

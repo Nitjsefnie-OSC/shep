@@ -266,3 +266,141 @@ fn an_adopted_dog_behind_host_is_refused_in_the_format_asked_for() {
     );
     assert!(!err.trim_start().starts_with('{'), "{err}");
 }
+
+/// The local home holds a roll that names a secret and a store that will not
+/// read. A `describe` that resolved them against the remote's sheep would
+/// warn about the store and draw a verdict for the reference.
+#[cfg(unix)]
+#[test]
+fn describe_over_a_stand_in_ssh_shows_the_remote_sheep_and_no_secrets() {
+    let local = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+    start_sheep(&mut guard, &remote, "remote-sheep");
+    write_ssh_stand_in(bin.path(), remote.path());
+    let mut config = shep_core::config::AppConfig::minimal("remote-sheep", "./srv");
+    config
+        .env
+        .insert("A".into(), "{{secret:DB_PASSWORD}}".into());
+    let roll =
+        shep_daemon::snapshot::FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
+            app: config,
+            instances_running: 1,
+            disabled: false,
+        }]);
+    std::fs::write(
+        local.path().join("flock.json"),
+        serde_json::to_vec(&roll).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(local.path().join("secrets.json"), b"{not json").unwrap();
+
+    let described = shep(local.path())
+        .args([
+            "--format",
+            "json",
+            "--host",
+            "amp2",
+            "describe",
+            "remote-sheep",
+        ])
+        .env("PATH", path_with_first(bin.path()))
+        .output()
+        .unwrap();
+
+    assert_success(&described);
+    let envelope: serde_json::Value = serde_json::from_slice(&described.stdout).unwrap();
+    assert_eq!(envelope["data"][0]["name"], "remote-sheep", "{envelope}");
+    assert!(
+        envelope["secrets"].as_array().is_none_or(Vec::is_empty),
+        "{envelope}"
+    );
+    let err = String::from_utf8_lossy(&described.stderr);
+    assert!(err.contains("secrets are not shown over --host"), "{err}");
+    assert!(!err.contains("secret_store_unreadable"), "{err}");
+
+    graceful_kill(remote.path());
+}
+
+#[cfg(unix)]
+/// Sends each line of `stdout` down a channel from a background thread, so a
+/// test can wait for one with a bound.
+fn lines_from(stdout: std::process::ChildStdout) -> std::sync::mpsc::Receiver<String> {
+    use std::io::BufRead;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+        {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
+/// A follow over a host prints what the remote sheep says after it
+/// subscribes, and Ctrl+C ends it at exit 0.
+#[cfg(unix)]
+#[test]
+fn bleats_over_a_stand_in_ssh_follows_a_remote_sheep_and_exits_0_on_sigint() {
+    let local = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+    let script = write_script(
+        &remote,
+        "chatty.sh",
+        "#!/bin/sh\nwhile :; do echo remote-line; sleep 1; done\n",
+    );
+    let started = shep(remote.path())
+        .arg("start")
+        .arg(&script)
+        .output()
+        .unwrap();
+    guard.adopt_home(remote.path());
+    assert_success(&started);
+    write_ssh_stand_in(bin.path(), remote.path());
+
+    let mut child = std::process::Command::cargo_bin("shep")
+        .unwrap()
+        .arg("--home")
+        .arg(local.path())
+        .args(["--host", "amp2", "bleats"])
+        .env("PATH", path_with_first(bin.path()))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    discard_in_background(child.stderr.take().unwrap());
+    let lines = lines_from(child.stdout.take().unwrap());
+
+    let seen = lines.recv_timeout(CMD_TIMEOUT);
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child.id() as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .unwrap();
+    let deadline = Instant::now() + CMD_TIMEOUT;
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("bleats did not exit after SIGINT");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+
+    let seen = seen.expect("the remote sheep's line never arrived");
+    assert!(seen.contains("remote-line"), "{seen}");
+    assert_eq!(status.code(), Some(0), "{status:?}");
+
+    graceful_kill(remote.path());
+}
