@@ -2580,7 +2580,10 @@ with a `user@` in front. Letters, digits, `.`, `_` and `-` only, and neither par
 apply.
 
 The remote `shep` must be on the PATH that a non-interactive ssh session sees. Adding a host that is
-already listed changes nothing.
+already listed changes nothing to the list.
+
+After saving, `add` dials the host once, without prompts and giving up after 5 seconds, and warns on
+stderr if no shepherd answers. The entry stays and the exit is 0 either way.
 
 Usage: shep host add [OPTIONS] <DESTINATION>
 

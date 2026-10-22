@@ -21,7 +21,12 @@ pub enum HostCommand {
     /// `Port` and `ProxyJump` already apply.
     ///
     /// The remote `shep` must be on the PATH that a non-interactive ssh
-    /// session sees. Adding a host that is already listed changes nothing.
+    /// session sees. Adding a host that is already listed changes nothing to
+    /// the list.
+    ///
+    /// After saving, `add` dials the host once, without prompts and giving up
+    /// after 5 seconds, and warns on stderr if no shepherd answers. The entry
+    /// stays and the exit is 0 either way.
     Add {
         /// The ssh destination, such as `amp2` or `deploy@build.example.com`
         destination: String,

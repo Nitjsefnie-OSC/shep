@@ -2,19 +2,39 @@
 
 use super::*;
 
+#[cfg(unix)]
+use crate::ssh_stand_in::write_ssh_stand_in;
+
 /// The list is `shep.toml` and nothing else: add, list and remove work on a
 /// home no shepherd ever touched, and none of them starts one.
+///
+/// `add` dials its entry once, so `ssh` is the stand-in first on `PATH`,
+/// run against a remote home with no shepherd: the dial warns, and the exit
+/// stays `Success`. Unix only, as the stand-in is a script.
+#[cfg(unix)]
 #[test]
 fn host_add_list_remove_round_trip_on_a_fresh_home() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();
+    let remote = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    write_ssh_stand_in(bin.path(), remote.path());
+    let path = std::env::join_paths(
+        std::iter::once(bin.path().to_owned())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
 
     for destination in ["amp2", "deploy@build.example.com"] {
         let added = shep(home)
+            .env("PATH", &path)
             .args(["host", "add", destination])
             .output()
             .unwrap();
         assert_success(&added);
+        let warning = String::from_utf8(added.stderr).unwrap();
+        assert!(warning.contains("host_unreachable"), "{warning}");
+        assert!(warning.contains("shep --host"), "{warning}");
     }
     assert!(
         !home.join("run").join("shep.sock").exists(),
