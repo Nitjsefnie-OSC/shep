@@ -370,7 +370,10 @@ async fn tail_log_files(
                 }
                 Err(err) => {
                     let _ = streams.out.flush();
-                    return Err(source.stop(streams, &err));
+                    let code = source.stop(streams, &err);
+                    // The notice `stop` wrote is the reason the verb ended.
+                    let _ = streams.err.flush();
+                    return Err(code);
                 }
             }
         }

@@ -50,6 +50,22 @@ async fn run(
     args: &BleatsArgs,
     serve: impl Fn(u32, LogStream, u32) -> Result<LogTail, RpcError> + Send + 'static,
 ) -> Run {
+    let mut err = Vec::new();
+    let mut run = run_into(host, format, rows, args, serve, &mut err).await;
+    run.err = String::from_utf8(err).unwrap();
+    run
+}
+
+/// [`run`] with the stderr writer chosen by the caller. The returned
+/// [`Run::err`] is empty: the caller owns what was written.
+async fn run_into(
+    host: Option<&str>,
+    format: Format,
+    rows: &[ProcessInfo],
+    args: &BleatsArgs,
+    serve: impl Fn(u32, LogStream, u32) -> Result<LogTail, RpcError> + Send + 'static,
+    err: &mut dyn io::Write,
+) -> Run {
     let dir = tempfile::tempdir().unwrap();
     let path = shep_client::testing::control_address(dir.path());
     let subscribed = Arc::new(Notify::new());
@@ -78,11 +94,10 @@ async fn run(
         }
     };
     let mut out = Vec::new();
-    let mut err = Vec::new();
     let code = {
         let mut streams = Streams {
             out: &mut out,
-            err: &mut err,
+            err,
             style: crate::style::Presentation::BARE,
             fmt: format,
         };
@@ -100,7 +115,7 @@ async fn run(
     Run {
         code,
         out: String::from_utf8(out).unwrap(),
-        err: String::from_utf8(err).unwrap(),
+        err: String::new(),
         requests: seen,
     }
 }
@@ -356,6 +371,47 @@ async fn an_unsupported_answer_fails_once_naming_the_host_and_the_remedy() {
     );
     assert_eq!(remote.tails().len(), 1, "the first refusal ends the reads");
     assert_eq!(remote.out, "");
+}
+
+/// A stderr that holds what it is given until it is flushed, as a buffered
+/// one does.
+#[derive(Default)]
+struct Buffered {
+    pending: Vec<u8>,
+    flushed: Vec<u8>,
+}
+
+impl io::Write for Buffered {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.pending.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flushed.append(&mut self.pending);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn the_failure_that_stops_a_remote_read_is_flushed_to_stderr() {
+    let rows = web();
+    let mut err = Buffered::default();
+
+    let remote = run_into(
+        Some(HOST),
+        Format::Table,
+        &rows,
+        &no_follow_args("all"),
+        |_, _, _| Err(refusing(RpcErrorCode::Unsupported)),
+        &mut err,
+    )
+    .await;
+
+    assert_eq!(remote.code, ExitCode::Unsupported);
+    let flushed = String::from_utf8(err.flushed).unwrap();
+    assert!(flushed.contains("ssh amp2 shep daemon reload"), "{flushed}");
+    assert!(err.pending.is_empty(), "nothing left unflushed");
 }
 
 #[tokio::test]
