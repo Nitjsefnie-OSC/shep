@@ -155,7 +155,10 @@ export const BUDGETS: Record<string, number> = {
   // dog table is operator-facing config, and #830 is the verb that moves one
   // onto another sheep.
   dogs: 3990,
-  lookout: 2770,
+  // Raised from 2770 for the "Over --host" section: a lookout over a host
+  // leaves panes blank that an operator would otherwise read as broken, so
+  // the table naming them is required content.
+  lookout: 2830,
   "first-flockfile": 2360,
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
   // push now reaches a running dog, which an operator rotating a secret has
@@ -255,7 +258,8 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 400 on 2026-10-21 for the verbs `--host` now reaches and
   // `describe` showing no secrets over it. Required content for #949.
   // Raised from 420 for the six verbs #951 adds to the list `--host` reaches.
-  cli: 430,
+  // Raised from 430 for `lookout` in the list `--host` reaches (#954).
+  cli: 435,
   "community-dogs": 300,
   terminology: 210,
   "pm2-verbs": 40,

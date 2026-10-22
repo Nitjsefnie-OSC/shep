@@ -99,7 +99,11 @@ where
             // has left it, and the pane's header says which. `super::tail::read`'s
             // `(None, None)` early return is for a different case, a sheep
             // whose shepherd predates the `out_file`/`err_file` fields.
+            //
+            // Over a host the rows' log paths name files on that host, which
+            // this machine cannot read; the feed draws a line saying so.
             let tail = match app.feed_row() {
+                Some(_) if app.remote_host().is_some() => super::tail::Tail::default(),
                 None => super::tail::Tail::default(),
                 Some(row) => {
                     // Cloned out before `app` is borrowed mutably.
@@ -138,6 +142,7 @@ where
             // line.
             let height = terminal.size().map_or(0, |size| size.height);
             if super::view::panes_for(height).detail
+                && app.remote_host().is_none()
                 && let Some(RowKey::Sheep(id)) = app.selected()
             {
                 // Paths cloned out before `app` is borrowed mutably, the same
@@ -218,7 +223,10 @@ where
                 // its own: memory and a load average cost microseconds and no
                 // process-table walk. Sampled unconditionally and refused by
                 // the reducer once the link is lost, one enforcement point.
-                let _ = app.update(Msg::Host { sample: local.host() });
+                // Not over a host: this machine's load is not the host's.
+                if app.remote_host().is_none() {
+                    let _ = app.update(Msg::Host { sample: local.host() });
+                }
                 Some(Msg::Tick { now: Instant::now() })
             }
         };
@@ -540,6 +548,9 @@ where
 #[cfg(test)]
 mod tests {
 
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
     use ratatui::Terminal;
@@ -755,5 +766,80 @@ mod tests {
             row.contains("1 (1 online)"),
             "reader-app must still be counted in READ BY: {row:?}"
         );
+    }
+
+    /// What `local` was asked while a lookout ran: the cursor leaves the
+    /// sheep and comes back, which asks for its feed and its log size, and
+    /// the first heartbeat asks for a host sample.
+    async fn reads_taken(remote: bool) -> (usize, usize, usize) {
+        let sheep = ProcessInfo::builder(7, "web", ProcStatus::Online)
+            .out_file(Some("/var/log/remote/web-out.log".to_string()))
+            .err_file(Some("/var/log/remote/web-err.log".to_string()))
+            .build();
+        let mut app = crate::lookout::view::fixtures::with_selection(sheep);
+        if remote {
+            app.set_remote_host("build-01");
+        }
+        let local = FakeLocal::default();
+        let (tails, sizes, hosts) = (
+            Arc::clone(&local.tails),
+            Arc::clone(&local.log_sizes),
+            Arc::clone(&local.hosts),
+        );
+
+        let (msg_tx, msg_rx) = mpsc::channel(16);
+        let (poll_tx, _poll_rx) = mpsc::channel(4);
+        let (request_tx, _request_rx) = mpsc::channel(2);
+        // Real time between the keys: the feed and the log size are read
+        // only once `MIN_REDRAW` has passed since the last draw.
+        tokio::spawn(async move {
+            for key in [KeyPress::SelectUp, KeyPress::SelectDown] {
+                tokio::time::sleep(MIN_REDRAW * 3).await;
+                let _ = msg_tx.send(Msg::Key(key)).await;
+            }
+            tokio::time::sleep(MIN_REDRAW * 3).await;
+            let _ = msg_tx.send(Msg::Key(KeyPress::Quit)).await;
+        });
+
+        let terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+        let _ = tokio::time::timeout(
+            Duration::from_secs(10),
+            run_ui(
+                app,
+                terminal,
+                stream::empty(),
+                msg_rx,
+                poll_tx,
+                request_tx,
+                test_paths(Path::new("/tmp/shep-lookout-tests")),
+                PathBuf::from("/tmp/shep-lookout-tests"),
+                PathBuf::from("/tmp/shep-lookout-tests/shep.toml"),
+                PathBuf::from("/tmp/shep-lookout-tests/run/shep.sock"),
+                local,
+            ),
+        )
+        .await
+        .expect("the loop left within ten seconds");
+        (
+            tails.load(Ordering::Relaxed),
+            sizes.load(Ordering::Relaxed),
+            hosts.load(Ordering::Relaxed),
+        )
+    }
+
+    /// The log paths on a remote row name files on the host. Read here they
+    /// would be this machine's files under the host's name, or nothing, which
+    /// reads as a sheep that wrote nothing.
+    #[tokio::test]
+    async fn a_host_lookout_reads_no_log_file_named_by_a_remote_row() {
+        // The same script on this machine's own shepherd reads all three, or
+        // the zeros below would prove nothing.
+        let (tails, sizes, hosts) = reads_taken(false).await;
+        assert!(
+            tails > 0 && sizes > 0 && hosts > 0,
+            "{tails} {sizes} {hosts}"
+        );
+
+        assert_eq!(reads_taken(true).await, (0, 0, 0));
     }
 }

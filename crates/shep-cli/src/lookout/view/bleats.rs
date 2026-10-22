@@ -4,7 +4,7 @@
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use super::super::app::{App, RowKey};
+use super::super::app::{App, NOT_OVER_HOST, RowKey};
 use super::super::tail::Stream;
 use super::super::theme::Palette;
 use super::detail::chip_text;
@@ -29,6 +29,10 @@ pub fn feed_lines(app: &App, width: u16, rows: usize) -> Vec<Line<'static>> {
     // the window are reported separately, since they cannot be counted in
     // lines.
     let lost_lines = feed.missed_lines + feed.lines.len().saturating_sub(body);
+
+    if app.remote_host().is_some() {
+        return vec![unavailable_line(palette, width)];
+    }
 
     let header = match app.selected() {
         None => header_line(palette, "no sheep is selected", palette.muted(), width),
@@ -128,6 +132,12 @@ fn header_line(palette: Palette, text: &str, style: Style, width: u16) -> Line<'
         Span::raw(" "),
         Span::styled(fit(text, budget), style),
     ])
+}
+
+/// The one line a feed draws over `--host`, where the log files it would read
+/// are on another machine.
+pub(super) fn unavailable_line(palette: Palette, width: u16) -> Line<'static> {
+    header_line(palette, NOT_OVER_HOST, palette.muted(), width)
 }
 
 /// What the header says about what is not on screen, or `None` when

@@ -77,8 +77,12 @@ pub(crate) async fn run(
     // Before `ensure_home`: the answer is the host's, and nothing of this
     // machine's is read, so a fresh machine must not get a `~/.shep` or a
     // first-run banner out of it. `host_scope` above left only the verbs that
-    // reach a host here.
-    if let Some(dest) = cli.global.host.as_deref() {
+    // reach a host here. The lookout is the exception: it reads this
+    // machine's own `lookout.allow_control` gate, so it resolves the home first
+    // and takes its host from `Link` below.
+    if let Some(dest) = cli.global.host.as_deref()
+        && !matches!(cli.command, Commands::Lookout(_))
+    {
         return run_on_host(&cli.command, cli.global.quiet, dest, guard, style, fmt).await;
     }
 
@@ -282,7 +286,7 @@ pub(crate) async fn run(
             style,
             fmt,
         };
-        return lookout::lookout(&mut streams, &paths, args, resolved_style).await;
+        return lookout::lookout(&mut streams, &link, &paths, args, resolved_style).await;
     }
 
     // Not in the locked block below: `--foreground` runs until signalled, and

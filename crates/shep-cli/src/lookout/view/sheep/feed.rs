@@ -15,6 +15,7 @@ use crate::lookout::pane_sheep::SheepPane;
 use crate::lookout::tail::{Stream, TailLine};
 use crate::lookout::theme::Palette;
 
+use super::super::bleats::unavailable_line;
 use super::super::detail::chip_text;
 use super::super::feed_ink;
 use super::super::flock::fit;
@@ -44,6 +45,10 @@ pub(super) fn draw_feed(
     buffer: &mut Buffer,
     palette: Palette,
 ) {
+    if app.remote_host().is_some() {
+        write_feed_row(buffer, area, top, &unavailable_line(palette, FEED_WIDTH));
+        return;
+    }
     let feed = pane.feed();
     let tail = app.feed();
     let levels = app.feed_classifier();

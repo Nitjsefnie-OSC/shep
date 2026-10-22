@@ -80,6 +80,9 @@ impl App {
     /// confirmed toggle ends in a request to the shepherd. Replaces a
     /// [`Pending::Sent`] for that method's reason.
     pub(super) fn cycle_dog(&mut self, index: usize) -> Effect {
+        if self.refuse_over_host() {
+            return Effect::None;
+        }
         if matches!(self.link, Link::Lost { .. }) {
             self.notice = Some(Notice::grave(LINK_GONE.to_string()));
             return Effect::None;

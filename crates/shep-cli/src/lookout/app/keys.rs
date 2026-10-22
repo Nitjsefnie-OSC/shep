@@ -152,11 +152,13 @@ impl App {
             | KeyPress::Continue => Effect::None,
             // The read, not the open: the screen opens only once
             // `Msg::Settings` lands.
+            KeyPress::Settings if self.refuse_over_host() => Effect::None,
             KeyPress::Settings => Effect::LoadSettings,
             // Opens with an empty model; `Msg::Secrets` fills it once the
             // read lands. Closing again is `on_secrets_key`'s job, reached
             // only once `self.body` is already `Body::Secrets`, the same
             // split `KeyPress::Settings`/`on_settings_key` uses.
+            KeyPress::Secrets if self.refuse_over_host() => Effect::None,
             KeyPress::Secrets => {
                 self.body = Body::Secrets(SecretsPane {
                     model: Box::default(),

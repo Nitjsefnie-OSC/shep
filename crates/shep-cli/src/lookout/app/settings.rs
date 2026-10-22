@@ -485,6 +485,14 @@ impl App {
     pub(crate) fn set_style(&mut self, style: (StyleLevel, StyleSource)) {
         self.style = style;
     }
+
+    /// Marks this lookout as watching the shepherd on `dest` over `--host`.
+    ///
+    /// From here the screens that read this machine say so instead of opening:
+    /// see [`NOT_OVER_HOST`].
+    pub(crate) fn set_remote_host(&mut self, dest: &str) {
+        self.remote_host = Some(dest.to_owned());
+    }
 }
 
 #[cfg(test)]

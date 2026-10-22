@@ -25,6 +25,9 @@ use crate::output::{human_bytes, human_duration};
 /// The strip, fitted to `width`.
 #[must_use]
 pub fn strip_line(app: &App, width: u16) -> Line<'static> {
+    if app.remote_host().is_some() {
+        return Line::from(Span::raw(" ".repeat(usize::from(width))));
+    }
     Line::from(Ink::fit(&runs(app), width, app.data_palette()))
 }
 

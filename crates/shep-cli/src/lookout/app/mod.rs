@@ -77,6 +77,7 @@ mod feed_keys;
 mod keys;
 mod lambs;
 mod msg;
+mod over_host;
 mod pane_dogs;
 mod pane_list;
 mod read;
@@ -98,6 +99,7 @@ pub use action::*;
 pub use close_dialog::*;
 pub(crate) use config_pane::*;
 pub use msg::*;
+pub(crate) use over_host::NOT_OVER_HOST;
 pub use rows::*;
 pub(crate) use samples::*;
 pub(crate) use secrets_pane::*;
@@ -296,6 +298,10 @@ pub struct App {
     control: Control,
     /// The `$SHEP_HOME` this lookout watches, for the title line.
     home: String,
+    /// The ssh destination this lookout watches in place of this machine's
+    /// shepherd, or `None` for the local one. Set through
+    /// [`Self::set_remote_host`].
+    remote_host: Option<String>,
     /// The clock the view reads. Advanced by [`Msg::Tick`], and never once the
     /// link is [`Link::Lost`], so a frozen dashboard's uptime column stops.
     now: Instant,
@@ -529,5 +535,57 @@ mod tests {
             answered(&mut app_in_sheep_pane().body),
             ["sheep_pane", "sheep_pane_mut"]
         );
+    }
+
+    /// Each key that would read or write this machine's `shep.toml`,
+    /// `dogs.toml`, secret store or dog binaries, pressed on an app watching
+    /// a host: the same notice, no effect, and the screen it would have
+    /// opened stays shut.
+    #[test]
+    fn over_a_host_the_settings_secrets_and_dog_keys_raise_a_notice_and_no_effect() {
+        use crate::lookout::app::testing::app_in_web;
+
+        let cases: [(&str, App, KeyPress); 5] = [
+            (
+                "settings",
+                fixtures::app_with_a_dog_selected_and_control(),
+                KeyPress::Settings,
+            ),
+            (
+                "secrets",
+                fixtures::app_with_a_dog_selected_and_control(),
+                KeyPress::Secrets,
+            ),
+            (
+                "a dog's config pane",
+                fixtures::app_with_a_dog_selected_and_control(),
+                KeyPress::Edit,
+            ),
+            (
+                "a sheep's dog list",
+                app_in_web(Control::Allowed),
+                KeyPress::Confirm,
+            ),
+            (
+                "a dog toggle",
+                fixtures::app_in_settings_on_dog("metrics"),
+                KeyPress::Cycle,
+            ),
+        ];
+        for (what, mut app, key) in cases {
+            let before = core::mem::discriminant(app.body());
+            app.set_remote_host("build-01");
+
+            let effect = app.update(Msg::Key(key));
+
+            assert_eq!(effect, Effect::None, "{what}");
+            let notice = app.notice().unwrap_or_else(|| panic!("{what}: no notice"));
+            assert_eq!(notice.to_string(), NOT_OVER_HOST, "{what}");
+            assert_eq!(
+                core::mem::discriminant(app.body()),
+                before,
+                "{what}: the body changed"
+            );
+        }
     }
 }

@@ -42,7 +42,8 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         | Commands::Stock(_)
         | Commands::Trigger(_)
         | Commands::Signal(_)
-        | Commands::Whisper(_) => HostScope::Reaches,
+        | Commands::Whisper(_)
+        | Commands::Lookout(_) => HostScope::Reaches,
         // The hidden `--exec` spelling is `adopt`, which writes this
         // machine's `shep.toml`.
         Commands::Enable(args) if args.exec.is_some() => HostScope::LocalOnly,
@@ -61,7 +62,6 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         | Commands::Dogs(_)
         | Commands::Adopt(_)
         | Commands::Rehome(_)
-        | Commands::Lookout(_)
         | Commands::Whistle
         | Commands::Reopen(_)
         | Commands::Flush(_)
@@ -276,6 +276,7 @@ mod tests {
         &["describe", "web"],
         &["fold", "web"],
         &["bleats", "web"],
+        &["lookout"],
     ];
 
     /// Every argv of a verb that changes the flock and reaches a host.
@@ -312,6 +313,12 @@ mod tests {
         }
         let add = parsed_with_host(&["add", "web"]);
         assert_eq!(host_scope(&add.command), HostScope::LocalOnly);
+    }
+
+    #[test]
+    fn lookout_reaches_a_host() {
+        let cli = parsed_with_host(&["lookout"]);
+        assert_eq!(host_scope(&cli.command), HostScope::Reaches);
     }
 
     #[test]

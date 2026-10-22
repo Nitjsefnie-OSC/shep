@@ -19,6 +19,9 @@ impl App {
             return None;
         }
         let sheep = name.clone();
+        if self.refuse_over_host() {
+            return Some(Effect::None);
+        }
         self.sheep_dogs_ask += 1;
         Some(Effect::LoadSheepDogs {
             sheep,

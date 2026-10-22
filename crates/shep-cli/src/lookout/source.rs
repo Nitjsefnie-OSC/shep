@@ -15,7 +15,7 @@ use core::future::Future;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use shep_client::{Client, ConnectError, EventStream, Lagged, RequestError};
+use shep_client::{Client, ConnectError, EventStream, Lagged, RequestError, SshOptions};
 use shep_core::protocol::{BusEvent, ProcessInfo, Request, Response};
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
 
@@ -200,13 +200,60 @@ impl Shepherd for UnixShepherd {
         // reconnecting one, must not start a shepherd, and a reconnect that
         // did would resurrect one the operator may have just killed.
         let client = Client::connect(&self.socket).await?;
-        let topics = TOPICS.iter().map(|topic| (*topic).to_string()).collect();
-        let stream = client
-            .subscribe(topics)
-            .await
-            .map_err(|err| LinkError::Refused(err.to_string()))?;
-        Ok((ClientFlock(client), stream))
+        subscribed(client).await
     }
+}
+
+/// A shepherd on another machine, dialled through ssh.
+///
+/// The first [`Shepherd::link`] runs `options` as given, so `lookout` can make
+/// it before raw mode and ssh may prompt, as a single `--host` verb does. Every
+/// later one is a redial on [`super::link::run_link`]'s ladder, inside the
+/// alternate screen, where a prompt would land unseen: those run batch mode.
+#[derive(Debug)]
+pub struct HostShepherd {
+    dest: String,
+    options: SshOptions,
+    dialled: bool,
+}
+
+impl HostShepherd {
+    /// Watches the shepherd on `dest`, dialled through `options`.
+    #[must_use]
+    pub fn new(dest: &str, options: SshOptions) -> Self {
+        Self {
+            dest: dest.to_owned(),
+            options,
+            dialled: false,
+        }
+    }
+}
+
+impl Shepherd for HostShepherd {
+    type Flock = ClientFlock;
+    type Events = EventStream;
+
+    async fn link(&mut self) -> Result<(Self::Flock, Self::Events), LinkError> {
+        // Set before the dial, so a first dial that fails still makes the next
+        // one a redial.
+        let options = if core::mem::replace(&mut self.dialled, true) {
+            self.options.clone().batch_mode(true)
+        } else {
+            self.options.clone()
+        };
+        let client = Client::connect_ssh_with(&self.dest, &options).await?;
+        subscribed(client).await
+    }
+}
+
+/// Subscribes `client` to [`TOPICS`] and pairs the two halves.
+async fn subscribed(client: Client) -> Result<(ClientFlock, EventStream), LinkError> {
+    let topics = TOPICS.iter().map(|topic| (*topic).to_string()).collect();
+    let stream = client
+        .subscribe(topics)
+        .await
+        .map_err(|err| LinkError::Refused(err.to_string()))?;
+    Ok((ClientFlock(client), stream))
 }
 
 /// One reading of the machine this lookout is running on.
@@ -318,6 +365,29 @@ impl Local for LocalReader {
         let out = std::fs::metadata(out?).ok()?.len();
         let err = std::fs::metadata(err?).ok()?.len();
         Some(out.saturating_add(err))
+    }
+}
+
+/// What a lookout over `--host` reads in place of this machine: nothing.
+///
+/// A backstop. The host's rows name log files on the host, and reading those
+/// paths here would show this machine's files under the host's name. The UI
+/// says so in words before it gets this far, since an empty tail reads as a
+/// sheep that wrote nothing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoLocal;
+
+impl Local for NoLocal {
+    fn host(&mut self) -> Option<HostSample> {
+        None
+    }
+
+    fn tail(&mut self, _out: Option<&Path>, _err: Option<&Path>) -> super::tail::Tail {
+        super::tail::Tail::default()
+    }
+
+    fn log_sizes(&mut self, _out: Option<&Path>, _err: Option<&Path>) -> Option<u64> {
+        None
     }
 }
 
@@ -513,5 +583,131 @@ mod tests {
     fn an_unreported_log_path_sizes_to_nothing() {
         let mut local = LocalReader::new();
         assert_eq!(local.log_sizes(None, None), None);
+    }
+
+    /// Stand-in `ssh` for [`HostShepherd`], unix only. It appends its argv to
+    /// `argv`, one line per dial, then answers like a shepherd: it reads a
+    /// frame and replies, twice over (the handshake, then the subscribe as
+    /// request 1), from the canned `hello` and `subscribed` files.
+    #[cfg(unix)]
+    mod stand_in {
+        use std::os::unix::fs::PermissionsExt as _;
+        use std::path::{Path, PathBuf};
+
+        use shep_core::protocol::{
+            HelloAck, HelloReply, PROTOCOL_VERSION, Reply, Response, ServerFrame, encode_frame,
+        };
+
+        /// `payload` behind the four-byte length every frame carries.
+        fn framed(payload: &impl serde::Serialize) -> Vec<u8> {
+            let payload = encode_frame(payload).unwrap();
+            let mut bytes = u32::try_from(payload.len()).unwrap().to_be_bytes().to_vec();
+            bytes.extend_from_slice(&payload);
+            bytes
+        }
+
+        pub(super) fn write(dir: &Path) -> PathBuf {
+            let ack: HelloReply = Ok(HelloAck {
+                daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
+                protocol: PROTOCOL_VERSION,
+                pid: 4242,
+                min_supported: None,
+            });
+            let subscribed = ServerFrame::Reply(Reply {
+                id: 1,
+                result: Ok(Response::Subscribed),
+            });
+            std::fs::write(dir.join("hello"), framed(&ack)).unwrap();
+            std::fs::write(dir.join("subscribed"), framed(&subscribed)).unwrap();
+            let program = dir.join("ssh");
+            std::fs::write(
+                &program,
+                r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "$@" >> "$dir/argv"
+skip() {
+  n=0
+  for b in $(dd bs=1 count=4 2>/dev/null | od -An -v -tu1); do n=$((n * 256 + b)); done
+  [ "$n" -eq 0 ] || dd bs=1 count="$n" of=/dev/null 2>/dev/null
+}
+skip; cat "$dir/hello"
+skip; cat "$dir/subscribed"
+cat >/dev/null
+"#,
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            program
+        }
+
+        /// One line per dial, as the stand-in was called.
+        pub(super) fn dials(dir: &Path) -> Vec<String> {
+            std::fs::read_to_string(dir.join("argv"))
+                .unwrap()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn host_shepherd_dials_a_stand_in_and_subscribes() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = stand_in::write(dir.path());
+        let mut shepherd = HostShepherd::new("build-01", SshOptions::default().program(program));
+
+        let (flock, _events) = shepherd
+            .link()
+            .await
+            .expect("the stand-in answers the handshake and the subscribe");
+
+        assert_eq!(flock.client().host(), Some("build-01"));
+        assert_eq!(
+            stand_in::dials(dir.path()),
+            ["-T -- build-01 shep dial-stdio"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_second_dial_is_batch_mode_and_the_first_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = stand_in::write(dir.path());
+        let mut shepherd = HostShepherd::new("build-01", SshOptions::default().program(program));
+
+        let _first = shepherd.link().await.expect("the first dial");
+        let _second = shepherd.link().await.expect("the redial");
+
+        assert_eq!(
+            stand_in::dials(dir.path()),
+            [
+                "-T -- build-01 shep dial-stdio",
+                "-T -o BatchMode=yes -- build-01 shep dial-stdio",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_host_that_cannot_be_dialled_is_unreachable() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("no-such-ssh");
+        let mut shepherd = HostShepherd::new("build-01", SshOptions::default().program(program));
+
+        let err = shepherd.link().await.expect_err("there is no ssh to run");
+
+        assert!(matches!(err, LinkError::Unreachable(_)), "{err:?}");
+    }
+
+    #[test]
+    fn no_local_reads_nothing_of_this_machine() {
+        let log = Path::new(file!());
+        let mut local = NoLocal;
+        assert_eq!(local.host(), None);
+        assert_eq!(
+            local.tail(Some(log), Some(log)),
+            crate::lookout::tail::Tail::default()
+        );
+        assert_eq!(local.log_sizes(Some(log), Some(log)), None);
     }
 }
