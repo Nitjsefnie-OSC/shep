@@ -114,9 +114,10 @@ pub struct GlobalArgs {
     /// Reach another host's shepherd over ssh
     ///
     /// DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from
-    /// ~/.ssh/config. `flock`, `describe`, `fold` and a followed `bleats`
-    /// take it; any other verb refuses it rather than act on this machine.
-    /// `describe` shows no secrets over it. `--home` still names this
+    /// ~/.ssh/config. `flock`, `describe`, `fold`, a followed `bleats`,
+    /// `stop`, `restart`, `reload` and `delete` take it; any other verb
+    /// refuses it rather than act on this machine. `describe` shows no
+    /// secrets over it. `--home` still names this
     /// machine's home, never the host's.
     #[arg(long, global = true, value_name = "DEST", value_parser = parse_destination)]
     pub host: Option<String>,

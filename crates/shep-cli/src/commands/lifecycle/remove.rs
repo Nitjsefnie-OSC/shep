@@ -20,6 +20,7 @@
 //! promises "for good" would exit 0 saying `deleted 1 sheep`. A sweep needs no
 //! answer and is untouched.
 
+use shep_client::Client;
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::SelectorSpec;
 
@@ -43,6 +44,13 @@ use crate::version_guard::{VersionGuard, connect_client};
 /// the alternative, one payload holding a dog's row beside a sheep's ids, was
 /// not worth a row type neither verb asked for.
 ///
+/// Over a [`Link::Host`] there is no dog half. The `shep.toml` here is this
+/// machine's, not the host's, so every selector goes to the host's shepherd.
+/// It answers `NotFound` for a name it holds no entry under. A dog it has
+/// registered is deregistered, but nothing strikes its adoption from the
+/// host's `shep.toml`, so the next boot there brings it back; that file is
+/// edited by running `shep delete` on the host itself.
+///
 /// # Errors
 /// [`ExitCode::InvalidConfig`] or [`ExitCode::Failure`] after writing what
 /// went wrong, when this home's `shep.toml` exists and cannot be read or
@@ -50,8 +58,30 @@ use crate::version_guard::{VersionGuard, connect_client};
 /// deleted on that arm.
 pub(crate) async fn delete(
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    link: &Link<'_>,
     guard: VersionGuard,
+    args: &SelectorArgs,
+) -> ExitCode {
+    let local_dogs = match link {
+        Link::Local(paths) => Some(*paths),
+        Link::Host { .. } => None,
+    };
+    delete_with(
+        streams,
+        local_dogs,
+        async |streams| connect_client(streams, link, guard).await,
+        args,
+    )
+    .await
+}
+
+/// [`delete`] with the dog half's home and the connection decided by the
+/// caller: `local_dogs` is `None` when there is no dog half, and `connect` is
+/// asked only if a sheep selector is left to send.
+async fn delete_with(
+    streams: &mut Streams<'_>,
+    local_dogs: Option<&ShepPaths>,
+    connect: impl AsyncFnOnce(&mut Streams<'_>) -> Result<Client, ExitCode>,
     args: &SelectorArgs,
 ) -> ExitCode {
     let selectors = match parse_selectors(streams, &args.selectors) {
@@ -61,7 +91,11 @@ pub(crate) async fn delete(
     let mut dog_names: Vec<String> = Vec::new();
     let mut sheep_tokens: Vec<String> = Vec::new();
     for (raw, selector) in args.selectors.iter().zip(&selectors) {
-        match dog_in_config(paths, selector) {
+        let dog = match local_dogs {
+            Some(paths) => dog_in_config(paths, selector),
+            None => Ok(None),
+        };
+        match dog {
             Ok(Some(name)) => dog_names.push(name),
             Ok(None) => sheep_tokens.push(raw.clone()),
             Err(err) => return fail_config(streams, &err),
@@ -69,16 +103,18 @@ pub(crate) async fn delete(
     }
 
     let mut failure: Option<ExitCode> = None;
-    for name in &dog_names {
-        let code = dogs::remove_dog(streams, paths, name, Removal::Delete).await;
-        if code != ExitCode::Success {
-            failure = failure.or(Some(code));
+    if let Some(paths) = local_dogs {
+        for name in &dog_names {
+            let code = dogs::remove_dog(streams, paths, name, Removal::Delete).await;
+            if code != ExitCode::Success {
+                failure = failure.or(Some(code));
+            }
         }
     }
     if sheep_tokens.is_empty() {
         return failure.unwrap_or(ExitCode::Success);
     }
-    let client = match connect_client(streams, &Link::Local(paths), guard).await {
+    let client = match connect(streams).await {
         Ok(client) => client,
         Err(code) => return code,
     };
@@ -191,7 +227,13 @@ mod tests {
             style: crate::style::Presentation::BARE,
             fmt,
         };
-        let code = delete(&mut streams, paths, VersionGuard::Enforce, &args(selectors)).await;
+        let code = delete(
+            &mut streams,
+            &Link::Local(paths),
+            VersionGuard::Enforce,
+            &args(selectors),
+        )
+        .await;
         let mut sent = Vec::new();
         if let Some(rx) = envelopes.as_mut() {
             while let Ok(envelope) = rx.try_recv() {
@@ -325,6 +367,60 @@ mod tests {
         assert!(
             written.contains("metrics"),
             "a name this CLI could not judge spends no config edit: {written}"
+        );
+    }
+
+    /// A dog's name over a host is a selector like any other: the dog half
+    /// reads and edits this machine's `shep.toml`, and the host's dogs are not
+    /// in it. The local adoption of the same name must come through untouched.
+    #[tokio::test]
+    async fn delete_over_a_host_sends_a_dog_name_to_the_shepherd_and_edits_no_local_shep_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = home_with_a_dog(dir.path(), "log-rotate");
+        let config_before = std::fs::read(&paths.daemon_config).unwrap();
+        let dogs_before = std::fs::read(&paths.dogs_config).unwrap();
+        let mut envelopes = fake_shepherd(&paths).await;
+        let client = shep_client::Client::connect(&paths.socket).await.unwrap();
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+
+        let code = {
+            let mut streams = Streams {
+                out: &mut out,
+                err: &mut err,
+                style: crate::style::Presentation::BARE,
+                fmt: Format::Table,
+            };
+            delete_with(
+                &mut streams,
+                None,
+                async |_| Ok(client),
+                &args(&["log-rotate"]),
+            )
+            .await
+        };
+
+        let err = String::from_utf8(err).unwrap();
+        assert_eq!(code, ExitCode::Success, "{err}");
+        let mut sent = Vec::new();
+        while let Ok(envelope) = envelopes.try_recv() {
+            sent.push(envelope.body);
+        }
+        assert_eq!(
+            sent,
+            vec![
+                Request::Delete {
+                    selector: SelectorSpec::Name("log-rotate".to_string()),
+                },
+                Request::ListFlock,
+            ],
+            "the host's shepherd is the one that knows whether this name is a dog"
+        );
+        assert_eq!(std::fs::read(&paths.daemon_config).unwrap(), config_before);
+        assert_eq!(std::fs::read(&paths.dogs_config).unwrap(), dogs_before);
+        assert!(
+            err.contains("deleted 1 sheep, id 7") && !err.contains("kept"),
+            "the shepherd's answer is reported and no dog is kept: {err}"
         );
     }
 

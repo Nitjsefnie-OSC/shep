@@ -36,22 +36,6 @@ mod slow {
         }
     }
 
-    /// The answer a dog gives when its binary was built against a
-    /// protocol below the floor this shep's handshake still accepts.
-    ///
-    /// Was `PROTOCOL_VERSION + 1` under the name `stale_answer`, back
-    /// when the restart check compared for exact equality. The
-    /// handshake now accepts anything at or above
-    /// [`shep_core::protocol::MIN_SUPPORTED`], so a newer protocol is
-    /// no longer stale; only one below the floor is.
-    #[cfg(unix)]
-    fn below_floor_answer() -> String {
-        format!(
-            "echo 'shep-log-rotate 0.1.3'\necho 'shep-protocol: {}'",
-            shep_core::protocol::MIN_SUPPORTED.saturating_sub(1)
-        )
-    }
-
     /// The ordering is read off stderr rather than off a clock: the
     /// shepherd refuses the restart, so its refusal lands on the same
     /// stream as the warning and the two offsets say which ran first.
@@ -79,7 +63,7 @@ mod slow {
             let args = SelectorArgs {
                 selectors: vec!["log-rotate".into()],
             };
-            let _ = restart_within(&client, &mut streams, &paths, &args, PROBE_BUDGET).await;
+            let _ = restart_within(&client, &mut streams, Some(&paths), &args, PROBE_BUDGET).await;
         }
 
         let text = String::from_utf8(err).unwrap();
@@ -117,7 +101,7 @@ mod slow {
             let args = SelectorArgs {
                 selectors: vec!["log-rotate".into()],
             };
-            let _ = restart_within(&client, &mut streams, &paths, &args, PROBE_BUDGET).await;
+            let _ = restart_within(&client, &mut streams, Some(&paths), &args, PROBE_BUDGET).await;
         }
 
         let text = String::from_utf8(err).unwrap();
@@ -165,7 +149,7 @@ mod slow {
             let args = SelectorArgs {
                 selectors: vec!["log-rotate".into()],
             };
-            let _ = restart_within(&client, &mut streams, &paths, &args, PROBE_BUDGET).await;
+            let _ = restart_within(&client, &mut streams, Some(&paths), &args, PROBE_BUDGET).await;
         }
 
         assert_eq!(
@@ -212,7 +196,7 @@ mod slow {
             let args = SelectorArgs {
                 selectors: vec!["log-rotate".into()],
             };
-            let _ = restart_within(&client, &mut streams, &paths, &args, PROBE_BUDGET).await;
+            let _ = restart_within(&client, &mut streams, Some(&paths), &args, PROBE_BUDGET).await;
         }
 
         assert_eq!(
@@ -256,7 +240,7 @@ mod slow {
             let args = SelectorArgs {
                 selectors: vec!["log-rotate".into()],
             };
-            let _ = restart_within(&client, &mut streams, &paths, &args, PROBE_BUDGET).await;
+            let _ = restart_within(&client, &mut streams, Some(&paths), &args, PROBE_BUDGET).await;
         }
 
         assert_eq!(
@@ -305,7 +289,7 @@ mod slow {
             let args = SelectorArgs {
                 selectors: vec!["metrics".into()],
             };
-            let _ = restart_within(&client, &mut streams, &paths, &args, PROBE_BUDGET).await;
+            let _ = restart_within(&client, &mut streams, Some(&paths), &args, PROBE_BUDGET).await;
         }
 
         assert_eq!(
