@@ -42,6 +42,17 @@ pub struct DaemonConfig {
     /// `deny_unknown_fields` does not turn an unrecognized `[interpreters]`
     /// section into a hard parse error on every boot.
     pub interpreters: BTreeMap<String, String>,
+    /// The top-level `hosts` array: ssh destinations of the machines whose
+    /// shepherds this CLI reaches, in file order.
+    ///
+    /// Read by the CLI only, which checks each entry against
+    /// [`Destination`](crate::destination::Destination) when it reads. The
+    /// shepherd never reads this field and does not validate it, so a bad
+    /// hand-edited entry cannot stop a boot.
+    ///
+    /// Declared here, like [`Self::interpreters`], so `RawDaemonConfig`'s
+    /// `deny_unknown_fields` does not turn the key into a hard parse error.
+    pub hosts: Vec<String>,
     /// Raw `[dog.<name>]` sections keyed by dog name
     pub dog: BTreeMap<String, toml::Table>,
 }
@@ -55,6 +66,7 @@ impl fmt::Debug for DaemonConfig {
             .field("secrets", &self.secrets)
             .field("style", &self.style)
             .field("interpreters", &self.interpreters)
+            .field("hosts", &self.hosts)
             .field("dog", &format_args!("<{} tables>", self.dog.len()))
             .finish()
     }
@@ -68,6 +80,7 @@ pub(super) struct RawDaemonConfig {
     secrets: SecretsSection,
     style: StyleSection,
     interpreters: BTreeMap<String, String>,
+    hosts: Vec<String>,
     dog: BTreeMap<String, toml::Table>,
 }
 
@@ -115,6 +128,7 @@ impl DaemonConfig {
             secrets: raw.secrets,
             style: raw.style,
             interpreters: raw.interpreters,
+            hosts: raw.hosts,
             dog: raw.dog,
         };
         if let Some(v) = env("SHEP_LOG_JSON") {
@@ -621,5 +635,37 @@ mod tests {
     #[test]
     fn a_non_string_interpreter_value_is_a_parse_error() {
         assert!(DaemonConfig::load(Some("[interpreters]\njs = 5\n"), &no_env).is_err());
+    }
+
+    // fails if a top-level `hosts` array stops parsing as a list of strings,
+    // in file order.
+    #[test]
+    fn a_hosts_key_parses_as_a_list_of_strings() {
+        let cfg = DaemonConfig::load(Some("hosts = [\"amp2\", \"deploy@build\"]\n"), &no_env)
+            .unwrap();
+        assert_eq!(cfg.hosts, ["amp2", "deploy@build"]);
+    }
+
+    // A `shep.toml` that never mentions `hosts` is most of them.
+    #[test]
+    fn hosts_defaults_to_empty() {
+        assert!(DaemonConfig::load(None, &no_env).unwrap().hosts.is_empty());
+        assert!(
+            DaemonConfig::load(Some("[daemon]\nlog_json = true\n"), &no_env)
+                .unwrap()
+                .hosts
+                .is_empty()
+        );
+    }
+
+    // fails if `hosts` is not declared on `RawDaemonConfig`: the CLI writes
+    // it, and `deny_unknown_fields` would refuse the file at every boot and
+    // reload. A bad entry must not stop a shepherd booting either.
+    #[test]
+    fn a_shep_toml_with_a_hosts_key_still_loads_under_deny_unknown_fields() {
+        let src = "hosts = [\"-oProxyCommand=x\"]\n[daemon]\nlog_json = true\n";
+        let cfg = DaemonConfig::load(Some(src), &no_env).unwrap();
+        assert!(cfg.daemon.log_json);
+        assert_eq!(cfg.hosts, ["-oProxyCommand=x"]);
     }
 }

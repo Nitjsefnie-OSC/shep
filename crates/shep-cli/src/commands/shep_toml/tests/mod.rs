@@ -222,5 +222,6 @@ fn two_writer_processes_do_not_lose_each_other_s_edits() {
 }
 
 mod dogs;
+mod hosts;
 mod scalars;
 mod style;

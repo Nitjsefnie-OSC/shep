@@ -406,6 +406,59 @@ impl ShepToml {
             .unwrap_or_default()
     }
 
+    /// Adds `entry` to the top-level `hosts` array, creating it when this
+    /// document has none, and returns whether it was new. Compared as
+    /// written; the grammar is the caller's to check.
+    ///
+    /// # Errors
+    ///
+    /// [`ShepTomlError::WrongShape`] when `hosts` is not an array.
+    pub fn add_host(&mut self, entry: &str) -> Result<bool, ShepTomlError> {
+        let path = self.path.clone();
+        let item = self
+            .doc
+            .entry("hosts")
+            .or_insert_with(|| Item::Value(Value::Array(Array::new())));
+        let found = item.type_name();
+        let hosts = item.as_array_mut().ok_or(ShepTomlError::WrongShape {
+            path,
+            key: "hosts",
+            expected: "an array",
+            found,
+        })?;
+        if hosts.iter().any(|v| v.as_str() == Some(entry)) {
+            return Ok(false);
+        }
+        hosts.push(entry);
+        Ok(true)
+    }
+
+    /// Removes `entry` from the top-level `hosts` array and returns whether
+    /// it was there. Touches nothing else.
+    pub fn remove_host(&mut self, entry: &str) -> bool {
+        let Some(hosts) = self.doc.get_mut("hosts").and_then(Item::as_array_mut) else {
+            return false;
+        };
+        let before = hosts.len();
+        hosts.retain(|v| v.as_str() != Some(entry));
+        hosts.len() != before
+    }
+
+    /// The entries in the top-level `hosts` array, in file order.
+    #[must_use]
+    pub fn host_names(&self) -> Vec<String> {
+        self.doc
+            .get("hosts")
+            .and_then(Item::as_array)
+            .map(|hosts| {
+                hosts
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// [`Self::adopted_dog_path`] without the write side, for `lib.rs`'s
     /// `dispatch_adopted_dog`, which runs on every unrecognized verb.
     ///
