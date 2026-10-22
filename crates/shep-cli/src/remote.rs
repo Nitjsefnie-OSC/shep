@@ -57,6 +57,7 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         | Commands::Get(_)
         | Commands::Unset(_)
         | Commands::Secret(_)
+        | Commands::Host(_)
         | Commands::Copy(_)
         | Commands::Ping
         | Commands::Kill
@@ -166,6 +167,7 @@ mod tests {
         &["get", "k"],
         &["unset", "k"],
         &["secret", "list"],
+        &["host", "list"],
         &["copy", "web", "web2"],
         &["ping"],
         &["kill"],

@@ -59,6 +59,7 @@ mod handover_dogs;
 mod handover_extras;
 mod home_and_watch;
 mod host_flag;
+mod hosts;
 mod import_env;
 mod init_verb;
 mod lifecycle;

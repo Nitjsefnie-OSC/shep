@@ -406,6 +406,73 @@ impl ShepToml {
             .unwrap_or_default()
     }
 
+    /// Adds `entry` to the top-level `hosts` array, creating it when this
+    /// document has none, and returns whether it was new. Compared as
+    /// written; the grammar is the caller's to check.
+    ///
+    /// # Errors
+    ///
+    /// [`ShepTomlError::WrongShape`] when `hosts` is not an array of strings.
+    pub fn add_host(&mut self, entry: &str) -> Result<bool, ShepTomlError> {
+        if self.host_names()?.iter().any(|name| name == entry) {
+            return Ok(false);
+        }
+        let item = self
+            .doc
+            .entry("hosts")
+            .or_insert_with(|| Item::Value(Value::Array(Array::new())));
+        if let Some(hosts) = item.as_array_mut() {
+            hosts.push(entry);
+        }
+        Ok(true)
+    }
+
+    /// Removes `entry` from the top-level `hosts` array and returns whether
+    /// it was there. Touches nothing else.
+    ///
+    /// # Errors
+    ///
+    /// [`ShepTomlError::WrongShape`] when `hosts` is not an array of strings.
+    pub fn remove_host(&mut self, entry: &str) -> Result<bool, ShepTomlError> {
+        if !self.host_names()?.iter().any(|name| name == entry) {
+            return Ok(false);
+        }
+        if let Some(hosts) = self.doc.get_mut("hosts").and_then(Item::as_array_mut) {
+            hosts.retain(|v| v.as_str() != Some(entry));
+        }
+        Ok(true)
+    }
+
+    /// The entries in the top-level `hosts` array, in file order. A missing
+    /// key is an empty list.
+    ///
+    /// # Errors
+    ///
+    /// [`ShepTomlError::WrongShape`] when `hosts` is not an array, or holds
+    /// anything but strings: dropping such an entry would hide it.
+    pub fn host_names(&self) -> Result<Vec<String>, ShepTomlError> {
+        let Some(item) = self.doc.get("hosts") else {
+            return Ok(Vec::new());
+        };
+        let wrong_shape = |found| ShepTomlError::WrongShape {
+            path: self.path.clone(),
+            key: "hosts",
+            expected: "an array of strings",
+            found,
+        };
+        let hosts = item
+            .as_array()
+            .ok_or_else(|| wrong_shape(item.type_name()))?;
+        hosts
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(String::from)
+                    .ok_or_else(|| wrong_shape(v.type_name()))
+            })
+            .collect()
+    }
+
     /// [`Self::adopted_dog_path`] without the write side, for `lib.rs`'s
     /// `dispatch_adopted_dog`, which runs on every unrecognized verb.
     ///
