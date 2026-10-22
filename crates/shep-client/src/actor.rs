@@ -199,6 +199,8 @@ fn route_frame(
 #[cfg(test)]
 mod tests {
     use futures_util::FutureExt;
+    use shep_core::protocol::{ProcessEventKind, ProcessInfo};
+    use shep_core::status::ProcStatus;
 
     use super::*;
     use crate::client::RequestError;
@@ -279,5 +281,29 @@ mod tests {
         );
 
         assert!(sub.try_recv().is_err(), "nothing decodable to deliver");
+    }
+
+    /// A status this build does not know used to make the whole event
+    /// undecodable, and so dropped. It now decodes with the status as
+    /// `Unrecognized`, and subscribers get it.
+    #[test]
+    fn an_event_carrying_a_status_this_build_does_not_know_is_delivered() {
+        let mut pending = HashMap::new();
+        let (events, mut sub) = broadcast::channel(4);
+        let event = BusEvent::Process {
+            event: ProcessEventKind::Online,
+            info: ProcessInfo::builder(3, "web", ProcStatus::Online).build(),
+            manually: false,
+            at_ms: 0,
+        };
+        let mut wire = serde_json::to_value(&event).unwrap();
+        wire["data"]["info"]["status"] = serde_json::json!("invented_next_year");
+
+        route_frame(wire.to_string().as_bytes(), &mut pending, &events);
+
+        let BusEvent::Process { info, .. } = sub.try_recv().expect("the event is delivered") else {
+            panic!("a process event");
+        };
+        assert_eq!(info.status, ProcStatus::Unrecognized);
     }
 }

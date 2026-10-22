@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 /// backoff or restart delay is pending.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum ProcStatus {
     /// Spawned, not yet ready
     Starting,
@@ -31,6 +32,15 @@ pub enum ProcStatus {
     Errored,
     /// Restart pending after a backoff or configured delay
     WaitingRestart,
+    /// A status this build has not been taught.
+    ///
+    /// Only ever produced by decoding: an unrecognized string falls through
+    /// to this variant via `#[serde(other)]` instead of failing the whole
+    /// listing. Nothing constructs one to send, which is a call-site
+    /// invariant rather than a type-level one: `#[serde(other)]` governs
+    /// decoding only, so serializing this would emit `"unrecognized"`.
+    #[serde(other)]
+    Unrecognized,
 }
 
 impl ProcStatus {
@@ -44,6 +54,7 @@ impl ProcStatus {
             Self::Stopped => "stopped",
             Self::Errored => "errored",
             Self::WaitingRestart => "waiting-restart",
+            Self::Unrecognized => "unrecognized",
         }
     }
 }
@@ -82,5 +93,18 @@ mod tests {
             assert_eq!(serde_json::from_str::<ProcStatus>(json).unwrap(), status);
             assert_eq!(format!("\"{status}\""), json);
         }
+    }
+
+    /// A status a newer shepherd adds must decode, not fail the listing it
+    /// rides in.
+    #[test]
+    fn an_unknown_status_decodes_as_unrecognized() {
+        for json in [r#""invented_next_year""#, r#""unrecognized""#] {
+            assert_eq!(
+                serde_json::from_str::<ProcStatus>(json).unwrap(),
+                ProcStatus::Unrecognized
+            );
+        }
+        assert_eq!(ProcStatus::Unrecognized.to_string(), "unrecognized");
     }
 }

@@ -28,10 +28,19 @@ pub enum DogSource {
         #[serde(default, skip_serializing_if = "core::ops::Not::not")]
         channel: bool,
     },
+    /// A kind this build has not been taught.
+    ///
+    /// Only ever produced by decoding: an unrecognized `kind` falls through
+    /// to this variant via `#[serde(other)]` instead of failing the whole
+    /// row. Nothing constructs one to send, which is a call-site invariant
+    /// rather than a type-level one: `#[serde(other)]` governs decoding
+    /// only, so serializing this would emit `"unrecognized"`.
+    #[serde(other)]
+    Unrecognized,
 }
 
 impl DogSource {
-    /// The kind's one-word label, `built-in` or `adopted`.
+    /// The kind's one-word label, `built-in`, `adopted` or `unrecognized`.
     ///
     /// Never the adopted path: this is what a SOURCE column shows, and the
     /// path is on the variant for a caller that wants it.
@@ -39,6 +48,7 @@ impl DogSource {
         match self {
             DogSource::BuiltIn => "built-in",
             DogSource::Adopted { .. } => "adopted",
+            DogSource::Unrecognized => "unrecognized",
         }
     }
 }
@@ -82,5 +92,22 @@ mod tests {
         let wire = r#"{"kind":"adopted","path":"/usr/local/bin/shep-otel","channel":true}"#;
         assert_eq!(serde_json::to_string(&adopted).unwrap(), wire);
         assert_eq!(serde_json::from_str::<DogSource>(wire).unwrap(), adopted);
+    }
+
+    /// A kind this build has never heard of must decode, not fail the row.
+    #[test]
+    fn an_unknown_dog_source_decodes_as_unrecognized() {
+        assert_eq!(
+            serde_json::from_str::<DogSource>(r#"{"kind":"invented_next_year"}"#).unwrap(),
+            DogSource::Unrecognized
+        );
+        let wire = r#"{"kind":"adopted","path":"/usr/local/bin/shep-otel"}"#;
+        assert_eq!(
+            serde_json::from_str::<DogSource>(wire).unwrap(),
+            DogSource::Adopted {
+                path: "/usr/local/bin/shep-otel".to_string(),
+                channel: false,
+            }
+        );
     }
 }

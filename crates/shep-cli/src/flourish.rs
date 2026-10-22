@@ -128,6 +128,7 @@ fn mustered_caption(counts: &[(ProcStatus, usize)], total: usize) -> String {
             ProcStatus::WaitingRestart => format!("{total} restored, waiting to restart"),
             ProcStatus::Stopping => format!("{total} restored, still shutting down"),
             ProcStatus::Errored => format!("{total} restored, errored"),
+            _ => format!("{total} restored, status unrecognized"),
         };
     }
     let breakdown: Vec<String> = counts

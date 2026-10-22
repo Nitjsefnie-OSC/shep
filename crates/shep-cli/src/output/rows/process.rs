@@ -335,6 +335,26 @@ pub(crate) mod tests {
         assert_eq!(at(&rows[3], "EXIT"), "-");
     }
 
+    /// The word is lost to decoding, so both renderings say `unrecognized`,
+    /// and every column still maps to a JSON key.
+    #[test]
+    fn a_row_with_an_unrecognized_status_renders_in_the_table_and_in_json() {
+        let mut info = sample_info(1, "web", 60_000);
+        info.status = ProcStatus::Unrecognized;
+        let rows = FlockRows(vec![info]);
+
+        let headers = FlockRows::headers();
+        let status = headers.iter().position(|h| *h == "STATUS").unwrap();
+        assert_eq!(rows.rows()[0][status], "unrecognized");
+        assert_eq!(
+            serde_json::to_value(&rows).unwrap()[0]["status"],
+            "unrecognized"
+        );
+        for header in headers {
+            FlockRows::json_key_for(header);
+        }
+    }
+
     /// A zero is a claim, "this sheep is using no CPU", and the daemon says
     /// `None` precisely when it cannot make that claim.
     #[test]

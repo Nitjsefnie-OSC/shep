@@ -265,9 +265,9 @@ pub struct ProcessInfo {
     /// spawn until `shep enable`. `None` otherwise, which also covers a peer
     /// daemon that predates the field.
     ///
-    /// Beside [`Self::status`] rather than a [`ProcStatus`] variant: that enum
-    /// is closed, so an older peer could not decode a new one. A disabled row
-    /// keeps `status: "stopped"`. Never `Some(false)`, so the key is absent
+    /// Beside [`Self::status`] rather than a [`ProcStatus`] variant, since a
+    /// peer that predates a status could not tell it from `stopped`. A
+    /// disabled row keeps `status: "stopped"`. Never `Some(false)`, so the key is absent
     /// from every row that is not disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disabled: Option<bool>,
@@ -616,6 +616,24 @@ mod tests {
     fn a_process_info_without_a_reading_has_no_counter() {
         let info = ProcessInfo::builder(3, "web", ProcStatus::Online).build();
         assert_eq!(info.cpu_ms, None);
+    }
+
+    /// A status a newer shepherd adds must not fail the row it rides in.
+    #[test]
+    fn a_process_info_with_a_status_this_build_does_not_know_still_decodes() {
+        let mut wire = serde_json::to_value(sample_info()).unwrap();
+        wire["status"] = serde_json::json!("invented_next_year");
+
+        let decoded: ProcessInfo = serde_json::from_value(wire).unwrap();
+
+        assert_eq!(decoded.status, ProcStatus::Unrecognized);
+        assert_eq!(
+            decoded,
+            ProcessInfo {
+                status: ProcStatus::Unrecognized,
+                ..sample_info()
+            }
+        );
     }
 
     /// Every field is given a value distinct from every other field's

@@ -23,6 +23,9 @@
 //! and forced nothing either, on the terms [`Request::PutSecrets`] set
 //! above. Version 10 bumped on a third new `AppConfig` field, `dogs`, for
 //! the reason version 5 did, and version 11 on a fourth, `log_timestamps`.
+//! The `Unrecognized` catch-alls on [`crate::status::ProcStatus`] and
+//! [`DogSource`] rode in the same way and forced nothing: this build only
+//! decodes them and never sends one.
 //!
 //! A `*_wire_v11` test pins today's shape. A
 //! `v1_*_fixture_still_deserializes` test pins an old peer's payload and
