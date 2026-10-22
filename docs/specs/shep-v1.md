@@ -16,10 +16,12 @@ policies, log capture, graceful reload, file watching, native
 observability (Prometheus, webhooks, TUI, MCP), and first-party plugins
 (dogs). Clean-room build inspired by pm2's feature list; MIT OR Apache-2.0.
 
-**Non-goals (v1):** container orchestration; multi-host anything; a
-third-party module registry (the dog contract replaces it); pm2 artifact
-compatibility (formats live only in `shep import`); deployment tooling;
-in-process Node instrumentation.
+**Non-goals (v1):** container orchestration; a shepherd supervising a
+process on another host; a third-party module registry (the dog contract
+replaces it); pm2 artifact compatibility (formats live only in `shep
+import`); deployment tooling; in-process Node instrumentation. The CLI may
+still reach another host's shepherd over ssh, see "A shepherd supervises only
+its own host" in `docs/decisions.md`.
 
 ## 2. Versioned scope
 
@@ -104,6 +106,8 @@ view, killed with the sheep by the process-group/Job-Object tree kill.
 **States:** `starting`, `online`, `stopping`, `stopped`, plus `errored`
 (restart budget exhausted or spawn failure) and `waiting-restart` (backoff
 delay pending). Serialized exactly as these strings on the wire.
+A listing from a newer shepherd can also show `unrecognized` for a status
+this build does not know, instead of failing the whole listing.
 
 `stopping` is not a step every stop passes through — it is reachable from
 exactly one place: a reload's `SpawnNew` step marks the instance being
@@ -484,7 +488,7 @@ reach processes the operator never named.
 | 9 | internal | An unexpected daemon-side failure. |
 | 10 | daemon already running | Another daemon already holds this `$SHEP_HOME`. |
 | 11 | flock empty | The foreground flock emptied with a sheep in `errored`. `runtime`'s fail-fast status. |
-| 12 | version skew | The handshake succeeded, but this binary and the running shepherd are different crate versions. Not returned for `kill`, `daemon reload` or `ping`. |
+| 12 | version skew | The handshake succeeded, but this binary and the running shepherd are different crate versions. Not returned for `kill`, `daemon reload` or `ping`, nor for `flock`, `describe` or `bleats`, which warn on stderr and proceed. |
 | 13 | unsupported | The daemon understood the handshake but not the request itself; a newer shepherd is the remedy. |
 
 Code 10 is a contract across a process boundary, not merely a CLI detail: a

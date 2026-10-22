@@ -14,12 +14,16 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
+use shep_core::destination::DestinationError;
 use shep_core::protocol::{
     Hello, HelloAck, HelloReply, PROTOCOL_VERSION, WireError, codec, decode_frame, encode_frame,
 };
-use shep_core::transport::{self, ClientStream};
+use shep_core::transport;
+
+use crate::ssh::SshCause;
 
 /// Budget for one connect-plus-handshake attempt.
 ///
@@ -28,13 +32,20 @@ use shep_core::transport::{self, ClientStream};
 /// `spawn` module's own connect-and-wait budget reads from this constant too.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Any byte stream a [`Connection`] can handshake and run over: the OS
+/// socket, or a pipe to an ssh child.
+pub(crate) trait ByteStream: AsyncRead + AsyncWrite + Unpin + Send {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> ByteStream for T {}
+
 /// The framed transport a [`Connection`] wraps, named so callers past this
-/// module don't have to spell out `Framed<ClientStream, LengthDelimitedCodec>`
-/// themselves.
+/// module don't have to spell out the framed type themselves.
 ///
-/// [`ClientStream`] is the per-platform carrier, so this alias keeps
-/// `crate::actor` free of any platform gate.
-pub(crate) type Frames = Framed<ClientStream, LengthDelimitedCodec>;
+/// Boxed rather than generic: `Connection`, the actor and `Client` stay
+/// non-generic, so the actor compiles once, and one vtable call per read is
+/// noise beside JSON decoding. This alias also keeps `crate::actor` free of
+/// any platform gate.
+pub(crate) type Frames = Framed<Box<dyn ByteStream>, LengthDelimitedCodec>;
 
 /// Why `Connection::open` failed.
 ///
@@ -77,18 +88,33 @@ pub enum ConnectError {
         /// The daemon's refusal message, verbatim.
         message: String,
     },
+    /// The destination handed to [`Client::connect_ssh_with`] is not one
+    /// [`Destination::parse`] accepts. Nothing was spawned.
+    ///
+    /// [`Client::connect_ssh_with`]: crate::Client::connect_ssh_with
+    /// [`Destination::parse`]: shep_core::destination::Destination::parse
+    Destination(DestinationError),
+    /// Dialling `destination` through ssh failed; `cause` says how.
+    Ssh {
+        /// The destination that was dialled.
+        destination: String,
+        /// What went wrong, on this side or the far one.
+        cause: SshCause,
+    },
 }
 
 impl ConnectError {
     /// The [`shep_core::exit`] code a process stopping on this error uses:
-    /// a refusal is a protocol mismatch, and every other stage is nothing
-    /// usable answering.
+    /// a refusal is a protocol mismatch, a destination ssh would misread is a
+    /// usage error, and every other stage is nothing usable answering.
     #[must_use]
     pub const fn exit_code(&self) -> u8 {
         use shep_core::exit;
         match self {
             Self::ProtocolMismatch { .. } => exit::PROTOCOL_MISMATCH,
+            Self::Destination(_) => exit::USAGE,
             Self::Connect { .. }
+            | Self::Ssh { .. }
             | Self::Io(_)
             | Self::Wire(_)
             | Self::HandshakeClosed
@@ -111,6 +137,8 @@ impl fmt::Display for ConnectError {
             Self::HandshakeTimeout { after } => {
                 write!(f, "the handshake did not complete within {after:?}")
             }
+            Self::Destination(err) => write!(f, "invalid destination: {err}"),
+            Self::Ssh { destination, cause } => cause.write_for(f, destination),
             // `message` states the daemon's side of the skew; this arm adds
             // what it cannot: what to do, and which shep to do it against.
             // Both directions of the remedy are named, since `client` and
@@ -140,6 +168,10 @@ impl core::error::Error for ConnectError {
         match self {
             Self::Connect { source, .. } | Self::Io(source) => Some(source),
             Self::Wire(err) => Some(err),
+            Self::Destination(err) => Some(err),
+            // the cause's own source, not the cause: `Display` already
+            // spelled the cause out, and a chain would print it twice
+            Self::Ssh { cause, .. } => core::error::Error::source(cause),
             Self::HandshakeClosed
             | Self::HandshakeTimeout { .. }
             | Self::ProtocolMismatch { .. } => None,
@@ -193,7 +225,25 @@ impl Connection {
                 path: socket.to_path_buf(),
                 source,
             })?;
-        let mut frames = Framed::new(stream, codec());
+        Self::open_over(stream, dog_name).await
+    }
+
+    /// Performs the version handshake (send [`Hello`], read the reply) over
+    /// an already-established `stream`. `dog_name` travels in the `Hello`.
+    ///
+    /// Unbounded: the caller owns the timeout, as [`Self::open`] does.
+    ///
+    /// # Errors
+    ///
+    /// - [`ConnectError::Wire`]: `Hello` failed to encode, or the reply failed to decode.
+    /// - [`ConnectError::Io`]: a framed read or write failed.
+    /// - [`ConnectError::HandshakeClosed`]: the peer closed before a `HelloReply`.
+    /// - [`ConnectError::ProtocolMismatch`]: the daemon refused on protocol-version skew.
+    pub(crate) async fn open_over(
+        stream: impl ByteStream + 'static,
+        dog_name: Option<&str>,
+    ) -> Result<Self, ConnectError> {
+        let mut frames = Framed::new(Box::new(stream) as Box<dyn ByteStream>, codec());
 
         let hello = Hello {
             client_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -490,6 +540,114 @@ mod tests {
         assert_eq!(after, Duration::from_millis(150));
     }
 
+    /// Spawns the far end of an in-memory stream that reads one [`Hello`]
+    /// and answers it with `reply`, then hands the [`Hello`] back.
+    fn serve_hello(
+        far: tokio::io::DuplexStream,
+        reply: HelloReply,
+    ) -> tokio::task::JoinHandle<Hello> {
+        tokio::spawn(async move {
+            let mut frames = Framed::new(far, codec());
+            let first = frames.next().await.unwrap().unwrap();
+            let hello: Hello = decode_frame(&first).unwrap();
+            frames.send(encode_frame(&reply).unwrap()).await.unwrap();
+            hello
+        })
+    }
+
+    #[tokio::test]
+    async fn open_over_completes_the_handshake_on_an_in_memory_stream() {
+        let (near, far) = tokio::io::duplex(1024);
+        let ack = HelloAck {
+            daemon_version: "9.9.9".into(),
+            protocol: PROTOCOL_VERSION,
+            pid: 4242,
+            min_supported: None,
+        };
+        let served = serve_hello(far, Ok(ack.clone()));
+
+        let conn = Connection::open_over(near, None).await.unwrap();
+
+        let (_frames, actual_ack) = conn.into_parts();
+        assert_eq!(actual_ack, ack);
+        let hello = served.await.unwrap();
+        assert_eq!(
+            hello.protocol, PROTOCOL_VERSION,
+            "the client must announce the version it speaks"
+        );
+        assert_eq!(
+            hello.client_version,
+            env!("CARGO_PKG_VERSION"),
+            "the client must identify its own version"
+        );
+        assert_eq!(
+            hello.dog_name, None,
+            "a client that is not a dog must not claim to be one"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_over_carries_a_dogs_name_in_its_hello() {
+        let (near, far) = tokio::io::duplex(1024);
+        let ack = HelloAck {
+            daemon_version: "9.9.9".into(),
+            protocol: PROTOCOL_VERSION,
+            pid: 4242,
+            min_supported: None,
+        };
+        let served = serve_hello(far, Ok(ack));
+
+        let _conn = Connection::open_over(near, Some("metrics")).await.unwrap();
+
+        let hello = served.await.unwrap();
+        assert_eq!(hello.dog_name.as_deref(), Some("metrics"));
+    }
+
+    #[tokio::test]
+    async fn open_over_reports_a_stream_closed_before_the_ack_as_handshake_closed() {
+        let (near, far) = tokio::io::duplex(1024);
+        tokio::spawn(async move {
+            let mut frames = Framed::new(far, codec());
+            let _hello = frames.next().await;
+            // dropped after reading the Hello, so the near half sees a clean EOF
+        });
+
+        let err = Connection::open_over(near, None).await.unwrap_err();
+
+        assert!(
+            matches!(err, ConnectError::HandshakeClosed),
+            "an in-memory EOF carries no OS error to fold into `Io`, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_over_reports_a_protocol_refusal_as_protocol_mismatch() {
+        let (near, far) = tokio::io::duplex(1024);
+        let refusal = RpcError {
+            code: RpcErrorCode::ProtocolMismatch,
+            message: "daemon speaks protocol 2, client speaks 1".into(),
+            daemon_version: Some("0.1.16".into()),
+        };
+        let _served = serve_hello(far, Err(refusal));
+
+        let err = Connection::open_over(near, None).await.unwrap_err();
+
+        let ConnectError::ProtocolMismatch {
+            client,
+            daemon_version,
+            message,
+        } = err
+        else {
+            panic!("a protocol refusal must not be flattened into a generic error, got {err:?}");
+        };
+        assert_eq!(client, PROTOCOL_VERSION);
+        assert_eq!(daemon_version.as_deref(), Some("0.1.16"));
+        assert!(
+            message.contains("protocol 2"),
+            "the daemon's own message must survive: {message}"
+        );
+    }
+
     /// A refusal is the one stage an upgrade fixes; every other stage is
     /// nothing answering.
     #[test]
@@ -506,5 +664,83 @@ mod tests {
         ] {
             assert_eq!(unreachable.exit_code(), shep_core::exit::DAEMON_UNREACHABLE);
         }
+    }
+
+    /// Every ssh failure is nothing usable answering, whatever its cause; a
+    /// refusal through ssh is still the refusal, and keeps its own code.
+    #[test]
+    fn ssh_failures_exit_daemon_unreachable_and_a_refusal_keeps_protocol_mismatch() {
+        let causes = [
+            SshCause::Spawn {
+                program: PathBuf::from("ssh"),
+                source: std::io::Error::other("no such file"),
+            },
+            SshCause::Transport {
+                stderr: "Connection refused".to_owned(),
+            },
+            SshCause::CommandNotFound,
+            SshCause::NoShepherd,
+            SshCause::RemoteTooOld,
+            SshCause::LoginOutput(Box::new(ConnectError::HandshakeClosed)),
+        ];
+        for cause in causes {
+            let err = ConnectError::Ssh {
+                destination: "build-01".to_owned(),
+                cause,
+            };
+            assert_eq!(
+                err.exit_code(),
+                shep_core::exit::DAEMON_UNREACHABLE,
+                "{err}"
+            );
+        }
+
+        let refused = ConnectError::ProtocolMismatch {
+            client: 1,
+            daemon_version: None,
+            message: "too old".to_owned(),
+        };
+        assert_eq!(refused.exit_code(), shep_core::exit::PROTOCOL_MISMATCH);
+    }
+
+    /// `Display` names the host, and `source` reaches the cause underneath
+    /// without repeating the message `Display` already printed.
+    #[test]
+    fn an_ssh_failure_names_its_host_and_exposes_the_cause_beneath_it() {
+        let spawn = ConnectError::Ssh {
+            destination: "build-01".to_owned(),
+            cause: SshCause::Spawn {
+                program: PathBuf::from("/opt/ssh"),
+                source: std::io::Error::other("denied"),
+            },
+        };
+        assert!(spawn.to_string().contains("`/opt/ssh`"), "{spawn}");
+        assert_eq!(
+            core::error::Error::source(&spawn).unwrap().to_string(),
+            "denied"
+        );
+
+        let wrapped = ConnectError::Ssh {
+            destination: "build-01".to_owned(),
+            cause: SshCause::LoginOutput(Box::new(ConnectError::HandshakeClosed)),
+        };
+        assert!(wrapped.to_string().contains("`build-01`"), "{wrapped}");
+        assert_eq!(
+            core::error::Error::source(&wrapped).unwrap().to_string(),
+            ConnectError::HandshakeClosed.to_string()
+        );
+
+        let transport = ConnectError::Ssh {
+            destination: "build-01".to_owned(),
+            cause: SshCause::NoShepherd,
+        };
+        assert!(core::error::Error::source(&transport).is_none());
+    }
+
+    #[test]
+    fn a_refused_destination_is_a_usage_error() {
+        let err = ConnectError::Destination(DestinationError::Empty);
+        assert_eq!(err.exit_code(), shep_core::exit::USAGE);
+        assert!(core::error::Error::source(&err).is_some());
     }
 }

@@ -43,10 +43,13 @@ impl App {
         }
         if let Some(probe) = self.dogs_row_effect() {
             // Each adopted dog's binary answers in its own time, up to
-            // `VERSION_BUDGET` apiece, so the wait says what it is.
-            self.notice = Some(Notice::info(
-                "asking each dog for its per-sheep schema".to_owned(),
-            ));
+            // `VERSION_BUDGET` apiece, so the wait says what it is. Not over
+            // a host, which raised its refusal in place of the probe.
+            if probe != Effect::None {
+                self.notice = Some(Notice::info(
+                    "asking each dog for its per-sheep schema".to_owned(),
+                ));
+            }
             return probe;
         }
         let Some(pane) = self.config_pane() else {

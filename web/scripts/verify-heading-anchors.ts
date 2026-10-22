@@ -62,6 +62,7 @@ export const ENFORCED: string[] = [
   "not-built",
   "pm2-verbs",
   "lookout-config",
+  "hosts",
 ];
 
 /**

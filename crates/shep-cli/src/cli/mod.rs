@@ -17,6 +17,7 @@
 mod dogs;
 mod flock;
 mod help;
+mod hosts;
 mod import;
 mod logs;
 mod sheep;
@@ -26,10 +27,13 @@ mod verbs;
 
 use std::path::PathBuf;
 
+use shep_core::destination::Destination;
+
 use help::{HELP_TEMPLATE, version_text};
 
 pub use dogs::{AdoptArgs, DisableArgs, DogArgs, DogsArgs, EnableArgs};
 pub use flock::{FlockArgs, FoldArgs, LookoutArgs};
+pub use hosts::{HostArgs, HostCommand};
 pub use import::{ImportArgs, ImportCommand, ImportEnvArgs, ImportPm2Args};
 pub use logs::{BarksArgs, BleatsArgs, FlushArgs, ReopenArgs};
 // Two defaults whose only caller outside their own module is a test
@@ -46,7 +50,8 @@ pub use sheep::{
 };
 pub use store::{KvGetArgs, KvSetArgs, KvUnsetArgs, SecretArgs, SecretCommand};
 pub use system::{
-    CompletionArgs, DaemonArgs, DaemonCmd, DevArgs, InitArgs, RuntimeArgs, StartupArgs, StyleArgs,
+    CompletionArgs, DaemonArgs, DaemonCmd, DevArgs, DialStdioArgs, InitArgs, RuntimeArgs,
+    StartupArgs, StyleArgs,
 };
 pub use verbs::Commands;
 
@@ -107,6 +112,17 @@ pub struct GlobalArgs {
     // the flag's own place in it.
     #[arg(long, global = true, value_enum)]
     pub style: Option<crate::style::StyleLevel>,
+    /// Reach another host's shepherd over ssh
+    ///
+    /// DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from
+    /// ~/.ssh/config. `flock`, `describe`, `fold`, a followed `bleats`,
+    /// `stop`, `restart`, `reload`, `delete`, `stock`, `enable`, `disable`,
+    /// `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+    /// refuses it rather than act on this machine. `describe` shows no
+    /// secrets over it, and `enable` takes no hidden `--exec` form over it.
+    /// `--home` still names this machine's home, never the host's.
+    #[arg(long, global = true, value_name = "DEST", value_parser = parse_destination)]
+    pub host: Option<String>,
     /// Talk to a different shepherd
     ///
     /// Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You
@@ -124,6 +140,17 @@ pub struct GlobalArgs {
     // render was read.
     #[arg(long, global = true, env = "SHEP_HOME")]
     pub home: Option<PathBuf>,
+}
+
+/// `--host`'s value parser: the destination as written, once
+/// [`Destination::parse`] accepts it.
+///
+/// Held as the `String` rather than the [`Destination`], so [`GlobalArgs`]
+/// stays plain data that the adopted-dog path can build by hand.
+fn parse_destination(raw: &str) -> Result<String, String> {
+    Destination::parse(raw)
+        .map(|dest| dest.as_str().to_owned())
+        .map_err(|err| err.to_string())
 }
 
 /// `--format`'s two shapes.
@@ -200,6 +227,50 @@ mod tests {
         }
 
         assert!(Cli::try_parse_from(["shep", "--style", "loud", "flock"]).is_err());
+    }
+
+    /// fails if `--host` stops being optional, stops being global (valid on
+    /// either side of the verb), or stops accepting either spelling of its
+    /// value.
+    #[test]
+    fn host_flag_defaults_to_unset_and_takes_a_destination() {
+        use clap::Parser;
+
+        let cli = Cli::try_parse_from(["shep", "flock"]).unwrap();
+        assert_eq!(cli.global.host, None);
+
+        for argv in [
+            vec!["shep", "--host", "amp2", "flock"],
+            vec!["shep", "--host=amp2", "flock"],
+            vec!["shep", "flock", "--host", "amp2"],
+            vec!["shep", "flock", "--host=amp2"],
+        ] {
+            let cli = Cli::try_parse_from(&argv).unwrap();
+            assert_eq!(cli.global.host.as_deref(), Some("amp2"), "{argv:?}");
+        }
+
+        let cli = Cli::try_parse_from(["shep", "--host", "deploy@amp2", "flock"]).unwrap();
+        assert_eq!(cli.global.host.as_deref(), Some("deploy@amp2"));
+    }
+
+    /// `--host` reaches ssh as an argument, so a value ssh would read as an
+    /// option never gets as far as a `GlobalArgs`.
+    #[test]
+    fn host_flag_refuses_a_destination_ssh_would_read_as_an_option() {
+        use clap::Parser;
+
+        for argv in [
+            vec!["shep", "--host=-oProxyCommand=x", "flock"],
+            vec!["shep", "--host", "", "flock"],
+            vec!["shep", "--host", "a b", "flock"],
+        ] {
+            let err = Cli::try_parse_from(&argv).expect_err(&format!("{argv:?}"));
+            assert_eq!(
+                err.kind(),
+                clap::error::ErrorKind::ValueValidation,
+                "{argv:?}"
+            );
+        }
     }
 
     /// `std::env::set_var` is `unsafe` in edition 2024 and this crate is

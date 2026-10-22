@@ -26,6 +26,7 @@ use crate::commands::rpc::typed_request_error;
 use crate::commands::selector::parse_selector;
 use crate::exit::ExitCode;
 use crate::output::{self, Streams, write_outcome};
+use crate::remote::interrupt_within_grace;
 
 pub(crate) use shep_core::logtail::read_tail;
 // Only the tests size a file against the window.
@@ -439,7 +440,7 @@ fn handle_event(
 /// and nothing else. A sheep's own line and a real error both still print.
 ///
 /// Delegates to [`bleats_with_signal`] with a real `SIGINT` as the interrupt
-/// source.
+/// source. The shepherd is this machine's: see [`bleats_on_host`] for a host's.
 pub async fn bleats(
     client: &Client,
     streams: &mut Streams<'_>,
@@ -456,6 +457,29 @@ pub async fn bleats(
     .await
 }
 
+/// [`bleats`] for the shepherd a `--host` names, where `client` is the ssh
+/// link and not a local socket.
+///
+/// The caller says so, rather than this reading it off `client`, because the
+/// cost of getting it wrong is a backlog opened from the remote's paths on
+/// this machine.
+pub async fn bleats_on_host(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    quiet: bool,
+    args: &BleatsArgs,
+) -> ExitCode {
+    bleats_over(
+        client,
+        streams,
+        quiet,
+        args,
+        true,
+        tokio::signal::ctrl_c().map(|_| ()),
+    )
+    .await
+}
+
 /// [`bleats`] with the interrupt injected, so the Ctrl-C branch has a test
 /// that does not need a real `SIGINT`.
 ///
@@ -464,7 +488,8 @@ pub async fn bleats(
 /// no `Request::Subscribe`. `--follow` subscribes and loops on
 /// `tokio::select!`: a line renders, a `Lagged` item is noted and the
 /// follow continues, the stream ending means the daemon is gone
-/// ([`ExitCode::DaemonUnreachable`]), and `interrupt` firing exits
+/// ([`ExitCode::DaemonUnreachable`], or [`ExitCode::Success`] when an interrupt
+/// follows within the grace [`bleats_over`] gives a host), and `interrupt` firing exits
 /// [`ExitCode::Success`].
 ///
 /// `streams.out` is flushed on every exit path, or buffered lines are lost.
@@ -473,6 +498,25 @@ pub async fn bleats_with_signal(
     streams: &mut Streams<'_>,
     quiet: bool,
     args: &BleatsArgs,
+    interrupt: impl std::future::Future<Output = ()> + Send,
+) -> ExitCode {
+    bleats_over(client, streams, quiet, args, false, interrupt).await
+}
+
+/// [`bleats_with_signal`] with the host decided by the caller, so a test
+/// needs no ssh.
+///
+/// `over_host` changes two things. No backlog is printed, because
+/// `out_file`/`err_file` are the remote's paths and [`tail_log_files`] would
+/// open them on this machine. A stream that ends is given
+/// [`crate::remote::HOST_INTERRUPT_GRACE`] to be explained by an interrupt, because the ssh
+/// child dies on the same Ctrl+C.
+async fn bleats_over(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    quiet: bool,
+    args: &BleatsArgs,
+    over_host: bool,
     interrupt: impl std::future::Future<Output = ()> + Send,
 ) -> ExitCode {
     let selector = match parse_selector(streams, &args.selector) {
@@ -499,7 +543,14 @@ pub async fn bleats_with_signal(
     // Backlog before subscribing, so a line in the gap is missed rather
     // than printed twice. The tail's exit code is discarded: an unreadable
     // log for one sheep must not stop the follow over the whole flock.
-    if args.lines > 0 {
+    if over_host {
+        write_notice(
+            streams,
+            quiet,
+            "backlog_not_shown",
+            "no backlog is shown over --host; following live output only",
+        );
+    } else if args.lines > 0 {
         let _ = tail_log_files(streams, quiet, &cache, &selector, args);
     }
 
@@ -534,6 +585,9 @@ pub async fn bleats_with_signal(
                     }
                     None => {
                         let _ = streams.out.flush();
+                        if over_host && interrupt_within_grace(&mut interrupt).await {
+                            return ExitCode::Success;
+                        }
                         return ExitCode::DaemonUnreachable;
                     }
                 }

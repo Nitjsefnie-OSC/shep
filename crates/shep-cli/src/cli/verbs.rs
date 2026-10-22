@@ -7,10 +7,11 @@
 //! are alias and visibility pins rather than grammar ones.
 
 use super::{
-    AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DisableArgs,
-    DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, ImportArgs, InitArgs, KvGetArgs,
-    KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs, SelectorArgs,
-    ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs, TriggerArgs, WhisperArgs,
+    AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DialStdioArgs,
+    DisableArgs, DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, HostArgs,
+    ImportArgs, InitArgs, KvGetArgs, KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs,
+    SecretArgs, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs,
+    TriggerArgs, WhisperArgs,
 };
 
 /// Every verb the binary understands.
@@ -183,6 +184,18 @@ pub enum Commands {
     #[command(visible_alias = "scale")]
     Stock(StockArgs),
     /// List the flock.
+    ///
+    /// With a `hosts` list in shep.toml (`shep host add` edits it), lists this
+    /// machine's flock and then each listed host's, all asked at once. Each
+    /// table is headed by the host's name as listed, `local` for this machine.
+    ///
+    /// A host that does not answer prints one line on stderr instead of a
+    /// table and does not hide the others. The exit code is 0 only when every
+    /// host answered, otherwise the first failing host's, this machine first.
+    /// Listed hosts are dialled without prompts, so their keys must be in
+    /// ssh-agent. `--host <name>` lists one host and may prompt; `--follow`
+    /// follows this machine, or the `--host` one, and dials no other.
+    /// `--format json` with a hosts list needs `--host`.
     #[command(visible_aliases = ["list", "ls"])]
     Flock(FlockArgs),
     /// List the dogs, and nothing else. `--available` lists the community
@@ -382,6 +395,13 @@ pub enum Commands {
     /// `$SHEP_HOME/shep.toml`. `secret list` needs nothing: it names keys and
     /// the environments each has a value for, never a value.
     Secret(SecretArgs),
+    /// Keep the list of machines whose shepherds this CLI reaches.
+    ///
+    /// The list is a top-level `hosts = ["amp2", ...]` array in
+    /// `$SHEP_HOME/shep.toml`. Each entry is an ssh destination, so
+    /// `~/.ssh/config` aliases, users, ports and ProxyJump all apply. Reads
+    /// and writes that file directly and never connects to a machine.
+    Host(HostArgs),
     /// Copy one setting, or one dog's table, from one sheep onto another.
     ///
     /// Each side is an address: a sheep name, then a path in its config.
@@ -540,6 +560,10 @@ pub enum Commands {
     /// regenerated.
     #[command(hide = true)]
     Schema,
+    /// Copy bytes between stdin/stdout and the local shepherd's socket. The
+    /// remote end of `ssh <dest> shep dial-stdio`; not for direct use.
+    #[command(hide = true)]
+    DialStdio(DialStdioArgs),
 }
 
 #[cfg(test)]
@@ -613,7 +637,7 @@ mod tests {
         let lookout = cmd.find_subcommand("lookout").unwrap();
         assert_eq!(lookout.get_visible_aliases().collect::<Vec<_>>(), ["dash"]);
 
-        for hidden in ["thatlldo", "daemon", "dog", "rehome"] {
+        for hidden in ["thatlldo", "daemon", "dog", "rehome", "dial-stdio"] {
             assert!(
                 cmd.find_subcommand(hidden).unwrap().is_hide_set(),
                 "{hidden} must stay hidden from --help"

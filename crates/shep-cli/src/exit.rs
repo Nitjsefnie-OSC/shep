@@ -55,7 +55,9 @@ pub enum ExitCode {
     /// The handshake succeeded and only the crate versions differ, the state
     /// `cargo install shep` leaves behind. A wire disagreement is
     /// [`ExitCode::ProtocolMismatch`] instead. Never returned for `kill`,
-    /// `daemon reload` or `ping`, which are how an operator gets out of it.
+    /// `daemon reload` or `ping`, which are how an operator gets out of it,
+    /// nor for `flock`, `describe` or `bleats`, which only read and warn on
+    /// stderr instead.
     VersionSkew = 12,
     /// The daemon understood the handshake but not the request itself.
     ///

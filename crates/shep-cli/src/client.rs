@@ -15,7 +15,8 @@ use shep_core::paths::ShepPaths;
 
 use crate::config::interpreters_from_config;
 use crate::home::{report_home_refusal, resolve_paths};
-use crate::version_guard::{VersionGuard, refuse_version_skew};
+use crate::remote::{HOST_REFUSAL, Link};
+use crate::version_guard::{VersionGuard, connect_client, refuse_version_skew};
 use crate::{cli, commands, exit, launch, output, status};
 
 /// Emits one error envelope to stderr under a lock taken for just that write.
@@ -59,13 +60,25 @@ pub(crate) async fn connect_or_spawn_client(
 ///
 /// Bare, either verb means the Flockfile in this directory. The two disagree
 /// only about what an empty directory means.
+///
+/// Over a [`Link::Host`] nothing is read or booted on this machine: see
+/// [`load_on_host`].
 pub(crate) async fn load_command(
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    link: &Link<'_>,
     guard: VersionGuard,
     args: &StartArgs,
     mode: Load,
 ) -> ExitCode {
+    let paths = match (link, mode) {
+        (Link::Local(paths), _) => *paths,
+        (Link::Host { dest, .. }, Load::Start) => {
+            return load_on_host(streams, link, dest, guard, args).await;
+        }
+        // `host_scope` keeps `add` off a host; this keeps the same line
+        // if a caller forgets.
+        (Link::Host { .. }, Load::Add) => return streams.fail(ExitCode::Usage, HOST_REFUSAL),
+    };
     let discovered = if args.targets.is_empty() {
         std::env::current_dir()
             .ok()
@@ -97,6 +110,36 @@ pub(crate) async fn load_command(
         Load::Add => {
             lifecycle::add(&client, streams, args, discovered.as_deref(), &interpreters).await
         }
+    }
+}
+
+/// `shep start` over `--host`: a sheep or fold the host's flock has.
+///
+/// A bare `start` is refused before the working directory is read, and the
+/// connect never autostarts, since booting the remote shepherd is `muster`'s
+/// job.
+async fn load_on_host(
+    streams: &mut Streams<'_>,
+    link: &Link<'_>,
+    dest: &str,
+    guard: VersionGuard,
+    args: &StartArgs,
+) -> ExitCode {
+    if args.targets.is_empty() {
+        return lifecycle::refuse_local_read(streams, dest, args, None);
+    }
+    // Before the dial: the refusal needs no host, and an unreachable one must
+    // not hide it. A `NAME=VALUE` word is an assignment, not a target.
+    let (_, targets) = crate::commands::lifecycle::resolve::split_assignments(&args.targets);
+    if let Some(token) = targets
+        .iter()
+        .find(|token| lifecycle::reads_this_machine(args, token))
+    {
+        return lifecycle::refuse_local_read(streams, dest, args, Some(token));
+    }
+    match connect_client(streams, link, guard).await {
+        Ok(client) => lifecycle::start_on_host(&client, streams, args, dest).await,
+        Err(code) => code,
     }
 }
 
@@ -268,5 +311,19 @@ mod tests {
             !text.contains("shep start"),
             "a permission failure must not send the operator to `shep start`, got {text:?}"
         );
+    }
+
+    /// The socket-specific sentence names a path, and an ssh failure has none.
+    #[test]
+    fn an_ssh_failure_keeps_its_own_wording() {
+        let err = shep_client::ConnectError::Ssh {
+            destination: "amp2".to_owned(),
+            cause: shep_client::SshCause::Spawn {
+                program: std::path::PathBuf::from("ssh"),
+                source: std::io::Error::from(std::io::ErrorKind::NotFound),
+            },
+        };
+        assert_eq!(unreachable_message(&err), err.to_string());
+        assert!(!unreachable_message(&err).contains("no socket at"));
     }
 }

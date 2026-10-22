@@ -251,7 +251,7 @@ mod tests {
         let cfg = DaemonConfig::load(Some("[dog.metrics]\nport = 9615"), &no_env).unwrap();
         assert_eq!(
             format!("{cfg:?}"),
-            "DaemonConfig { daemon: DaemonSection { log_json: false, log_level: Warn, environment: \"production\", socket: None, enabled_dogs: [], adopted_dogs: {}, channel_dogs: [], boot_first_dogs: [], max_cron_sleep: None }, whistle: WhistleSection { allow_control: false }, secrets: SecretsSection { allow_read: false }, style: StyleSection { level: None }, interpreters: {}, dog: <1 tables> }"
+            "DaemonConfig { daemon: DaemonSection { log_json: false, log_level: Warn, environment: \"production\", socket: None, enabled_dogs: [], adopted_dogs: {}, channel_dogs: [], boot_first_dogs: [], max_cron_sleep: None }, whistle: WhistleSection { allow_control: false }, secrets: SecretsSection { allow_read: false }, style: StyleSection { level: None }, interpreters: {}, hosts: [], dog: <1 tables> }"
         );
     }
 }

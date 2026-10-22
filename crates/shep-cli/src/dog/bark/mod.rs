@@ -49,7 +49,7 @@ fn subscription_topics(dog: &str, rules: &rules::Rules) -> Vec<String> {
 
 /// Runs the bark dog until it is signalled.
 ///
-/// Parses `[dog.bark]`, builds [`rules::Rules`] (or
+/// Parses `[bark]`, builds [`rules::Rules`] (or
 /// [`rules::Rules::default_rules`] when the operator configured
 /// none), subscribes to the shepherd's bus on `process.*` and
 /// `config.dog.bark`, and hands both to [`run_loop`] alongside a

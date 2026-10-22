@@ -40,6 +40,7 @@ use crate::exit::ExitCode;
 pub use described::emit_described;
 pub use diagnostics::{emit_error, emit_notice};
 pub use flock::emit_flock;
+pub(crate) use flock::{HostListing, emit_fleet_flock, emit_origin_flock};
 
 // Re-exported for `commands/`, which names every one of these at its own
 // crate-root import. `commands/` is `#[cfg(unix)]`-gated, so on Windows
@@ -47,11 +48,11 @@ pub use flock::emit_flock;
 #[cfg_attr(windows, allow(unused_imports))]
 pub use rows::{
     AvailableDogRows, BarkRows, CopyChange, CopyReport, DeletedIds, DescribedSecret, DogActionRow,
-    DogActionStatus, DogRows, EmptiedFile, EmptiedFiles, FlockRows, FlushedRows, ImportEnvRow,
-    ImportEnvRows, ImportRow, ImportRows, KillRow, KvEntry, KvRows, KvUnsetRow, LabelledLambRows,
-    LambRows, RolledSheep, RolledSheepRows, SavedRollRow, SecretKeyRow, SecretKeyRows,
-    SecretSlotRow, SecretStatus, SecretValueRow, SentLineRows, SignalledRows, StartupStep,
-    StartupSteps, TriggeredRows,
+    DogActionStatus, DogRows, EmptiedFile, EmptiedFiles, FlockRows, FlushedRows, HostEntry,
+    HostRows, ImportEnvRow, ImportEnvRows, ImportRow, ImportRows, KillRow, KvEntry, KvRows,
+    KvUnsetRow, LabelledLambRows, LambRows, RolledSheep, RolledSheepRows, SavedRollRow,
+    SecretKeyRow, SecretKeyRows, SecretSlotRow, SecretStatus, SecretValueRow, SentLineRows,
+    SignalledRows, StartupStep, StartupSteps, TriggeredRows,
 };
 pub use table::{human_bytes, human_duration, local_timestamp, render_table};
 
@@ -397,7 +398,7 @@ pub fn write_outcome(result: io::Result<()>) -> ExitCode {
 pub(crate) mod tests {
     use std::ffi::OsStr;
 
-    use shep_core::protocol::{DogSource, ProcessInfo};
+    use shep_core::protocol::{DogSource, HostUsage, ProcessInfo};
     use shep_core::status::ProcStatus;
 
     use crate::output::rows::tests::{dog_info, sample_flock, sample_info};
@@ -429,6 +430,40 @@ pub(crate) mod tests {
             command: "flock",
             data: sample_flock(),
         };
+        insta::assert_json_snapshot!(out);
+    }
+
+    /// Pins the fleet envelope's exact shape: a local row, a row from `amp2`,
+    /// a host with usage, one whose platform `sysinfo` cannot read (`null`)
+    /// and one that listed its rows but would not answer the usage request
+    /// (no entry).
+    #[test]
+    fn the_fleet_json_envelope_shape_is_pinned() {
+        let reading = HostUsage {
+            cpu_percent: Some(11.5),
+            memory_used_bytes: 4_294_967_296,
+            memory_total_bytes: 8_589_934_592,
+            disk_bytes_per_second: Some((1_024, 2_048)),
+            network_bytes_per_second: None,
+        };
+        let listing = |host: Option<&str>, name: &str, usage| HostListing {
+            host: host.map(str::to_owned),
+            procs: vec![sheep_info(name)],
+            usage,
+        };
+        let mut out = Vec::new();
+        emit_fleet_flock(
+            &mut out,
+            "flock",
+            vec![
+                listing(None, "web", Some(Some(reading))),
+                listing(Some("amp2"), "api", Some(Some(reading))),
+                listing(Some("amp3"), "cache", Some(None)),
+                listing(Some("amp4"), "old", None),
+            ],
+        )
+        .unwrap();
+        let out: serde_json::Value = serde_json::from_slice(&out).unwrap();
         insta::assert_json_snapshot!(out);
     }
 

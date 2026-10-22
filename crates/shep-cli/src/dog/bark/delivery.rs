@@ -111,7 +111,7 @@ async fn deliver_and_record(firing: Firing, delivery: &Delivery) {
                 },
             },
             // Unreachable: `Rules::new` refuses a rule routing to a sink
-            // `[dog.bark.sinks]` does not define. Recorded rather than
+            // `[bark.sinks]` does not define. Recorded rather than
             // panicked on.
             None => SinkOutcome {
                 sink: name.clone(),

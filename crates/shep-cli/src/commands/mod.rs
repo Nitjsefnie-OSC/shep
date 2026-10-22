@@ -9,6 +9,7 @@ pub(crate) mod bounded;
 pub(crate) mod copy;
 pub mod daemon;
 pub mod dev;
+pub(crate) mod dial_stdio;
 pub(crate) mod dog_migration;
 pub mod dogs;
 pub(crate) mod empty;
@@ -17,6 +18,7 @@ pub(crate) mod foreground;
 // ahead of a ruling on which verb fires it, so nothing calls it yet.
 #[allow(dead_code)]
 pub(crate) mod hook;
+pub mod hosts;
 pub mod import;
 pub(crate) mod init;
 pub mod kv;

@@ -440,7 +440,7 @@ fn title_band(app: &App, width: u16) -> Line<'static> {
                 format!(" {visible} of {total} in the flock")
             };
             (
-                format!("shep lookout   {}", app.home()),
+                format!("shep lookout   {}", app.place()),
                 right,
                 Role::Meadow,
             )

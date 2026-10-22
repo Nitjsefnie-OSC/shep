@@ -273,12 +273,12 @@ pub struct BarkRow {
 }
 
 /// What one sink made of one alert. Names the sink by its
-/// `[dog.bark.sinks]` config key, never by its webhook URL — the property
+/// `[bark.sinks]` config key, never by its webhook URL — the property
 /// `Bark`'s own doc calls the reason that type is safe to print, carried
 /// across to the twin so it stays true here.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct SinkOutcomeRow {
-    /// The sink's name from `[dog.bark.sinks]`.
+    /// The sink's name from `[bark.sinks]`.
     pub sink: String,
     /// `None` when it was delivered; the failure otherwise.
     pub error: Option<String>,

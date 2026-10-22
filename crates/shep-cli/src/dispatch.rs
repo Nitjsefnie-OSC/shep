@@ -7,12 +7,14 @@ use cli::{AdoptArgs, Cli, Commands, Format, ImportCommand};
 use commands::admin;
 use commands::bleats;
 use commands::dev;
+use commands::dial_stdio;
 use commands::dogs;
+use commands::hosts;
 use commands::import;
 use commands::kv;
 use commands::lifecycle;
 use commands::lifecycle::Load;
-use commands::lifecycle::toggle::{Toggle, toggle};
+use commands::lifecycle::toggle::{Toggle, toggle, toggle_on_host};
 use commands::logs;
 use commands::muster;
 use commands::query;
@@ -36,6 +38,7 @@ use crate::config::{resolve_style, style_write_is_overridden};
 use crate::home::{
     ensure_home, report_home_refusal, resolve_paths, scaffold_first_run_interpreters,
 };
+use crate::remote::{HostScope, Link, host_scope, refuse_host};
 use crate::version_guard::{VersionGuard, connect_client, flock_command};
 use crate::{
     cli, commands, completions, dog, exit, lookout, output, status, style, welcome, whistle,
@@ -62,9 +65,26 @@ pub(crate) async fn run(
     resolved_style: (style::StyleLevel, style::StyleSource),
 ) -> ExitCode {
     let fmt = cli.global.format;
+    // First, before the home is resolved or created: a verb that cannot reach
+    // the host must leave this machine exactly as it found it.
+    if cli.global.host.is_some() && host_scope(&cli.command) == HostScope::LocalOnly {
+        return refuse_host(fmt);
+    }
     // Resolved once, here: the dispatch below partially moves `cli.command`,
     // so no arm can borrow it to ask this question for itself.
     let guard = VersionGuard::for_command(&cli.command);
+
+    // Before `ensure_home`: the answer is the host's, and nothing of this
+    // machine's is read, so a fresh machine must not get a `~/.shep` or a
+    // first-run banner out of it. `host_scope` above left only the verbs that
+    // reach a host here. The lookout is the exception: it reads this
+    // machine's own `lookout.allow_control` gate, so it resolves the home first
+    // and takes its host from `Link` below.
+    if let Some(dest) = cli.global.host.as_deref()
+        && !matches!(cli.command, Commands::Lookout(_))
+    {
+        return run_on_host(&cli.command, cli.global.quiet, dest, guard, style, fmt).await;
+    }
 
     // `StdoutLock`/`StderrLock` are process-wide, so the locked pair further
     // down is right only for a verb that finishes in milliseconds. A guard
@@ -151,6 +171,23 @@ pub(crate) async fn run(
             #[cfg(windows)]
             return streams.fail(ExitCode::Failure, WINDOWS_NO_SERVICE);
         }
+        // Resolves the home but never creates it: a probe against a machine
+        // with no shep home must leave nothing behind and print no welcome.
+        // `--autostart` creates it like a local `start` does, without the
+        // interpreter scaffold or the welcome: stderr crosses ssh to the
+        // operator's terminal.
+        Commands::DialStdio(ref args) => {
+            let resolved = if args.autostart {
+                ensure_home(&cli.global).map(|(paths, _)| paths)
+            } else {
+                resolve_paths(&cli.global)
+            };
+            let paths = match resolved {
+                Ok(paths) => paths,
+                Err(refusal) => return report_home_refusal(fmt, &refusal),
+            };
+            match dial_stdio::dial_stdio(fmt, &paths, args.autostart).await {}
+        }
         // Needs no `$SHEP_HOME` at all, like `Completions` above.
         Commands::Schema => {
             let mut out = std::io::stdout().lock();
@@ -212,6 +249,9 @@ pub(crate) async fn run(
         welcome::on_first_run(&mut streams, &paths.home, std::io::stderr().is_terminal());
     }
 
+    // Local for every verb but the ones `host_scope` says reach a host.
+    let link = Link::new(&paths, cli.global.host.as_deref());
+
     // `dog` is a re-exec target like `daemon`, long-lived until signalled,
     // and writes straight to stderr rather than through a `Streams` envelope.
     if let Commands::Dog(ref args) = cli.command {
@@ -229,7 +269,7 @@ pub(crate) async fn run(
             style,
             fmt,
         };
-        return match connect_client(&mut streams, &paths, guard).await {
+        return match connect_client(&mut streams, &link, guard).await {
             Ok(client) => bleats::bleats(&client, &mut streams, cli.global.quiet, args).await,
             Err(code) => code,
         };
@@ -246,7 +286,7 @@ pub(crate) async fn run(
             style,
             fmt,
         };
-        return lookout::lookout(&mut streams, &paths, args, resolved_style).await;
+        return lookout::lookout(&mut streams, &link, &paths, args, resolved_style).await;
     }
 
     // Not in the locked block below: `--foreground` runs until signalled, and
@@ -355,51 +395,51 @@ pub(crate) async fn run(
             }
         },
         Commands::Start(ref args) => {
-            load_command(&mut streams, &paths, guard, args, Load::Start).await
+            load_command(&mut streams, &link, guard, args, Load::Start).await
         }
-        Commands::Add(ref args) => load_command(&mut streams, &paths, guard, args, Load::Add).await,
+        Commands::Add(ref args) => load_command(&mut streams, &link, guard, args, Load::Add).await,
         Commands::Stop(ref args) | Commands::Thatlldo(ref args) => {
-            match connect_client(&mut streams, &paths, guard).await {
+            match connect_client(&mut streams, &link, guard).await {
                 Ok(client) => lifecycle::stop(&client, &mut streams, args).await,
                 Err(code) => code,
             }
         }
-        Commands::Restart(ref args) => match connect_client(&mut streams, &paths, guard).await {
-            Ok(client) => lifecycle::restart(&client, &mut streams, &paths, args).await,
+        Commands::Restart(ref args) => match connect_client(&mut streams, &link, guard).await {
+            Ok(client) => lifecycle::restart(&client, &mut streams, Some(&paths), args).await,
             Err(code) => code,
         },
-        Commands::Reload(ref args) => match connect_client(&mut streams, &paths, guard).await {
+        Commands::Reload(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => lifecycle::reload(&client, &mut streams, args).await,
             Err(code) => code,
         },
         // Not `connect_client` at this arm: `delete` removes a dog from
         // `shep.toml` too, and that half works with no shepherd running.
-        Commands::Delete(ref args) => lifecycle::delete(&mut streams, &paths, guard, args).await,
-        Commands::Stock(ref args) => match connect_client(&mut streams, &paths, guard).await {
+        Commands::Delete(ref args) => lifecycle::delete(&mut streams, &link, guard, args).await,
+        Commands::Stock(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => lifecycle::stock(&client, &mut streams, args).await,
             Err(code) => code,
         },
-        Commands::Trigger(ref args) => match connect_client(&mut streams, &paths, guard).await {
+        Commands::Trigger(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => trigger::trigger(&client, &mut streams, args).await,
             Err(code) => code,
         },
-        Commands::Signal(ref args) => match connect_client(&mut streams, &paths, guard).await {
+        Commands::Signal(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => signal::signal(&client, &mut streams, args).await,
             Err(code) => code,
         },
-        Commands::Whisper(ref args) => match connect_client(&mut streams, &paths, guard).await {
+        Commands::Whisper(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => whisper::whisper(&client, &mut streams, args).await,
             Err(code) => code,
         },
         // Falls back to the muster roll rather than refusing: looking at the
         // flock must not be a dead end on a machine that just rebooted.
-        Commands::Flock(ref args) => flock_command(&mut streams, &paths, guard, args).await,
+        Commands::Flock(ref args) => flock_command(&mut streams, &link, guard, args).await,
         // The guard arm is what makes `--available` work with no shepherd
         // running: it never reaches `connect_client`.
         Commands::Dogs(ref args) if args.available => {
             query::available_dogs(&mut streams, args).await
         }
-        Commands::Dogs(ref args) => match connect_client(&mut streams, &paths, guard).await {
+        Commands::Dogs(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => query::dogs(&client, &mut streams, args).await,
             Err(code) => code,
         },
@@ -426,12 +466,12 @@ pub(crate) async fn run(
         }
         Commands::Adopt(ref args) => dogs::adopt(&mut streams, &paths, args).await,
         Commands::Rehome(ref args) => dogs::rehome(&mut streams, &paths, &args.name).await,
-        Commands::Describe(ref args) => match connect_client(&mut streams, &paths, guard).await {
-            Ok(client) => query::describe(&client, &mut streams, &paths, args).await,
+        Commands::Describe(ref args) => match connect_client(&mut streams, &link, guard).await {
+            Ok(client) => query::describe(&client, &mut streams, &link, args).await,
             Err(code) => code,
         },
-        Commands::Fold(ref args) => match connect_client(&mut streams, &paths, guard).await {
-            Ok(client) => query::fold(&client, &mut streams, &paths, args).await,
+        Commands::Fold(ref args) => match connect_client(&mut streams, &link, guard).await {
+            Ok(client) => query::fold(&client, &mut streams, args).await,
             Err(code) => code,
         },
         // Not `connect_client`: a verb reporting whether a shepherd answers
@@ -443,7 +483,7 @@ pub(crate) async fn run(
         }
         // `connect_client`, not `connect_or_spawn_client`: autostarting a
         // daemon to save its empty flock would overwrite a good roll.
-        Commands::Save => match connect_client(&mut streams, &paths, guard).await {
+        Commands::Save => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => muster::save(&client, &mut streams).await,
             Err(code) => code,
         },
@@ -451,7 +491,7 @@ pub(crate) async fn run(
             Ok(client) => muster::muster(&client, &mut streams).await,
             Err(code) => code,
         },
-        Commands::Reopen(ref args) => match connect_client(&mut streams, &paths, guard).await {
+        Commands::Reopen(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => logs::reopen(&client, &mut streams, args).await,
             Err(code) => code,
         },
@@ -459,7 +499,7 @@ pub(crate) async fn run(
         // inherited, so there is nothing to ask the socket. Not connecting is
         // the feature: a wedged shepherd is when this gets reached for.
         Commands::Flush(ref args) if args.daemon => logs::flush_daemon(&mut streams, &paths),
-        Commands::Flush(ref args) => match connect_client(&mut streams, &paths, guard).await {
+        Commands::Flush(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => logs::flush(&client, &mut streams, args).await,
             Err(code) => code,
         },
@@ -474,9 +514,13 @@ pub(crate) async fn run(
         // Same rule, same file-first reason: `shep secret set` before a
         // first `shep start` is the ordinary first-run order.
         Commands::Secret(ref args) => secret::secret(&mut streams, &paths, args),
+        // Reads and writes `shep.toml` and never connects to the local
+        // shepherd: editing the list needs none running. `add` dials the new
+        // entry once over ssh, to warn about a typo.
+        Commands::Host(ref args) => hosts::host(&mut streams, &paths, args).await,
         // Reads two sheep's configs and writes one, so it needs the shepherd:
         // the copy is of what the running flock holds, not of a file.
-        Commands::Copy(ref args) => match connect_client(&mut streams, &paths, guard).await {
+        Commands::Copy(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => commands::copy::copy(&client, &mut streams, args).await,
             Err(code) => code,
         },
@@ -488,7 +532,7 @@ pub(crate) async fn run(
         // override, which is the daemon's own store.
         Commands::Import(ref args) => match &args.command {
             ImportCommand::Pm2(args) => import::pm2::import(&mut streams, args),
-            ImportCommand::Env(args) => match connect_client(&mut streams, &paths, guard).await {
+            ImportCommand::Env(args) => match connect_client(&mut streams, &link, guard).await {
                 Ok(client) => import::dotenv::import_env(&client, &mut streams, &paths, args).await,
                 Err(code) => code,
             },
@@ -498,6 +542,7 @@ pub(crate) async fn run(
         | Commands::Startup(_)
         | Commands::Unstartup(_)
         | Commands::Schema
+        | Commands::DialStdio(_)
         | Commands::Bleats(_)
         | Commands::Lookout(_)
         | Commands::Whistle
@@ -507,6 +552,73 @@ pub(crate) async fn run(
         | Commands::Dog(_) => {
             unreachable!("handled above: before the shared $SHEP_HOME gate, or on unlocked handles")
         }
+    }
+}
+
+/// The verbs [`host_scope`] lets reach `dest`, run against its shepherd.
+///
+/// Unlocked handles: `flock --follow` and a followed `bleats` run until
+/// interrupted, and a lock held that long wedges any other thread's write.
+async fn run_on_host(
+    command: &Commands,
+    quiet: bool,
+    dest: &str,
+    guard: VersionGuard,
+    style: style::Presentation,
+    fmt: Format,
+) -> ExitCode {
+    let link = Link::to_host(dest);
+    let mut out = std::io::stdout();
+    let mut err = std::io::stderr();
+    let mut streams = Streams {
+        out: &mut out,
+        err: &mut err,
+        style,
+        fmt,
+    };
+    match command {
+        Commands::Flock(args) => return flock_command(&mut streams, &link, guard, args).await,
+        // Connects for itself, for a dog half that has no host to run on.
+        Commands::Delete(args) => return lifecycle::delete(&mut streams, &link, guard, args).await,
+        // Connects for itself, to skip the dog half a host has no `shep.toml` for.
+        Commands::Enable(args) => {
+            return toggle_on_host(&mut streams, &link, guard, Toggle::Enable, &args.name).await;
+        }
+        Commands::Disable(args) => {
+            return toggle_on_host(&mut streams, &link, guard, Toggle::Disable, &args.name).await;
+        }
+        // Connects for itself: a bare `start` is refused before any dial.
+        Commands::Start(args) => {
+            return load_command(&mut streams, &link, guard, args, Load::Start).await;
+        }
+        // Dials with `--autostart`: the one verb that boots a host's shepherd.
+        Commands::Muster => {
+            let booting = Link::to_host_booting(dest);
+            return match connect_client(&mut streams, &booting, guard).await {
+                Ok(client) => muster::muster(&client, &mut streams).await,
+                Err(code) => code,
+            };
+        }
+        _ => {}
+    }
+    let client = match connect_client(&mut streams, &link, guard).await {
+        Ok(client) => client,
+        Err(code) => return code,
+    };
+    match command {
+        Commands::Describe(args) => query::describe(&client, &mut streams, &link, args).await,
+        Commands::Fold(args) => query::fold(&client, &mut streams, args).await,
+        Commands::Stop(args) | Commands::Thatlldo(args) => {
+            lifecycle::stop(&client, &mut streams, args).await
+        }
+        Commands::Restart(args) => lifecycle::restart(&client, &mut streams, None, args).await,
+        Commands::Reload(args) => lifecycle::reload(&client, &mut streams, args).await,
+        Commands::Bleats(args) => bleats::bleats_on_host(&client, &mut streams, quiet, args).await,
+        Commands::Stock(args) => lifecycle::stock(&client, &mut streams, args).await,
+        Commands::Trigger(args) => trigger::trigger(&client, &mut streams, args).await,
+        Commands::Signal(args) => signal::signal(&client, &mut streams, args).await,
+        Commands::Whisper(args) => whisper::whisper(&client, &mut streams, args).await,
+        other => unreachable!("`host_scope` refused {other:?} before it got here"),
     }
 }
 
@@ -657,6 +769,50 @@ mod tests {
             )
             .await,
             ExitCode::Success
+        );
+    }
+
+    /// A named home that is missing is refused as a usage error whatever the
+    /// verb, so that case alone cannot tell a `--host` refusal from the home
+    /// gate's. The second case can: with a home that is there, a verb that
+    /// ignored `--host` would dial this machine and exit 5.
+    #[tokio::test]
+    async fn a_verb_that_cannot_reach_a_host_refuses_before_creating_the_home() {
+        use clap::Parser;
+
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("never-created");
+        let present = dir.path().join("present");
+        std::fs::create_dir(&present).unwrap();
+
+        for home in [&missing, &present] {
+            let cli = Cli::try_parse_from([
+                "shep",
+                "--home",
+                home.to_str().unwrap(),
+                "--host",
+                "amp2",
+                "flush",
+                "web",
+            ])
+            .unwrap();
+            assert_eq!(
+                run(
+                    cli,
+                    style::Presentation::BARE,
+                    (style::StyleLevel::Full, style::StyleSource::Default),
+                )
+                .await,
+                ExitCode::Usage,
+                "{}",
+                home.display()
+            );
+        }
+        assert!(!missing.exists(), "a refused --host must create no home");
+        assert_eq!(
+            std::fs::read_dir(&present).unwrap().count(),
+            0,
+            "a refused --host must write nothing into a home that is there"
         );
     }
 

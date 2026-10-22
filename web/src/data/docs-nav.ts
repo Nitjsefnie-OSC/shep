@@ -1,5 +1,5 @@
 /*
- * The docs book: seven parts, twenty-nine chapters, in reading order.
+ * The docs book: seven parts, thirty chapters, in reading order.
  *
  * This is the shape of the docs shell itself, and it is the only place a
  * chapter is named, numbered or ordered. DocsLayout derives each page's
@@ -384,6 +384,16 @@ export const docsNav: DocsNavGroup[] = [
           "shep runtime is the PID-1 entrypoint for a container. shep dev is the same idea for a laptop: an isolated session that tidies up after itself.",
         built: true,
         source: "crates/shep-cli/src/commands/runtime.rs",
+        spec: { anchor: "9-cli-surface-sheep-native", label: "§9 CLI surface" },
+      },
+      {
+        slug: "hosts",
+        label: "Other hosts",
+        plain: "several machines",
+        summary:
+          "List hosts in shep.toml and shep flock shows the flocks of all of them over ssh. A host that fails prints one line and hides nothing.",
+        built: true,
+        source: "crates/shep-cli/src/commands/query/fleet.rs",
         spec: { anchor: "9-cli-surface-sheep-native", label: "§9 CLI surface" },
       },
       {

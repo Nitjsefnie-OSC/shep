@@ -35,9 +35,14 @@ use tempfile::TempDir;
 mod adopt;
 mod assertions;
 mod available_dogs;
+// Shared with `init.rs` and `term_panic_order.rs`, which are separate targets.
+// The file gates itself to unix.
+#[path = "../common/mod.rs"]
+mod common;
 mod constants;
 mod daemon_log;
 mod dev;
+mod dial_stdio;
 mod dispatch;
 mod dog_channel;
 mod dog_channel_samples;
@@ -53,6 +58,8 @@ mod handover_disabled;
 mod handover_dogs;
 mod handover_extras;
 mod home_and_watch;
+mod host_flag;
+mod hosts;
 mod import_env;
 mod init_verb;
 mod lifecycle;
@@ -64,6 +71,7 @@ mod rendering;
 mod runtime;
 mod serve;
 mod spawn_failures;
+mod ssh_stand_in;
 mod startup;
 
 pub(crate) use assertions::*;

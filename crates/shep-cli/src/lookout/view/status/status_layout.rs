@@ -39,7 +39,7 @@ pub fn banner_line(app: &App, width: u16) -> Option<Line<'static>> {
             fit(
                 &format!(
                     " shep lookout   {}  ·  the dashboard stays up so you can read what it had  ·  it will not exit on its own",
-                    app.home()
+                    app.place()
                 ),
                 width,
             ),

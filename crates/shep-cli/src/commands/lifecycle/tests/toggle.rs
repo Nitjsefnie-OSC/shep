@@ -2,7 +2,7 @@
 //! is refused before it, and what the operator is told.
 
 use super::*;
-use crate::commands::lifecycle::toggle::{Toggle, toggle, toggle_sheep};
+use crate::commands::lifecycle::toggle::{Toggle, toggle, toggle_sheep, toggle_with};
 
 fn stopped_api(disabled: bool) -> ProcessInfo {
     ProcessInfo::builder(0, "api", shep_core::status::ProcStatus::Stopped)
@@ -348,4 +348,105 @@ async fn a_dogs_name_still_edits_the_config_with_no_shepherd() {
     assert_eq!(code, ExitCode::Success, "{}", String::from_utf8_lossy(&err));
     let config = std::fs::read_to_string(&paths.daemon_config).unwrap();
     assert!(config.contains("metrics"), "{config}");
+}
+
+/// A dog's name over a host is a selector like any other: the dog half reads
+/// and edits this machine's `shep.toml`, and the host's dogs are not in it.
+/// `mydog` is adopted here, so a local read would send it down the dog path and
+/// never to the wire.
+#[tokio::test]
+async fn enable_over_a_host_treats_a_dog_name_as_a_sheep_selector_and_reads_no_local_shep_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    std::fs::create_dir_all(&paths.run).unwrap();
+    crate::commands::shep_toml::ShepToml::edit(&paths.daemon_config, |cfg| {
+        cfg.adopt_dog("mydog", std::path::Path::new("/usr/local/bin/mydog"), false)
+            .unwrap();
+    })
+    .unwrap();
+    let config_before = std::fs::read(&paths.daemon_config).unwrap();
+    let (client, mut envelopes) = fake_client_answering(&paths.socket, |request| match request {
+        Request::Enable { .. } => Response::Enabled(Vec::new()),
+        _ => Response::Pong,
+    })
+    .await;
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+
+    let code = {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        toggle_with(
+            &mut streams,
+            None,
+            async |_| Ok(client),
+            Toggle::Enable,
+            "mydog",
+        )
+        .await
+    };
+
+    let said = String::from_utf8(err).unwrap();
+    assert_eq!(code, ExitCode::Success, "{said}");
+    assert_eq!(
+        envelopes.recv().await.unwrap().body,
+        Request::Enable {
+            selector: SelectorSpec::Name("mydog".to_string())
+        },
+        "the host's shepherd is the one that knows whether this name is a dog"
+    );
+    assert_eq!(std::fs::read(&paths.daemon_config).unwrap(), config_before);
+    assert!(!paths.dogs_config.exists(), "no dog verb ran here");
+}
+
+/// fails if a missing remote shepherd sends the operator to `shep start` on
+/// this machine, which would start the wrong one.
+#[cfg(unix)]
+#[tokio::test]
+async fn disable_over_a_host_with_no_remote_shepherd_names_the_host_not_shep_start() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use crate::commands::lifecycle::toggle::toggle_on_host;
+
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("ssh");
+    std::fs::write(
+        &program,
+        "#!/bin/sh\necho 'no shepherd is running' >&2\nexit 5\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let link = crate::remote::Link::Host {
+        dest: "amp2",
+        options: shep_client::SshOptions::default().program(program),
+    };
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+
+    let code = {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        toggle_on_host(
+            &mut streams,
+            &link,
+            crate::version_guard::VersionGuard::Enforce,
+            Toggle::Disable,
+            "api",
+        )
+        .await
+    };
+
+    let said = String::from_utf8(err).unwrap();
+    assert_eq!(code, ExitCode::DaemonUnreachable, "{said}");
+    assert!(said.contains("no shepherd is running on `amp2`"), "{said}");
+    assert!(!said.contains("shep start"), "{said}");
+    assert!(out.is_empty());
 }

@@ -199,9 +199,54 @@ fn route_frame(
 #[cfg(test)]
 mod tests {
     use futures_util::FutureExt;
+    use shep_core::protocol::{ProcessEventKind, ProcessInfo, codec};
+    use shep_core::status::ProcStatus;
+    use tokio_util::codec::Framed;
 
     use super::*;
     use crate::client::RequestError;
+    use crate::connection::ByteStream;
+
+    #[tokio::test]
+    async fn the_actor_answers_a_request_over_an_in_memory_stream() {
+        let (near, far) = tokio::io::duplex(1024);
+        let frames = Framed::new(Box::new(near) as Box<dyn ByteStream>, codec());
+        let commands = spawn(frames);
+        let mut far = Framed::new(far, codec());
+
+        let (reply_to, answer) = oneshot::channel();
+        commands
+            .send(Command::Request {
+                body: Request::Ping,
+                deadline_ms: None,
+                reply_to,
+            })
+            .await
+            .unwrap();
+        let sent: Envelope = decode_frame(&far.next().await.unwrap().unwrap()).unwrap();
+        let reply = ServerFrame::Reply(Reply {
+            id: sent.id,
+            result: Ok(Response::Pong),
+        });
+        far.send(encode_frame(&reply).unwrap()).await.unwrap();
+        assert!(matches!(answer.await.unwrap(), Ok(Response::Pong)));
+
+        let (reply_to, answer) = oneshot::channel();
+        commands
+            .send(Command::Request {
+                body: Request::Ping,
+                deadline_ms: None,
+                reply_to,
+            })
+            .await
+            .unwrap();
+        let _second = far.next().await.unwrap().unwrap();
+        drop(far);
+        assert!(
+            matches!(answer.await.unwrap(), Err(RequestError::Closed)),
+            "a request pending when the stream closes must resolve as closed"
+        );
+    }
 
     /// A reply this build cannot decode used to be dropped, leaving the
     /// caller to wait out its deadline for an answer that had already
@@ -279,5 +324,29 @@ mod tests {
         );
 
         assert!(sub.try_recv().is_err(), "nothing decodable to deliver");
+    }
+
+    /// A status this build does not know used to make the whole event
+    /// undecodable, and so dropped. It now decodes with the status as
+    /// `Unrecognized`, and subscribers get it.
+    #[test]
+    fn an_event_carrying_a_status_this_build_does_not_know_is_delivered() {
+        let mut pending = HashMap::new();
+        let (events, mut sub) = broadcast::channel(4);
+        let event = BusEvent::Process {
+            event: ProcessEventKind::Online,
+            info: ProcessInfo::builder(3, "web", ProcStatus::Online).build(),
+            manually: false,
+            at_ms: 0,
+        };
+        let mut wire = serde_json::to_value(&event).unwrap();
+        wire["data"]["info"]["status"] = serde_json::json!("invented_next_year");
+
+        route_frame(wire.to_string().as_bytes(), &mut pending, &events);
+
+        let BusEvent::Process { info, .. } = sub.try_recv().expect("the event is delivered") else {
+            panic!("a process event");
+        };
+        assert_eq!(info.status, ProcStatus::Unrecognized);
     }
 }

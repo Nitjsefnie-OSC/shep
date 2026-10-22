@@ -29,6 +29,9 @@ pub mod config;
 // old name for the lock their writers hold. Lives here rather than in
 // shep-cli (where it was born) so shep-daemon can hold it too.
 pub mod config_lock;
+// The one grammar for a host handed to `ssh`, refusing anything it could
+// read as an option.
+pub mod destination;
 // The probe contract both sides of a dog's `--version`/`--schema` answer
 // parse: flag names, the answer grammar, the schema's secret marker key.
 pub mod dogs;

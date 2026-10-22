@@ -6,7 +6,10 @@ use crate::exit::ExitCode;
 use crate::flourish;
 use crate::host;
 use crate::lookout::term;
-use crate::output::{RolledSheep, RolledSheepRows, Streams, emit, emit_flock, write_outcome};
+use crate::output::{
+    RolledSheep, RolledSheepRows, Streams, emit, emit_flock, emit_origin_flock, write_outcome,
+};
+use crate::remote::interrupt_within_grace;
 use crate::shutdown::Interrupt;
 use crate::style::Presentation;
 use crossterm::QueueableCommand as _;
@@ -101,6 +104,19 @@ pub fn flock_from_roll(streams: &mut Streams<'_>, paths: &ShepPaths) -> ExitCode
 /// one [`crate::output::Render`] type per verb rather than two tables from one
 /// `Vec<ProcessInfo>`.
 pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
+    flock_from(client, streams, None).await
+}
+
+/// [`flock`] for the shepherd `origin` names, as typed after `--host`, or this
+/// machine's for `None`.
+///
+/// Under `--format json` every row of a named origin carries it; see
+/// [`print_listing`].
+pub async fn flock_from(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    origin: Option<&str>,
+) -> ExitCode {
     match client.list_flock().await {
         Ok(procs) => {
             // Read before `procs` moves into `emit_flock`.
@@ -111,26 +127,47 @@ pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
                 let _ = write!(streams.out, "{art}");
             }
             let host = host_usage(client).await;
-            if streams.fmt == Format::Table
-                && let Some(usage) = host
-            {
-                // Above the table and separated from it, exactly where a
-                // followed listing puts the same line. `Presentation::width`
-                // is the terminal's, resolved once at the seam.
-                let strip = host::strip(usage, streams.style, streams.style.width);
-                let _ = writeln!(streams.out, "{strip}\n");
-            }
-            write_outcome(emit_flock(
-                &mut *streams.out,
-                streams.fmt,
-                "flock",
-                procs,
-                host,
-                streams.style,
-            ))
+            write_outcome(print_listing(streams, procs, host, origin))
         }
         Err(err) => typed_request_error(streams, &err),
     }
+}
+
+/// One listing's tables: the host strip and a blank line above them in the
+/// table form, then the sheep table and the dogs table when there are dogs.
+///
+/// The one place a local listing and a host's go through, so a fleet listing
+/// prints each shepherd exactly as `shep flock` prints one.
+///
+/// A JSON listing with an `origin` tags every row with it, and one without
+/// is byte-identical to what [`emit_flock`] writes.
+pub(super) fn print_listing(
+    streams: &mut Streams<'_>,
+    procs: Vec<ProcessInfo>,
+    host: Option<Option<HostUsage>>,
+    origin: Option<&str>,
+) -> io::Result<()> {
+    if let (Format::Json, Some(origin)) = (streams.fmt, origin) {
+        emit_origin_flock(&mut *streams.out, "flock", origin, &procs, host)?;
+        return Ok(());
+    }
+    if streams.fmt == Format::Table
+        && let Some(usage) = host
+    {
+        // Above the table and separated from it, exactly where a followed
+        // listing puts the same line. `Presentation::width` is the
+        // terminal's, resolved once at the seam.
+        let strip = host::strip(usage, streams.style, streams.style.width);
+        writeln!(streams.out, "{strip}\n")?;
+    }
+    emit_flock(
+        &mut *streams.out,
+        streams.fmt,
+        "flock",
+        procs,
+        host,
+        streams.style,
+    )
 }
 
 /// What the shepherd says the machine is doing, or `None` where it will not
@@ -147,7 +184,7 @@ pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
 /// before this existed. Not a warning line, which would fire on every
 /// listing for as long as the skew lasts, on the verb an operator types
 /// most.
-async fn host_usage(client: &Client) -> Option<Option<HostUsage>> {
+pub(super) async fn host_usage(client: &Client) -> Option<Option<HostUsage>> {
     match client.request(Request::HostUsage).await {
         Ok(Response::HostUsage(usage)) => Some(usage),
         // A shepherd that answered something else, and one that refused.
@@ -184,7 +221,9 @@ pub(super) fn sheep_flourish(listing: &[ProcessInfo]) -> Option<String> {
 ///
 /// An interrupt ends the follow at [`ExitCode::Success`], a shepherd that
 /// goes away mid-follow ends it carrying that refusal's own code. The two
-/// must not read as the same thing.
+/// must not read as the same thing. Over a host the two arrive together, so
+/// a lost link waits [`crate::remote::HOST_INTERRUPT_GRACE`] for the interrupt
+/// before it counts as a lost shepherd.
 ///
 /// Why each of those beat its alternative: `docs/decisions.md`, "Following
 /// the flock".
@@ -230,6 +269,17 @@ pub(crate) async fn flock_follow(
         };
         let procs = match listing {
             Ok(procs) => procs,
+            // The ssh child dies on the same Ctrl+C as this process, so over
+            // a host the failed request can be seen before the interrupt.
+            Err(_)
+                if client.host().is_some()
+                    && interrupt_within_grace(async {
+                        interrupt.recv().await;
+                    })
+                    .await =>
+            {
+                return ExitCode::Success;
+            }
             Err(err) => return typed_request_error(streams, &err),
         };
         let host = tokio::select! {
@@ -302,16 +352,10 @@ fn follow_frame(listing: Vec<ProcessInfo>, style: Presentation, strip: Option<St
 
 /// Lists one fold: `Request::Describe` with `SelectorSpec::Fold(args.name)`,
 /// delegating to [`describe_selector`].
-pub async fn fold(
-    client: &Client,
-    streams: &mut Streams<'_>,
-    paths: &ShepPaths,
-    args: &FoldArgs,
-) -> ExitCode {
+pub async fn fold(client: &Client, streams: &mut Streams<'_>, args: &FoldArgs) -> ExitCode {
     describe_selector(
         client,
         streams,
-        paths,
         "fold",
         None,
         SelectorSpec::Fold(args.name.clone()),
@@ -322,7 +366,6 @@ pub async fn fold(
 #[cfg(test)]
 mod tests {
 
-    use shep_core::paths::ShepPaths;
     use shep_core::protocol::{HostUsage, ProcessInfo, Request, SelectorSpec};
 
     use shep_core::status::ProcStatus;
@@ -573,7 +616,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = shep_client::testing::control_address(dir.path());
         let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
-        let paths = ShepPaths::resolve(&|_| None, dir.path());
         let mut out = Vec::new();
         let mut err = Vec::new();
         let mut streams = Streams {
@@ -582,13 +624,7 @@ mod tests {
             style: crate::style::Presentation::BARE,
             fmt: Format::Table,
         };
-        let _ = fold(
-            &client,
-            &mut streams,
-            &paths,
-            &FoldArgs { name: "api".into() },
-        )
-        .await;
+        let _ = fold(&client, &mut streams, &FoldArgs { name: "api".into() }).await;
         let sent = tokio::time::timeout(RECV_TIMEOUT, envelopes.recv())
             .await
             .expect("fold must reach the wire; it hung instead of sending a request")
@@ -639,11 +675,6 @@ mod tests {
         daemon.reply_to_describe(vec![
             ProcessInfo::builder(1, "web", ProcStatus::Online).build(),
         ]);
-        // Deliberately no `paths.snapshot` on disk: if `fold` ever reads it,
-        // the missing file is tolerated (`read_roll`), which would hide the
-        // bug this test exists to catch. The real guard is the assertion
-        // below, on `command == "fold"` never entering `secret_inspection::gather_secrets`.
-        let paths = ShepPaths::resolve(&|_| None, dir.path());
 
         let mut out = Vec::new();
         let mut err = Vec::new();
@@ -653,13 +684,7 @@ mod tests {
             style: crate::style::Presentation::BARE,
             fmt: Format::Json,
         };
-        let code = fold(
-            &client,
-            &mut streams,
-            &paths,
-            &FoldArgs { name: "api".into() },
-        )
-        .await;
+        let code = fold(&client, &mut streams, &FoldArgs { name: "api".into() }).await;
         assert_eq!(code, ExitCode::Success);
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert!(json.get("secrets").is_none(), "{json}");

@@ -8,10 +8,12 @@
 //! `ProcessInfo` rows, [`lambs`] for its lamb tree, [`dogs`] for the
 //! dog-specific ones, [`toolkit`] for the paint/cell rules both share,
 //! [`lifecycle`] for one-shot verb results, [`replies`] for a daemon
-//! action's reply, [`secrets`] for the KV store and `shep secret`.
+//! action's reply, [`secrets`] for the KV store and `shep secret`, [`hosts`] for
+//! `shep host`.
 
 mod copy;
 mod dogs;
+mod hosts;
 mod lambs;
 mod lifecycle;
 mod process;
@@ -21,6 +23,7 @@ mod toolkit;
 
 pub use copy::{CopyChange, CopyReport};
 pub use dogs::*;
+pub use hosts::*;
 pub use lambs::*;
 pub use lifecycle::*;
 pub use process::*;
@@ -248,6 +251,7 @@ pub(crate) mod tests {
         assert_priorities_match_headers::<BarkRows>(&["WHEN", "RULE", "SUBJECT"]);
         assert_priorities_match_headers::<KvRows>(&["KEY", "VALUE"]);
         assert_priorities_match_headers::<KvUnsetRow>(&["REMOVED"]);
+        assert_priorities_match_headers::<HostRows>(&["HOST"]);
         assert_priorities_match_headers::<AvailableDogRows>(&["NAME", "PACKAGE"]);
         assert_priorities_match_headers::<SecretKeyRows>(&["KEY", "ENVIRONMENTS"]);
         assert_priorities_match_headers::<SecretSlotRow>(&["KEY", "ENVIRONMENT"]);

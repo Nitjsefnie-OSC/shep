@@ -120,7 +120,9 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3130 on 2026-10-15 for "Following logs" saying which stream
   // colour a plain line gets, that a line carrying its own colour is left
   // alone, and that `--format json` stays raw. Required content for #846.
-  output: 3190,
+  // Raised from 3190 on 2026-10-21 for the one sentence saying `--host`
+  // follows the host's flock. Required content for #949.
+  output: 3200,
   // Raised from 2980 on 2026-10-13 for the `log_match` rule: a new `on`
   // value, its `stream` key, and the loss and secrets caveats are
   // operator-facing surface, not prose to trim back out.
@@ -153,7 +155,10 @@ export const BUDGETS: Record<string, number> = {
   // dog table is operator-facing config, and #830 is the verb that moves one
   // onto another sheep.
   dogs: 3990,
-  lookout: 2770,
+  // Raised from 2770 for the "Over --host" section: a lookout over a host
+  // leaves panes blank that an operator would otherwise read as broken, so
+  // the table naming them is required content.
+  lookout: 2830,
   "first-flockfile": 2360,
   // Raised from 2080 on 2026-10-13 for the rotation paragraph: a provider's
   // push now reaches a running dog, which an operator rotating a secret has
@@ -176,7 +181,13 @@ export const BUDGETS: Record<string, number> = {
   //
   // Raised again for the same verb refusing a name it cannot judge, which is
   // an exit an operator hits. Paid for by tightening the sentence above it.
-  lifecycle: 2245,
+  //
+  // Raised from 2245 for #951: `stock`, `enable` and `disable` take `--host`
+  // and read a dog's name as a sheep's there, which the page must say.
+  //
+  // Raised from 2260 for #952: `start` takes `--host` for a sheep name only,
+  // and the page has to say what a path target does instead.
+  lifecycle: 2300,
   // Cut from 1900 for the stamps-off tail sentence: the page has to say a
   // sheep with `log_timestamps = false` carries no stamp for `bleats` to
   // strip, and it paid for that line by tightening the sentences around it
@@ -184,7 +195,9 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 1895 on 2026-10-15 for the same #846 rule on this page:
   // which lines are coloured, the fallback for a line that already has its
   // own colour, and what a table strips out of a line.
-  logs: 1995,
+  // Raised from 1995 on 2026-10-21 for the sentence saying a `--host` follow
+  // has no history. Required content for #949.
+  logs: 2010,
   // Raised from 1690 on 2026-09-28 for "Naming your lambs": `lamb-label`
   // is a new message an app author has to be told about, not prose to trim
   // back out.
@@ -206,7 +219,10 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 1410 on 2026-10-13 for `disabled`: a key that is absent
   // unless true, beside a `status` that still reads `stopped`, is a shape
   // a script has to be told about.
-  "json-output": 1470,
+  //
+  // Raised from 1470 for the fleet listing: `origin` on a row and a `hosts`
+  // map beside `host` are a shape a script has to be told about.
+  "json-output": 1500,
   startup: 1250,
   examples: 1200,
   "not-built": 1080,
@@ -236,7 +252,14 @@ export const BUDGETS: Record<string, number> = {
   // as good as the run that wrote it.
   "getting-started": 500,
   serve: 480,
-  cli: 380,
+  hosts: 500,
+  // Raised from 380 on 2026-10-21 for the global `--host` flag, which is new
+  // content: what a destination is and that only `flock` takes it so far.
+  // Raised from 400 on 2026-10-21 for the verbs `--host` now reaches and
+  // `describe` showing no secrets over it. Required content for #949.
+  // Raised from 420 for the six verbs #951 adds to the list `--host` reaches.
+  // Raised from 430 for `lookout` in the list `--host` reaches (#954).
+  cli: 435,
   "community-dogs": 300,
   terminology: 210,
   "pm2-verbs": 40,

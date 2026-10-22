@@ -26,6 +26,7 @@ impl App {
             palette,
             control,
             home,
+            remote_host: None,
             now,
             froze_at: None,
             frozen_for: Duration::ZERO,

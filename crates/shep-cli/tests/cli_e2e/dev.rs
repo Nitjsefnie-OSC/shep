@@ -191,7 +191,7 @@ fn the_alias_binaries_exist_and_reach_their_own_verbs() {
             "{bin} --help must be {verb}'s own help, not the root's:\n{text}"
         );
         assert!(
-            !text.contains("lookout"),
+            !text.contains("See what's up"),
             "{bin} printed the root verb list, so the alias supplied no verb:\n{text}"
         );
     }
