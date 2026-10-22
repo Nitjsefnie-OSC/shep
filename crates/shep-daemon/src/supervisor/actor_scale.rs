@@ -121,8 +121,8 @@ impl<R: ProcessRunner> Actor<R> {
                 };
                 let existing: Vec<u32> = slots.iter().map(|(instance, _)| *instance).collect();
                 let mut ids: Vec<u32> = slots.iter().map(|(_, id)| *id).collect();
-                // One read of the store for the whole batch: it cannot change
-                // inside one `shep scale`.
+                // One read for the whole batch: every instance this scale-up
+                // adds resolves against the same store.
                 let secrets = self.secret_view(&rescaled);
                 for instance in instance_slots(&existing, count - current) {
                     let attempted_id = self.next_id;
