@@ -272,18 +272,21 @@ pub(crate) async fn open(
     timeout: Option<Duration>,
     dog_name: Option<&str>,
 ) -> Result<Connection, ConnectError> {
-    let dial = dial(destination, options, dog_name);
-    match timeout {
-        Some(after) => tokio::time::timeout(after, dial)
-            .await
-            .map_err(|_elapsed| ConnectError::HandshakeTimeout { after })?,
-        None => dial.await,
+    // a spent budget must not start an ssh child it would only kill
+    if let Some(after) = timeout.filter(Duration::is_zero) {
+        return Err(ConnectError::HandshakeTimeout { after });
     }
+    dial(destination, options, timeout, dog_name).await
 }
 
+/// Spawns ssh and handshakes over it. `timeout` bounds the handshake, which
+/// is all that waits once the spawn call has returned, but not the diagnosis
+/// of a failure: that has its own short waits, and a deadline landing in the
+/// middle of it would trade the cause for a bare timeout.
 async fn dial(
     destination: &Destination,
     options: &SshOptions,
+    timeout: Option<Duration>,
     dog_name: Option<&str>,
 ) -> Result<Connection, ConnectError> {
     let mut command = Command::new(&options.program);
@@ -318,7 +321,15 @@ async fn dial(
         io: tokio::io::join(stdout, stdin),
         _ended: ended,
     };
-    match Connection::open_over(stream, dog_name).await {
+    let handshake = Connection::open_over(stream, dog_name);
+    let outcome = match timeout {
+        // dropping the future drops `child`, which kills it
+        Some(after) => tokio::time::timeout(after, handshake)
+            .await
+            .map_err(|_elapsed| ConnectError::HandshakeTimeout { after })?,
+        None => handshake.await,
+    };
+    match outcome {
         Ok(connection) => {
             tokio::spawn(reap_when_over(child, connection_over));
             Ok(connection)
@@ -738,5 +749,21 @@ mod tests {
             panic!("a silent ssh must time out, got {err:?}");
         };
         assert_eq!(after, Duration::from_millis(200));
+    }
+
+    #[tokio::test]
+    async fn a_spent_timeout_fails_before_anything_spawns() {
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        let program = stand_in(dir.path(), &format!("touch '{}'", ran.display()));
+        let options = options(program).timeout(Some(Duration::ZERO));
+
+        let err = failure("build-01", &options).await;
+
+        assert!(
+            matches!(err, ConnectError::HandshakeTimeout { after } if after.is_zero()),
+            "{err:?}"
+        );
+        assert!(!ran.exists(), "ssh was run with no time left");
     }
 }
