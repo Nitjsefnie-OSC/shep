@@ -26,6 +26,7 @@ use crate::commands::rpc::typed_request_error;
 use crate::commands::selector::parse_selector;
 use crate::exit::ExitCode;
 use crate::output::{self, Streams, write_outcome};
+use crate::remote::interrupt_within_grace;
 
 /// One line of `bleats` output under `--format json`. A stability surface of
 /// its own, not wrapped in [`output::OutputEnvelope`]: a follow has no end.
@@ -536,7 +537,8 @@ pub async fn bleats(
 /// no `Request::Subscribe`. `--follow` subscribes and loops on
 /// `tokio::select!`: a line renders, a `Lagged` item is noted and the
 /// follow continues, the stream ending means the daemon is gone
-/// ([`ExitCode::DaemonUnreachable`]), and `interrupt` firing exits
+/// ([`ExitCode::DaemonUnreachable`], or [`ExitCode::Success`] when an interrupt
+/// follows within the grace [`bleats_over`] gives a host), and `interrupt` firing exits
 /// [`ExitCode::Success`].
 ///
 /// `streams.out` is flushed on every exit path, or buffered lines are lost.
@@ -545,6 +547,33 @@ pub async fn bleats_with_signal(
     streams: &mut Streams<'_>,
     quiet: bool,
     args: &BleatsArgs,
+    interrupt: impl std::future::Future<Output = ()> + Send,
+) -> ExitCode {
+    bleats_over(
+        client,
+        streams,
+        quiet,
+        args,
+        client.host().is_some(),
+        interrupt,
+    )
+    .await
+}
+
+/// [`bleats_with_signal`] with the host decided by the caller, so a test
+/// needs no ssh.
+///
+/// `over_host` changes two things. No backlog is printed, because
+/// `out_file`/`err_file` are the remote's paths and [`tail_log_files`] would
+/// open them on this machine. A stream that ends is given
+/// [`crate::remote::HOST_INTERRUPT_GRACE`] to be explained by an interrupt, because the ssh
+/// child dies on the same Ctrl+C.
+async fn bleats_over(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    quiet: bool,
+    args: &BleatsArgs,
+    over_host: bool,
     interrupt: impl std::future::Future<Output = ()> + Send,
 ) -> ExitCode {
     let selector = match parse_selector(streams, &args.selector) {
@@ -571,7 +600,16 @@ pub async fn bleats_with_signal(
     // Backlog before subscribing, so a line in the gap is missed rather
     // than printed twice. The tail's exit code is discarded: an unreadable
     // log for one sheep must not stop the follow over the whole flock.
-    if args.lines > 0 {
+    if over_host {
+        if args.lines > 0 {
+            write_notice(
+                streams,
+                quiet,
+                "backlog_not_shown",
+                "no backlog is shown over --host; following live output only",
+            );
+        }
+    } else if args.lines > 0 {
         let _ = tail_log_files(streams, quiet, &cache, &selector, args);
     }
 
@@ -606,6 +644,9 @@ pub async fn bleats_with_signal(
                     }
                     None => {
                         let _ = streams.out.flush();
+                        if over_host && interrupt_within_grace(&mut interrupt).await {
+                            return ExitCode::Success;
+                        }
                         return ExitCode::DaemonUnreachable;
                     }
                 }

@@ -7,6 +7,7 @@ use crate::flourish;
 use crate::host;
 use crate::lookout::term;
 use crate::output::{RolledSheep, RolledSheepRows, Streams, emit, emit_flock, write_outcome};
+use crate::remote::interrupt_within_grace;
 use crate::shutdown::Interrupt;
 use crate::style::Presentation;
 use crossterm::QueueableCommand as _;
@@ -184,7 +185,9 @@ pub(super) fn sheep_flourish(listing: &[ProcessInfo]) -> Option<String> {
 ///
 /// An interrupt ends the follow at [`ExitCode::Success`], a shepherd that
 /// goes away mid-follow ends it carrying that refusal's own code. The two
-/// must not read as the same thing.
+/// must not read as the same thing. Over a host the two arrive together, so
+/// a lost link waits [`crate::remote::HOST_INTERRUPT_GRACE`] for the interrupt
+/// before it counts as a lost shepherd.
 ///
 /// Why each of those beat its alternative: `docs/decisions.md`, "Following
 /// the flock".
@@ -230,6 +233,11 @@ pub(crate) async fn flock_follow(
         };
         let procs = match listing {
             Ok(procs) => procs,
+            // The ssh child dies on the same Ctrl+C as this process, so over
+            // a host the failed request can be seen before the interrupt.
+            Err(_) if client.host().is_some() && interrupt_within_grace(interrupt.recv()).await => {
+                return ExitCode::Success;
+            }
             Err(err) => return typed_request_error(streams, &err),
         };
         let host = tokio::select! {

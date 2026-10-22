@@ -163,29 +163,62 @@ pub(super) fn gather_secrets(
 /// failure: the sheep still describes.
 const SECRET_STORE_UNREADABLE_NOTICE: &str = "secret_store_unreadable";
 
+/// [`emit_notice`](crate::output::emit_notice) code for the line `describe`
+/// prints over `--host`, where it draws no secrets section.
+const SECRETS_NOT_SHOWN_NOTICE: &str = "secrets_not_shown";
+
 /// Describes the sheep matching `args.selector` in detail.
+///
+/// Over a host (`client.host()`) it draws no secrets section: see
+/// [`describe_over`].
 pub async fn describe(
     client: &Client,
     streams: &mut Streams<'_>,
     paths: &ShepPaths,
     args: &SelectorArgs,
 ) -> ExitCode {
+    describe_over(client, streams, paths, args, client.host().is_some()).await
+}
+
+/// [`describe`] with the host decided by the caller, so a test needs no ssh.
+///
+/// `over_host` skips [`host_environment`] and [`gather_secrets`] outright.
+/// Both read this machine's `shep.toml`, secret store, provider cache and
+/// muster roll, and resolving those against another machine's sheep would
+/// report what the wrong machine holds. One aside says so, once per run.
+async fn describe_over(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    args: &SelectorArgs,
+    over_host: bool,
+) -> ExitCode {
     // One pass per target, each its own detail view: `describe` answers with
     // a tree per sheep, so merging them would lose that shape.
     let mut failure: Option<ExitCode> = None;
-    let mut host: Option<String> = None;
+    let mut host: Option<Option<String>> = None;
     for raw in &args.selectors {
         let selector = match parse_selector_spec(streams, raw) {
             Ok(selector) => selector,
             Err(code) => return code,
         };
-        let host = host.get_or_insert_with(|| host_environment(streams, paths));
+        let host = host.get_or_insert_with(|| {
+            if over_host {
+                streams.aside(
+                    SECRETS_NOT_SHOWN_NOTICE,
+                    "secrets are not shown over --host",
+                );
+                None
+            } else {
+                Some(host_environment(streams, paths))
+            }
+        });
         let code = describe_selector(
             client,
             streams,
             paths,
             "describe",
-            Some(host.as_str()),
+            host.as_deref(),
             selector,
         )
         .await;
@@ -593,6 +626,72 @@ mod tests {
         );
         let rendered = String::from_utf8(out).unwrap();
         assert!(rendered.contains("DB_PASSWORD"), "{rendered}");
+    }
+
+    /// The roll, the secret store and the provider cache are this machine's.
+    /// Resolving them against a host's sheep would call a remote reference
+    /// missing or resolved by what a different machine holds.
+    #[tokio::test]
+    async fn describe_over_a_host_reads_no_local_secret_store_and_draws_no_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = shep_client::testing::control_address(dir.path());
+        let (client, daemon) = fake_client_with_ack(&path, sample_ack()).await;
+        daemon.reply_to_describe(vec![
+            ProcessInfo::builder(1, "web", ProcStatus::Online).build(),
+        ]);
+        let home = dir.path().display().to_string();
+        let paths = ShepPaths::resolve(
+            &move |key| (key == "SHEP_HOME").then(|| home.clone()),
+            dir.path(),
+        );
+        let mut config = shep_core::config::AppConfig::minimal("web", "./srv");
+        config
+            .env
+            .insert("A".into(), "{{secret:DB_PASSWORD}}".into());
+        let roll = FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
+            app: config,
+            instances_running: 1,
+            disabled: false,
+        }]);
+        std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
+        std::fs::write(&paths.secrets, b"{not json").unwrap();
+
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = {
+            let mut streams = Streams {
+                out: &mut out,
+                err: &mut err,
+                style: crate::style::Presentation::BARE,
+                fmt: Format::Json,
+            };
+            describe_over(
+                &client,
+                &mut streams,
+                &paths,
+                &SelectorArgs {
+                    selectors: vec!["all".into()],
+                },
+                true,
+            )
+            .await
+        };
+
+        assert_eq!(code, ExitCode::Success);
+        let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(json["data"][0]["name"], "web");
+        // The field is omitted when empty, which reads as an empty array.
+        assert_eq!(json["secrets"].as_array().map_or(0, Vec::len), 0, "{json}");
+        let notices = String::from_utf8(err).unwrap();
+        assert!(
+            !notices.contains(SECRET_STORE_UNREADABLE_NOTICE),
+            "the local store was read: {notices}"
+        );
+        assert!(
+            notices.contains("secrets are not shown over --host"),
+            "{notices}"
+        );
+        assert_eq!(notices.matches("not shown over --host").count(), 1);
     }
 
     /// The whole notice, byte for byte. The old wording said "every
