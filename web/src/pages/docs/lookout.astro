@@ -145,7 +145,16 @@ out  connection pool: 14/50 in use
 read-only: from --read-only or lookout.allow_control                                                           read-only`;
 
 const startCmds = `$ shep lookout
-$ shep lookout --read-only`;
+$ shep lookout --read-only
+$ shep --host amp2 lookout`;
+
+const overHost: { pane: string; works: boolean; note: string }[] = [
+  { pane: "Flock table, lambs, config pane", works: true, note: "" },
+  { pane: "Actions x, R and L", works: true, note: "The gate stays this machine's." },
+  { pane: "Bleats feed, log size", works: false, note: "Reads log files." },
+  { pane: "Host strip", works: false, note: "Samples this machine." },
+  { pane: "Settings, secrets, dogs", works: false, note: "Read this machine's files." },
+];
 
 const feedExcerpt = ` ██ BLEATS api  … 525 earlier lines not shown, and 3.8M before them never read
  ██ BLEATS api  out then err  from the log files, re-read with each listing
@@ -339,6 +348,30 @@ esc/s close   j/k select   g… control enabled`;
       <code>--read-only</code> closes the action gate, covered below. The
       gate is open by default.
     </p>
+
+    <h2 id="over-host">Over --host</h2>
+    <p>
+      <code>shep --host amp2 lookout</code> shows that host's flock and
+      names it in the title. Only the first connection may prompt. A pane
+      that would read this machine's files says so instead of showing them
+      under the host's name.
+    </p>
+    <div class="host-table">
+      <div class="row header">
+        <span>pane</span>
+        <span>over --host</span>
+        <span>note</span>
+      </div>
+      {
+        overHost.map((row) => (
+          <div class="row">
+            <span>{row.pane}</span>
+            <span data-label="over --host">{row.works ? "works" : "not available"}</span>
+            <span class="note-cell" data-label="note">{row.note}</span>
+          </div>
+        ))
+      }
+    </div>
 
     <h2 id="the-flock-table">The flock table</h2>
     <p>
@@ -722,3 +755,64 @@ esc/s close   j/k select   g… control enabled`;
     </p>
 </article>
 </DocsLayout>
+
+<style>
+  .host-table {
+    border: 3px solid var(--line);
+    border-radius: 16px;
+    overflow: hidden;
+    margin: 0 0 32px;
+  }
+
+  .host-table .row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.6fr) minmax(0, 1.4fr);
+    gap: 14px;
+    padding: 12px 18px;
+    align-items: start;
+    font-size: 13.5px;
+  }
+
+  .row.header {
+    background: var(--ink);
+    padding: 11px 18px;
+  }
+
+  .row.header span {
+    font-family: "Space Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--butter);
+  }
+
+  .row:not(.header) {
+    background: var(--paper-2);
+    border-bottom: 2px solid var(--hair);
+  }
+
+  .row:not(.header):last-child {
+    border-bottom: none;
+  }
+
+  .row:not(.header) span {
+    color: var(--ink-2);
+  }
+
+  .note-cell {
+    color: var(--ink-3) !important;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  @media (max-width: 640px) {
+    .host-table .row {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+
+    .host-table .row.header {
+      display: none;
+    }
+  }
+</style>
