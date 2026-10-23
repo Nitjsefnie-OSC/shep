@@ -11,6 +11,20 @@ use shep_core::config::DogsConfig;
 
 use super::spec::DogError;
 
+/// `path`, a `dogs.toml`, read as UTF-8 text: `None` when the file is not
+/// there, which is the shape of a home that has never had a dog configured
+/// and also the shape of a section nobody has written yet.
+///
+/// The one place the two readers of this file map a missing file to an
+/// empty result; any other failure to read is [`DogError::Io`] for both.
+fn read_dogs_toml(path: &Path) -> Result<Option<String>, DogError> {
+    match std::fs::read_to_string(path) {
+        Ok(source) => Ok(Some(source)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(DogError::Io(err)),
+    }
+}
+
 /// The `[<name>]` section of `path`, a `dogs.toml`, as the operator wrote
 /// it, as a document in its own right: headers rebased off `name`, and no
 /// header of its own.
@@ -29,10 +43,10 @@ use super::spec::DogError;
 ///   its section will not render back to TOML.
 /// - [`DogError::Io`] if the file exists and could not be read.
 pub fn dog_section(path: &Path, name: &str) -> Result<String, DogError> {
-    let source = match std::fs::read_to_string(path) {
-        Ok(source) => source,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
-        Err(err) => return Err(DogError::Io(err)),
+    // A missing file returns before the parse below, which would otherwise
+    // be handed nothing to parse.
+    let Some(source) = read_dogs_toml(path)? else {
+        return Ok(String::new());
     };
     // Through shep-core's own type, so a broken `dogs.toml` is one named error
     // and not a second parser's opinion of the same file.
@@ -128,11 +142,7 @@ pub fn set_dog_section(path: &Path, name: &str, section: &str) -> Result<(), Dog
 
     // A missing file is the ordinary first write: a home that has never had
     // a dog configured has no `dogs.toml` at all.
-    let existing = match std::fs::read_to_string(path) {
-        Ok(existing) => existing,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(err) => return Err(DogError::Io(err)),
-    };
+    let existing = read_dogs_toml(path)?.unwrap_or_default();
     let mut doc: DocumentMut = existing.parse().map_err(|err: toml_edit::TomlError| {
         DogError::Config(format!("dogs.toml does not parse: {err}"))
     })?;
@@ -343,6 +353,22 @@ mod tests {
             text.find("zz_last") < text.find("aa_first"),
             "the write keeps the order the read handed it: {text}"
         );
+    }
+
+    /// A `dogs.toml` that is there but cannot be read (a directory sitting
+    /// at the path) is an I/O error for both readers, not the empty result
+    /// a missing file gets: the two cases must not collapse into one.
+    #[test]
+    fn a_dogs_toml_that_cannot_be_read_is_an_io_error_for_both_functions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dogs.toml");
+        std::fs::create_dir(&path).unwrap();
+
+        let read = dog_section(&path, "bark").unwrap_err();
+        assert!(matches!(read, DogError::Io(_)), "{read}");
+
+        let write = set_dog_section(&path, "bark", "poll = \"30s\"\n").unwrap_err();
+        assert!(matches!(write, DogError::Io(_)), "{write}");
     }
 
     /// A home that has never had a dog configured has no `dogs.toml` at
