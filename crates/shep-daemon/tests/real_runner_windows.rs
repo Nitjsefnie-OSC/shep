@@ -148,6 +148,21 @@ fn pings_under(parent: u32) -> Vec<u32> {
         .collect()
 }
 
+/// Kills the tree, then waits up to [`SETTLE`] for the sheep to report.
+///
+/// A `wait` that never resolves is ignored: the cases that call this assert
+/// on what happened around the kill, not on the exit code, which
+/// [`kill_tree_stops_a_long_running_sheep_and_reports_a_recognisable_code`]
+/// pins.
+///
+/// # Panics
+///
+/// If `kill_tree` fails to reach the live sheep.
+async fn kill_and_settle(proc: &mut impl RunningProcess) {
+    proc.kill_tree().expect("kill_tree must reach a live sheep");
+    let _ = tokio::time::timeout(SETTLE, proc.wait()).await;
+}
+
 /// fails if a real child's stdout never reaches its log file.
 #[tokio::test]
 async fn a_real_child_writes_its_stdout_to_the_log_file() {
@@ -255,8 +270,7 @@ async fn kill_tree_reaches_a_grandchild_and_not_just_the_sheep() {
         );
     }
 
-    proc.kill_tree().unwrap();
-    let _ = tokio::time::timeout(SETTLE, proc.wait()).await;
+    kill_and_settle(&mut proc).await;
 
     let deadline = tokio::time::Instant::now() + SETTLE;
     for lamb in lambs {
@@ -292,8 +306,7 @@ async fn the_graceful_rung_refuses_honestly_and_names_the_way_out() {
         "the refusal must name the supported graceful path, got {message:?}"
     );
 
-    proc.kill_tree().unwrap();
-    let _ = tokio::time::timeout(SETTLE, proc.wait()).await;
+    kill_and_settle(&mut proc).await;
 }
 
 /// fails if a child cannot reach the shepherd channel by pipe name.
@@ -334,8 +347,7 @@ async fn a_child_reaches_the_shepherd_channel_by_pipe_name() {
     let got = tokio::time::timeout(SETTLE, io.from_child.recv()).await;
     let saw = std::fs::read_to_string(&seen).unwrap_or_else(|_| "<file never written>".into());
     let child_err = std::fs::read_to_string(&spec.err_file).unwrap_or_default();
-    proc.kill_tree().unwrap();
-    let _ = tokio::time::timeout(SETTLE, proc.wait()).await;
+    kill_and_settle(&mut proc).await;
 
     let message = got.unwrap_or_else(|_| {
         panic!(
