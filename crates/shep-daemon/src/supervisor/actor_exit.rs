@@ -18,14 +18,56 @@ impl<R: ProcessRunner> Actor<R> {
     /// come through. `&self` keeps the handler free of state changes, which is
     /// what lets it skip the epoch check.
     ///
-    /// A matched sheep with no pump is a success. The pumps asked are every
-    /// slot writing to a path a matched sheep writes to, matched or not; the
-    /// reply stays keyed by the selector.
+    /// A matched sheep with no pump is a success. The pumps asked come from
+    /// [`Self::pumps_for_paths`], a wider set than the selector's matches;
+    /// the reply stays keyed by the selector.
     pub(super) fn handle_reopen(
         &self,
         selector: &ProcessSelector,
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     ) {
+        let (mut matched, paths) = match self.resolve_selector(selector) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                let _ = reply.send(Err(error));
+                return;
+            }
+        };
+
+        // The failure text names the sheep each pump serves, so each pump's
+        // row is rebuilt from its id.
+        let mut pumps: Vec<(ProcessInfo, mpsc::Sender<LogCtl>)> = Vec::new();
+        for (id, log_ctl) in self.pumps_for_paths(&paths) {
+            let slot = self
+                .sheep
+                .get(&id)
+                .expect("`pumps_for_paths` answers with ids read off this map a moment ago");
+            pumps.push((to_info(&slot.entry, &self.smits), log_ctl));
+        }
+
+        // The table `shep reopen` prints, so it takes the listing order.
+        sort_flock(&mut matched);
+        spawn_reopen_task(matched, pumps, reply);
+    }
+
+    /// Resolves `selector` into the rows its reply carries and the log paths
+    /// the sheep those rows name write to.
+    ///
+    /// The one place the two log verbs decide which sheep they reached: they
+    /// differ only in what they do with the paths, so a rule about which
+    /// paths count cannot be written twice here.
+    ///
+    /// `matched` comes back in `reached_ids`' id order, not listing order:
+    /// each caller sorts it for the table it prints.
+    ///
+    /// # Errors
+    ///
+    /// [`SupervisorError::NotFound`] when `selector` names no registered
+    /// sheep.
+    fn resolve_selector(
+        &self,
+        selector: &ProcessSelector,
+    ) -> Result<(Vec<ProcessInfo>, BTreeSet<PathBuf>), SupervisorError> {
         let mut matched: Vec<ProcessInfo> = Vec::new();
         let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
         for id in self.reached_ids(selector, Sweep::Any) {
@@ -39,31 +81,35 @@ impl<R: ProcessRunner> Actor<R> {
         }
 
         if matched.is_empty() {
-            let _ = reply.send(Err(SupervisorError::NotFound));
-            return;
+            return Err(SupervisorError::NotFound);
         }
 
-        let mut pumps: Vec<(ProcessInfo, mpsc::Sender<LogCtl>)> = self
+        Ok((matched, paths))
+    }
+
+    /// Every live log pump writing to a path in `paths`, in id order.
+    ///
+    /// Wider than the selector's matches on purpose: a sheep the selector
+    /// never named can share a path with one it did, and that sibling's
+    /// dispatched `write(2)` would land at offset 0 of the file just
+    /// truncated, or keep a rotator's renamed inode open. A slot with no pump
+    /// is skipped: it owes no bytes.
+    ///
+    /// Sorted because `HashMap` iteration order is arbitrary and pump
+    /// failures are reported in collection order, so an unsorted set would
+    /// word a multi-pump failure differently run to run. Id order is enough
+    /// here, unlike a caller's `matched`: this list is never rendered.
+    fn pumps_for_paths(&self, paths: &BTreeSet<PathBuf>) -> Vec<(u32, mpsc::Sender<LogCtl>)> {
+        let mut pumps: Vec<(u32, mpsc::Sender<LogCtl>)> = self
             .sheep
-            .values()
-            .filter(|slot| {
+            .iter()
+            .filter(|(_, slot)| {
                 paths.contains(&slot.entry.out_file) || paths.contains(&slot.entry.err_file)
             })
-            .filter_map(|slot| {
-                slot.log_ctl
-                    .clone()
-                    .map(|log_ctl| (to_info(&slot.entry, &self.smits), log_ctl))
-            })
+            .filter_map(|(id, slot)| slot.log_ctl.clone().map(|log_ctl| (*id, log_ctl)))
             .collect();
-
-        // `HashMap` iteration order is arbitrary and pump failures are
-        // reported in collection order, so an unsorted set would word a
-        // multi-pump failure differently run to run. Id order is fine here,
-        // unlike `matched` below: this list is never rendered.
-        pumps.sort_unstable_by_key(|(info, _)| info.id);
-        // The table `shep reopen` prints, so it takes the listing order.
-        sort_flock(&mut matched);
-        spawn_reopen_task(matched, pumps, reply);
+        pumps.sort_unstable_by_key(|&(id, _)| id);
+        pumps
     }
 
     /// Reads everything a handover needs off the actor and hands it to a
@@ -187,46 +233,31 @@ impl<R: ProcessRunner> Actor<R> {
     /// rotator's rename would empty the archive and leave the live log alone.
     /// A stopped sheep has no pump and is still flushed.
     ///
-    /// Every slot writing to one of those paths is flushed, matched or not: an
-    /// unflushed sibling's dispatched `write(2)` would land at offset 0 of the
-    /// file just reported empty. The reply stays keyed by the selector.
+    /// Every slot writing to one of those paths is flushed, matched or not,
+    /// through [`Self::pumps_for_paths`]: an unflushed sibling's dispatched
+    /// `write(2)` would land at offset 0 of the file just reported empty. The
+    /// reply stays keyed by the selector.
     pub(super) fn handle_flush(
         &self,
         selector: &ProcessSelector,
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     ) {
-        let mut matched: Vec<ProcessInfo> = Vec::new();
-        let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-        for id in self.reached_ids(selector, Sweep::Any) {
-            let slot = self
-                .sheep
-                .get(&id)
-                .expect("`reached_ids` answers with ids read off this map a moment ago");
-            paths.insert(slot.entry.out_file.clone());
-            paths.insert(slot.entry.err_file.clone());
-            matched.push(to_info(&slot.entry, &self.smits));
-        }
+        let (mut matched, paths) = match self.resolve_selector(selector) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                let _ = reply.send(Err(error));
+                return;
+            }
+        };
 
-        if matched.is_empty() {
-            let _ = reply.send(Err(SupervisorError::NotFound));
-            return;
-        }
-
-        let mut pumps: Vec<(u32, mpsc::Sender<LogCtl>)> = self
-            .sheep
-            .iter()
-            .filter(|(_, slot)| {
-                paths.contains(&slot.entry.out_file) || paths.contains(&slot.entry.err_file)
-            })
-            .filter_map(|(id, slot)| slot.log_ctl.clone().map(|log_ctl| (*id, log_ctl)))
+        let pumps: Vec<mpsc::Sender<LogCtl>> = self
+            .pumps_for_paths(&paths)
+            .into_iter()
+            .map(|(_, log_ctl)| log_ctl)
             .collect();
 
-        // Sorted for the reason `handle_reopen` sorts: `HashMap` iteration
-        // order is arbitrary and failures are reported in collection order.
-        pumps.sort_unstable_by_key(|&(id, _)| id);
         // The table `shep empty` prints, so it takes the listing order.
         sort_flock(&mut matched);
-        let pumps = pumps.into_iter().map(|(_, log_ctl)| log_ctl).collect();
         spawn_flush_task(matched, pumps, paths, reply);
     }
 
