@@ -1,6 +1,7 @@
-//! A follow over `--host`: how it ends when the link and the operator's
-//! Ctrl+C arrive together. `bleats_over` takes the host as an argument, and a
-//! fake shepherd stands in for the ssh hop, which cannot be scripted here.
+//! A run over `--host`: how it ends when the link, a shepherd that stops
+//! answering and the operator's Ctrl+C arrive together. `bleats_over` takes
+//! the host as an argument, and a fake shepherd stands in for the ssh hop,
+//! which cannot be scripted here.
 
 use super::*;
 
@@ -167,8 +168,8 @@ async fn a_host_link_that_closes_mid_subscribe_with_no_interrupt_is_a_lost_sheph
 }
 
 /// A shepherd that answers a request with a refusal is answering, whatever
-/// the operator pressed at the same moment: only a link that closed gets the
-/// grace, and an interrupt ready before the answer must not swallow it.
+/// the operator pressed a moment later: only a link that closed gets the
+/// grace.
 #[tokio::test]
 async fn a_refusal_over_a_host_is_not_read_as_the_operators_interrupt() {
     let dir = tempfile::tempdir().unwrap();
@@ -197,7 +198,7 @@ async fn a_refusal_over_a_host_is_not_read_as_the_operators_interrupt() {
                 false,
                 &follow_args("all"),
                 Some("amp2"),
-                async {},
+                async { tokio::time::sleep(Duration::from_millis(50)).await },
             ),
         )
         .await
@@ -249,4 +250,71 @@ async fn a_host_link_that_closes_under_an_interrupt_flushes_the_backlog_it_print
         "an interrupt the operator meant ends the verb, not what it printed"
     );
     assert_eq!(String::from_utf8(err).unwrap(), "");
+}
+
+/// A shepherd that answers nothing would hold this run until the client's
+/// own deadline, which is longer than `RUN_TIMEOUT`: the interrupt raced
+/// against the step is what ends it, and the test fails if it does not.
+async fn host_run_over_a_shepherd_that_never_answers(
+    args: &BleatsArgs,
+) -> (ExitCode, String, String, Duration) {
+    let started = std::time::Instant::now();
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, _task) = shep_client::testing::fake_client_that_never_replies(&path).await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let code = {
+        let mut streams = Streams {
+            out: &mut out,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        tokio::time::timeout(
+            RUN_TIMEOUT,
+            bleats_over(&client, &mut streams, false, args, Some("amp2"), async {
+                tokio::time::sleep(Duration::from_millis(50)).await
+            }),
+        )
+        .await
+        .expect("the interrupt ends the run, not a request deadline")
+    };
+    (
+        code,
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+        started.elapsed(),
+    )
+}
+
+#[tokio::test]
+async fn an_interrupt_that_lands_mid_request_ends_a_host_follow_before_any_deadline() {
+    let (code, out, err, elapsed) =
+        host_run_over_a_shepherd_that_never_answers(&follow_args("all")).await;
+
+    assert_eq!(code, ExitCode::Success);
+    assert_eq!(out, "");
+    assert_eq!(err, "");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "a Ctrl+C mid-request is honored at once, not at the client's deadline: {elapsed:?}"
+    );
+}
+
+/// `--no-follow` never reaches the follow loop. A listener only that loop
+/// polled would leave this run ignoring Ctrl+C however often it is pressed.
+#[tokio::test]
+async fn a_no_follow_run_ended_by_an_interrupt_exits_success_and_says_nothing() {
+    let (code, out, err, elapsed) =
+        host_run_over_a_shepherd_that_never_answers(&no_follow_args("all")).await;
+
+    assert_eq!(code, ExitCode::Success);
+    assert_eq!(out, "");
+    assert_eq!(err, "");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "a tail is interruptible too: {elapsed:?}"
+    );
 }

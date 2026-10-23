@@ -2,7 +2,7 @@
 //! log-file helper, and the run timeout every streamed test in [`follow`]
 //! bounds itself by. [`follow`] covers the bus-subscribed path,
 //! [`tail`] the `--no-follow` file-reading one, [`remote`] the tail read
-//! through a host's shepherd and [`host_follow`] how a host follow ends.
+//! through a host's shepherd and [`host_follow`] how a run over a host ends.
 
 use std::time::Duration;
 

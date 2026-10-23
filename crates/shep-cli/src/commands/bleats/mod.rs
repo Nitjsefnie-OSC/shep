@@ -477,11 +477,11 @@ pub async fn bleats_on_host(
 /// [`bleats_over`] with the operator's Ctrl+C listened for from here.
 ///
 /// Installed here rather than awaited through [`tokio::signal::ctrl_c`],
-/// which registers its handler on its first poll: a follow reaches that poll
-/// only after its listing, its backlog reads and its `Subscribe` round trip,
-/// and it prints the backlog on the way. A `SIGINT` landing before a handler
-/// exists reaches the default disposition and kills this process. Registering
-/// here means tokio queues one that lands early.
+/// which registers its handler on its first poll: a verb reaches that poll
+/// only after its listing, its backlog reads and its `Subscribe` round trip.
+/// A `SIGINT` landing before a handler exists reaches the default disposition
+/// and kills this process. Registering here means tokio queues one that lands
+/// early, and [`raced`] gives every step of the verb the chance to read it.
 ///
 /// # Errors
 /// Renders and returns the exit code for a listener this OS refuses to
@@ -520,6 +520,9 @@ async fn bleats_armed(
 /// `tokio::select!`: a line renders, a `Lagged` item is noted and the
 /// follow continues, a request or a stream that stops answering ends on
 /// [`link_gone`], and `interrupt` firing exits [`ExitCode::Success`].
+///
+/// Every step before the loop is raced against `interrupt` by [`raced`], so
+/// a Ctrl+C ends the verb wherever it lands, not only once the loop arms.
 ///
 /// `streams.out` is flushed on every exit path, or buffered lines are lost.
 pub async fn bleats_with_signal(
@@ -571,6 +574,35 @@ where
     code
 }
 
+/// One step of the verb, raced against the operator's Ctrl+C.
+///
+/// Each step can wait on a round trip or a backlog read while the interrupt
+/// listener is installed, so a step that never polled the interrupt would
+/// hold the operator's key press until it finished. `None` means the
+/// interrupt landed while the step was still waiting, and the caller owes
+/// only what the step had already printed.
+///
+/// The work arm is polled first: a shepherd that answered answered, whatever
+/// the operator pressed at the same moment.
+async fn raced<F, T, W>(interrupt: &mut F, work: W) -> Option<T>
+where
+    F: std::future::Future<Output = ()> + Unpin,
+    W: std::future::Future<Output = T>,
+{
+    tokio::select! {
+        biased;
+        value = work => Some(value),
+        () = &mut *interrupt => None,
+    }
+}
+
+/// What an interrupt the operator meant owes this verb: what it printed
+/// already, and no error.
+fn interrupt_exit(streams: &mut Streams<'_>) -> ExitCode {
+    let _ = streams.out.flush();
+    ExitCode::Success
+}
+
 /// [`bleats_with_signal`] with the host decided by the caller, so a test
 /// needs no ssh.
 ///
@@ -601,17 +633,22 @@ async fn bleats_over(
     // The id/name cache is built from one listing taken before subscribing.
     // Subscribing first would lose every line pushed while the listing is
     // still in flight.
-    let cache = match resolve_names(client).await {
-        Ok(cache) => cache,
-        Err(err) => {
+    let cache = match raced(&mut interrupt, resolve_names(client)).await {
+        None => return interrupt_exit(streams),
+        Some(Ok(cache)) => cache,
+        Some(Err(err)) => {
             return link_gone(streams, host, &err, &mut interrupt, typed_request_error).await;
         }
     };
 
     if args.no_follow {
-        return match tail_log_files(streams, quiet, &cache, &selector, args, source).await {
-            Ok(code) => code,
-            Err(err) => link_gone(streams, host, &err, &mut interrupt, stop_a_read(source)).await,
+        let tail = tail_log_files(streams, quiet, &cache, &selector, args, source);
+        return match raced(&mut interrupt, tail).await {
+            None => interrupt_exit(streams),
+            Some(Ok(code)) => code,
+            Some(Err(err)) => {
+                link_gone(streams, host, &err, &mut interrupt, stop_a_read(source)).await
+            }
         };
     }
 
@@ -624,15 +661,21 @@ async fn bleats_over(
     // log for one sheep must not stop the follow over the whole flock. A host
     // that gave no answer to a read stops it, since it would give none to the
     // subscribe either.
-    if args.lines > 0
-        && let Err(err) = tail_log_files(streams, quiet, &cache, &selector, args, source).await
-    {
-        return link_gone(streams, host, &err, &mut interrupt, stop_a_read(source)).await;
+    if args.lines > 0 {
+        let backlog = tail_log_files(streams, quiet, &cache, &selector, args, source);
+        match raced(&mut interrupt, backlog).await {
+            None => return interrupt_exit(streams),
+            Some(Err(err)) => {
+                return link_gone(streams, host, &err, &mut interrupt, stop_a_read(source)).await;
+            }
+            Some(Ok(_)) => {}
+        }
     }
 
-    let mut stream = match subscribe(client).await {
-        Ok(stream) => stream,
-        Err(err) => {
+    let mut stream = match raced(&mut interrupt, subscribe(client)).await {
+        None => return interrupt_exit(streams),
+        Some(Ok(stream)) => stream,
+        Some(Err(err)) => {
             return link_gone(streams, host, &err, &mut interrupt, typed_request_error).await;
         }
     };
@@ -669,8 +712,7 @@ async fn bleats_over(
                 }
             }
             () = &mut interrupt => {
-                let _ = streams.out.flush();
-                return ExitCode::Success;
+                return interrupt_exit(streams);
             }
         }
     }
