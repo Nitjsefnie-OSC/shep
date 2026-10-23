@@ -295,6 +295,53 @@ async fn instances_sharing_one_log_path_answer_one_row_each() {
     assert_eq!(std::fs::read_to_string(&shared).unwrap(), "");
 }
 
+/// Starts `web` with a reload in flight and returns the mid-swap `list()`.
+///
+/// Two scripts: the original spawn and the one replacement. A third would
+/// abandon the reload, leaving one entry and no overlap to see. The caller
+/// passes the list to [`assert_swap_shares_log_paths`]; the asserts are not
+/// here because `#[track_caller]` has no effect on an `async fn`.
+async fn reload_to_a_shared_path(
+    dir: &tempfile::TempDir,
+) -> (SupervisorHandle, Arc<ScriptedRunner>, Vec<ProcessInfo>) {
+    let (handle, runner, mut rx) = started(
+        dir,
+        AppConfig::minimal("web", "./srv"),
+        vec![ProcScript::never_exits(), ProcScript::never_exits()],
+    )
+    .await;
+
+    handle
+        .reload(ProcessSelector::Name("web".to_string()))
+        .await
+        .expect("the reload is accepted");
+    expect_event(&mut rx, 1, ProcessEventKind::Start).await;
+
+    let mid = handle.list().await;
+    (handle, runner, mid)
+}
+
+/// Fails the calling test if the mid-swap list is not the fixture the
+/// shared-path cases need: both halves registered, on one out and one err path.
+#[track_caller]
+fn assert_swap_shares_log_paths(mid: &[ProcessInfo]) {
+    assert_eq!(
+        mid.len(),
+        2,
+        "fixture check: both halves of the swap must be registered, or \
+         there is no shared path to widen to"
+    );
+    assert_eq!(
+        mid[0].out_file, mid[1].out_file,
+        "fixture check: one instance slot must really give both entries \
+         one out path, or this case proves nothing"
+    );
+    assert_eq!(
+        mid[0].err_file, mid[1].err_file,
+        "fixture check: and one err path"
+    );
+}
+
 /// Fails if the set of pumps a flush drains is narrowed back to the sheep
 /// the selector matched, leaving a sibling sharing that file unflushed.
 ///
@@ -506,37 +553,8 @@ async fn truncating_a_symlinked_log_path_refuses_and_leaves_its_target_alone() {
 #[tokio::test(start_paused = true)]
 async fn a_flush_naming_a_replacement_still_drains_the_drainee_sharing_its_path() {
     let dir = tempfile::tempdir().unwrap();
-    // Two scripts: the original spawn and the one replacement. A third
-    // would abandon the reload, leaving one entry and no overlap to see.
-    let (handle, runner, mut rx) = started(
-        &dir,
-        AppConfig::minimal("web", "./srv"),
-        vec![ProcScript::never_exits(), ProcScript::never_exits()],
-    )
-    .await;
-
-    handle
-        .reload(ProcessSelector::Name("web".to_string()))
-        .await
-        .expect("the reload is accepted");
-    expect_event(&mut rx, 1, ProcessEventKind::Start).await;
-
-    let mid = handle.list().await;
-    assert_eq!(
-        mid.len(),
-        2,
-        "fixture check: both halves of the swap must be registered, or \
-         there is no shared path to widen to"
-    );
-    assert_eq!(
-        mid[0].out_file, mid[1].out_file,
-        "fixture check: one instance slot must really give both entries \
-         one out path, or this case proves nothing"
-    );
-    assert_eq!(
-        mid[0].err_file, mid[1].err_file,
-        "fixture check: and one err path"
-    );
+    let (handle, runner, mid) = reload_to_a_shared_path(&dir).await;
+    assert_swap_shares_log_paths(&mid);
 
     let flushed = handle.flush(ProcessSelector::Id(1)).await.unwrap();
 
@@ -566,35 +584,8 @@ async fn a_flush_naming_a_replacement_still_drains_the_drainee_sharing_its_path(
 #[tokio::test(start_paused = true)]
 async fn a_reopen_naming_a_replacement_still_reaches_the_drainee_sharing_its_path() {
     let dir = tempfile::tempdir().unwrap();
-    // Two scripts, counted, for the reason the flush case above gives.
-    let (handle, runner, mut rx) = started(
-        &dir,
-        AppConfig::minimal("web", "./srv"),
-        vec![ProcScript::never_exits(), ProcScript::never_exits()],
-    )
-    .await;
-
-    handle
-        .reload(ProcessSelector::Name("web".to_string()))
-        .await
-        .expect("the reload is accepted");
-    expect_event(&mut rx, 1, ProcessEventKind::Start).await;
-
-    let mid = handle.list().await;
-    assert_eq!(
-        mid.len(),
-        2,
-        "fixture check: both halves of the swap must be registered"
-    );
-    assert_eq!(
-        mid[0].out_file, mid[1].out_file,
-        "fixture check: one instance slot must really give both entries \
-         one out path, or this case proves nothing"
-    );
-    assert_eq!(
-        mid[0].err_file, mid[1].err_file,
-        "fixture check: and one err path"
-    );
+    let (handle, runner, mid) = reload_to_a_shared_path(&dir).await;
+    assert_swap_shares_log_paths(&mid);
 
     let reopened = handle.reopen(ProcessSelector::Id(1)).await.unwrap();
 
