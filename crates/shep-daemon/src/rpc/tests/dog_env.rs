@@ -41,21 +41,7 @@ async fn a_dog_is_refused_an_env_override_rather_than_given_one() {
             .is_none(),
         "the refusal still wrote the store"
     );
-    let described = reply_of(
-        dispatch(
-            envelope(
-                3,
-                Request::Describe {
-                    selector: SelectorSpec::Name("bark".to_string()),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    let Ok(Response::Described(infos)) = described.result else {
-        panic!("expected Described")
-    };
+    let infos = describe(&h.ctx, 3, SelectorSpec::Name("bark".to_string())).await;
     assert_eq!(infos[0].id, dog.id);
     assert_eq!(infos[0].pending, None, "the refusal still parked a config");
 }
@@ -172,21 +158,7 @@ async fn set_sheep_env_writes_the_store_and_parks_env_until_a_respawn() {
         .unwrap();
     assert_eq!(stored.fields["env"]["NEW"], "1");
 
-    let described = reply_of(
-        dispatch(
-            envelope(
-                3,
-                Request::Describe {
-                    selector: SelectorSpec::Name("web".to_string()),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    let Ok(Response::Described(infos)) = described.result else {
-        panic!("expected Described")
-    };
+    let infos = describe(&h.ctx, 3, SelectorSpec::Name("web".to_string())).await;
     assert_eq!(
         infos[0].pending.as_deref(),
         Some(["env".to_string()].as_slice())

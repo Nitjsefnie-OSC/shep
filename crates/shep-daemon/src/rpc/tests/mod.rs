@@ -40,10 +40,15 @@ fn reply_of(outcome: Outcome) -> Reply {
     }
 }
 
-/// Starts `web` through `h` and returns nothing: no case below asserts
-/// on the start reply itself.
+/// Starts `web` through `h`, asserting the start landed: a fixture that
+/// never came up has to fail here, not at whatever assertion reads the
+/// flock afterwards.
+///
+/// # Panics
+///
+/// If the start reply is an error.
 async fn start_web(h: &Harness) {
-    reply_of(
+    let started = reply_of(
         dispatch(
             envelope(
                 1,
@@ -55,6 +60,53 @@ async fn start_web(h: &Harness) {
         )
         .await,
     );
+    assert!(
+        started.result.is_ok(),
+        "web must start: {:?}",
+        started.result
+    );
+}
+
+/// The flock a `Describe` of `selector` on `ctx` answers with.
+///
+/// # Panics
+///
+/// If the reply is anything but `Described`, which is a fixture bug.
+async fn describe(ctx: &RpcContext, id: u64, selector: SelectorSpec) -> Vec<ProcessInfo> {
+    let reply = reply_of(dispatch(envelope(id, Request::Describe { selector }), ctx).await);
+    let Ok(Response::Described(infos)) = reply.result else {
+        panic!("expected Described, got {:?}", reply.result)
+    };
+    infos
+}
+
+/// Sends `entries` for `namespace` in `environment` as a `PutSecrets`,
+/// and hands back the whole reply: every case here reads either its
+/// `Ok` or its `Err`, so neither half is thrown away.
+async fn put_secrets(
+    ctx: &RpcContext,
+    id: u64,
+    namespace: &str,
+    environment: &str,
+    entries: &[(&str, &str)],
+) -> Reply {
+    reply_of(
+        dispatch(
+            envelope(
+                id,
+                Request::PutSecrets {
+                    namespace: namespace.to_string(),
+                    environment: environment.to_string(),
+                    entries: entries
+                        .iter()
+                        .map(|(key, value)| ((*key).to_string(), (*value).to_string().into()))
+                        .collect(),
+                },
+            ),
+            ctx,
+        )
+        .await,
+    )
 }
 
 /// The flock a `ListFlock` on `ctx` answers with.

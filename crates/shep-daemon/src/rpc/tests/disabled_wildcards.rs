@@ -176,18 +176,7 @@ async fn naming_a_disabled_app_still_reaches_stop_signal_describe_and_delete() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].name, "api");
 
-    let Ok(Response::Described(described)) = send(
-        &h,
-        5,
-        Request::Describe {
-            selector: SelectorSpec::All,
-        },
-    )
-    .await
-    .result
-    else {
-        panic!("expected Described")
-    };
+    let described = describe(&h.ctx, 5, SelectorSpec::All).await;
     assert_eq!(names(&described), ["api", "web", "worker"]);
 
     let Ok(Response::Deleted(deleted)) = send(
