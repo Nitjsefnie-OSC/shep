@@ -73,15 +73,13 @@ async fn a_triggered_action_reaches_a_real_child_and_answers_it_twice() {
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut client = fixture.connect().await;
 
-    let mut app = AppConfig::minimal("responder", "/bin/sh");
-    app.interpreter = Some("none".to_string());
-    // `channel` is what opens fd 3 here; this app gates no readiness on it.
-    app.channel = true;
-    app.args = vec![
-        "-c".to_string(),
+    let mut app = shell_app(
+        "responder",
         r#"i=0; while IFS= read -r _line <&3; do i=$((i + 1)); printf '{"kind":"action-reply","action":"gc","body":"round-%d"}\n' "$i" >&3; done"#
             .to_string(),
-    ];
+    );
+    // `channel` is what opens fd 3 here; this app gates no readiness on it.
+    app.channel = true;
     let started = client.request(Request::Start { apps: vec![app] }).await;
     let Response::Started(infos) = started.result.unwrap() else {
         panic!("expected started")
@@ -128,12 +126,10 @@ async fn a_line_written_to_a_real_sheeps_stdin_comes_back_on_its_stdout() {
         .await;
     assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
 
-    let mut app = AppConfig::minimal("echoer", "/bin/sh");
-    app.interpreter = Some("none".to_string());
-    app.args = vec![
-        "-c".to_string(),
+    let mut app = shell_app(
+        "echoer",
         "while IFS= read -r line; do echo \"got $line\"; done".to_string(),
-    ];
+    );
     app.stdin = true;
 
     let started = client.request(Request::Start { apps: vec![app] }).await;
@@ -176,14 +172,12 @@ async fn a_childs_metric_reaches_a_channel_subscriber_over_the_socket() {
         .await;
     assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
 
-    let mut app = AppConfig::minimal("chatty", "/bin/sh");
-    app.interpreter = Some("none".to_string());
-    app.channel = true;
     // Sleeps after the metric: the sheep must outlive the assertion.
-    app.args = vec![
-        "-c".to_string(),
+    let mut app = shell_app(
+        "chatty",
         r#"printf '{"kind":"metric","name":"rps","value":42}\n' >&3; sleep 30"#.to_string(),
-    ];
+    );
+    app.channel = true;
     client.request(Request::Start { apps: vec![app] }).await;
 
     // Bounded: a subscriber that never receives must fail, not hang.
@@ -232,18 +226,16 @@ async fn a_childs_note_reaches_a_note_subscriber_and_not_a_metric_one() {
         assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
     }
 
-    let mut app = AppConfig::minimal("leaser", "/bin/sh");
-    app.interpreter = Some("none".to_string());
-    app.channel = true;
     // Sleeps after both lines: the sheep must outlive the assertions.
-    app.args = vec![
-        "-c".to_string(),
+    let mut app = shell_app(
+        "leaser",
         concat!(
             r#"printf '{"kind":"note","name":"lease.web.want.1760500000","value":1}\n' >&3; "#,
             r#"printf '{"kind":"metric","name":"rps","value":42}\n' >&3; sleep 30"#,
         )
         .to_string(),
-    ];
+    );
+    app.channel = true;
     notes.request(Request::Start { apps: vec![app] }).await;
 
     for (client, topic) in [
@@ -325,14 +317,12 @@ async fn a_trigger_against_a_silent_child_times_out_rather_than_hitting_the_rpc_
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut client = fixture.connect().await;
 
-    let mut app = AppConfig::minimal("silent", "/bin/sh");
-    app.interpreter = Some("none".to_string());
+    let mut app = shell_app(
+        "silent",
+        "read -r _line <&3; while :; do sleep 1; done".to_string(),
+    );
     app.channel = true;
     app.action_timeout = UpDuration::from_millis(500);
-    app.args = vec![
-        "-c".to_string(),
-        "read -r _line <&3; while :; do sleep 1; done".to_string(),
-    ];
     let started = client.request(Request::Start { apps: vec![app] }).await;
     let Response::Started(infos) = started.result.unwrap() else {
         panic!("expected started")
