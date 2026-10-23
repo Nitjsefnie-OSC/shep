@@ -241,23 +241,7 @@ impl<R: ProcessRunner> Actor<R> {
             .sheep
             .get_mut(&id)
             .expect("respawn: entry vanished mid-respawn");
-        slot.entry.status = ProcStatus::Errored;
-        slot.entry.pid = None;
-        slot.entry.started_at = None;
-        // Cleared, because nothing exited here: leaving the previous process's
-        // code would show a sheep that once crashed with 1 as still crashing
-        // with 1 while it is failing to start at all.
-        slot.entry.last_exit = None;
-        // `log_ctl` is the one handle here left in place, for the reason on
-        // `SheepSlot::log_ctl`: a send to a pump that ended already fails, so
-        // clearing it would record that fact twice.
-        slot.ctl = None;
-        // Already `None` on every route into a respawn, written anyway so that
-        // "these two go together" is visible at each site.
-        slot.to_child = None;
-        slot.signals = None;
-        slot.to_stdin = None;
-        slot.ready_tx = None;
+        slot.clear_lifecycle(ProcStatus::Errored);
         let info = to_info(&slot.entry, &self.smits);
         self.emit(ProcessEventKind::Errored, info.clone(), manually);
         // The same terminal status `Decision::Errored` reaches, and it needs
@@ -306,20 +290,7 @@ impl<R: ProcessRunner> Actor<R> {
         }
         tracing::warn!(id, %err, "spawn refused; waiting to try again");
         let epoch = slot.epoch;
-        slot.entry.status = ProcStatus::WaitingRestart;
-        slot.entry.pid = None;
-        slot.entry.started_at = None;
-        // Nothing exited here, so the previous process's code would read as
-        // a crash this sheep is still repeating; `respawn_failed` clears it
-        // for the same reason.
-        slot.entry.last_exit = None;
-        // `log_ctl` is left in place as in `respawn_failed`, for the reason on
-        // `SheepSlot::log_ctl`.
-        slot.ctl = None;
-        slot.to_child = None;
-        slot.signals = None;
-        slot.to_stdin = None;
-        slot.ready_tx = None;
+        slot.clear_lifecycle(ProcStatus::WaitingRestart);
         // The wall-clock half of the timer below, which is what a handover
         // successor re-arms from.
         slot.restart_due = SystemTime::now()

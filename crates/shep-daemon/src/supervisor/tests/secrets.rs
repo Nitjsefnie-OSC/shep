@@ -364,3 +364,133 @@ async fn a_batch_with_one_unresolvable_secret_registers_none_of_it() {
         "names the reference: {err}"
     );
 }
+
+/// The lifecycle handles `slot` still holds, so a failure names the one
+/// that survived rather than the whole slot.
+fn live_handles(slot: &SheepSlot) -> Vec<&'static str> {
+    [
+        ("ctl", slot.ctl.is_some()),
+        ("to_child", slot.to_child.is_some()),
+        ("signals", slot.signals.is_some()),
+        ("to_stdin", slot.to_stdin.is_some()),
+        ("ready_tx", slot.ready_tx.is_some()),
+    ]
+    .into_iter()
+    .filter_map(|(name, live)| live.then_some(name))
+    .collect()
+}
+
+/// A respawn that could not start leaves no handle behind on either status
+/// it can land on: a sender kept past its process leaks the task parked on
+/// the other end of it, and a `ready_tx` whose sheep is gone wakes nothing.
+/// `log_ctl` is the one exception, for the reason on `SheepSlot::log_ctl`.
+///
+/// The two routes are the two refusals a secret can make. A key nobody has
+/// set is nobody's to retry, so `respawn_failed` lands it `Errored`; a
+/// namespace no dog has pushed to under this app's environment clears
+/// itself, so `refuse_spawn` lands it `WaitingRestart` on the ladder.
+#[tokio::test(start_paused = true)]
+async fn a_refused_respawn_clears_every_handle_but_the_log_pump() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut actor = actor_with_an_empty_flock(&dir, vec![ProcScript::never_exits(); 2]);
+    shep_core::secrets::set(&actor.paths.secrets, "K", "production", "v").unwrap();
+    actor
+        .provider_secrets
+        .put(
+            crate::supervisor::DEFAULT_ENVIRONMENT,
+            "vault",
+            "production",
+            BTreeMap::from([("K".to_string(), "v".to_string())]),
+            false,
+        )
+        .expect("no cache is written with persist off");
+
+    // `wait_ready` on both, so each slot holds a `ready_tx` to be cleared.
+    let gated = |name: &str, reference: &str, environment: Option<&str>| {
+        let mut app = AppConfig::minimal(name, "./srv");
+        app.wait_ready = true;
+        app.environment = environment.map(str::to_string);
+        app.env
+            .insert("PW".to_string(), format!("{{{{secret:{reference}}}}}"));
+        normalize(app).unwrap()
+    };
+    let started = actor
+        .do_start(
+            vec![gated("plain", "K", None), gated("pushed", "vault/K", None)],
+            None,
+            BatchPolicy::PerApp,
+            &BTreeSet::new(),
+        )
+        .expect("both references resolve for the first spawn");
+    let (plain_id, pushed_id) = (started[0].id, started[1].id);
+    let all_handles = ["ctl", "to_child", "signals", "to_stdin", "ready_tx"];
+    for id in [plain_id, pushed_id] {
+        assert_eq!(
+            live_handles(&actor.sheep[&id]),
+            all_handles,
+            "a sheep that spawned holds every handle, or there is nothing to clear"
+        );
+    }
+
+    // The `Errored` route: the store no longer has the key, and no retry
+    // produces one.
+    shep_core::secrets::unset(&actor.paths.secrets, "K", "production").unwrap();
+    let info = actor.respawn(plain_id, true);
+    assert_eq!(info.status, ProcStatus::Errored);
+    let slot = &actor.sheep[&plain_id];
+    assert_eq!(slot.entry.status, ProcStatus::Errored);
+    assert_eq!(slot.entry.pid, None);
+    assert_eq!(slot.entry.started_at, None);
+    assert_eq!(
+        slot.entry.last_exit, None,
+        "nothing exited on this route, so no code stands for a crash"
+    );
+    assert_eq!(
+        live_handles(slot),
+        Vec::<&str>::new(),
+        "every handle is cleared on the route that errors"
+    );
+    assert!(
+        slot.log_ctl.is_some(),
+        "the log pump's sender is the one kept"
+    );
+
+    // The `WaitingRestart` route: the config this spawn is about to be made
+    // from asks `vault` for a value under `staging`, which no dog has
+    // pushed to yet.
+    actor
+        .sheep
+        .get_mut(&pushed_id)
+        .expect("registered a moment ago")
+        .entry
+        .pending = Some(gated("pushed", "vault/K", Some("staging")));
+    let info = actor.respawn(pushed_id, true);
+    assert_eq!(info.status, ProcStatus::WaitingRestart);
+    let slot = &actor.sheep[&pushed_id];
+    assert_eq!(slot.entry.status, ProcStatus::WaitingRestart);
+    assert_eq!(slot.entry.pid, None);
+    assert_eq!(slot.entry.started_at, None);
+    assert_eq!(
+        slot.entry.last_exit, None,
+        "the same reason as above, on the route that keeps a ladder"
+    );
+    assert_eq!(
+        live_handles(slot),
+        Vec::<&str>::new(),
+        "every handle is cleared on the route that waits"
+    );
+    assert!(
+        slot.log_ctl.is_some(),
+        "the log pump's sender is the one kept"
+    );
+    assert!(
+        slot.restart_due.is_some(),
+        "the wait carries the wall-clock half of its timer, which is what a handover successor re-arms from"
+    );
+
+    assert_eq!(
+        actor.runner.spawn_count(),
+        2,
+        "both refusals happen before the runner is reached, so neither status comes from a spawn that failed"
+    );
+}
