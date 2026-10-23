@@ -70,10 +70,7 @@ pub(super) fn install_signals(
     // its own tokio type with its own `recv`, so there is nothing to iterate.
     macro_rules! listen {
         ($ctor:path, $name:literal) => {{
-            let mut stream = $ctor().map_err(|source| BootError::Io {
-                path: paths.home.clone(),
-                source,
-            })?;
+            let mut stream = $ctor().map_err(|source| BootError::io(&paths.home, source))?;
             let shutdown = Arc::clone(&shutdown);
             signals.tasks.push(tokio::spawn(async move {
                 // Looped: a single await leaves a second event during a
@@ -128,10 +125,7 @@ pub(super) fn install_signals(
     ] {
         // An early return drops `signals`, whose `Drop` aborts every task
         // already pushed.
-        let mut stream = signal(kind).map_err(|source| BootError::Io {
-            path: paths.home.clone(),
-            source,
-        })?;
+        let mut stream = signal(kind).map_err(|source| BootError::io(&paths.home, source))?;
         let shutdown = Arc::clone(&shutdown);
         signals.tasks.push(tokio::spawn(async move {
             // `None` means the stream itself closed, leaving this task
@@ -160,10 +154,8 @@ pub(super) fn install_signals(
     // the case that most needs a reload is a daemon refusing the client at the
     // handshake. Its own task, since it replaces this daemon where the loop
     // above stops it; a refused handover falls back to the graceful stop.
-    let mut hup = signal(SignalKind::hangup()).map_err(|source| BootError::Io {
-        path: paths.home.clone(),
-        source,
-    })?;
+    let mut hup =
+        signal(SignalKind::hangup()).map_err(|source| BootError::io(&paths.home, source))?;
     let (connect_handover, handover_rx) = oneshot::channel::<Option<HandoverSeam>>();
     let hup_shutdown = Arc::clone(&shutdown);
     signals.tasks.push(tokio::spawn(async move {
@@ -194,10 +186,8 @@ pub(super) fn install_signals(
         }
     }));
 
-    let mut usr2 = signal(SignalKind::user_defined2()).map_err(|source| BootError::Io {
-        path: paths.home.clone(),
-        source,
-    })?;
+    let mut usr2 =
+        signal(SignalKind::user_defined2()).map_err(|source| BootError::io(&paths.home, source))?;
     let (connect_supervisor, supervisor_rx) = oneshot::channel::<SupervisorHandle>();
     signals.tasks.push(tokio::spawn(async move {
         // Parked until `boot` reaches step 4; the wait loses no signal.

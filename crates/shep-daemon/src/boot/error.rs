@@ -6,7 +6,7 @@
 //! starts the sequence writes one `?`.
 
 use core::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::snapshot::SnapshotError;
 
@@ -67,6 +67,22 @@ pub enum BootError {
     ReadyWrite(std::io::Error),
 }
 
+impl BootError {
+    /// Shorthand for the [`Self::Io`] variant, which every path-carrying boot
+    /// step reports through
+    ///
+    /// `pub(crate)`, not `pub`: `#[non_exhaustive]` already lets a future boot
+    /// step add a variant, and this helper changes no variant shape. Takes
+    /// `&Path` and clones it here, so only a failing step pays for the
+    /// `PathBuf`.
+    pub(crate) fn io(path: &Path, source: std::io::Error) -> Self {
+        Self::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+}
+
 impl fmt::Display for BootError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -123,6 +139,21 @@ impl From<SnapshotError> for BootError {
 mod tests {
     use super::*;
     use core::error::Error as _;
+
+    #[test]
+    fn io_carries_the_path_and_the_source() {
+        let err = BootError::io(
+            Path::new("/srv/flock/run"),
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+        );
+        assert_eq!(
+            err.to_string(),
+            "boot step failed for `/srv/flock/run`: denied",
+            "the message names the path the step operated on and what the OS said"
+        );
+        let source = err.source().expect("Io must report a source");
+        assert_eq!(source.to_string(), "denied");
+    }
 
     // The point of the boxed payload: whatever the adoption step said is still
     // reachable by anything walking the chain.
