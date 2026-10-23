@@ -70,7 +70,8 @@ impl TestFlock {
         write_atomic(&self.paths.snapshot, roll).expect("the fixture roll must be writable");
     }
 
-    /// Restores this flock's own roll, over a flock holding no dogs.
+    /// Restores this flock's own roll, naming no dogs for the restore's
+    /// graph. What the flock itself already holds is the test's business.
     ///
     /// # Errors
     ///
