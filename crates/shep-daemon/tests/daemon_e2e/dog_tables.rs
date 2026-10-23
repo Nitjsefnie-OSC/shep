@@ -64,12 +64,7 @@ async fn a_dog_hears_its_per_sheep_table_change_end_to_end() {
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     // The dog and the operator are two connections, as they are in life.
     let mut dog = fixture.connect().await;
-    let subscribed = dog
-        .request(Request::Subscribe {
-            topics: vec!["config.sheep.jobs".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    dog.subscribe("config.sheep.jobs").await;
     let mut operator = fixture.connect().await;
 
     let parsed = Flockfile::parse(FLOCKFILE, FlockFormat::Toml).expect("the Flockfile parses");

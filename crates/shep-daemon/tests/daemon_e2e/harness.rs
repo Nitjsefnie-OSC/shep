@@ -239,6 +239,54 @@ impl Client {
         reply
     }
 
+    /// Starts one `app` and hands back its row, failing at the call site.
+    ///
+    /// A plain `fn` reading [`Location::caller`] before it builds the future:
+    /// `#[track_caller]` is a no-op on an `async fn`, and without it a refused
+    /// start reports this file rather than the test that asked for the sheep.
+    ///
+    /// # Panics
+    ///
+    /// If the daemon refuses the start, or answers with anything but a
+    /// `Started` carrying at least one row. The reply rides on the message.
+    #[track_caller]
+    pub(crate) fn start_first(&mut self, app: AppConfig) -> impl Future<Output = ProcessInfo> + '_ {
+        let site = Location::caller();
+        async move {
+            let reply = self.request(Request::Start { apps: vec![app] }).await;
+            let Response::Started(infos) = reply
+                .result
+                .unwrap_or_else(|error| panic!("the sheep must start: {error:?} (at {site})"))
+            else {
+                panic!("expected a started reply (at {site})");
+            };
+            infos
+                .into_iter()
+                .next()
+                .expect("a started reply carries its sheep's row")
+        }
+    }
+
+    /// Subscribes this connection to one `topic`, failing at the call site.
+    ///
+    /// # Panics
+    ///
+    /// If the daemon answers anything but `Subscribed`.
+    #[track_caller]
+    pub(crate) fn subscribe(&mut self, topic: &str) -> impl Future<Output = ()> + '_ {
+        let site = Location::caller();
+        let topics = vec![topic.to_string()];
+        async move {
+            let reply = self.request(Request::Subscribe { topics }).await;
+            let Response::Subscribed = reply
+                .result
+                .unwrap_or_else(|error| panic!("the subscribe failed: {error:?} (at {site})"))
+            else {
+                panic!("expected a subscribed reply (at {site})");
+            };
+        }
+    }
+
     /// Reads frames until a `Process` event of `kind` for `id` arrives,
     /// re-queueing everything else.
     pub(crate) async fn await_process_event(

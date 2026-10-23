@@ -45,6 +45,57 @@ fn probed_sheep(name: &str, port: u16, mute_file: &std::path::Path) -> AppConfig
     app
 }
 
+/// What one probed-reload case has booted: a daemon, one [`probed_sheep`]
+/// answering `port` and `Online`, and a `process.*` subscription.
+///
+/// `dir` is the tempdir holding [`ProbedFlock::mute`], separate from the
+/// fixture's own `$SHEP_HOME`.
+#[cfg(unix)]
+struct ProbedFlock {
+    fixture: Fixture,
+    client: Client,
+    dir: tempfile::TempDir,
+    port: u16,
+    mute: std::path::PathBuf,
+    drainee_id: u32,
+    drainee_pid: u32,
+}
+
+/// Boots [`ProbedFlock`]: a fresh home, one `web` sheep on a fresh port, the
+/// wait for it to serve and go `Online`, then the subscription.
+///
+/// The caller holds [`RELOAD_PORT_LOCK`] across this, and writes
+/// [`ProbedFlock::mute`] after it, so a case that wants the bad release needs
+/// no flag here.
+#[cfg(unix)]
+async fn boot_probed_flock() -> ProbedFlock {
+    let port = free_port();
+    let dir = tempfile::tempdir().unwrap();
+    let mute = dir.path().join("mute");
+
+    let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
+    let mut client = fixture.connect().await;
+    let sheep = client.start_first(probed_sheep("web", port, &mute)).await;
+    let drainee_id = sheep.id;
+    let drainee_pid = sheep.pid.expect("a real spawn reports a real pid");
+    await_serving(port, drainee_pid).await;
+    await_online(&mut client, drainee_id).await;
+
+    // Subscribed after the sheep is up: these cases read the event stream in
+    // emission order, and an earlier subscription would put `Start` in front.
+    client.subscribe("process.*").await;
+
+    ProbedFlock {
+        fixture,
+        client,
+        dir,
+        port,
+        mute,
+        drainee_id,
+        drainee_pid,
+    }
+}
+
 /// The control for the case below: without it, an implementation that
 /// abandoned every probed reload would pass the failure case and look correct.
 ///
@@ -54,36 +105,10 @@ fn probed_sheep(name: &str, port: u16, mute_file: &std::path::Path) -> AppConfig
 #[tokio::test]
 async fn a_probed_reload_of_a_working_release_still_finishes() {
     let _port_guard = RELOAD_PORT_LOCK.lock().await;
-    let port = free_port();
-    let dir = tempfile::tempdir().unwrap();
-    let mute = dir.path().join("mute");
+    let mut boot = boot_probed_flock().await;
 
-    let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
-    let mut client = fixture.connect().await;
-
-    let started = client
-        .request(Request::Start {
-            apps: vec![probed_sheep("web", port, &mute)],
-        })
-        .await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let drainee_id = infos[0].id;
-    let drainee_pid = infos[0].pid.expect("a real spawn reports a real pid");
-    await_serving(port, drainee_pid).await;
-    await_online(&mut client, drainee_id).await;
-
-    // Subscribed after the app is up: this case reads the event stream in
-    // emission order, and an earlier subscription would put `Start` in front.
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["process.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
-
-    let accepted = client
+    let accepted = boot
+        .client
         .request(Request::Reload {
             selector: SelectorSpec::Name("web".to_string()),
         })
@@ -95,7 +120,8 @@ async fn a_probed_reload_of_a_working_release_still_finishes() {
 
     // In order: the question is which of the two endings the reload reached,
     // and a search would find one whatever else had already been said.
-    let (ending, replacement) = client
+    let (ending, replacement) = boot
+        .client
         .next_process_event_of(&[
             ProcessEventKind::Reloaded,
             ProcessEventKind::ReloadAbandoned,
@@ -107,17 +133,17 @@ async fn a_probed_reload_of_a_working_release_still_finishes() {
         "a serial reload is slower than an overlapping one, not broken"
     );
     let replacement_pid = replacement.pid.expect("a replacement has a pid");
-    assert_ne!(replacement_pid, drainee_pid);
+    assert_ne!(replacement_pid, boot.drainee_pid);
     assert_eq!(replacement.status, ProcStatus::Online);
     assert_eq!(
-        tally(&burst(port).await),
+        tally(&burst(boot.port).await),
         format!("{BURST}x served by {replacement_pid}"),
         "the replacement owns the port once the swap is done"
     );
 
-    let held = fixture.shutdown().await;
+    let held = boot.fixture.shutdown().await;
     drop(held);
-    drop(dir);
+    drop(boot.dir);
 }
 
 /// Both instances run the same command; the second finds `SHEEP_MUTE_FILE` in
@@ -132,39 +158,13 @@ async fn a_probed_reload_of_a_working_release_still_finishes() {
 #[tokio::test]
 async fn a_replacement_that_serves_nothing_is_refused_not_reported_reloaded() {
     let _port_guard = RELOAD_PORT_LOCK.lock().await;
-    let port = free_port();
-    let dir = tempfile::tempdir().unwrap();
-    let mute = dir.path().join("mute");
-
-    let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
-    let mut client = fixture.connect().await;
-
-    let started = client
-        .request(Request::Start {
-            apps: vec![probed_sheep("web", port, &mute)],
-        })
-        .await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let drainee_id = infos[0].id;
-    let drainee_pid = infos[0].pid.expect("a real spawn reports a real pid");
-    await_serving(port, drainee_pid).await;
-    await_online(&mut client, drainee_id).await;
-
-    // Subscribed after the app is up: this case reads the event stream in
-    // emission order, and an earlier subscription would put `Start` in front.
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["process.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    let mut boot = boot_probed_flock().await;
 
     // The bad release, staged between the two spawns of one unchanged app.
-    std::fs::write(&mute, b"").expect("the marker must be writable");
+    std::fs::write(&boot.mute, b"").expect("the marker must be writable");
 
-    let accepted = client
+    let accepted = boot
+        .client
         .request(Request::Reload {
             selector: SelectorSpec::Name("web".to_string()),
         })
@@ -175,7 +175,8 @@ async fn a_replacement_that_serves_nothing_is_refused_not_reported_reloaded() {
     assert_eq!(accepted.len(), 1);
 
     // In order again, for the reason the control case gives.
-    let (ending, info) = client
+    let (ending, info) = boot
+        .client
         .next_process_event_of(&[
             ProcessEventKind::Reloaded,
             ProcessEventKind::ReloadAbandoned,
@@ -186,9 +187,12 @@ async fn a_replacement_that_serves_nothing_is_refused_not_reported_reloaded() {
         ProcessEventKind::ReloadAbandoned,
         "a replacement that binds nothing has not proved it can take over"
     );
-    assert_ne!(info.id, drainee_id, "the abandonment names the replacement");
+    assert_ne!(
+        info.id, boot.drainee_id,
+        "the abandonment names the replacement"
+    );
 
-    let listed = client.request(Request::ListFlock).await;
+    let listed = boot.client.request(Request::ListFlock).await;
     let Response::Flock(flock) = listed.result.unwrap() else {
         panic!("expected flock")
     };
@@ -199,7 +203,7 @@ async fn a_replacement_that_serves_nothing_is_refused_not_reported_reloaded() {
         "a replacement that never answered its probe is never called online"
     );
 
-    let held = fixture.shutdown().await;
+    let held = boot.fixture.shutdown().await;
     drop(held);
-    drop(dir);
+    drop(boot.dir);
 }

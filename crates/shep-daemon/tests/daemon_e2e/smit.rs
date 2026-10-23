@@ -7,16 +7,6 @@ use super::*;
 /// thirteen characters, and nothing shep understands.
 const SMIT: &str = "\u{25b2} main@a1b2c3";
 
-/// Starts one long-lived real sheep under `name` and answers with its id.
-async fn start_sheep(client: &mut Client, name: &str) -> u32 {
-    let app = forever_app(name);
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.expect("the sheep must start") else {
-        panic!("expected started")
-    };
-    infos[0].id
-}
-
 /// `name`'s smit as `shep flock` would paint it, read over the socket rather
 /// than out of the daemon's memory.
 async fn smit_of(client: &mut Client, name: &str) -> Option<String> {
@@ -51,7 +41,7 @@ async fn a_smit_dies_with_the_connection_that_painted_it() {
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     // The observer must not be the connection whose closing is under test.
     let mut looker = fixture.connect().await;
-    start_sheep(&mut looker, "web").await;
+    looker.start_first(forever_app("web")).await;
 
     let mut painter = fixture.connect().await;
     let painted = painter
@@ -87,8 +77,8 @@ async fn a_smit_dies_with_the_connection_that_painted_it() {
 async fn one_dogs_disconnect_leaves_another_dogs_smit_alone() {
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut looker = fixture.connect().await;
-    start_sheep(&mut looker, "web").await;
-    start_sheep(&mut looker, "api").await;
+    looker.start_first(forever_app("web")).await;
+    looker.start_first(forever_app("api")).await;
 
     let mut deployer = fixture.connect().await;
     let mut watcher = fixture.connect().await;
@@ -147,7 +137,7 @@ async fn one_dogs_disconnect_leaves_another_dogs_smit_alone() {
 async fn a_smit_carrying_an_escape_is_refused_at_the_daemon() {
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut looker = fixture.connect().await;
-    start_sheep(&mut looker, "web").await;
+    looker.start_first(forever_app("web")).await;
 
     let mut rogue = fixture.connect().await;
     let refused = rogue

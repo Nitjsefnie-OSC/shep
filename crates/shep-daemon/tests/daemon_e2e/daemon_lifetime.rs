@@ -244,21 +244,12 @@ async fn a_bare_interpreter_resolves_via_the_inherited_path() {
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut client = fixture.connect().await;
     // Subscribe before starting: a connection gets no events until it does.
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["process.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    client.subscribe("process.*").await;
 
     // Bare: only found via the seeded PATH now that it includes shim_dir.
     let mut app = AppConfig::minimal("bare", "unused");
     app.interpreter = Some("shep-test-interp".to_string());
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let id = infos[0].id;
+    let id = client.start_first(app).await.id;
 
     // A failed exec lands the sheep in Errored, so Online is the assertion.
     let online = client
