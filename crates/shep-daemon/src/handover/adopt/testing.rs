@@ -1,8 +1,7 @@
 //! Fixtures and helpers shared by this module's tests.
 
-use super::super::{CarriedFds, CarriedSheep, Handover};
+use super::super::{CarriedFds, CarriedSheep, Counters, DaemonFds, Handover};
 use super::adopt_descriptors::adopt;
-use crate::handover::VERSION;
 use crate::privilege::SpawnIdentity;
 use shep_core::status::ProcStatus;
 use std::io;
@@ -13,6 +12,17 @@ use std::path::Path;
 /// A number this process will never own, the same floor `sys`'s own
 /// refusal tests use.
 pub(super) const NEVER_OPEN: RawFd = 4096;
+
+/// The counters every fixture blob in this module names.
+///
+/// Deliberately nonzero: a successor that ignored them would reissue an id
+/// or a stamp a caller still holds, which is what the real counters guard
+/// against.
+pub(super) const TEST_COUNTERS: Counters = Counters {
+    next_id: 9,
+    next_deadline: 5,
+    next_action_stamp: 2,
+};
 
 /// One carried sheep named `web`, whose descriptors are `fds`.
 pub(super) fn carried(fds: CarriedFds) -> CarriedSheep {
@@ -56,16 +66,15 @@ pub(super) fn carried_slot(instance: u32, fds: CarriedFds) -> CarriedSheep {
 pub(super) fn blob_with(socket: &Path, sheep: Vec<CarriedSheep>) -> Handover {
     let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
     let pidfile = tempfile::tempfile().unwrap();
-    Handover {
-        version: VERSION,
+    Handover::new(
         sheep,
-        listener_fd: listener.into_raw_fd(),
-        pidfile_fd: pidfile.into_raw_fd(),
-        next_id: 9,
-        next_deadline: 5,
-        next_action_stamp: 2,
-        reloads: Some(Vec::new()),
-    }
+        DaemonFds {
+            listener: listener.into_raw_fd(),
+            pidfile: pidfile.into_raw_fd(),
+        },
+        TEST_COUNTERS,
+        Vec::new(),
+    )
 }
 
 /// A predecessor's live descriptors: one of everything a blob names,
@@ -118,9 +127,8 @@ impl Predecessor {
     /// A blob naming every one of them, for one sheep called `web`.
     pub(super) fn blob(&self) -> Handover {
         use std::os::fd::AsRawFd as _;
-        Handover {
-            version: VERSION,
-            sheep: vec![carried(CarriedFds {
+        Handover::new(
+            vec![carried(CarriedFds {
                 out_pipe: Some(self.out_read.as_raw_fd()),
                 err_pipe: None,
                 out_log: Some(self.out_log.as_raw_fd()),
@@ -128,13 +136,13 @@ impl Predecessor {
                 stdin: Some(self.stdin_write.as_raw_fd()),
                 channel: Some(self.channel.as_raw_fd()),
             })],
-            listener_fd: self.listener.as_raw_fd(),
-            pidfile_fd: self.pidfile.as_raw_fd(),
-            next_id: 9,
-            next_deadline: 5,
-            next_action_stamp: 2,
-            reloads: Some(Vec::new()),
-        }
+            DaemonFds {
+                listener: self.listener.as_raw_fd(),
+                pidfile: self.pidfile.as_raw_fd(),
+            },
+            TEST_COUNTERS,
+            Vec::new(),
+        )
     }
 }
 
