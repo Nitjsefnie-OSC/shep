@@ -4,11 +4,11 @@
 //! sheep depends on a disabled one.
 
 use super::super::*;
+use super::fixture::TestFlock;
 use super::info;
 
 use crate::fake::{ProcScript, ScriptedRunner};
-use crate::supervisor::spawn_supervisor;
-use crate::testing::{capture_logs, test_paths};
+use crate::testing::capture_logs;
 use shep_core::config::{AppConfig, normalize};
 use shep_core::protocol::{BusEvent, ProcessEventKind};
 use shep_core::status::ProcStatus;
@@ -115,31 +115,14 @@ fn restorable_never_starts_a_disabled_app() {
 /// it registers them: `api` would come back listed, stopped and enabled.
 #[tokio::test(start_paused = true)]
 async fn a_restore_keeps_a_disabled_sheep_disabled() {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    std::fs::create_dir_all(paths.snapshot.parent().unwrap()).unwrap();
     let roll = FlockSnapshot::with_apps(vec![saved("api", 0, true), saved("web", 1, false)]);
-    write_atomic(&paths.snapshot, &roll).unwrap();
 
-    let (events, _rx) = crate::bus::test_bus(64);
-    let handle = spawn_supervisor(
-        ScriptedRunner::new(vec![ProcScript::never_exits()]),
-        paths.clone(),
-        events.clone(),
-    );
+    let flock = TestFlock::new(ScriptedRunner::new(vec![ProcScript::never_exits()]));
+    flock.seed(&roll);
 
-    muster(
-        &paths.snapshot,
-        &FlockRegistry::new(),
-        &handle,
-        &events,
-        &[],
-        &[],
-    )
-    .await
-    .unwrap();
+    flock.muster().await.unwrap();
 
-    let mut listed = handle.list_checked().await.unwrap();
+    let mut listed = flock.handle.list_checked().await.unwrap();
     listed.sort_by(|left, right| left.name.cmp(&right.name));
     let seen: Vec<(&str, ProcStatus, Option<bool>)> = listed
         .iter()
@@ -152,37 +135,20 @@ async fn a_restore_keeps_a_disabled_sheep_disabled() {
             ("web", ProcStatus::Online, None),
         ]
     );
-    handle.shutdown().await;
+    flock.shutdown().await;
 }
 
 /// Fails if a disabled dependency keeps its dependent down, or if the roll
 /// round trip through the next write drops the mark again.
 #[tokio::test(start_paused = true)]
 async fn a_dependent_of_a_disabled_sheep_still_starts() {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    std::fs::create_dir_all(paths.snapshot.parent().unwrap()).unwrap();
     let roll = FlockSnapshot::with_apps(vec![saved("db", 0, true), saved_dependent("api", "db")]);
-    write_atomic(&paths.snapshot, &roll).unwrap();
 
-    let (events, _rx) = crate::bus::test_bus(64);
-    let handle = spawn_supervisor(
-        ScriptedRunner::new(vec![ProcScript::never_exits()]),
-        paths.clone(),
-        events.clone(),
-    );
-    let mut seen = events.subscribe();
+    let flock = TestFlock::new(ScriptedRunner::new(vec![ProcScript::never_exits()]));
+    flock.seed(&roll);
+    let mut seen = flock.events.subscribe();
 
-    muster(
-        &paths.snapshot,
-        &FlockRegistry::new(),
-        &handle,
-        &events,
-        &[],
-        &[],
-    )
-    .await
-    .unwrap();
+    flock.muster().await.unwrap();
 
     let mut started = Vec::new();
     while let Ok(event) = seen.try_recv() {
@@ -196,7 +162,7 @@ async fn a_dependent_of_a_disabled_sheep_still_starts() {
         }
     }
     assert_eq!(started, ["api"]);
-    handle.shutdown().await;
+    flock.shutdown().await;
 }
 
 #[test]
