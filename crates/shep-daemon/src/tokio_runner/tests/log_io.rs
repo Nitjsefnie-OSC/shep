@@ -209,20 +209,26 @@ impl AsyncWrite for WriteCounter {
     }
 }
 
-/// A [`LogFile`] writing through `sink`, for the cases that count the writes
-/// reaching a stream rather than read a file.
+/// A [`LogFile`] writing through `sink`, for the cases that drive one
+/// directly rather than through [`PumpHarness`].
 ///
-/// The one place these tests name [`LogFile`]'s fields: the record lock is
-/// the same one any handle on this path takes, so a fixed `"test"` path
-/// shares it, and the handle is the production [`LOG_BUFFER`] over the
-/// counter. An empty `stamp` with `Some(Stamper::default())` is what
-/// [`LogFile::open`] builds for a stamped sheep: the scratch string every
-/// line is joined in.
-fn counting_log(path: &str, sink: &WriteCounter) -> LogFile<WriteCounter> {
+/// The one place these tests name [`LogFile`]'s fields, and generic over the
+/// sink for the same reason [`LogFile`] is: a case that counts the writes
+/// reaching a stream hands in a [`WriteCounter`], a case that wants a real
+/// file hands in the [`tokio::fs::File`] it opened. Neither goes through
+/// [`LogFile::open`], which is the one that swallows a failed open, and
+/// neither is the unix-only [`LogFile::from_file`], which exists for a handle
+/// a handover carried.
+///
+/// The record lock is the one any other handle on `path` takes, the handle is
+/// the production [`LOG_BUFFER`] over `sink`, and an empty `stamp` with
+/// `Some(Stamper::default())` is what [`LogFile::open`] builds for a stamped
+/// sheep: the scratch string every line is joined in.
+fn buffered_log<W: AsyncWrite + Unpin>(path: &Path, sink: W) -> LogFile<W> {
     LogFile {
-        record: record_lock(Path::new("test")),
-        path: PathBuf::from(path),
-        handle: Some(BufWriter::with_capacity(LOG_BUFFER, sink.clone())),
+        record: record_lock(path),
+        path: path.to_path_buf(),
+        handle: Some(BufWriter::with_capacity(LOG_BUFFER, sink)),
         buffered_since: None,
         stamp: String::new(),
         stamper: Some(Stamper::default()),
@@ -248,7 +254,7 @@ async fn a_run_of_lines_costs_one_write_per_bufferful_not_one_per_line() {
     let lines = 3 * LOG_BUFFER / LINE_BYTES;
 
     let sink = WriteCounter::default();
-    let mut log = counting_log("counted.log", &sink);
+    let mut log = buffered_log(Path::new("counted.log"), sink.clone());
     for _ in 0..lines {
         log.append(LINE).await;
     }
@@ -289,7 +295,7 @@ async fn a_run_of_lines_costs_one_write_per_bufferful_not_one_per_line() {
 async fn a_line_from_a_sheep_that_then_goes_quiet_still_reaches_its_file() {
     const LINE: &str = "the-only-line";
     let sink = WriteCounter::default();
-    let mut log = counting_log("quiet.log", &sink);
+    let mut log = buffered_log(Path::new("quiet.log"), sink.clone());
 
     log.append(LINE).await;
     assert_eq!(
@@ -818,21 +824,21 @@ async fn a_flush_lands_both_streams_and_keeps_writing_afterwards() {
 /// that answered without asking would swallow the only signal a
 /// sheep's log went unwritten.
 ///
-/// Driven against a [`LogFile`] directly, not [`PumpHarness`]: a
-/// read-only handle makes the write fail deterministically, since
-/// `write(2)` on `O_RDONLY` is `EBADF` for every uid.
+/// Driven against a [`LogFile`] directly, not [`PumpHarness`]: a handle
+/// opened for reading alone makes the write fail deterministically on every
+/// platform, since `write(2)` on `O_RDONLY` is `EBADF` for every uid and
+/// `WriteFile` on a handle opened without write access is refused.
 ///
-/// `cfg(unix)` alongside [`LogFile::from_file`], the only constructor that
-/// takes a handle already open, which exists only where a handover can carry
-/// one.
-#[cfg(unix)]
+/// Built through [`buffered_log`] rather than [`LogFile::from_file`], so the
+/// case runs on Windows too: what it pins is [`LogFile::flush`] asking the
+/// handle it holds, which is true of any handle.
 #[tokio::test]
 async fn a_flush_reports_the_write_its_file_never_took() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("out.log");
     fs::write(&path, "").unwrap();
     let file = tokio::fs::File::open(&path).await.unwrap();
-    let mut log = LogFile::from_file(path.clone(), file, true);
+    let mut log = buffered_log(&path, file);
 
     // Swallowed by design: the pump keeps draining a child whose log
     // it cannot write. The failure is owed at the flush instead.
