@@ -242,13 +242,16 @@ impl Client {
     /// Starts one `app` and hands back its row, failing at the call site.
     ///
     /// A plain `fn` reading [`Location::caller`] before it builds the future:
-    /// `#[track_caller]` is a no-op on an `async fn`, and without it a refused
-    /// start reports this file rather than the test that asked for the sheep.
+    /// `#[track_caller]` is a no-op on an `async fn`, so a failure names the
+    /// test rather than this file. One app, one row: a case starting a
+    /// multi-instance app sends [`Request::Start`] itself and reads the whole
+    /// `Started`.
     ///
     /// # Panics
     ///
-    /// If the daemon refuses the start, or answers with anything but a
-    /// `Started` carrying at least one row. The reply rides on the message.
+    /// If the daemon refuses the start, answers anything but `Started`, or
+    /// answers `Started` with a row count other than one. The reply rides on
+    /// the message.
     #[track_caller]
     pub(crate) fn start_first(&mut self, app: AppConfig) -> impl Future<Output = ProcessInfo> + '_ {
         let site = Location::caller();
@@ -260,10 +263,13 @@ impl Client {
             else {
                 panic!("expected a started reply (at {site})");
             };
-            infos
-                .into_iter()
-                .next()
-                .expect("a started reply carries its sheep's row")
+            let [info] = infos.as_slice() else {
+                panic!(
+                    "one app, one row: a started reply carries {} rows (at {site})",
+                    infos.len()
+                );
+            };
+            info.clone()
         }
     }
 
