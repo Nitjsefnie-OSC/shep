@@ -370,14 +370,7 @@ mod tests {
     async fn ping_round_trips_over_the_socket() {
         let h = harness(vec![]);
         let mut client = connected(h.ctx.clone()).await;
-        client
-            .send(&Hello {
-                client_version: "0.1.0".to_string(),
-                protocol: PROTOCOL_VERSION,
-                dog_name: None,
-            })
-            .await;
-        let _: HelloReply = client.recv().await;
+        client.handshake().await;
         client
             .send(&Envelope {
                 id: 11,
@@ -397,25 +390,8 @@ mod tests {
     async fn subscribe_streams_only_matching_events() {
         let h = harness(vec![]);
         let mut client = connected(h.ctx.clone()).await;
-        client
-            .send(&Hello {
-                client_version: "0.1.0".to_string(),
-                protocol: PROTOCOL_VERSION,
-                dog_name: None,
-            })
-            .await;
-        let _: HelloReply = client.recv().await;
-        client
-            .send(&Envelope {
-                id: 1,
-                deadline_ms: None,
-                body: Request::Subscribe {
-                    topics: vec!["process.*".to_string()],
-                },
-            })
-            .await;
-        let frame: ServerFrame = client.recv().await;
-        assert!(matches!(frame, ServerFrame::Reply(ref r) if r.result == Ok(Response::Subscribed)));
+        client.handshake().await;
+        client.subscribe(&["process.*"]).await;
 
         let event = |kind| -> SharedEvent {
             BusEvent::Process {
@@ -466,14 +442,7 @@ mod tests {
     async fn a_garbage_frame_ends_the_connection_without_panicking() {
         let h = harness(vec![]);
         let mut client = connected(h.ctx.clone()).await;
-        client
-            .send(&Hello {
-                client_version: "0.1.0".to_string(),
-                protocol: PROTOCOL_VERSION,
-                dog_name: None,
-            })
-            .await;
-        let _: HelloReply = client.recv().await;
+        client.handshake().await;
         client
             .frames
             .send(bytes::Bytes::from_static(b"not json"))
@@ -490,24 +459,8 @@ mod tests {
         // is what makes that path reachable.
         let h = harness(vec![]);
         let mut client = connected(h.ctx.clone()).await;
-        client
-            .send(&Hello {
-                client_version: "0.1.0".to_string(),
-                protocol: PROTOCOL_VERSION,
-                dog_name: None,
-            })
-            .await;
-        let _: HelloReply = client.recv().await;
-        client
-            .send(&Envelope {
-                id: 1,
-                deadline_ms: None,
-                body: Request::Subscribe {
-                    topics: vec!["*".to_string()],
-                },
-            })
-            .await;
-        let _: ServerFrame = client.recv().await; // the Subscribed reply
+        client.handshake().await;
+        client.subscribe(&["*"]).await;
         client
             .frames
             .send(bytes::Bytes::from_static(b"not json"))
@@ -525,24 +478,8 @@ mod tests {
         // connection stack rather than in isolation. Real time: real socket.
         let h = harness(vec![]);
         let mut client = connected(h.ctx.clone()).await;
-        client
-            .send(&Hello {
-                client_version: "0.1.0".to_string(),
-                protocol: PROTOCOL_VERSION,
-                dog_name: None,
-            })
-            .await;
-        let _: HelloReply = client.recv().await;
-        client
-            .send(&Envelope {
-                id: 1,
-                deadline_ms: None,
-                body: Request::Subscribe {
-                    topics: vec!["log.*".to_string()],
-                },
-            })
-            .await;
-        let _: ServerFrame = client.recv().await; // the Subscribed reply
+        client.handshake().await;
+        client.subscribe(&["log.*"]).await;
 
         // Never call `client.recv()` again until after the flood: CONN_QUEUE
         // fills, the forwarder blocks on `out.send`, and the broadcast ring
