@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-23
+
+### Added
+
+- Read a sheep's per-dog table with its secrets resolved
+
+### Fixed
+
+- An older shepherd's sheep_dog_table is NotFound for an unknown sheep
+
+
 ## [0.16.1] - 2026-10-22
 
 

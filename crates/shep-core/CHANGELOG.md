@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-23
+
+### Added
+
+- Resolve secret references in a sheep's per-dog table
+
+### Fixed
+
+- An older shepherd's sheep_dog_table is NotFound for an unknown sheep
+
+### Performance
+
+- Check a log stamp's shape instead of parsing it per line
+- Buffer the bark ring rewrite so a full ring costs one write per buffer
+
+
 ## [0.16.1] - 2026-10-22
 
 

@@ -5,6 +5,17 @@ All notable changes to this crate are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-10-23
+
+### Fixed
+
+- Look a shutdown up after joining the action handlers before it
+
+### Performance
+
+- Run each action handler on its own thread
+
+
 ## [0.16.1] - 2026-10-22
 
 
