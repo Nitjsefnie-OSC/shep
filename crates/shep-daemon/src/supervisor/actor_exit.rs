@@ -404,10 +404,7 @@ impl<R: ProcessRunner> Actor<R> {
                              the instance it replaced already gone"
                         );
                         self.reloads.remove(&name);
-                        if let Some(slot) = self.sheep.get(&id) {
-                            let info = to_info(&slot.entry, &self.smits);
-                            self.emit(ProcessEventKind::ReloadAbandoned, info, true);
-                        }
+                        self.emit_reload_abandoned(id);
                     }
                 }
             }
