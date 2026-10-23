@@ -7,8 +7,6 @@
 //! slow teardown still has somewhere to go. [`SignalTasks`] is what ends them:
 //! its [`Drop`] aborts, where a bare `JoinHandle` would detach.
 
-use std::sync::Arc;
-
 use shep_core::paths::ShepPaths;
 #[cfg(unix)]
 use shep_core::selector::ProcessSelector;
@@ -57,7 +55,7 @@ impl Drop for SignalTasks {
 /// - [`BootError::Io`] if the OS refused to register a signal handler.
 #[cfg(windows)]
 pub(super) fn install_signals(
-    shutdown: Arc<watch::Sender<bool>>,
+    shutdown: watch::Sender<bool>,
     paths: ShepPaths,
 ) -> Result<(SignalTasks, oneshot::Sender<SupervisorHandle>), BootError> {
     use tokio::signal::windows;
@@ -71,7 +69,7 @@ pub(super) fn install_signals(
     macro_rules! listen {
         ($ctor:path, $name:literal) => {{
             let mut stream = $ctor().map_err(|source| BootError::io(&paths.home, source))?;
-            let shutdown = Arc::clone(&shutdown);
+            let shutdown = shutdown.clone();
             signals.tasks.push(tokio::spawn(async move {
                 // Looped: a single await leaves a second event during a
                 // slow teardown with nowhere to go.
@@ -111,7 +109,7 @@ pub(super) fn install_signals(
 
 #[cfg(unix)]
 pub(super) fn install_signals(
-    shutdown: Arc<watch::Sender<bool>>,
+    shutdown: watch::Sender<bool>,
     paths: ShepPaths,
 ) -> Result<InstalledSignals, BootError> {
     let mut signals = SignalTasks {
@@ -126,7 +124,7 @@ pub(super) fn install_signals(
         // An early return drops `signals`, whose `Drop` aborts every task
         // already pushed.
         let mut stream = signal(kind).map_err(|source| BootError::io(&paths.home, source))?;
-        let shutdown = Arc::clone(&shutdown);
+        let shutdown = shutdown.clone();
         signals.tasks.push(tokio::spawn(async move {
             // `None` means the stream itself closed, leaving this task
             // nothing to listen for.
@@ -157,7 +155,7 @@ pub(super) fn install_signals(
     let mut hup =
         signal(SignalKind::hangup()).map_err(|source| BootError::io(&paths.home, source))?;
     let (connect_handover, handover_rx) = oneshot::channel::<Option<HandoverSeam>>();
-    let hup_shutdown = Arc::clone(&shutdown);
+    let hup_shutdown = shutdown.clone();
     signals.tasks.push(tokio::spawn(async move {
         // Parked until `boot` reaches step 4: the descriptors and supervisor a
         // handover needs do not exist yet, and the stream registered above
@@ -237,6 +235,7 @@ mod tests {
     use crate::fake::{ProcScript, ScriptedRunner};
     use crate::testing::{SharedRunner, test_paths};
     use shep_core::config::{AppConfig, normalize};
+    use std::sync::Arc;
     use std::time::Duration;
 
     #[tokio::test]
@@ -306,7 +305,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = test_paths(&dir);
         let (shutdown, mut shutdown_rx) = watch::channel(false);
-        let shutdown = Arc::new(shutdown);
         // The SIGUSR2 and SIGHUP senders are dropped unused: that ends the
         // task parked on each receiver without disturbing the three below.
         let (signals, _connect_supervisor, _connect_handover) =

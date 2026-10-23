@@ -521,7 +521,7 @@ pub(crate) fn harness_with_runner(
             dog_refusals: crate::dogs::DogRefusals::new(),
             peer_contacts: crate::dogs::PeerContacts::new(),
             pid: 4242,
-            shutdown: Arc::new(shutdown),
+            shutdown,
             stats: Arc::clone(&stats),
             // Nothing read, as when `sysinfo` cannot see the platform. A test
             // that needs a reading assigns its own `HostState::fixed`.

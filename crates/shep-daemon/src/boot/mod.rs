@@ -197,12 +197,11 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
     // 1. Signal handlers, before the socket or anything else observable
     //    exists.
     let (shutdown, shutdown_rx) = watch::channel(false);
-    let shutdown = Arc::new(shutdown);
     #[cfg(unix)]
     let (signals, connect_supervisor, connect_handover) =
-        install_signals(Arc::clone(&shutdown), paths.clone())?;
+        install_signals(shutdown.clone(), paths.clone())?;
     #[cfg(windows)]
-    let (signals, connect_supervisor) = install_signals(Arc::clone(&shutdown), paths.clone())?;
+    let (signals, connect_supervisor) = install_signals(shutdown.clone(), paths.clone())?;
 
     // 2. Layout, then claim $SHEP_HOME before touching the socket: that is
     //    what closes the concurrent-boot race a bare probe-then-recover
