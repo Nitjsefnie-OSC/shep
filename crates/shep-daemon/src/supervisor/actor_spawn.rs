@@ -289,10 +289,7 @@ impl<R: ProcessRunner> Actor<R> {
         let out_file = spec.out_file.clone();
         let err_file = spec.err_file.clone();
 
-        // A `ResolvedApp` has already been through `ProbeTarget::parse` in
-        // `normalize`, so an `Err` here means an app skipped that step.
-        let source = ReadinessSource::of(app.config())
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(app.config());
         // An app a later stage waits on is gated even with no signal of its
         // own: the wait then costs its `listen_timeout`, which is the field's
         // documented fallback, rather than costing nothing.
@@ -609,8 +606,7 @@ impl<R: ProcessRunner> Actor<R> {
         // exception: its verdict already stands, and a fresh wait would clear
         // the flag a rollback needs.
         let ready_tx = (status == ProcStatus::Starting && !ready_failed).then(|| {
-            let source = ReadinessSource::of(app.config())
-                .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+            let source = ReadinessSource::of_normalized(app.config());
             spawn_readiness_task(
                 id,
                 carried.epoch(),

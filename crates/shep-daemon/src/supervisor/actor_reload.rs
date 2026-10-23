@@ -205,8 +205,7 @@ impl<R: ProcessRunner> Actor<R> {
             .intended_spec(old_id)
             .expect("reload_mode_of: the instance was found replaceable a moment ago")
             .config();
-        let source = ReadinessSource::of(config)
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(config);
         ReloadMode::of(config, &source)
     }
 
@@ -327,8 +326,7 @@ impl<R: ProcessRunner> Actor<R> {
         .map_err(|err| err.to_string())?;
         let out_file = spec.out_file.clone();
         let err_file = spec.err_file.clone();
-        let source = ReadinessSource::of(app.config())
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(app.config());
 
         let drainee = self
             .sheep
@@ -607,8 +605,7 @@ impl<R: ProcessRunner> Actor<R> {
             return None;
         }
         let config = self.sheep.get(&new_id)?.entry.spec.config();
-        let source = ReadinessSource::of(config)
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(config);
         matches!(source, ReadinessSource::Probe(..)).then_some(source)
     }
 

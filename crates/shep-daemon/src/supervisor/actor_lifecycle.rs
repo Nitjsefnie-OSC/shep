@@ -138,8 +138,7 @@ impl<R: ProcessRunner> Actor<R> {
             Ok(spec) => spec,
             Err(err) => return self.refuse_spawn(id, manually, &err),
         };
-        let source = ReadinessSource::of(app.config())
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(app.config());
         let gated = !matches!(source, ReadinessSource::Heuristic);
         // Read before the move below: a gated app's readiness task wants the
         // same timeout the spawn just used, and `app` is what hands it over.

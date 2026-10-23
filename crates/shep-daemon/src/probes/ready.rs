@@ -59,6 +59,21 @@ impl ReadinessSource {
             None => Ok(Self::Heuristic),
         }
     }
+
+    /// [`Self::of`] on a config that has already been through `normalize`.
+    ///
+    /// Every supervisor site reads the source off a `ResolvedApp`, which
+    /// `normalize` built by running [`ProbeTarget::parse`] over its
+    /// `readiness_probe`.
+    ///
+    /// # Panics
+    ///
+    /// Never for a `ResolvedApp`. A panic means an app reached the
+    /// supervisor without going through `normalize`.
+    #[track_caller]
+    pub(crate) fn of_normalized(config: &AppConfig) -> Self {
+        Self::of(config).expect("ResolvedApp already passed ProbeTarget::parse in normalize")
+    }
 }
 
 /// How many probe gaps a readiness wait splits its deadline into.
@@ -441,6 +456,30 @@ mod tests {
     fn neither_configured_is_heuristic() {
         let app = AppConfig::minimal("web", "./srv");
         assert_eq!(ReadinessSource::of(&app), Ok(ReadinessSource::Heuristic));
+    }
+
+    #[test]
+    fn of_normalized_agrees_with_of_for_channel_probe_and_heuristic() {
+        let probe_cfg = probe_config(ProbeKind::Tcp, "localhost:5432");
+        let target = ProbeTarget::parse(&probe_cfg).expect("a valid tcp target parses");
+
+        let mut channel = AppConfig::minimal("web", "./srv");
+        channel.wait_ready = true;
+        channel.readiness_probe = Some(probe_cfg.clone());
+        let mut probe = AppConfig::minimal("web", "./srv");
+        probe.readiness_probe = Some(probe_cfg.clone());
+        let heuristic = AppConfig::minimal("web", "./srv");
+
+        let cases = [
+            (&channel, ReadinessSource::Channel),
+            (&probe, ReadinessSource::Probe(probe_cfg, target)),
+            (&heuristic, ReadinessSource::Heuristic),
+        ];
+        for (app, expected) in cases {
+            let source = ReadinessSource::of_normalized(app);
+            assert_eq!(source, expected, "each signal still decides on its own");
+            assert_eq!(source, ReadinessSource::of(app).unwrap(), "and with `of`");
+        }
     }
 
     #[test]
