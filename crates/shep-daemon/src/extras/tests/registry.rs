@@ -1,6 +1,30 @@
 //! The registry: what gets armed, and what stops.
 
 use super::*;
+use shep_core::config::ResolvedApp;
+
+/// The liveness-tier fixture app: `web` on `instances` instances, with a
+/// TCP probe that reports only after `failure_threshold` failures.
+fn liveness_app(failure_threshold: u32, instances: u32) -> ResolvedApp {
+    app_with("web", |app| {
+        app.instances = instances;
+        app.liveness_probe = Some(ProbeConfig {
+            failure_threshold,
+            ..probe_config(ProbeKind::Tcp, "localhost:5432")
+        });
+    })
+}
+
+/// The interval the fixture app's probe carries, for a test's `interval * 3`
+/// silence window.
+fn probe_interval(app: &ResolvedApp) -> Duration {
+    app.config()
+        .liveness_probe
+        .as_ref()
+        .expect("the fixture just set one")
+        .interval
+        .as_duration()
+}
 
 #[tokio::test(start_paused = true)]
 async fn extras_debug_names_the_seams_by_role_and_the_sleep_bound_by_value() {
@@ -526,19 +550,8 @@ async fn dropping_the_registry_stops_the_liveness_loop_it_armed() {
     let paths = test_paths(&dir);
     let (handle, _rx, _fixture) = spawn_test_fixture();
     let mut rig = rig(DEFAULT_MAX_CRON_SLEEP);
-    let app = app_with("web", |app| {
-        app.liveness_probe = Some(ProbeConfig {
-            failure_threshold: 1,
-            ..probe_config(ProbeKind::Tcp, "localhost:5432")
-        });
-    });
-    let interval = app
-        .config()
-        .liveness_probe
-        .as_ref()
-        .expect("the fixture just set one")
-        .interval
-        .as_duration();
+    let app = liveness_app(1, 1);
+    let interval = probe_interval(&app);
 
     let mut kept = ExtrasRegistry::default();
     kept.arm(
@@ -621,20 +634,8 @@ async fn disarming_an_id_stops_its_liveness_loop() {
     let (handle, _rx, _fixture) = spawn_test_fixture();
     let mut rig = rig(DEFAULT_MAX_CRON_SLEEP);
     let mut registry = ExtrasRegistry::default();
-    let app = app_with("web", |app| {
-        app.instances = 2;
-        app.liveness_probe = Some(ProbeConfig {
-            failure_threshold: 1,
-            ..probe_config(ProbeKind::Tcp, "localhost:5432")
-        });
-    });
-    let interval = app
-        .config()
-        .liveness_probe
-        .as_ref()
-        .expect("the fixture just set one")
-        .interval
-        .as_duration();
+    let app = liveness_app(1, 2);
+    let interval = probe_interval(&app);
 
     for (id, instance, pid) in [(0, 0, 1000), (1, 1, 1001)] {
         registry.arm(
@@ -666,19 +667,8 @@ async fn a_liveness_threshold_reports_this_instances_id_and_pid() {
     let (handle, _rx, _fixture) = spawn_test_fixture();
     let mut rig = rig(DEFAULT_MAX_CRON_SLEEP);
     let mut registry = ExtrasRegistry::default();
-    let app = app_with("web", |app| {
-        app.liveness_probe = Some(ProbeConfig {
-            failure_threshold: 2,
-            ..probe_config(ProbeKind::Tcp, "localhost:5432")
-        });
-    });
-    let interval = app
-        .config()
-        .liveness_probe
-        .as_ref()
-        .expect("the fixture just set one")
-        .interval
-        .as_duration();
+    let app = liveness_app(2, 1);
+    let interval = probe_interval(&app);
 
     registry.arm(
         &armed_entry(7, 0, 1234, app, &paths),
