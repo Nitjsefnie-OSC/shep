@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Check a log stamp's shape instead of parsing it per line
 - Buffer the bark ring rewrite so a full ring costs one write per buffer
+- Buffer the bark ring rewrite to one write per buffer
 
 
 ## [0.16.1] - 2026-10-22

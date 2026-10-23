@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build watch glob sets from borrowed patterns
 - One within_deadline helper for the readiness wait
 - Drop the unreachable result check in instance_slots
+- Build InvalidConfig and no-sheep refusals through two helpers
+- Share the rpc test start, describe, list and push fixtures
+- Share the reload-to-a-shared-path setup in the flush tests
+- One helper for readiness source, credentials and reset
 
 ### Performance
 

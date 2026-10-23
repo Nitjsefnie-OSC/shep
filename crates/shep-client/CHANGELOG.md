@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Read a sheep's per-dog table with its secrets resolved
+- Resolve secret references in a sheep's per-dog table
 
 ### Fixed
 
