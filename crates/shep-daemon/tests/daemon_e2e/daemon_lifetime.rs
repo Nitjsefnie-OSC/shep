@@ -4,7 +4,6 @@
 
 use super::*;
 
-#[cfg(unix)]
 // `cfg(unix)` because its fixture is a `/bin/sh` script.
 #[cfg(unix)]
 #[tokio::test]
@@ -12,15 +11,9 @@ async fn kill_daemon_shuts_the_flock_down_and_unlinks_the_socket() {
     let mut fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut client = fixture.connect().await;
 
-    let sleeper = |name: &str| {
-        let mut app = AppConfig::minimal(name, "/bin/sh");
-        app.interpreter = Some("none".to_string());
-        app.args = vec!["-c".to_string(), "while :; do sleep 1; done".to_string()];
-        app
-    };
     let started = client
         .request(Request::Start {
-            apps: vec![sleeper("one"), sleeper("two")],
+            apps: vec![forever_app("one"), forever_app("two")],
         })
         .await;
     let Response::Started(infos) = started.result.unwrap() else {
@@ -129,7 +122,6 @@ async fn a_socket_left_behind_by_a_crash_does_not_block_the_next_boot() {
     rebooted.shutdown().await;
 }
 
-#[cfg(unix)]
 // `cfg(unix)` because its fixture is a `/bin/sh` script.
 #[cfg(unix)]
 #[tokio::test]
@@ -228,7 +220,6 @@ impl Drop for PathGuard {
     }
 }
 
-#[cfg(unix)]
 // `cfg(unix)` because its fixture is a `/bin/sh` script.
 #[cfg(unix)]
 #[tokio::test]
