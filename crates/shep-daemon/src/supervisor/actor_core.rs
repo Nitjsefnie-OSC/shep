@@ -196,6 +196,10 @@ impl<R: ProcessRunner> Actor<R> {
                 let _ = reply.send(self.handle_dog_sheep_settings(&dog));
                 false
             }
+            Command::SheepDogRead { name, dog, reply } => {
+                let _ = reply.send(self.handle_sheep_dog_read(&name, &dog));
+                false
+            }
             Command::SetSheepDogSettings {
                 name,
                 dog,

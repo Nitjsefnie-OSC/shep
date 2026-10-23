@@ -16,11 +16,11 @@ use shep_core::protocol::{
 
 use crate::bus::TopicFilter;
 use crate::dogs::DogSpec;
-use crate::supervisor::{BatchPolicy, ConnId};
+use crate::supervisor::{BatchPolicy, ConnId, SheepDogRead};
 
 use super::batch::{duplicate_name, persists, staged_plan};
 use super::context::{Outcome, RpcContext, budget};
-use super::dog_secrets::resolved_section;
+use super::dog_secrets::{resolved_section, resolved_sheep_table};
 use super::enrichment::{
     dog_staleness, handover_refusal, with_dog_contact, with_lambs, with_live_stats,
 };
@@ -381,6 +381,26 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
             Ok(toml) => reply(Ok(Response::DogSection { toml })),
             Err(err) => reply(Err(err)),
         },
+        Request::SheepDogSettingsResolved { name, dog } => {
+            match ctx
+                .supervisor
+                .sheep_dog_read(name.clone(), dog.clone())
+                .await
+            {
+                Ok(Some(SheepDogRead {
+                    table: Some(table),
+                    environment,
+                })) => match resolved_sheep_table(ctx, &name, &dog, &environment, &table) {
+                    Ok(table) => reply(Ok(Response::SheepDogTable { table: Some(table) })),
+                    Err(err) => reply(Err(err)),
+                },
+                Ok(Some(SheepDogRead { table: None, .. })) => {
+                    reply(Ok(Response::SheepDogTable { table: None }))
+                }
+                Ok(None) => reply(Err(no_sheep(&name))),
+                Err(err) => reply(Err(rpc_error(&err))),
+            }
+        }
         Request::EnableDog { name, source } => {
             let spec = DogSpec { name, source };
             match crate::dogs::dog_app(&spec, &ctx.paths) {
