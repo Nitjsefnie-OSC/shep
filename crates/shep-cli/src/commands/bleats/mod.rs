@@ -20,7 +20,7 @@ use std::path::Path;
 use futures_util::FutureExt;
 use serde::Serialize;
 
-use shep_client::{Client, EventStream, Lagged};
+use shep_client::{Client, EventStream, Lagged, RequestError};
 use shep_core::protocol::{BusEvent, LogStream, ProcessInfo};
 use shep_core::selector::ProcessSelector;
 
@@ -30,6 +30,7 @@ use crate::commands::selector::parse_selector;
 use crate::exit::ExitCode;
 use crate::output::{self, Streams, write_outcome};
 use crate::remote::interrupt_within_grace;
+use crate::shutdown::Interrupt;
 
 mod source;
 use source::{FileTail, LogSource, stream_label};
@@ -65,17 +66,15 @@ struct BleatLine<'a> {
 /// subscribes, and turns the answer into an id -> [`ProcessInfo`] cache.
 ///
 /// # Errors
-/// Renders and returns the exit code for a request that failed to reach
-/// the daemon, or a response this client does not recognise (`Response`
-/// is `#[non_exhaustive]`).
-async fn resolve_names(
-    client: &Client,
-    streams: &mut Streams<'_>,
-) -> Result<HashMap<u32, ProcessInfo>, ExitCode> {
-    match client.list_flock().await {
-        Ok(procs) => Ok(procs.into_iter().map(|p| (p.id, p)).collect()),
-        Err(err) => Err(typed_request_error(streams, &err)),
-    }
+/// The request failed to reach the daemon, or the answer is one this client
+/// does not recognise (`Response` is `#[non_exhaustive]`). Reporting it is
+/// the caller's, so one can be explained away as the operator's interrupt
+/// before anything is printed.
+async fn resolve_names(client: &Client) -> Result<HashMap<u32, ProcessInfo>, RequestError> {
+    client
+        .list_flock()
+        .await
+        .map(|procs| procs.into_iter().map(|p| (p.id, p)).collect())
 }
 
 /// Subscribes to every topic `bleats` needs: `log.*` for the lines
@@ -83,16 +82,11 @@ async fn resolve_names(
 /// rather than the connection simply vanishing unexplained.
 ///
 /// # Errors
-/// Renders and returns the exit code for a subscribe request that failed.
-async fn subscribe(client: &Client, streams: &mut Streams<'_>) -> Result<EventStream, ExitCode> {
+/// The subscribe request failed. Reporting it is the caller's, for the same
+/// reason as [`resolve_names`].
+async fn subscribe(client: &Client) -> Result<EventStream, RequestError> {
     let topics = vec!["log.*".to_string(), "daemon.*".to_string()];
-    match client.subscribe(topics).await {
-        Ok(stream) => Ok(stream),
-        Err(err) => {
-            let code = ExitCode::from(&err);
-            Err(streams.fail(code, &err.to_string()))
-        }
-    }
+    client.subscribe(topics).await
 }
 
 /// Resolves `id` to a name from `cache`, or the bare id if `id` was not in
@@ -268,8 +262,9 @@ fn path_unknown_notice(
 /// prints.
 ///
 /// # Errors
-/// A host's shepherd gave no answer to a read ([`LogSource::stop`]). The
-/// code is already reported, and the files after it are not read.
+/// The [`RequestError`] from a read over a host that got no answer. Nothing
+/// is printed for it here: the caller reports it, or explains it away as the
+/// operator's interrupt. The files after it are not read.
 async fn tail_log_files(
     streams: &mut Streams<'_>,
     quiet: bool,
@@ -277,7 +272,7 @@ async fn tail_log_files(
     selector: &ProcessSelector,
     args: &BleatsArgs,
     source: LogSource<'_>,
-) -> Result<ExitCode, ExitCode> {
+) -> Result<ExitCode, RequestError> {
     let mut matched: Vec<&ProcessInfo> = cache
         .values()
         .filter(|info| selector.matches(&info.name, info.id, info.fold.as_deref(), info.instance))
@@ -368,13 +363,7 @@ async fn tail_log_files(
                     failure = true;
                     write_notice(streams, quiet, "log_unreadable", &message);
                 }
-                Err(err) => {
-                    let _ = streams.out.flush();
-                    let code = source.stop(streams, &err);
-                    // The notice `stop` wrote is the reason the verb ended.
-                    let _ = streams.err.flush();
-                    return Err(code);
-                }
+                Err(err) => return Err(err),
             }
         }
     }
@@ -385,6 +374,12 @@ async fn tail_log_files(
     } else {
         ExitCode::Success
     })
+}
+
+/// The reporter [`link_gone`] uses for a tail read a host gave no answer to:
+/// one failure naming the host and the remedy, not one per file.
+fn stop_a_read(source: LogSource<'_>) -> impl FnOnce(&mut Streams<'_>, &RequestError) -> ExitCode {
+    move |streams, err| source.stop(streams, err)
 }
 
 /// Handles one [`BusEvent`] already known to be `Ok` (a `Lagged` item is
@@ -452,22 +447,15 @@ fn handle_event(
 /// `quiet` is `cli::GlobalArgs::quiet`: it silences this module's own notices
 /// and nothing else. A sheep's own line and a real error both still print.
 ///
-/// Delegates to [`bleats_with_signal`] with a real `SIGINT` as the interrupt
-/// source. The shepherd is this machine's: see [`bleats_on_host`] for a host's.
+/// Delegates to [`bleats_armed`] with the interrupt listener installed here.
+/// The shepherd is this machine's: see [`bleats_on_host`] for a host's.
 pub async fn bleats(
     client: &Client,
     streams: &mut Streams<'_>,
     quiet: bool,
     args: &BleatsArgs,
 ) -> ExitCode {
-    bleats_with_signal(
-        client,
-        streams,
-        quiet,
-        args,
-        tokio::signal::ctrl_c().map(|_| ()),
-    )
-    .await
+    bleats_armed(client, streams, quiet, args, None).await
 }
 
 /// [`bleats`] for the shepherd on `host`, where `client` is the ssh link and
@@ -483,13 +471,42 @@ pub async fn bleats_on_host(
     host: &str,
     args: &BleatsArgs,
 ) -> ExitCode {
+    bleats_armed(client, streams, quiet, args, Some(host)).await
+}
+
+/// [`bleats_over`] with the operator's Ctrl+C listened for from here.
+///
+/// Installed here rather than awaited through [`tokio::signal::ctrl_c`],
+/// which registers its handler on its first poll: a follow reaches that poll
+/// only after its listing, its backlog reads and its `Subscribe` round trip,
+/// and it prints the backlog on the way. A `SIGINT` landing before a handler
+/// exists reaches the default disposition and kills this process. Registering
+/// here means tokio queues one that lands early.
+///
+/// # Errors
+/// Renders and returns the exit code for a listener this OS refuses to
+/// register, which leaves the verb with no way to end on Ctrl+C.
+async fn bleats_armed(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    quiet: bool,
+    args: &BleatsArgs,
+    host: Option<&str>,
+) -> ExitCode {
+    let mut interrupt = match Interrupt::install() {
+        Ok(interrupt) => interrupt,
+        Err(err) => {
+            let message = format!("listening for an interrupt: {err}");
+            return streams.fail(ExitCode::Failure, &message);
+        }
+    };
     bleats_over(
         client,
         streams,
         quiet,
         args,
-        Some(host),
-        tokio::signal::ctrl_c().map(|_| ()),
+        host,
+        interrupt.recv().map(|_| ()),
     )
     .await
 }
@@ -501,10 +518,8 @@ pub async fn bleats_on_host(
 /// `--no-follow` stops there and hands off to [`tail_log_files`], issuing
 /// no `Request::Subscribe`. `--follow` subscribes and loops on
 /// `tokio::select!`: a line renders, a `Lagged` item is noted and the
-/// follow continues, the stream ending means the daemon is gone
-/// ([`ExitCode::DaemonUnreachable`], or [`ExitCode::Success`] when an interrupt
-/// follows within the grace [`bleats_over`] gives a host), and `interrupt` firing exits
-/// [`ExitCode::Success`].
+/// follow continues, a request or a stream that stops answering ends on
+/// [`link_gone`], and `interrupt` firing exits [`ExitCode::Success`].
 ///
 /// `streams.out` is flushed on every exit path, or buffered lines are lost.
 pub async fn bleats_with_signal(
@@ -517,14 +532,49 @@ pub async fn bleats_with_signal(
     bleats_over(client, streams, quiet, args, None, interrupt).await
 }
 
+/// What a request whose link closed mid-flight means.
+///
+/// Over a host the ssh child dies on the same Ctrl+C as this process, so a
+/// closed connection is equally consistent with the operator ending the verb:
+/// the interrupt gets [`crate::remote::HOST_INTERRUPT_GRACE`] to say so, and
+/// ends the verb at [`ExitCode::Success`] with nothing printed. A shepherd
+/// that answered with a refusal is answering, so only [`RequestError::Closed`]
+/// gets the grace, and locally a Ctrl+C closes no connection at all.
+///
+/// Polling `interrupt` here is what ends a follow on an interrupt that landed
+/// before its loop armed: [`bleats_armed`] installed the listener, and tokio
+/// queued the signal.
+async fn link_gone<F, R>(
+    streams: &mut Streams<'_>,
+    host: Option<&str>,
+    err: &RequestError,
+    interrupt: &mut F,
+    report: R,
+) -> ExitCode
+where
+    F: std::future::Future<Output = ()> + Unpin,
+    R: FnOnce(&mut Streams<'_>, &RequestError) -> ExitCode,
+{
+    if host.is_some()
+        && matches!(err, RequestError::Closed)
+        && interrupt_within_grace(interrupt).await
+    {
+        return ExitCode::Success;
+    }
+    let _ = streams.out.flush();
+    // The message `report` wrote is the reason the verb ended.
+    let code = report(streams, err);
+    let _ = streams.err.flush();
+    code
+}
+
 /// [`bleats_with_signal`] with the host decided by the caller, so a test
 /// needs no ssh.
 ///
 /// A `host` changes two things. Every tail is read by that host's shepherd,
 /// because `out_file`/`err_file` are the remote's paths and are not files
-/// here. A stream that ends is given [`crate::remote::HOST_INTERRUPT_GRACE`]
-/// to be explained by an interrupt, because the ssh child dies on the same
-/// Ctrl+C.
+/// here. Every request whose link closed is decided by [`link_gone`], because
+/// the ssh child dies on the same Ctrl+C.
 async fn bleats_over(
     client: &Client,
     streams: &mut Streams<'_>,
@@ -533,16 +583,10 @@ async fn bleats_over(
     host: Option<&str>,
     interrupt: impl std::future::Future<Output = ()> + Send,
 ) -> ExitCode {
+    tokio::pin!(interrupt);
+
     let selector = match parse_selector(streams, &args.selector) {
         Ok(selector) => selector,
-        Err(code) => return code,
-    };
-
-    // The id/name cache is built from one listing taken before subscribing.
-    // Subscribing first would lose every line pushed while the listing is
-    // still in flight.
-    let cache = match resolve_names(client, streams).await {
-        Ok(cache) => cache,
         Err(code) => return code,
     };
 
@@ -551,10 +595,21 @@ async fn bleats_over(
         None => LogSource::Local,
     };
 
+    // The id/name cache is built from one listing taken before subscribing.
+    // Subscribing first would lose every line pushed while the listing is
+    // still in flight.
+    let cache = match resolve_names(client).await {
+        Ok(cache) => cache,
+        Err(err) => {
+            return link_gone(streams, host, &err, &mut interrupt, typed_request_error).await;
+        }
+    };
+
     if args.no_follow {
-        let (Ok(code) | Err(code)) =
-            tail_log_files(streams, quiet, &cache, &selector, args, source).await;
-        return code;
+        return match tail_log_files(streams, quiet, &cache, &selector, args, source).await {
+            Ok(code) => code,
+            Err(err) => link_gone(streams, host, &err, &mut interrupt, stop_a_read(source)).await,
+        };
     }
 
     // A follow labels every line it receives, and `cache` cannot change
@@ -567,17 +622,17 @@ async fn bleats_over(
     // that gave no answer to a read stops it, since it would give none to the
     // subscribe either.
     if args.lines > 0
-        && let Err(code) = tail_log_files(streams, quiet, &cache, &selector, args, source).await
+        && let Err(err) = tail_log_files(streams, quiet, &cache, &selector, args, source).await
     {
-        return code;
+        return link_gone(streams, host, &err, &mut interrupt, stop_a_read(source)).await;
     }
 
-    let mut stream = match subscribe(client, streams).await {
+    let mut stream = match subscribe(client).await {
         Ok(stream) => stream,
-        Err(code) => return code,
+        Err(err) => {
+            return link_gone(streams, host, &err, &mut interrupt, typed_request_error).await;
+        }
     };
-
-    tokio::pin!(interrupt);
 
     loop {
         tokio::select! {
