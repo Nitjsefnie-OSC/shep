@@ -83,17 +83,25 @@ pub(crate) async fn attempt(port: u16) -> Attempt {
     }
 }
 
+/// Drain `set` to the end, in completion order.
+///
+/// An [`attempt`] answers or reports a failure, never panics, so a failed
+/// join is a harness bug rather than a lost connection.
+pub(crate) async fn collect_attempts(mut set: tokio::task::JoinSet<Attempt>) -> Vec<Attempt> {
+    let mut attempts = Vec::new();
+    while let Some(outcome) = set.join_next().await {
+        attempts.push(outcome.expect("an attempt cannot panic"));
+    }
+    attempts
+}
+
 /// Opens [`BURST`] connections at once and hands back what each got.
 pub(crate) async fn burst(port: u16) -> Vec<Attempt> {
     let mut set = tokio::task::JoinSet::new();
     for _ in 0..BURST {
         set.spawn(attempt(port));
     }
-    let mut attempts = Vec::new();
-    while let Some(outcome) = set.join_next().await {
-        attempts.push(outcome.expect("an attempt cannot panic"));
-    }
-    attempts
+    collect_attempts(set).await
 }
 
 /// A caller that keeps connecting for as long as a reload takes.
@@ -116,11 +124,7 @@ impl Hammer {
                 }
                 // Connections already open are waited out: those in flight at
                 // the swap are the ones an instance killed mid-answer loses.
-                let mut attempts = Vec::new();
-                while let Some(outcome) = set.join_next().await {
-                    attempts.push(outcome.expect("an attempt cannot panic"));
-                }
-                attempts
+                collect_attempts(set).await
             }
         });
         Self { stop, task }
