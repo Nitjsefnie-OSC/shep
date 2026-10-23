@@ -444,10 +444,8 @@ impl<R: ProcessRunner> Actor<R> {
         // Reused as resolved, never re-resolved: the value was pinned at the
         // predecessor's first spawn, so a passwd change cannot move a running
         // app's identity.
-        let credentials = match carried.credentials() {
-            SpawnIdentity::Resolved(credentials) => credentials,
-            SpawnIdentity::Unresolved => None,
-        };
+        let identity = carried.credentials();
+        let credentials = identity.credentials();
         // Assembled for its log paths only: the entry has to name the files
         // this sheep is writing to, and a later rotation reopens them by path.
         // `describe`, so a store that moved under a running flock costs a log
@@ -517,7 +515,7 @@ impl<R: ProcessRunner> Actor<R> {
             // `Replacement` out of the swap, while `None` takes
             // `decide_on_exit`.
             reload,
-            credentials: carried.credentials(),
+            credentials: identity,
             out_file: described.out_file.clone(),
             err_file: described.err_file.clone(),
             // Restored: it is the marker that keeps a dog out of the flock.

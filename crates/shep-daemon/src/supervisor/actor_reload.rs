@@ -628,10 +628,7 @@ impl<R: ProcessRunner> Actor<R> {
         // `instance` and `credentials` never change after registration, so
         // this is the instance's own spawn spec, bar a reference the store
         // has stopped answering.
-        let credentials = match slot.entry.credentials {
-            SpawnIdentity::Resolved(creds) => creds,
-            SpawnIdentity::Unresolved => None,
-        };
+        let credentials = slot.entry.credentials.credentials();
         let described = describe(
             &slot.entry.spec,
             slot.entry.instance,

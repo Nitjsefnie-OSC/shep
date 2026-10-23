@@ -60,6 +60,22 @@ pub enum SpawnIdentity {
     Resolved(Option<Credentials>),
 }
 
+impl SpawnIdentity {
+    /// The credentials the next spawn runs under.
+    ///
+    /// `None` both for an identity that names nobody and for one `resolve`
+    /// has never been asked about. Reading a value is not settling one:
+    /// an `Unresolved` identity stays unresolved here, and only
+    /// [`resolve`] answers it.
+    #[must_use]
+    pub(crate) const fn credentials(self) -> Option<Credentials> {
+        match self {
+            Self::Resolved(credentials) => credentials,
+            Self::Unresolved => None,
+        }
+    }
+}
+
 /// Error resolving an app's `user`/`group` config to numeric ids
 #[cfg_attr(windows, allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,6 +195,29 @@ mod tests {
             .unwrap()
             .expect("this process has a passwd entry")
             .name
+    }
+
+    #[test]
+    fn a_spawn_identity_yields_its_credentials_only_when_resolved() {
+        let creds = Credentials {
+            uid: 1000,
+            gid: Some(1001),
+        };
+
+        assert_eq!(
+            SpawnIdentity::Resolved(Some(creds)).credentials(),
+            Some(creds)
+        );
+        assert_eq!(
+            SpawnIdentity::Resolved(None).credentials(),
+            None,
+            "an app that named neither `user` nor `group` settles to nobody"
+        );
+        assert_eq!(
+            SpawnIdentity::Unresolved.credentials(),
+            None,
+            "an identity never resolved yields nothing here; only `resolve` can settle it"
+        );
     }
 
     #[test]

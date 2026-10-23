@@ -502,13 +502,10 @@ impl<R: ProcessRunner> Actor<R> {
             let secrets = views
                 .entry(environment)
                 .or_insert_with(|| self.secret_view(&entry.spec));
-            // `Credentials` is `Copy`, so this needs no clone. The unresolved
-            // arm costs nothing: an entry reached here is running and
-            // resolved its identity before it started.
-            let credentials = match entry.credentials {
-                SpawnIdentity::Resolved(credentials) => credentials,
-                SpawnIdentity::Unresolved => None,
-            };
+            // `Credentials` is `Copy`, so this needs no clone. An entry
+            // reached here is running and resolved its identity before it
+            // started.
+            let credentials = entry.credentials.credentials();
             specs.insert(
                 entry.id,
                 describe(
