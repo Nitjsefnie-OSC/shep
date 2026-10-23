@@ -131,6 +131,28 @@ impl SheepSlot {
         }
     }
 
+    /// Lands the slot at `status` with nothing left attached to a process
+    /// that is no longer running.
+    ///
+    /// [`Self::log_ctl`] is the one handle left in place, for the reason on
+    /// that field.
+    pub(super) fn clear_lifecycle(&mut self, status: ProcStatus) {
+        self.entry.status = status;
+        self.entry.pid = None;
+        self.entry.started_at = None;
+        // Cleared, because nothing exited here: leaving the previous
+        // process's code would show a sheep that once crashed with 1 as
+        // still crashing with 1 while it is failing to start at all.
+        self.entry.last_exit = None;
+        self.ctl = None;
+        // `signals` and `to_stdin` go wherever `to_child` goes, for the
+        // reason on each field.
+        self.to_child = None;
+        self.signals = None;
+        self.to_stdin = None;
+        self.ready_tx = None;
+    }
+
     /// This sheep's shepherd-channel sender while something is still there to
     /// receive on it, and `None` when nothing is.
     ///

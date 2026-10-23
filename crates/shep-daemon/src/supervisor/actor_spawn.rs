@@ -289,10 +289,7 @@ impl<R: ProcessRunner> Actor<R> {
         let out_file = spec.out_file.clone();
         let err_file = spec.err_file.clone();
 
-        // A `ResolvedApp` has already been through `ProbeTarget::parse` in
-        // `normalize`, so an `Err` here means an app skipped that step.
-        let source = ReadinessSource::of(app.config())
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(app.config());
         // An app a later stage waits on is gated even with no signal of its
         // own: the wait then costs its `listen_timeout`, which is the field's
         // documented fallback, rather than costing nothing.
@@ -447,10 +444,8 @@ impl<R: ProcessRunner> Actor<R> {
         // Reused as resolved, never re-resolved: the value was pinned at the
         // predecessor's first spawn, so a passwd change cannot move a running
         // app's identity.
-        let credentials = match carried.credentials() {
-            SpawnIdentity::Resolved(credentials) => credentials,
-            SpawnIdentity::Unresolved => None,
-        };
+        let identity = carried.credentials();
+        let credentials = identity.credentials();
         // Assembled for its log paths only: the entry has to name the files
         // this sheep is writing to, and a later rotation reopens them by path.
         // `describe`, so a store that moved under a running flock costs a log
@@ -520,7 +515,7 @@ impl<R: ProcessRunner> Actor<R> {
             // `Replacement` out of the swap, while `None` takes
             // `decide_on_exit`.
             reload,
-            credentials: carried.credentials(),
+            credentials: identity,
             out_file: described.out_file.clone(),
             err_file: described.err_file.clone(),
             // Restored: it is the marker that keeps a dog out of the flock.
@@ -609,8 +604,7 @@ impl<R: ProcessRunner> Actor<R> {
         // exception: its verdict already stands, and a fresh wait would clear
         // the flag a rollback needs.
         let ready_tx = (status == ProcStatus::Starting && !ready_failed).then(|| {
-            let source = ReadinessSource::of(app.config())
-                .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+            let source = ReadinessSource::of_normalized(app.config());
             spawn_readiness_task(
                 id,
                 carried.epoch(),

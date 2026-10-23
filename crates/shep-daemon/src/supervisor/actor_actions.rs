@@ -375,11 +375,8 @@ impl<R: ProcessRunner> Actor<R> {
         // Rebuilt for the prober's sake alone, as `spawn_verify_task` does:
         // nothing spawns this sheep's own program from it. Extras are armed
         // only for a process already running, which resolved its identity to
-        // start, so the unresolved arm below cannot be reached from here.
-        let credentials = match slot.entry.credentials {
-            SpawnIdentity::Resolved(creds) => creds,
-            SpawnIdentity::Unresolved => None,
-        };
+        // start.
+        let credentials = slot.entry.credentials.credentials();
         let described = describe(
             &slot.entry.spec,
             slot.entry.instance,
