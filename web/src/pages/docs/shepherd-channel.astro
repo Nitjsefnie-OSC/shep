@@ -338,6 +338,14 @@ $ shep trigger chatty ping --format json
       even though you answered it promptly. Echoing <code>id</code> is how
       you make that impossible.
     </p>
+    <p>
+      <strong>Handlers may run at the same time.</strong>{" "}
+      <code>shep-channel</code> runs each action handler on its own thread,
+      so a slow action does not hold up the messages behind it, and two
+      replies can reach the descriptor in the opposite order to the actions
+      that produced them. Without <code>id</code>, the matching above
+      assumes you answered in the order you were asked.
+    </p>
 
     <h2 id="not-every-sheep-has-a-channel-and-that-s-not-a-silent-failure">Not every sheep has a channel, and that's not a silent failure</h2>
     <p>

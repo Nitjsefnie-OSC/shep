@@ -34,6 +34,12 @@ shepherd, silence from an app thinking hard and silence from an app that
 never understood the question look the same, and only `action_timeout`
 running out tells them apart.
 
+An action handler runs on a thread of its own, so a slow one does not hold up
+the messages behind it, and replies can reach the shepherd in any order. Each
+reply carries the id of the action it answers, which is how the shepherd
+matches it. Handlers run beside each other, so a handler has to be `Send +
+Sync`, which `on_action` already asks for.
+
 `flush` is the call that is easiest to leave out. Sending queues, so an app
 that exits from its own shutdown handler loses replies an operator is still
 waiting on.
