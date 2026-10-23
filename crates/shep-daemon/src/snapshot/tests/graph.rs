@@ -6,6 +6,8 @@
 
 use super::super::*;
 
+use super::fixture::TestFlock;
+
 use crate::fake::{ProcScript, ScriptedRunner};
 use crate::supervisor::spawn_supervisor;
 use crate::testing::{capture_logs, roll_of, sorted_status, test_paths};
@@ -37,105 +39,75 @@ fn start_order(rx: &mut broadcast::Receiver<SharedEvent>) -> Vec<String> {
 /// before the one it waits for.
 #[tokio::test(start_paused = true)]
 async fn a_restore_starts_the_roll_in_dependency_order() {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    std::fs::create_dir_all(paths.snapshot.parent().unwrap()).unwrap();
     let mut db = AppConfig::minimal("db", "./srv");
     db.listen_timeout = UpDuration::from_millis(50);
     let mut api = AppConfig::minimal("api", "./srv");
     api.depends_on = vec!["db".to_string()];
-    write_atomic(&paths.snapshot, &roll_of(vec![api, db])).unwrap();
 
-    let (events, _rx) = crate::bus::test_bus(64);
-    let handle = spawn_supervisor(
-        ScriptedRunner::new(vec![ProcScript::never_exits(); 2]),
-        paths.clone(),
-        events.clone(),
-    );
-    let registry = FlockRegistry::new();
-    let mut seen = events.subscribe();
+    let flock = TestFlock::new(ScriptedRunner::new(vec![ProcScript::never_exits(); 2]));
+    flock.seed(&roll_of(vec![api, db]));
+    let mut seen = flock.events.subscribe();
 
-    muster(&paths.snapshot, &registry, &handle, &events, &[], &[])
-        .await
-        .unwrap();
+    flock.muster().await.unwrap();
 
     assert_eq!(
         start_order(&mut seen),
         vec!["db", "api"],
         "the roll's order must not decide boot order"
     );
-    handle.shutdown().await;
+    flock.shutdown().await;
 }
 
 /// fails if a cycle refuses the restore, which would strand an unattended
 /// boot on a typo nobody is there to read.
 #[tokio::test(start_paused = true)]
 async fn a_cyclic_roll_still_brings_the_flock_up() {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    std::fs::create_dir_all(paths.snapshot.parent().unwrap()).unwrap();
     let mut a = AppConfig::minimal("a", "./srv");
     a.depends_on = vec!["b".to_string()];
     let mut b = AppConfig::minimal("b", "./srv");
     b.depends_on = vec!["a".to_string()];
-    write_atomic(&paths.snapshot, &roll_of(vec![a, b])).unwrap();
 
-    let (events, _rx) = crate::bus::test_bus(64);
-    let handle = spawn_supervisor(
-        ScriptedRunner::new(vec![ProcScript::never_exits(); 2]),
-        paths.clone(),
-        events.clone(),
-    );
-    let registry = FlockRegistry::new();
+    let flock = TestFlock::new(ScriptedRunner::new(vec![ProcScript::never_exits(); 2]));
+    flock.seed(&roll_of(vec![a, b]));
 
-    let restored = muster(&paths.snapshot, &registry, &handle, &events, &[], &[])
+    let restored = flock
+        .muster()
         .await
         .expect("a cycle must not refuse the restore");
 
     assert_eq!(restored, vec!["a".to_string(), "b".to_string()]);
     assert_eq!(
-        sorted_status(&handle).await,
+        sorted_status(&flock.handle).await,
         [
             ("a".to_string(), ProcStatus::Online),
             ("b".to_string(), ProcStatus::Online)
         ],
         "both members of the knot run; neither waits for the other"
     );
-    handle.shutdown().await;
+    flock.shutdown().await;
 }
 
 /// fails if `depends_on` overrides `autostart`, which would let one app's
 /// file start a sheep another app's file said not to start.
 #[tokio::test(start_paused = true)]
 async fn a_dependency_with_autostart_off_is_warned_about_and_skipped() {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    std::fs::create_dir_all(paths.snapshot.parent().unwrap()).unwrap();
     let mut db = AppConfig::minimal("db", "./srv");
     db.autostart = false;
     let mut api = AppConfig::minimal("api", "./srv");
     api.depends_on = vec!["db".to_string()];
-    write_atomic(&paths.snapshot, &roll_of(vec![db, api])).unwrap();
 
-    let (events, _rx) = crate::bus::test_bus(64);
-    let handle = spawn_supervisor(
-        ScriptedRunner::new(vec![ProcScript::never_exits()]),
-        paths.clone(),
-        events.clone(),
-    );
-    let registry = FlockRegistry::new();
-    let mut seen = events.subscribe();
+    let flock = TestFlock::new(ScriptedRunner::new(vec![ProcScript::never_exits()]));
+    flock.seed(&roll_of(vec![db, api]));
+    let mut seen = flock.events.subscribe();
 
-    muster(&paths.snapshot, &registry, &handle, &events, &[], &[])
-        .await
-        .unwrap();
+    flock.muster().await.unwrap();
 
     assert_eq!(
         start_order(&mut seen),
         vec!["api"],
         "db opted out; api starts without it"
     );
-    handle.shutdown().await;
+    flock.shutdown().await;
 }
 
 /// An app named `name` that waits for `deps`, normalized.

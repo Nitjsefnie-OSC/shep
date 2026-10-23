@@ -872,6 +872,7 @@ mod tests {
     }
 
     mod disabled;
+    mod fixture;
     mod graph;
     mod io;
     mod muster;
