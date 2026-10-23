@@ -123,6 +123,13 @@ A credential need not sit in that file: a string value may be
 `Request::DogConfigResolved` receives the value, while `DogConfig` serves the
 reference as written. `dogs.toml` is never rewritten by either.
 
+A sheep's own `[app.dogs.<name>]` table takes the same references, for a
+credential that belongs to one sheep. `Request::SheepDogSettingsResolved
+{ name, dog }` answers that sheep's table with each one replaced, resolved in
+the sheep's own `environment` (the shepherd's when it sets none), and
+`DogSheepSettings` serves the table as written. A `shep-client` dog calls
+`sheep_dog_table(name, dog)`.
+
 **Editing `[<name>]` in `dogs.toml` does not reach a dog that is already
 running.** A running dog asked for its section once, at startup, and
 nothing pushes it a new one. `shep disable <name> && shep enable <name>`
@@ -514,7 +521,11 @@ shepherd's `[daemon] environment` and then the `all` slot; `DogConfig` still
 gives the text as written, which is what an editor must read, since writing a
 resolved section back would put the credential into `dogs.toml`. A reference
 that cannot resolve fails the request with `InvalidConfig`, naming the
-section, the key path and the reference, never a value. Shep sets two
+section, the key path and the reference, never a value. For one sheep's
+table send `Request::SheepDogSettingsResolved { name, dog }`, which answers
+`SheepDogTable { table }` (`None` when the sheep has no table for `dog`),
+`NotFound` for an unknown sheep, and refuses with the sheep's name added to
+that text. Shep sets two
 variables of its own on a dog: `$SHEP_HOME`, which is how it finds that
 socket in the first place, and `$SHEP_DOG_NAME`, which is the `name` to put
 in that request. No `[<name>]` value ever rides along beside them, for

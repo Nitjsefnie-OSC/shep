@@ -23,13 +23,17 @@ credentials (`SO_PEERCRED` / `getpeereid`), THEN:
 - Tokens, webhook URLs, and other secret-carrying config values are never
   written to logs or `Debug` output in plaintext. Over the socket they go
   as written: a dog reads its own config and its per-sheep
-  `[app.dogs.<name>]` tables through RPC, and shep cannot tell a secret in
-  either from any other value without the dog's own schema.
+  `[app.dogs.<name>]` tables through RPC (`DogConfig`, `DogSheepSettings`),
+  and shep cannot tell a secret in either from any other value without the
+  dog's own schema. `DogConfigResolved` and `SheepDogSettingsResolved` answer
+  the same two with each `{{secret:...}}` reference replaced, so a resolved
+  credential rides the socket too, to a caller that asks for it by name.
 - The socket is the boundary, not the request. Anything that gets past it
   is already running as the daemon's user, and can read `$SHEP_HOME`
-  directly. So the dog a request names (`DogSheepSettings`, `PutSecrets`)
-  is bookkeeping rather than authorization: any client can read any dog's
-  config and every sheep's tables, as it could from the files. Lookout
+  directly. So the dog a request names (`DogSheepSettings`,
+  `SheepDogSettingsResolved`, `PutSecrets`) is bookkeeping rather than
+  authorization: any client can read any dog's config and every sheep's
+  tables, as it could from the files. Lookout
   drawing a secret-marked field as `<set>` is display hygiene for
   screenshots and screen shares, not a boundary either.
 

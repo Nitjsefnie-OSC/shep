@@ -716,6 +716,13 @@ speaks protocol 9, accepts 8 and newer`}</CodeBlock>
       table and reads none of them itself. Subscribe to{" "}
       <code>config.sheep.&lt;dog&gt;</code> to hear one change.
     </p>
+    <p>
+      A table may hold <code>{'{{secret:...}}'}</code> references. Ask{" "}
+      <code>Request::SheepDogSettingsResolved {"{"} name, dog {"}"}</code>{" "}
+      for one sheep's table with each replaced, in that sheep's own
+      environment. In <code>shep-client</code> that is{" "}
+      <code>sheep_dog_table</code>.
+    </p>
 
     <h2 id="publishing-a-per-sheep-schema">Publishing a per-sheep schema</h2>
     <p>
