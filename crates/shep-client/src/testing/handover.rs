@@ -1,9 +1,11 @@
 use super::*;
 use futures_util::{SinkExt, StreamExt};
+use shep_core::config::DogTable;
 use shep_core::protocol::{
     BusEvent, Envelope, Hello, HelloAck, HelloReply, ProcessInfo, Request, Response, RpcError,
     codec, decode_frame, encode_frame,
 };
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -47,6 +49,7 @@ pub struct Handovers {
     envelopes: Arc<Mutex<Vec<(u32, Envelope)>>>,
     armed_list: Arc<Mutex<Vec<ProcessInfo>>>,
     armed_dog_section: Arc<Mutex<String>>,
+    armed_sheep_tables: Arc<Mutex<BTreeMap<String, DogTable>>>,
     armed_subscribe_err: Arc<Mutex<Option<RpcError>>>,
     armed_resolved_refusal: Arc<Mutex<Option<RpcError>>>,
     events: mpsc::Sender<BusEvent>,
@@ -77,6 +80,8 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
     let envelopes: Arc<Mutex<Vec<(u32, Envelope)>>> = Arc::new(Mutex::new(Vec::new()));
     let armed_list: Arc<Mutex<Vec<ProcessInfo>>> = Arc::new(Mutex::new(Vec::new()));
     let armed_dog_section: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let armed_sheep_tables: Arc<Mutex<BTreeMap<String, DogTable>>> =
+        Arc::new(Mutex::new(BTreeMap::new()));
     let armed_subscribe_err: Arc<Mutex<Option<RpcError>>> = Arc::new(Mutex::new(None));
     let armed_resolved_refusal: Arc<Mutex<Option<RpcError>>> = Arc::new(Mutex::new(None));
     let (events_tx, mut events_rx) = mpsc::channel(SCRIPT_CHANNEL_CAPACITY);
@@ -88,6 +93,7 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
         let envelopes = Arc::clone(&envelopes);
         let armed_list = Arc::clone(&armed_list);
         let armed_dog_section = Arc::clone(&armed_dog_section);
+        let armed_sheep_tables = Arc::clone(&armed_sheep_tables);
         let armed_subscribe_err = Arc::clone(&armed_subscribe_err);
         let armed_resolved_refusal = Arc::clone(&armed_resolved_refusal);
         async move {
@@ -147,7 +153,11 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
                                 None
                             };
                             let refusal = refusal.or_else(|| {
-                                if matches!(body, Request::DogConfigResolved { .. }) {
+                                if matches!(
+                                    body,
+                                    Request::DogConfigResolved { .. }
+                                        | Request::SheepDogSettingsResolved { .. }
+                                ) {
                                     armed_resolved_refusal.lock().unwrap().clone()
                                 } else {
                                     None
@@ -169,6 +179,9 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
                                 // parse, and this is its first request.
                                 Request::DogConfig { .. } | Request::DogConfigResolved { .. } => Response::DogSection {
                                     toml: armed_dog_section.lock().unwrap().clone().into(),
+                                },
+                                Request::DogSheepSettings { .. } => Response::DogSheepSettings {
+                                    tables: armed_sheep_tables.lock().unwrap().clone(),
                                 },
                                 _ => Response::Pong,
                             };
@@ -208,6 +221,7 @@ pub fn fake_daemon_across_handovers(path: &Path, handshakes: Vec<Handshake>) -> 
         envelopes,
         armed_list,
         armed_dog_section,
+        armed_sheep_tables,
         armed_subscribe_err,
         armed_resolved_refusal,
         events: events_tx,
@@ -270,9 +284,19 @@ impl Handovers {
         *self.armed_dog_section.lock().unwrap() = section.to_owned();
     }
 
-    /// Arms every `Request::DogConfigResolved` to be refused with `refusal`,
-    /// as a shepherd that has never heard of it does. `Request::DogConfig`
-    /// is still answered with the armed section.
+    /// Arms the sheep name to table map every generation answers
+    /// `Request::DogSheepSettings` with. Empty until set.
+    ///
+    /// Not consumed, like [`Self::reply_to_list`].
+    pub fn reply_to_dog_sheep_settings(&self, tables: BTreeMap<String, DogTable>) {
+        *self.armed_sheep_tables.lock().unwrap() = tables;
+    }
+
+    /// Arms every `Request::DogConfigResolved` and
+    /// `Request::SheepDogSettingsResolved` to be refused with `refusal`, as a
+    /// shepherd that has never heard of them does. `Request::DogConfig` is
+    /// still answered with the armed section, and `Request::DogSheepSettings`
+    /// with the armed tables.
     ///
     /// Held rather than taken, like [`Self::reply_to_list`]: a dog asks
     /// again after a handover.

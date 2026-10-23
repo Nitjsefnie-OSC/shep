@@ -6,6 +6,7 @@
 
 use core::future::Future;
 
+use shep_core::config::DogTable;
 use shep_core::protocol::{
     DogSectionToml, HostUsage, LogStream, LogTail, ProcessInfo, Request, Response, RpcError,
     RpcErrorCode, SelectorSpec,
@@ -31,6 +32,31 @@ impl Client {
     /// a secret reference it cannot resolve.
     pub async fn dog_config(&self, name: &str) -> Result<DogSectionToml, RequestError> {
         resolved_dog_section(name, |body| self.request(body)).await
+    }
+
+    /// The sheep `name`'s `[app.dogs.<dog>]` table with every
+    /// `{{secret:...}}` reference resolved in that sheep's own environment,
+    /// `None` when it carries no such table.
+    ///
+    /// Asks [`Request::SheepDogSettingsResolved`]. A shepherd too old to
+    /// know it is asked [`Request::DogSheepSettings`] instead, and a table
+    /// that still holds a reference is refused rather than handed over
+    /// unresolved.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::request`], including [`RpcErrorCode::NotFound`] for a name
+    /// no sheep holds and [`RpcErrorCode::InvalidConfig`] for a reference
+    /// that cannot resolve, and [`RequestError::UnexpectedReply`] for any
+    /// answer but [`Response::SheepDogTable`].
+    /// [`RequestError::Rpc`] with [`RpcErrorCode::Unsupported`] when an
+    /// older shepherd's table names a secret reference it cannot resolve.
+    pub async fn sheep_dog_table(
+        &self,
+        name: &str,
+        dog: &str,
+    ) -> Result<Option<DogTable>, RequestError> {
+        resolved_sheep_dog_table(name, dog, |body| self.request(body)).await
     }
 
     /// Every supervised entry, dogs included.
@@ -100,6 +126,19 @@ impl ReconnectingClient {
         resolved_dog_section(name, |body| self.request(body)).await
     }
 
+    /// Shorthand for [`Client::sheep_dog_table`] on the current generation.
+    ///
+    /// # Errors
+    ///
+    /// As [`Client::sheep_dog_table`].
+    pub async fn sheep_dog_table(
+        &self,
+        name: &str,
+        dog: &str,
+    ) -> Result<Option<DogTable>, RequestError> {
+        resolved_sheep_dog_table(name, dog, |body| self.request(body)).await
+    }
+
     /// Shorthand for [`Client::list_flock`] on the current generation.
     ///
     /// # Errors
@@ -164,12 +203,7 @@ where
     Fut: Future<Output = Result<Response, RequestError>>,
 {
     match ask(dog_config_request(name)).await {
-        Err(RequestError::Rpc(refusal))
-            if matches!(
-                refusal.code,
-                RpcErrorCode::Unsupported | RpcErrorCode::Unrecognized
-            ) =>
-        {
+        Err(RequestError::Rpc(refusal)) if is_unknown_request(&refusal) => {
             let plain = Request::DogConfig {
                 name: name.to_owned(),
             };
@@ -187,6 +221,61 @@ where
             Ok(section)
         }
         answer => dog_section(answer?),
+    }
+}
+
+/// Whether `refusal` is a shepherd saying it does not know the request.
+fn is_unknown_request(refusal: &RpcError) -> bool {
+    matches!(
+        refusal.code,
+        RpcErrorCode::Unsupported | RpcErrorCode::Unrecognized
+    )
+}
+
+/// Asks `ask` for the sheep's resolved table, and for every sheep's plain
+/// one when the shepherd does not know the request, as
+/// [`resolved_dog_section`] does for a section.
+async fn resolved_sheep_dog_table<F, Fut>(
+    name: &str,
+    dog: &str,
+    ask: F,
+) -> Result<Option<DogTable>, RequestError>
+where
+    F: Fn(Request) -> Fut,
+    Fut: Future<Output = Result<Response, RequestError>>,
+{
+    let resolved = Request::SheepDogSettingsResolved {
+        name: name.to_owned(),
+        dog: dog.to_owned(),
+    };
+    match ask(resolved).await {
+        Err(RequestError::Rpc(refusal)) if is_unknown_request(&refusal) => {
+            let plain = Request::DogSheepSettings {
+                dog: dog.to_owned(),
+            };
+            let table = match ask(plain).await? {
+                Response::DogSheepSettings { mut tables } => tables.remove(name),
+                other => return Err(unexpected("DogSheepSettings", &other)),
+            };
+            if table
+                .as_ref()
+                .is_some_and(|table| !table.references().is_empty())
+            {
+                return Err(RequestError::Rpc(RpcError {
+                    code: RpcErrorCode::Unsupported,
+                    message: format!(
+                        "the shepherd is too old to resolve secret references in the \
+                         `{name}` sheep's `{dog}` table"
+                    ),
+                    daemon_version: refusal.daemon_version,
+                }));
+            }
+            Ok(table)
+        }
+        answer => match answer? {
+            Response::SheepDogTable { table } => Ok(table),
+            other => Err(unexpected("SheepDogSettingsResolved", &other)),
+        },
     }
 }
 
@@ -234,6 +323,7 @@ fn unexpected(asked: &'static str, answer: &Response) -> RequestError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::time::Duration;
 
     use shep_core::protocol::{Envelope, HostUsage, RpcError, RpcErrorCode};
@@ -601,6 +691,141 @@ mod tests {
         let err = client.dog_config("metrics").await.unwrap_err();
 
         assert_eq!(err, too_old_refusal("metrics"));
+        let text = format!("{err} {err:?}");
+        assert!(!text.contains(SENTINEL), "{text}");
+        assert!(!text.contains("{{secret:"), "{text}");
+    }
+
+    fn deploy_table(token: &str) -> DogTable {
+        DogTable::from(serde_json::Map::from_iter([(
+            "env".to_owned(),
+            serde_json::json!({ "TOKEN": token }),
+        )]))
+    }
+
+    /// A shepherd built before `SheepDogSettingsResolved`, whose `deploy`
+    /// table on `web` is `table`.
+    fn older_shepherd_with_table(path: &std::path::Path, table: DogTable) -> Handovers {
+        let shepherd = fake_daemon_across_handovers(path, vec![Handshake::Accept(sample_ack())]);
+        shepherd.reply_to_dog_sheep_settings(BTreeMap::from([("web".to_owned(), table)]));
+        shepherd.refuse_dog_config_resolved(does_not_know_the_request());
+        shepherd
+    }
+
+    fn resolved_and_plain_table_reads() -> Vec<Request> {
+        vec![
+            Request::SheepDogSettingsResolved {
+                name: "web".to_owned(),
+                dog: "deploy".to_owned(),
+            },
+            Request::DogSheepSettings {
+                dog: "deploy".to_owned(),
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn sheep_dog_table_asks_by_name_and_dog() {
+        let dir = tempfile::tempdir().unwrap();
+        let (client, mut envelopes) =
+            fake_client_answering(&control_address(dir.path()), |_| Response::SheepDogTable {
+                table: Some(deploy_table("resolved")),
+            })
+            .await;
+
+        let table = client.sheep_dog_table("web", "deploy").await.unwrap();
+
+        assert_eq!(table, Some(deploy_table("resolved")));
+        assert_eq!(
+            sent(&mut envelopes).await.body,
+            Request::SheepDogSettingsResolved {
+                name: "web".to_owned(),
+                dog: "deploy".to_owned(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reconnecting_client_sheep_dog_table_asks_the_same_way() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = control_address(dir.path());
+        let served = serve_one_request(
+            &socket,
+            sample_ack(),
+            Response::SheepDogTable { table: None },
+        )
+        .await;
+        let client = ReconnectingClient::connect(&socket).await.unwrap();
+
+        assert_eq!(client.sheep_dog_table("web", "deploy").await.unwrap(), None);
+
+        let envelope = tokio::time::timeout(Duration::from_secs(5), served)
+            .await
+            .expect("the request reached the fake daemon")
+            .unwrap();
+        assert_eq!(envelope.body, resolved_and_plain_table_reads()[0]);
+    }
+
+    #[tokio::test]
+    async fn sheep_dog_table_refuses_any_other_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let (client, _envelopes) =
+            fake_client_answering(&control_address(dir.path()), |_| Response::Pong).await;
+
+        let err = client.sheep_dog_table("web", "deploy").await.unwrap_err();
+
+        assert_eq!(
+            err,
+            RequestError::UnexpectedReply {
+                asked: "SheepDogSettingsResolved",
+                answered: "Pong",
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn sheep_dog_table_falls_back_to_dog_sheep_settings_on_an_older_shepherd() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = control_address(dir.path());
+        let plain = DogTable::from(serde_json::Map::from_iter([(
+            "retries".to_owned(),
+            serde_json::json!(3),
+        )]));
+        let shepherd = older_shepherd_with_table(&path, plain.clone());
+        let client = Client::connect(&path).await.unwrap();
+
+        assert_eq!(
+            client.sheep_dog_table("web", "deploy").await.unwrap(),
+            Some(plain)
+        );
+        assert_eq!(
+            client.sheep_dog_table("api", "deploy").await.unwrap(),
+            None,
+            "a sheep the older shepherd lists no table for"
+        );
+        assert_eq!(asked(&shepherd)[..2], resolved_and_plain_table_reads());
+    }
+
+    #[tokio::test]
+    async fn sheep_dog_table_refuses_an_older_shepherds_table_holding_a_reference() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = control_address(dir.path());
+        let _shepherd =
+            older_shepherd_with_table(&path, deploy_table(&format!("{{{{secret:{SENTINEL}}}}}")));
+        let client = Client::connect(&path).await.unwrap();
+
+        let err = client.sheep_dog_table("web", "deploy").await.unwrap_err();
+
+        assert_eq!(
+            err,
+            RequestError::Rpc(RpcError {
+                code: RpcErrorCode::Unsupported,
+                message: "the shepherd is too old to resolve secret references in the `web` \
+                          sheep's `deploy` table"
+                    .to_owned(),
+                daemon_version: None,
+            })
+        );
         let text = format!("{err} {err:?}");
         assert!(!text.contains(SENTINEL), "{text}");
         assert!(!text.contains("{{secret:"), "{text}");
