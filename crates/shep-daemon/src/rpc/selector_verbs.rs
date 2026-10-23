@@ -11,7 +11,7 @@ use shep_core::signals::OperatorSignal;
 use crate::supervisor::SupervisorError;
 
 use super::context::{Outcome, RpcContext};
-use super::error::rpc_error;
+use super::error::{invalid_config, rpc_error};
 
 pub(super) fn not_found() -> RpcError {
     RpcError {
@@ -22,11 +22,7 @@ pub(super) fn not_found() -> RpcError {
 }
 
 pub(super) fn selector_of(spec: SelectorSpec) -> Result<ProcessSelector, RpcError> {
-    ProcessSelector::try_from(spec).map_err(|err| RpcError {
-        code: RpcErrorCode::InvalidConfig,
-        message: err.to_string(),
-        daemon_version: None,
-    })
+    ProcessSelector::try_from(spec).map_err(invalid_config)
 }
 
 /// The helper every selector-in, flock-out verb shares: convert the selector,
@@ -90,14 +86,10 @@ pub(super) async fn signal_request(
     ctx: &RpcContext,
 ) -> Outcome {
     let result = match OperatorSignal::parse(&signal) {
-        None => Err(RpcError {
-            code: RpcErrorCode::InvalidConfig,
-            message: format!(
-                "`{signal}` is not a signal shep will send; accepted: {}",
-                OperatorSignal::ACCEPTED.join(", ")
-            ),
-            daemon_version: None,
-        }),
+        None => Err(invalid_config(format!(
+            "`{signal}` is not a signal shep will send; accepted: {}",
+            OperatorSignal::ACCEPTED.join(", ")
+        ))),
         Some(sig) => match selector_of(spec) {
             Err(err) => Err(err),
             Ok(selector) => ctx

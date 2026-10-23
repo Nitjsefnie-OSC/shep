@@ -1,12 +1,13 @@
 //! `Request::DogConfigResolved`: a dog's section with its `{{secret:...}}`
 //! references replaced.
 
-use shep_core::protocol::{DogSectionToml, RpcError, RpcErrorCode};
+use shep_core::protocol::{DogSectionToml, RpcError};
 use shep_core::secrets::SecretView;
 
 use crate::dogs::{DogError, resolve_section, section_references, store_unreadable};
 
 use super::context::RpcContext;
+use super::error::invalid_config;
 
 /// `name`'s section, read fresh from `dogs.toml` and resolved in the
 /// shepherd's own environment.
@@ -20,18 +21,12 @@ use super::context::RpcContext;
 /// Nothing here writes `dogs.toml`. Every refusal names the section, the
 /// key path and the reference, never a value.
 pub(super) fn resolved_section(ctx: &RpcContext, name: &str) -> Result<DogSectionToml, RpcError> {
-    let refuse = |message: String| RpcError {
-        code: RpcErrorCode::InvalidConfig,
-        message,
-        daemon_version: None,
-    };
-    let raw =
-        crate::dogs::dog_section(&ctx.dogs_config, name).map_err(|err| refuse(err.to_string()))?;
+    let raw = crate::dogs::dog_section(&ctx.dogs_config, name).map_err(invalid_config)?;
     let view = if section_references(&raw).is_empty() {
         SecretView::empty(ctx.host_environment.clone())
     } else {
         let store = shep_core::secrets::all(&ctx.paths.secrets)
-            .map_err(|err| refuse(format!("[{name}] {}", store_unreadable(&raw, &err))))?;
+            .map_err(|err| invalid_config(format!("[{name}] {}", store_unreadable(&raw, &err))))?;
         SecretView::new(
             ctx.host_environment.clone(),
             store,
@@ -39,7 +34,7 @@ pub(super) fn resolved_section(ctx: &RpcContext, name: &str) -> Result<DogSectio
         )
     };
     resolve_section(&raw, &view).map_err(|err| match err {
-        DogError::Reference { .. } => refuse(format!("[{name}] {err}")),
-        other => refuse(other.to_string()),
+        DogError::Reference { .. } => invalid_config(format!("[{name}] {err}")),
+        other => invalid_config(other),
     })
 }
