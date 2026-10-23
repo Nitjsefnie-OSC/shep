@@ -30,24 +30,9 @@ async fn push_in(
     environment: &str,
     entries: &[(&str, &str)],
 ) -> Result<Response, shep_core::protocol::RpcError> {
-    reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::PutSecrets {
-                    namespace: namespace.to_string(),
-                    environment: environment.to_string(),
-                    entries: entries
-                        .iter()
-                        .map(|(key, value)| ((*key).to_string(), (*value).to_string().into()))
-                        .collect(),
-                },
-            ),
-            ctx,
-        )
-        .await,
-    )
-    .result
+    put_secrets(ctx, 1, namespace, environment, entries)
+        .await
+        .result
 }
 
 async fn push(ctx: &RpcContext, entries: &[(&str, &str)]) {

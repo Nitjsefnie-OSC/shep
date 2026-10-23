@@ -36,19 +36,11 @@ fn names_for(
     rx: &mut tokio::sync::broadcast::Receiver<crate::bus::SharedEvent>,
     kind: ProcessEventKind,
 ) -> Vec<String> {
-    let mut names = Vec::new();
-    while let Ok(event) = rx.try_recv() {
-        let shep_core::protocol::BusEvent::Process {
-            event: seen, info, ..
-        } = &*event
-        else {
-            continue;
-        };
-        if *seen == kind {
-            names.push(info.name.clone());
-        }
-    }
-    names
+    events_in_order(rx)
+        .into_iter()
+        .filter(|(seen, _)| *seen == kind)
+        .map(|(_, name)| name)
+        .collect()
 }
 
 /// fails if a fold restarts as one batch, which restarts `api` against a
@@ -564,10 +556,7 @@ async fn a_plain_listing_carries_no_reload_deadline() {
     );
     assert!(started.result.is_ok(), "web comes up: {started:?}");
 
-    let listed = reply_of(dispatch(envelope(2, Request::ListFlock), &h.ctx).await);
-    let Response::Flock(flock) = listed.result.unwrap() else {
-        panic!("expected flock")
-    };
+    let flock = list_flock(&h.ctx, 2).await;
     assert_eq!(flock[0].reload_deadline_ms, None);
 }
 
@@ -644,10 +633,7 @@ async fn a_walk_waits_for_a_dependency_it_reaches_through_an_unmatched_hop() {
         assert!(started.result.is_ok(), "the chain comes up: {started:?}");
     }
 
-    let listed = reply_of(dispatch(envelope(4, Request::ListFlock), &h.ctx).await);
-    let Response::Flock(flock) = listed.result.unwrap() else {
-        panic!("expected flock")
-    };
+    let flock = list_flock(&h.ctx, 4).await;
     let selector = selector_of(SelectorSpec::Regex("^(web|db)$".to_string())).unwrap();
     let walk = ordered_walk(&h.ctx, &selector, &flock).expect("two names matched");
 

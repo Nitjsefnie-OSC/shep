@@ -101,21 +101,7 @@ async fn describe_filters_by_fold() {
         &h.ctx,
     )
     .await;
-    let reply = reply_of(
-        dispatch(
-            envelope(
-                2,
-                Request::Describe {
-                    selector: SelectorSpec::Fold("backend".to_string()),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    let Response::Described(hits) = reply.result.unwrap() else {
-        panic!("expected described")
-    };
+    let hits = describe(&h.ctx, 2, SelectorSpec::Fold("backend".to_string())).await;
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].name, "api");
 }
@@ -126,16 +112,7 @@ async fn describe_filters_by_fold() {
 #[tokio::test(start_paused = true)]
 async fn reopen_routes_to_the_supervisor_and_leaves_the_sheep_running() {
     let h = harness(vec![ProcScript::never_exits()]);
-    dispatch(
-        envelope(
-            1,
-            Request::Start {
-                apps: vec![AppConfig::minimal("web", "./srv")],
-            },
-        ),
-        &h.ctx,
-    )
-    .await;
+    start_web(&h).await;
 
     let reply = reply_of(
         dispatch(
@@ -155,10 +132,7 @@ async fn reopen_routes_to_the_supervisor_and_leaves_the_sheep_running() {
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].status, ProcStatus::Online);
 
-    let listed = reply_of(dispatch(envelope(3, Request::ListFlock), &h.ctx).await);
-    let Response::Flock(flock) = listed.result.unwrap() else {
-        panic!("expected flock")
-    };
+    let flock = list_flock(&h.ctx, 3).await;
     assert_eq!(
         flock[0].status,
         ProcStatus::Online,
@@ -180,16 +154,7 @@ async fn reopen_routes_to_the_supervisor_and_leaves_the_sheep_running() {
 #[tokio::test(start_paused = true)]
 async fn reload_routes_to_the_supervisor_and_starts_a_swap() {
     let h = harness(vec![ProcScript::never_exits(); 3]);
-    dispatch(
-        envelope(
-            1,
-            Request::Start {
-                apps: vec![AppConfig::minimal("web", "./srv")],
-            },
-        ),
-        &h.ctx,
-    )
-    .await;
+    start_web(&h).await;
 
     let reply = reply_of(
         dispatch(
@@ -213,10 +178,7 @@ async fn reload_routes_to_the_supervisor_and_starts_a_swap() {
         "the answer is the flock as it stood when the reload was accepted"
     );
 
-    let listed = reply_of(dispatch(envelope(3, Request::ListFlock), &h.ctx).await);
-    let Response::Flock(flock) = listed.result.unwrap() else {
-        panic!("expected flock")
-    };
+    let flock = list_flock(&h.ctx, 3).await;
     assert_eq!(
         flock.len(),
         2,
@@ -323,16 +285,7 @@ async fn envelope_deadline_ms_actually_bounds_the_reply() {
     // 1600ms `kill_timeout` ladder, far past this 1ms deadline, while a
     // build passing `budget(None)` would take the 5s default and pass.
     let h = harness(vec![ProcScript::ignores_signals()]);
-    dispatch(
-        envelope(
-            1,
-            Request::Start {
-                apps: vec![AppConfig::minimal("web", "./srv")],
-            },
-        ),
-        &h.ctx,
-    )
-    .await;
+    start_web(&h).await;
 
     let reply = reply_of(
         dispatch(
@@ -515,18 +468,7 @@ async fn save_roll_against_a_stopped_engine_is_an_error_not_a_silent_success() {
 #[tokio::test]
 async fn a_second_muster_still_reports_the_flock_the_roll_restored() {
     let h = harness(vec![ProcScript::never_exits()]);
-    reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::Start {
-                    apps: vec![AppConfig::minimal("web", "./srv")],
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
+    start_web(&h).await;
     reply_of(dispatch(envelope(2, Request::SaveRoll), &h.ctx).await);
 
     let reply = reply_of(dispatch(envelope(3, Request::Muster), &h.ctx).await);

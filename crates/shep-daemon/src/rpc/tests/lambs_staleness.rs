@@ -19,45 +19,17 @@ async fn only_describe_carries_a_lamb_tree() {
             identity(FIRST_SCRIPTED_PID + 1, Some(FIRST_SCRIPTED_PID), "node"),
         ],
     );
-    reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::Start {
-                    apps: vec![AppConfig::minimal("web", "./srv")],
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
+    start_web(&h).await;
 
-    let listed = reply_of(dispatch(envelope(2, Request::ListFlock), &h.ctx).await);
-    let Ok(Response::Flock(rows)) = listed.result else {
-        panic!("expected a flock listing");
-    };
+    let rows = list_flock(&h.ctx, 2).await;
     assert!(
         rows.iter().all(|row| row.lambs.is_none()),
         "ListFlock must not walk the process table"
     );
 
-    let described = reply_of(
-        dispatch(
-            envelope(
-                3,
-                Request::Describe {
-                    selector: SelectorSpec::Name("web".to_string()),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    let Ok(Response::Described(rows)) = described.result else {
-        panic!("expected a describe listing");
-    };
+    let described = describe(&h.ctx, 3, SelectorSpec::Name("web".to_string())).await;
     assert_eq!(
-        rows[0].lambs,
+        described[0].lambs,
         Some(vec![Lamb::new(FIRST_SCRIPTED_PID + 1, "node")])
     );
 }
@@ -76,6 +48,19 @@ async fn start_dog(ctx: &RpcContext, name: &str) -> ProcessInfo {
         .expect("the dog fixture must start")
 }
 
+/// The row `name` holds in `infos`, or a panic naming the dog and
+/// printing the listing it is missing from.
+///
+/// # Panics
+///
+/// If no row in `infos` carries that name.
+fn find_dog<'a>(infos: &'a [ProcessInfo], name: &str) -> &'a ProcessInfo {
+    infos
+        .iter()
+        .find(|info| info.name == name)
+        .unwrap_or_else(|| panic!("{name} is missing from the listing: {infos:?}"))
+}
+
 /// The two lists `Request::DogStaleness` answers with.
 async fn staleness(ctx: &RpcContext) -> (Vec<String>, Vec<String>) {
     let reply = reply_of(dispatch(envelope(1, Request::DogStaleness), ctx).await);
@@ -91,19 +76,7 @@ async fn staleness(ctx: &RpcContext) -> (Vec<String>, Vec<String>) {
 #[tokio::test]
 async fn a_flock_of_ordinary_sheep_has_nothing_stale_and_nothing_pending() {
     let h = harness(vec![ProcScript::never_exits()]);
-    let started = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::Start {
-                    apps: vec![AppConfig::minimal("web", "./srv")],
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    started.result.expect("the sheep must start");
+    start_web(&h).await;
 
     assert_eq!(staleness(&h.ctx).await, (Vec::new(), Vec::new()));
 }
@@ -118,10 +91,7 @@ async fn a_listing_says_which_dogs_have_answered_this_shepherd() {
     start_dog(&h.ctx, "metrics").await;
 
     let silent = list_flock(&h.ctx, 1).await;
-    let dog = silent
-        .iter()
-        .find(|info| info.name == "metrics")
-        .expect("the dog must be listed");
+    let dog = find_dog(&silent, "metrics");
     assert_eq!(dog.handshook, Some(false));
     assert_eq!(
         dog.status,
@@ -131,14 +101,7 @@ async fn a_listing_says_which_dogs_have_answered_this_shepherd() {
 
     h.ctx.dog_refusals.handshook("metrics");
     let talking = list_flock(&h.ctx, 2).await;
-    assert_eq!(
-        talking
-            .iter()
-            .find(|info| info.name == "metrics")
-            .expect("still listed")
-            .handshook,
-        Some(true)
-    );
+    assert_eq!(find_dog(&talking, "metrics").handshook, Some(true));
 }
 
 /// A sheep does not speak this protocol at all, so it has no handshake to
@@ -167,10 +130,7 @@ async fn a_listing_says_which_silent_dogs_this_shepherd_gave_up_on() {
     start_dog(&h.ctx, "metrics").await;
 
     let waiting = list_flock(&h.ctx, 1).await;
-    let dog = waiting
-        .iter()
-        .find(|info| info.name == "metrics")
-        .expect("the dog must be listed");
+    let dog = find_dog(&waiting, "metrics");
     assert_eq!(dog.handshook, Some(false));
     assert_eq!(
         dog.dog_stale,
@@ -185,10 +145,7 @@ async fn a_listing_says_which_silent_dogs_this_shepherd_gave_up_on() {
     h.ctx.dog_refusals.refused("metrics");
 
     let given_up = list_flock(&h.ctx, 2).await;
-    let dog = given_up
-        .iter()
-        .find(|info| info.name == "metrics")
-        .expect("still listed");
+    let dog = find_dog(&given_up, "metrics");
     assert_eq!(dog.dog_stale, Some(true));
     assert_eq!(
         dog.status,
@@ -200,10 +157,7 @@ async fn a_listing_says_which_silent_dogs_this_shepherd_gave_up_on() {
     // it, so the listing must stop reporting the give-up.
     h.ctx.dog_refusals.handshook("metrics");
     let talking = list_flock(&h.ctx, 3).await;
-    let dog = talking
-        .iter()
-        .find(|info| info.name == "metrics")
-        .expect("still listed");
+    let dog = find_dog(&talking, "metrics");
     assert_eq!(dog.handshook, Some(true));
     assert_eq!(dog.dog_stale, Some(false));
 }
@@ -216,21 +170,7 @@ async fn describe_carries_the_handshake_fact_too() {
     let h = harness(vec![ProcScript::never_exits()]);
     start_dog(&h.ctx, "metrics").await;
 
-    let described = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::Describe {
-                    selector: SelectorSpec::Name("metrics".to_string()),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    let Ok(Response::Described(rows)) = described.result else {
-        panic!("expected a describe listing");
-    };
+    let rows = describe(&h.ctx, 1, SelectorSpec::Name("metrics".to_string())).await;
     assert_eq!(rows[0].handshook, Some(false));
 }
 
