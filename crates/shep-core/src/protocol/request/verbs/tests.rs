@@ -491,6 +491,15 @@ fn request_wire_snapshots() {
                 lines: 50,
             },
         ),
+        // Paired with `dog_sheep_settings` (35): one sheep's table for one
+        // dog, resolved.
+        envelope(
+            40,
+            Request::SheepDogSettingsResolved {
+                name: "web".to_string(),
+                dog: "deploy".to_string(),
+            },
+        ),
     ];
     insta::assert_json_snapshot!("request_wire_v11", requests);
 }
@@ -580,5 +589,24 @@ fn the_enable_and_disable_requests_and_their_replies_have_their_own_tags() {
     assert_eq!(
         serde_json::to_string(&Response::Enabled(vec![])).unwrap(),
         r#"{"kind":"enabled","data":[]}"#
+    );
+}
+
+#[test]
+fn sheep_dog_settings_resolved_serializes_as_its_own_kind() {
+    assert_eq!(
+        serde_json::to_string(&Request::SheepDogSettingsResolved {
+            name: "web".to_string(),
+            dog: "deploy".to_string(),
+        })
+        .unwrap(),
+        r#"{"kind":"sheep_dog_settings_resolved","name":"web","dog":"deploy"}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&Request::DogSheepSettings {
+            dog: "deploy".to_string()
+        })
+        .unwrap(),
+        r#"{"kind":"dog_sheep_settings","dog":"deploy"}"#
     );
 }

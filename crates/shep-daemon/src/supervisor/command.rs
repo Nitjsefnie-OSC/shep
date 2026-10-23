@@ -252,6 +252,17 @@ pub(crate) enum Command {
         /// Answers sheep name to table, empty when no sheep carries one.
         reply: oneshot::Sender<BTreeMap<String, DogTable>>,
     },
+    /// Reads one sheep's table for one dog, with the environment its
+    /// references resolve in. See [`Actor::handle_sheep_dog_read`].
+    SheepDogRead {
+        /// The sheep's name, not a selector, for [`Self::Scale`]'s reason.
+        name: String,
+        /// Which dog's table to read.
+        dog: String,
+        /// Answers the table and environment, or `None` when no sheep has
+        /// that name. A dog's own name has none.
+        reply: oneshot::Sender<Option<SheepDogRead>>,
+    },
     /// Sets or removes one dog's table on one sheep. See
     /// [`Actor::handle_set_sheep_dog_settings`].
     SetSheepDogSettings {

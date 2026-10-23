@@ -94,6 +94,19 @@ pub(crate) struct FieldSet {
     pub(crate) warning: Option<String>,
 }
 
+/// One sheep's table for one dog, with the environment its references
+/// resolve in.
+///
+/// `Debug` is derived (IR-41): [`DogTable`]'s own manual `Debug` prints a key
+/// count and never a value.
+#[derive(Debug, Clone)]
+pub(crate) struct SheepDogRead {
+    /// The sheep's table for the dog, `None` when it carries none.
+    pub(crate) table: Option<DogTable>,
+    /// The sheep's own `environment`, or the shepherd's when it sets none.
+    pub(crate) environment: String,
+}
+
 /// What a [`Command::SetSheepEnvBatch`] did.
 ///
 /// `Debug` is derived: every field is a key name, and [`ResolvedApp`] wraps

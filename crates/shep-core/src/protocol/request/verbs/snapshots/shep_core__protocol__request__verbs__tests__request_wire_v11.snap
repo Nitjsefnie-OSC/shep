@@ -527,5 +527,14 @@ expression: requests
       "stream": "err",
       "lines": 50
     }
+  },
+  {
+    "id": 40,
+    "deadline_ms": null,
+    "body": {
+      "kind": "sheep_dog_settings_resolved",
+      "name": "web",
+      "dog": "deploy"
+    }
   }
 ]

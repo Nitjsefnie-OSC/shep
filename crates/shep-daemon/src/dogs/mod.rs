@@ -26,7 +26,10 @@ pub(crate) use held::{leave_held_names, saved_sheep_names};
 pub(crate) use narrate::{narrate, narrate_by_name};
 pub use refusals::{DogRefusals, Refusal, record_refused_dog};
 pub use rotation::dogs_referencing;
-pub use secrets::{StoreFault, resolve_section, section_references, store_unreadable};
+pub use secrets::{
+    StoreFault, resolve_section, resolve_table, section_references, store_unreadable,
+    table_store_unreadable,
+};
 pub(crate) use silent::silent_dogs;
 pub use silent::{DOG_SILENCE_BUDGET, spawn_silent_dog_watch};
 // Only server.rs's handshake test names these, and it is `#[cfg(unix)]`

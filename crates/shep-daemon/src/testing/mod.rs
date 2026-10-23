@@ -478,6 +478,27 @@ pub(crate) fn harness_with_runner(
     runner: ScriptedRunner,
     build_extras: impl FnOnce(ExtrasReports) -> Extras,
 ) -> Harness {
+    build_harness(runner, build_extras, crate::supervisor::DEFAULT_ENVIRONMENT)
+}
+
+/// [`harness`], on a host whose `[daemon] environment` is `environment`.
+///
+/// The shepherd's environment is what a sheep naming none of its own
+/// resolves its secrets in, held by the supervisor and by the RPC layer.
+pub(crate) fn harness_in_environment(scripts: Vec<ProcScript>, environment: &str) -> Harness {
+    build_harness(
+        ScriptedRunner::new(scripts),
+        |reports| standard_extras(Arc::new(ScriptedSampler::new(vec![vec![]])), reports),
+        environment,
+    )
+}
+
+/// The one body behind every harness, on a host in `environment`.
+fn build_harness(
+    runner: ScriptedRunner,
+    build_extras: impl FnOnce(ExtrasReports) -> Extras,
+    environment: &str,
+) -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let paths = test_paths(&dir);
     let (events, events_rx) = crate::bus::test_bus(256);
@@ -497,6 +518,7 @@ pub(crate) fn harness_with_runner(
     let supervisor = SupervisorBuilder::new(runner, paths.clone(), events.clone())
         .extras(extras)
         .provider_secrets(Arc::clone(&provider_secrets))
+        .environment(environment.to_string())
         .spawn();
     let (shutdown, shutdown_rx) = watch::channel(false);
     Harness {
@@ -527,7 +549,7 @@ pub(crate) fn harness_with_runner(
             // that needs a reading assigns its own `HostState::fixed`.
             host: crate::host::HostState::fixed(None),
             provider_secrets,
-            host_environment: crate::supervisor::DEFAULT_ENVIRONMENT.to_string(),
+            host_environment: environment.to_string(),
         },
         _dir: dir,
         _events_rx: events_rx,

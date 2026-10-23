@@ -1,5 +1,5 @@
 ---
-source: crates/shep-core/src/protocol/request/response.rs
+source: crates/shep-core/src/protocol/request/response/tests.rs
 expression: replies
 ---
 [
@@ -994,6 +994,32 @@ expression: replies
           "kind": "unreadable",
           "path": "/var/log/web-err.log",
           "reason": "Is a directory (os error 21)"
+        }
+      }
+    }
+  },
+  {
+    "id": 49,
+    "result": {
+      "Ok": {
+        "kind": "sheep_dog_table",
+        "data": {
+          "table": {
+            "env": {
+              "TOKEN": "resolved"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": 50,
+    "result": {
+      "Ok": {
+        "kind": "sheep_dog_table",
+        "data": {
+          "table": null
         }
       }
     }

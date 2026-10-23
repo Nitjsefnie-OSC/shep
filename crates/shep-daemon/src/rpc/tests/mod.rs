@@ -200,6 +200,7 @@ mod log_tail;
 mod misc_verbs;
 mod push;
 mod sheep_dog_names;
+mod sheep_dog_secrets;
 mod start_add;
 mod stats;
 mod trigger_signal;
