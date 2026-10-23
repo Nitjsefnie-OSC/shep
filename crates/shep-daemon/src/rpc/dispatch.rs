@@ -480,17 +480,13 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         // The two config-pane reads and writes. Neither takes a selector:
         // a pane edits one sheep, so an unknown name is `NotFound` here
         // rather than an empty match.
-        Request::SheepConfig { name } => match ctx.supervisor.sheep_config(name.clone()).await {
+        Request::SheepConfig { name } => match ctx.supervisor.sheep_config(&name).await {
             Ok(Some(view)) => reply(Ok(Response::SheepConfig(Box::new(view)))),
             Ok(None) => reply(Err(no_sheep(&name))),
             Err(err) => reply(Err(rpc_error(&err))),
         },
         Request::SetSheepEnv { name, key, value } => {
-            match ctx
-                .supervisor
-                .set_sheep_env(name.clone(), key.clone(), value)
-                .await
-            {
+            match ctx.supervisor.set_sheep_env(&name, &key, value).await {
                 // Recorded exactly as `Start`, `Add`, `Scale` and
                 // `ApplyConfig` record theirs, and for the reason
                 // `Scale`'s arm gives: the muster roll is written from the
@@ -520,7 +516,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 .collect();
             match ctx
                 .supervisor
-                .set_sheep_env_batch(name.clone(), values, force, dry_run)
+                .set_sheep_env_batch(&name, values, force, dry_run)
                 .await
             {
                 // Recorded for `SetSheepEnv`'s reason: the muster roll is
@@ -545,11 +541,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
             }
         }
         Request::SetSheepField { name, key, value } => {
-            match ctx
-                .supervisor
-                .set_sheep_field(name.clone(), key.clone(), value)
-                .await
-            {
+            match ctx.supervisor.set_sheep_field(&name, &key, value).await {
                 // Recorded exactly as `SetSheepEnv` records its own, and
                 // for that arm's reason: the muster roll is written from
                 // the registry and nothing on the restore path reads the

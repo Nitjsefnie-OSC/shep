@@ -210,8 +210,8 @@ async fn a_reopen_after_a_refused_spawn_is_a_prompt_no_op_success() {
 
     handle
         .set_sheep_env(
-            "web".to_string(),
-            "PW".to_string(),
+            "web",
+            "PW",
             Some(EnvValue::from("{{secret:vault/K}}".to_string())),
         )
         .await
