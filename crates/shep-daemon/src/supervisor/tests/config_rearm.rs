@@ -6,6 +6,32 @@
 
 use super::*;
 
+/// Park `parked` on every instance of `name`, so a case parks the flock it
+/// has rather than a count spelled out at the call site.
+///
+/// # Panics
+///
+/// Panics when the flock holds no instance named `name`.
+#[track_caller]
+fn park_on_all(actor: &mut Actor<ScriptedRunner>, name: &str, parked: &ResolvedApp) {
+    let mut parked_on = 0;
+    for slot in actor.sheep.values_mut() {
+        if slot.entry.spec.config().name == name {
+            slot.entry.pending = Some(parked.clone());
+            parked_on += 1;
+        }
+    }
+    assert!(
+        parked_on > 0,
+        "no instance named {name} to park on, out of {:?}",
+        actor
+            .sheep
+            .values()
+            .map(|slot| slot.entry.spec.config().name.as_str())
+            .collect::<Vec<_>>(),
+    );
+}
+
 /// `max_memory`, `watch` and the cron pair are read when a worker is
 /// armed, so a spec write alone leaves the old value enforced for as long
 /// as that arming lives.
@@ -448,14 +474,7 @@ async fn a_change_that_cannot_be_parked_is_not_reported_as_parked() {
         app.instances = 1;
         app.env = BTreeMap::from([("MODE".to_string(), "blue".to_string())]);
     });
-    for id in [0, 1] {
-        actor
-            .sheep
-            .get_mut(&id)
-            .expect("the fixture registers two")
-            .entry
-            .pending = Some(earlier.clone());
-    }
+    park_on_all(&mut actor, "web", &earlier);
 
     // One explicit log path, no `{{instance}}` and no `merge_logs`: legal
     // for the one instance the parked config declares, refused for the
@@ -541,14 +560,7 @@ async fn a_parked_config_that_cannot_be_rebuilt_is_reported_even_with_no_field_t
         app.max_restarts = 10;
         app.out_file = Some("/tmp/web.log".to_string());
     });
-    for id in [0, 1] {
-        actor
-            .sheep
-            .get_mut(&id)
-            .expect("the fixture registers two")
-            .entry
-            .pending = Some(earlier.clone());
-    }
+    park_on_all(&mut actor, "web", &earlier);
 
     let mut file = AppConfig::minimal("web", "./srv");
     file.max_restarts = 99;
@@ -588,14 +600,7 @@ async fn a_refused_key_is_not_established_so_the_same_file_still_tries() {
     let dir = tempfile::tempdir().unwrap();
     let (mut actor, _enforcer) = actor_over(&dir, &[app_with("web", |app| app.instances = 2)]);
     let earlier = app_with("web", |app| app.instances = 1);
-    for id in [0, 1] {
-        actor
-            .sheep
-            .get_mut(&id)
-            .expect("the fixture registers two")
-            .entry
-            .pending = Some(earlier.clone());
-    }
+    park_on_all(&mut actor, "web", &earlier);
     let file = || {
         let mut file = AppConfig::minimal("web", "./srv");
         file.out_file = Some("/tmp/web.log".to_string());
@@ -692,14 +697,7 @@ async fn a_refused_env_change_gives_the_operators_override_back() {
         app.instances = 1;
         app.out_file = Some("/tmp/web.log".to_string());
     });
-    for id in [0, 1] {
-        actor
-            .sheep
-            .get_mut(&id)
-            .expect("the fixture registers two")
-            .entry
-            .pending = Some(earlier.clone());
-    }
+    park_on_all(&mut actor, "web", &earlier);
     shep_core::overrides::put(
         &actor.paths.overrides,
         "web",
