@@ -537,9 +537,12 @@ pub async fn bleats_with_signal(
 /// Over a host the ssh child dies on the same Ctrl+C as this process, so a
 /// closed connection is equally consistent with the operator ending the verb:
 /// the interrupt gets [`crate::remote::HOST_INTERRUPT_GRACE`] to say so, and
-/// ends the verb at [`ExitCode::Success`] with nothing printed. A shepherd
+/// ends the verb at [`ExitCode::Success`] with no error printed. A shepherd
 /// that answered with a refusal is answering, so only [`RequestError::Closed`]
 /// gets the grace, and locally a Ctrl+C closes no connection at all.
+///
+/// `streams.out` is flushed before either way out, or a backlog this verb
+/// already printed stays in the writer's buffer.
 ///
 /// Polling `interrupt` here is what ends a follow on an interrupt that landed
 /// before its loop armed: [`bleats_armed`] installed the listener, and tokio
@@ -555,13 +558,13 @@ where
     F: std::future::Future<Output = ()> + Unpin,
     R: FnOnce(&mut Streams<'_>, &RequestError) -> ExitCode,
 {
+    let _ = streams.out.flush();
     if host.is_some()
         && matches!(err, RequestError::Closed)
         && interrupt_within_grace(interrupt).await
     {
         return ExitCode::Success;
     }
-    let _ = streams.out.flush();
     // The message `report` wrote is the reason the verb ended.
     let code = report(streams, err);
     let _ = streams.err.flush();

@@ -208,3 +208,45 @@ async fn a_refusal_over_a_host_is_not_read_as_the_operators_interrupt() {
     assert_eq!(code, ExitCode::Unsupported);
     assert!(err.starts_with("error[unsupported]"), "{err}");
 }
+
+/// The grace path prints no error, and the backlog a tail already wrote is
+/// still in the writer's buffer. `Streams::out` is whatever the caller passed,
+/// so reaching it is this module's job on every way out.
+#[tokio::test]
+async fn a_host_link_that_closes_under_an_interrupt_flushes_the_backlog_it_printed() {
+    let mut sink: Vec<u8> = Vec::new();
+    let mut err: Vec<u8> = Vec::new();
+    let (code, reached) = {
+        let mut buffered = std::io::BufWriter::new(&mut sink);
+        let mut streams = Streams {
+            out: &mut buffered,
+            err: &mut err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
+        };
+        write_line(&mut streams, 1, "web", None, "out", "backlog")
+            .expect("a Vec never fails a write");
+        let mut interrupt = std::future::ready(());
+        let code = link_gone(
+            &mut streams,
+            Some("amp2"),
+            &RequestError::Closed,
+            &mut interrupt,
+            |streams, err| streams.fail(ExitCode::Failure, &err.to_string()),
+        )
+        .await;
+        // Read the sink through the writer still open: only what this verb
+        // flushed has reached it.
+        (
+            code,
+            String::from_utf8(buffered.get_ref().to_vec()).unwrap(),
+        )
+    };
+
+    assert_eq!(code, ExitCode::Success);
+    assert_eq!(
+        reached, "web | backlog\n",
+        "an interrupt the operator meant ends the verb, not what it printed"
+    );
+    assert_eq!(String::from_utf8(err).unwrap(), "");
+}
