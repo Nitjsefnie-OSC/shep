@@ -24,7 +24,7 @@ use super::dog_secrets::resolved_section;
 use super::enrichment::{
     dog_staleness, handover_refusal, with_dog_contact, with_lambs, with_live_stats,
 };
-use super::error::rpc_error;
+use super::error::{invalid_config, no_sheep, rpc_error};
 use super::selector_verbs::{not_found, selector_call, selector_of, signal_request, trigger};
 use super::walk::{reload_request, restart_request};
 
@@ -125,11 +125,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         // stage 0 running and nothing rolls it back. The refusal names those
         // apps; `start_in_stages` argues why they are left alone.
         Request::Start { apps } => match normalize_all(apps) {
-            Err(err) => reply(Err(RpcError {
-                code: RpcErrorCode::InvalidConfig,
-                message: err.to_string(),
-                daemon_version: None,
-            })),
+            Err(err) => reply(Err(invalid_config(err))),
             Ok(resolved) => match staged_plan(ctx, &resolved) {
                 Err(err) => reply(Err(err)),
                 Ok(plan) => {
@@ -158,11 +154,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         // cannot be started is one to refuse at the door an operator is
         // standing at, and `add` starts nothing to order.
         Request::Add { apps } => match normalize_all(apps) {
-            Err(err) => reply(Err(RpcError {
-                code: RpcErrorCode::InvalidConfig,
-                message: err.to_string(),
-                daemon_version: None,
-            })),
+            Err(err) => reply(Err(invalid_config(err))),
             Ok(resolved) => match staged_plan(ctx, &resolved) {
                 Err(err) => reply(Err(err)),
                 Ok(_) => {
@@ -183,11 +175,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         // as a difference. Nothing is recorded, since this answers a question
         // and must not change what the next `shep save` writes.
         Request::ConfigDrift { apps } => match normalize_all(apps) {
-            Err(err) => reply(Err(RpcError {
-                code: RpcErrorCode::InvalidConfig,
-                message: err.to_string(),
-                daemon_version: None,
-            })),
+            Err(err) => reply(Err(invalid_config(err))),
             Ok(resolved) => match ctx.supervisor.config_drift(resolved).await {
                 Ok(drifted) => reply(Ok(Response::Drifted(drifted))),
                 Err(err) => reply(Err(rpc_error(&err))),
@@ -269,13 +257,10 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
             // operator typed one. `\r` too, since CRLF reaches a shell as a
             // command with a stray carriage return in it.
             if line.contains(['\n', '\r']) {
-                return reply(Err(RpcError {
-                    code: RpcErrorCode::InvalidConfig,
-                    message: "a line may not contain a newline or a carriage return; \
-                              send one line per request"
-                        .to_string(),
-                    daemon_version: None,
-                }));
+                return reply(Err(invalid_config(
+                    "a line may not contain a newline or a carriage return; \
+                     send one line per request",
+                )));
             }
             match selector_of(selector) {
                 Ok(selector) => match ctx.supervisor.send_line(selector, line).await {
@@ -390,11 +375,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         // `config.dog.<name>` reaches this same arm without going down.
         Request::DogConfig { name } => match crate::dogs::dog_section(&ctx.dogs_config, &name) {
             Ok(toml) => reply(Ok(Response::DogSection { toml: toml.into() })),
-            Err(err) => reply(Err(RpcError {
-                code: RpcErrorCode::InvalidConfig,
-                message: err.to_string(),
-                daemon_version: None,
-            })),
+            Err(err) => reply(Err(invalid_config(err))),
         },
         Request::DogConfigResolved { name } => match resolved_section(ctx, &name) {
             Ok(toml) => reply(Ok(Response::DogSection { toml })),
@@ -403,11 +384,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         Request::EnableDog { name, source } => {
             let spec = DogSpec { name, source };
             match crate::dogs::dog_app(&spec, &ctx.paths) {
-                Err(err) => reply(Err(RpcError {
-                    code: RpcErrorCode::InvalidConfig,
-                    message: err.to_string(),
-                    daemon_version: None,
-                })),
+                Err(err) => reply(Err(invalid_config(err))),
                 Ok(app) => {
                     // Read before `start_dog` takes the app. An operator
                     // reading the dog's log during an upgrade is usually
@@ -419,14 +396,10 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                         // already holds it. An unmarked entry means a sheep
                         // holds it: nothing was spawned, so the refusal has
                         // nothing to undo.
-                        Ok(info) if info.dog.is_none() => reply(Err(RpcError {
-                            code: RpcErrorCode::InvalidConfig,
-                            message: format!(
-                                "a sheep is already registered as `{}`; rename it or give the dog another name",
-                                spec.name
-                            ),
-                            daemon_version: None,
-                        })),
+                        Ok(info) if info.dog.is_none() => reply(Err(invalid_config(format!(
+                            "a sheep is already registered as `{}`; rename it or give the dog another name",
+                            spec.name
+                        )))),
                         Ok(info) => {
                             // The one place this daemon learns of a dog it
                             // was not told about at boot. `shep adopt` and
@@ -471,11 +444,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 },
                 filter,
             },
-            Err(err) => reply(Err(RpcError {
-                code: RpcErrorCode::InvalidConfig,
-                message: err.to_string(),
-                daemon_version: None,
-            })),
+            Err(err) => reply(Err(invalid_config(err))),
         },
         Request::DogStaleness => {
             let (stale, pending) = dog_staleness(ctx).await;
@@ -491,11 +460,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         // The acting half of `ConfigDrift` above, and the one arm here that
         // changes a running flock's config without replacing anything.
         Request::ApplyConfig { apps, reset } => match duplicate_name(&apps) {
-            Some(name) => reply(Err(RpcError {
-                code: RpcErrorCode::InvalidConfig,
-                message: NormalizeError::DuplicateName(name).to_string(),
-                daemon_version: None,
-            })),
+            Some(name) => reply(Err(invalid_config(NormalizeError::DuplicateName(name)))),
             None => match ctx.supervisor.apply_config(apps, reset).await {
                 Ok(applied) => {
                     // Recorded unconditionally, as the `Scale` arm above is:
@@ -517,11 +482,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         // rather than an empty match.
         Request::SheepConfig { name } => match ctx.supervisor.sheep_config(name.clone()).await {
             Ok(Some(view)) => reply(Ok(Response::SheepConfig(Box::new(view)))),
-            Ok(None) => reply(Err(RpcError {
-                code: RpcErrorCode::NotFound,
-                message: format!("no sheep named {name}"),
-                daemon_version: None,
-            })),
+            Ok(None) => reply(Err(no_sheep(&name))),
             Err(err) => reply(Err(rpc_error(&err))),
         },
         Request::SetSheepEnv { name, key, value } => {
@@ -543,11 +504,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                     ctx.registry.record(&[app]);
                     reply(Ok(Response::SheepEnvSet { name, key }))
                 }
-                Ok(None) => reply(Err(RpcError {
-                    code: RpcErrorCode::NotFound,
-                    message: format!("no sheep named {name}"),
-                    daemon_version: None,
-                })),
+                Ok(None) => reply(Err(no_sheep(&name))),
                 Err(err) => reply(Err(rpc_error(&err))),
             }
         }
@@ -583,11 +540,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                         collisions: batch.collisions,
                     }))
                 }
-                Ok(None) => reply(Err(RpcError {
-                    code: RpcErrorCode::NotFound,
-                    message: format!("no sheep named {name}"),
-                    daemon_version: None,
-                })),
+                Ok(None) => reply(Err(no_sheep(&name))),
                 Err(err) => reply(Err(rpc_error(&err))),
             }
         }
@@ -614,11 +567,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                         warning,
                     }))
                 }
-                Ok(None) => reply(Err(RpcError {
-                    code: RpcErrorCode::NotFound,
-                    message: format!("no sheep named {name}"),
-                    daemon_version: None,
-                })),
+                Ok(None) => reply(Err(no_sheep(&name))),
                 Err(err) => reply(Err(rpc_error(&err))),
             }
         }
@@ -638,11 +587,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                     ctx.registry.record(&[set.app]);
                     reply(Ok(Response::SheepDogSettingsSet { name, dog }))
                 }
-                Ok(None) => reply(Err(RpcError {
-                    code: RpcErrorCode::NotFound,
-                    message: format!("no sheep named {name}"),
-                    daemon_version: None,
-                })),
+                Ok(None) => reply(Err(no_sheep(&name))),
                 Err(err) => reply(Err(rpc_error(&err))),
             }
         }
@@ -694,11 +639,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                     );
                     reply(Ok(Response::DogConfigSet { name }))
                 }
-                Err(err) => reply(Err(RpcError {
-                    code: RpcErrorCode::InvalidConfig,
-                    message: err.to_string(),
-                    daemon_version: None,
-                })),
+                Err(err) => reply(Err(invalid_config(err))),
             }
         }
         // A provider dog's push. Unguarded by design, for the reason the
@@ -733,15 +674,11 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
             .chain(entries.keys().map(|key| ("key", key.as_str())))
             .find(|(_, value)| !shep_core::secrets::is_name(value));
             if let Some((field, value)) = refused {
-                return reply(Err(RpcError {
-                    code: RpcErrorCode::InvalidConfig,
-                    message: format!(
-                        "`{value}` is not a valid {field}: a name is 1 to \
-                         {max} bytes of `[A-Za-z0-9._-]` and may not start with `.`",
-                        max = shep_core::secrets::MAX_KEY_BYTES
-                    ),
-                    daemon_version: None,
-                }));
+                return reply(Err(invalid_config(format!(
+                    "`{value}` is not a valid {field}: a name is 1 to \
+                     {max} bytes of `[A-Za-z0-9._-]` and may not start with `.`",
+                    max = shep_core::secrets::MAX_KEY_BYTES
+                ))));
             }
             // The key, never the value: an error message is the one place a
             // pushed value must not turn up (IR-41).
@@ -750,14 +687,10 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 .map(|(key, value)| (key, value.as_str().len()))
                 .find(|(_, len)| *len > shep_core::secrets::MAX_VALUE_BYTES);
             if let Some((key, len)) = oversized {
-                return reply(Err(RpcError {
-                    code: RpcErrorCode::InvalidConfig,
-                    message: format!(
-                        "the value for `{key}` is {len} bytes, over the {max}-byte limit",
-                        max = shep_core::secrets::MAX_VALUE_BYTES
-                    ),
-                    daemon_version: None,
-                }));
+                return reply(Err(invalid_config(format!(
+                    "the value for `{key}` is {len} bytes, over the {max}-byte limit",
+                    max = shep_core::secrets::MAX_VALUE_BYTES
+                ))));
             }
             // The entries arrive owned, so the values map takes the
             // `String` out of each rather than copying what `as_str`
