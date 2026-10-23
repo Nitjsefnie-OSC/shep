@@ -17,6 +17,9 @@ use crate::{ChildMessage, ShepherdMessage};
 
 /// What an action handler is: params, then the action's own name. Returns
 /// the reply body the operator reads.
+///
+/// `Send + Sync` because the reader runs a handler on a thread of its own,
+/// beside any other handler the same app has running.
 pub type ActionHandler = Box<dyn Fn(Option<&str>, &str) -> String + Send + Sync + 'static>;
 
 /// What a shutdown handler is.
@@ -49,6 +52,10 @@ pub(crate) enum Outcome {
 /// has run. Carries a handle to whatever handler applies, or the context
 /// to build a reply without one. That keeps the registry's lock free by
 /// the time [`run`] calls into it.
+///
+/// `Clone` because the reader hands a copy to a handler thread and keeps
+/// the original for the case where that thread cannot be spawned.
+#[derive(Clone)]
 pub(crate) enum Resolved {
     /// A registered action's handler, ready to call.
     Action {

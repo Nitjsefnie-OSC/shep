@@ -316,6 +316,15 @@ though you answered it promptly. Echoing `id` is how you make that
 impossible. Failing that, don't sit on a reply, and don't send more than one
 per action you were asked.
 
+**Handlers may run at the same time.** `shep-channel` runs each action
+handler on its own thread, so a slow action does not hold up the messages
+behind it, and two replies can reach the descriptor in the opposite order to
+the actions that produced them. Echo the `id` and that costs you nothing. If
+you do not echo it, the name-and-order matching above assumes you answered in
+the order you were asked. A handler has to be safe to run beside another
+handler of the same app: in Rust that is `Send + Sync`, which `on_action`
+already asks for.
+
 **No shepherd channel is not a silent failure.** An app configured with
 none of `channel`/`wait_ready`/`shutdown_with_message` still gets a row
 back from `shep trigger` — `no_channel`, naming exactly which config field
@@ -412,5 +421,6 @@ with any subscriber seeing, not just the one who asked.
 - Reply to every `action` message you receive, even ones you don't
   recognize, and reply exactly once, promptly.
 - Echo the `id` from the action on your reply — one field, and it is what
-  makes a slow action's answer land on the right trigger.
+  makes a slow action's answer land on the right trigger, whatever order the
+  handlers finish in.
 - What you put in `body` is what the operator reads back.

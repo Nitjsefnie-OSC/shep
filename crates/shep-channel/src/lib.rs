@@ -21,8 +21,12 @@
 //! shepherd.flush(std::time::Duration::from_secs(2)).unwrap();
 //! ```
 //!
-//! - A slow handler delays the next message: the reader thread runs
-//!   handlers itself. `action_timeout` (default 3s) sets the budget.
+//! - An action's handler runs on a thread of its own, so a slow one does
+//!   not delay the messages behind it. Up to 32 run at once, and past that
+//!   the reader answers actions itself. Every reply carries the id of the
+//!   action it answers, so a reply lands on the right trigger whatever
+//!   order the handlers finish in. `action_timeout` (default 3s) is still
+//!   the budget one handler gets.
 //! - `metric` and `note` drop under backpressure. `ready` and a reply block
 //!   for room instead, since losing either is worse.
 //! - Sending queues; a writer thread does the writing. An app that ends

@@ -100,6 +100,11 @@ impl Shepherd {
     /// Called with the action's params (`None` if triggered with none) and
     /// its name, in that order. The return value becomes the reply body.
     ///
+    /// A handler runs on a thread of its own and may run at the same time
+    /// as another handler of the same app, which is what the `Send + Sync`
+    /// bound is for. Each reply carries the id of the action it answers, so
+    /// two handlers finishing out of order still answer the right trigger.
+    ///
     /// Safe to call from another thread, or from inside a handler.
     /// A `reload` action can swap its own handlers this way. The
     /// registry's lock is never held while a handler runs.
@@ -119,6 +124,10 @@ impl Shepherd {
     ///
     /// Without one, a shutdown message warns and nothing else happens.
     /// This crate never ends a process on its own judgement.
+    ///
+    /// A shutdown is looked up only after the action handlers already
+    /// running have finished, so an action handler can register this one
+    /// and still have it run for a shutdown sent right after it.
     pub fn on_shutdown<H>(&self, handler: H) -> &Self
     where
         H: Fn() + Send + Sync + 'static,
@@ -391,7 +400,7 @@ fn start() -> Shepherd {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Cursor, Write};
+    use std::io::{BufReader, Cursor, Write, pipe};
     use std::sync::{PoisonError, mpsc};
     use std::time::Duration;
 
@@ -724,56 +733,72 @@ mod tests {
 
     /// Runs on its own thread with a deadline. A real deadlock would hang
     /// the whole suite otherwise.
+    ///
+    /// The `late` line is written only after the reload handler says it
+    /// registered, so the reader cannot have resolved that action as an
+    /// unknown one. What the two replies then have to carry is their own
+    /// id, which is the only thing matching them once handlers overlap.
     #[test]
-    fn a_handler_that_registers_another_handler_does_not_deadlock_the_reader() {
+    fn a_handler_that_registers_another_handler_is_matched_by_id() {
         let shepherd = Shepherd::inert(None);
         let inner_shepherd = shepherd.clone();
+        let (registered, registered_rx) = mpsc::channel();
+        let (release, waiting) = mpsc::channel();
+        let waiting = Arc::new(std::sync::Mutex::new(waiting));
         shepherd.on_action("reload", move |_, _| {
             inner_shepherd.on_action("late", |_, _| "late ok".to_string());
+            registered.send(()).expect("registered");
+            waiting
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .recv()
+                .expect("the test never released the reload handler");
             "reloaded".to_string()
         });
 
         let outbox = Arc::new(Outbox::new(4));
         let dispatch = Arc::clone(&shepherd.0.dispatch);
-        let outbox_thread = Arc::clone(&outbox);
-
-        let (tx, rx) = mpsc::channel();
+        let (stream, mut shepherd_end) = pipe().expect("pipe");
+        let (done, done_rx) = mpsc::channel();
+        let reading = Arc::clone(&outbox);
         std::thread::spawn(move || {
-            let mut reader = Cursor::new(
-                b"{\"kind\":\"action\",\"name\":\"reload\",\"id\":1}\n\
-                  {\"kind\":\"action\",\"name\":\"late\",\"id\":2}\n"
-                    .to_vec(),
-            );
-            let warn = |_: &str| {};
-            reader_loop(&mut reader, &outbox_thread, &dispatch, &warn);
-            let _ = tx.send(());
+            let mut reader = BufReader::new(stream);
+            reader_loop(&mut reader, &reading, &dispatch, &|_: &str| {});
+            let _ = done.send(());
         });
 
-        rx.recv_timeout(DEADLINE)
+        shepherd_end
+            .write_all(b"{\"kind\":\"action\",\"name\":\"reload\",\"id\":1}\n")
+            .expect("write the reload");
+        registered_rx
+            .recv_timeout(DEADLINE)
+            .expect("the reload handler never registered the late one");
+        shepherd_end
+            .write_all(b"{\"kind\":\"action\",\"name\":\"late\",\"id\":2}\n")
+            .expect("write the late action");
+        drop(shepherd_end);
+        release.send(()).expect("release the reload handler");
+
+        done_rx
+            .recv_timeout(DEADLINE)
             .expect("reader_loop deadlocked: a handler that registers a handler hung the reader");
 
-        // The second is the late reply, registered inside the reload handler.
-        match outbox.take().as_slice() {
-            [
-                ChildMessage::ActionReply {
-                    action: action1,
-                    body: body1,
-                    id: id1,
-                },
-                ChildMessage::ActionReply {
-                    action: action2,
-                    body: body2,
-                    id: id2,
-                },
-            ] => {
-                assert_eq!(action1, "reload");
-                assert_eq!(body1, "reloaded");
-                assert_eq!(*id1, Some(1));
-                assert_eq!(action2, "late");
-                assert_eq!(body2, "late ok");
-                assert_eq!(*id2, Some(2));
-            }
-            other => panic!("expected two action replies, got {other:?}"),
-        }
+        let mut replies: Vec<(Option<u64>, String, String)> = outbox
+            .take()
+            .into_iter()
+            .map(|message| match message {
+                ChildMessage::ActionReply { action, body, id } => (id, action, body),
+                other => panic!("expected an action reply, got {other:?}"),
+            })
+            .collect();
+        replies.sort_by_key(|(id, ..)| *id);
+        assert_eq!(
+            replies,
+            vec![
+                (Some(1), "reload".to_string(), "reloaded".to_string()),
+                (Some(2), "late".to_string(), "late ok".to_string()),
+            ],
+            "a handler registered mid-flight was not answered, or a reply lost the id it answers"
+        );
     }
 }
