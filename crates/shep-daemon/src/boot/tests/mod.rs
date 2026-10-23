@@ -14,12 +14,83 @@ use crate::boot::*;
 use crate::fake::{FIRST_SCRIPTED_PID, ProcScript, ScriptedRunner, ScriptedSweep};
 use crate::proc_table::ProcInstant;
 use crate::sweep::{LambSignal, LambSnapshot, LambSweep};
-use crate::testing::test_paths;
+use crate::testing::{capture_logs, roll_of, test_paths};
 use shep_core::config::{AppConfig, ProbeConfig, ProbeKind, normalize};
-use shep_core::protocol::{BusEvent, ProcessEventKind};
+use shep_core::paths::ShepPaths;
+use shep_core::protocol::{BusEvent, ProcessEventKind, ProcessInfo};
 use shep_core::selector::ProcessSelector;
 use shep_core::values::UpDuration;
 use std::time::Duration;
+
+/// A laid-out `$SHEP_HOME` holding a muster roll of `apps`, every one of them
+/// recorded as running.
+///
+/// The seed a boot test that restores a flock needs: [`init_dirs`] first, so
+/// the restore reads the layout the roll was written into, and [`roll_of`] so
+/// the roll says the flock was up when the daemon last wrote it.
+///
+/// # Panics
+///
+/// If the layout cannot be created or the roll cannot be written, which is a
+/// fixture fault rather than a condition under test.
+#[track_caller]
+fn seed_roll(paths: &ShepPaths, apps: Vec<AppConfig>) {
+    init_dirs(paths).unwrap();
+    crate::snapshot::write_atomic(&paths.snapshot, &roll_of(apps)).unwrap();
+}
+
+/// Boots a daemon to a finished listing, and hands back the flock with every
+/// line the boot logged.
+///
+/// The shape every synchronous boot test needs, in one place:
+/// `capture_logs` scopes its subscriber to a synchronous closure, so the
+/// runtime is a current-thread one this helper drives with `block_on` rather
+/// than a `#[tokio::test]` runtime, and the daemon is dropped instead of run.
+///
+/// Seeds `roll` only when it is non-empty: a test with nothing to restore
+/// must not be handed a roll. Which test restores stays in `options`, and so
+/// does what a failure means, since the test's own name carries its claim.
+///
+/// # Panics
+///
+/// If the runtime cannot be built, the boot fails, or the listing fails.
+#[track_caller]
+fn boot_blocking(
+    roll: Vec<AppConfig>,
+    scripts: Vec<ProcScript>,
+    options: BootOptions,
+) -> (Vec<ProcessInfo>, String) {
+    let _guard = SIGNAL_TEST_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let paths = test_paths(&dir);
+    if roll.is_empty() {
+        init_dirs(&paths).unwrap();
+    } else {
+        seed_roll(&paths, roll);
+    }
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    // `capture_logs` takes a `FnOnce`, so the boot takes `paths` out of an
+    // `Option` rather than cloning it: nothing after the boot reads them.
+    let mut paths = Some(paths);
+    let mut boot_result = None;
+    let logs = capture_logs(|| {
+        boot_result = Some(rt.block_on(boot_with_idle_sweep(
+            ScriptedRunner::new(scripts),
+            paths.take().expect("the boot takes the paths exactly once"),
+            options,
+        )));
+    });
+    let daemon = boot_result.unwrap().expect("the boot must succeed");
+    let flock = rt
+        .block_on(daemon.context().supervisor.list_checked())
+        .unwrap();
+    drop(daemon); // no run() needed; SignalTasks::drop stops the listeners
+    (flock, logs)
+}
 
 // A scripted pid can be another test's real child, so a boot test must never
 // end its lambs through the real sweep. Real time: binds a real socket.
@@ -107,7 +178,7 @@ async fn a_booted_daemon_restarts_a_sheep_whose_liveness_probe_fails() {
 
     let daemon = boot_with_idle_sweep(
         ScriptedRunner::new(vec![ProcScript::never_exits(); 4]),
-        paths.clone(),
+        paths,
         BootOptions::default(),
     )
     .await

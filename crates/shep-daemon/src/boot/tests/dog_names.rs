@@ -4,13 +4,14 @@
 //! an upgrade a roll's sheep named `metrics` stays, whatever the dog's
 //! standing, and boot says which of the two to rename.
 //!
-//! `#[test]` with a `block_on` of its own, not `#[tokio::test]`:
-//! `capture_logs` scopes its subscriber to a synchronous closure.
+//! `#[test]` with a `block_on` of its own, not `#[tokio::test]`, because all
+//! three go through [`boot_blocking`]: it captures the logs through a
+//! synchronous closure, which needs a runtime it can drive itself.
 
+use super::boot_blocking;
 use crate::boot::*;
 use crate::dogs::DogSpec;
-use crate::fake::{ProcScript, ScriptedRunner};
-use crate::testing::{capture_logs, roll_of, test_paths};
+use crate::fake::ProcScript;
 use shep_core::config::AppConfig;
 use shep_core::protocol::{DogSource, ProcessInfo};
 
@@ -23,40 +24,22 @@ fn built_in(name: &str) -> DogSpec {
 
 /// Boots over a roll holding one sheep named `metrics`, and returns the
 /// flock with everything the boot logged.
+///
+/// Restores, since every case here is about a saved sheep: which of the two
+/// the boot tells the operator to rename is only visible once the roll is
+/// back.
 fn boot_over_a_saved_metrics(
     scripts: Vec<ProcScript>,
     options: BootOptions,
 ) -> (Vec<ProcessInfo>, String) {
-    let _guard = SIGNAL_TEST_LOCK.blocking_lock();
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    init_dirs(&paths).unwrap();
-    let roll = roll_of(vec![AppConfig::minimal("metrics", "./srv")]);
-    crate::snapshot::write_atomic(&paths.snapshot, &roll).unwrap();
-
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let mut boot_result = None;
-    let logs = capture_logs(|| {
-        boot_result = Some(rt.block_on(boot_with_idle_sweep(
-            ScriptedRunner::new(scripts),
-            paths.clone(),
-            BootOptions {
-                restore: true,
-                ..options
-            },
-        )));
-    });
-    let daemon = boot_result
-        .unwrap()
-        .expect("a name collision must not fail the boot");
-    let flock = rt
-        .block_on(daemon.context().supervisor.list_checked())
-        .unwrap();
-    drop(daemon);
-    (flock, logs)
+    boot_blocking(
+        vec![AppConfig::minimal("metrics", "./srv")],
+        scripts,
+        BootOptions {
+            restore: true,
+            ..options
+        },
+    )
 }
 
 #[test]
