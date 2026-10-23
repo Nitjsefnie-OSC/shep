@@ -124,6 +124,10 @@ impl Shepherd {
     ///
     /// Without one, a shutdown message warns and nothing else happens.
     /// This crate never ends a process on its own judgement.
+    ///
+    /// A shutdown is looked up only after the action handlers already
+    /// running have finished, so an action handler can register this one
+    /// and still have it run for a shutdown sent right after it.
     pub fn on_shutdown<H>(&self, handler: H) -> &Self
     where
         H: Fn() + Send + Sync + 'static,

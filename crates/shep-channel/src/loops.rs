@@ -10,7 +10,7 @@ use std::thread::JoinHandle;
 
 use crate::dispatch::{Dispatch, Outcome, Resolved, run};
 use crate::outbox::Outbox;
-use crate::{ChannelError, session};
+use crate::{ChannelError, ShepherdMessage, session};
 
 /// What to tell an author whose app was asked to stop and registered nothing.
 const UNHANDLED_SHUTDOWN_ADVICE: &str = "the shepherd sent shutdown and no on_shutdown handler is registered. This \
@@ -55,9 +55,10 @@ pub(crate) fn writer_loop<W: Write>(writer: &mut W, outbox: &Outbox) {
 /// shutdown is handled on the reader, and so is an action once
 /// [`MAX_CONCURRENT_HANDLERS`] are already running or a spawn fails.
 ///
-/// Handlers still running are joined before a shutdown is handled, and
+/// Handlers still running are joined before a shutdown is looked up, and
 /// again before `outbox` closes at the end of the stream, so no reply is
-/// lost with the reader.
+/// lost with the reader, and a shutdown is resolved against the registry
+/// as the actions before it left it.
 ///
 /// `warn` is injected so a test can assert what was said and how
 /// often. This pins the once-per-loop malformed-frame latch.
@@ -73,20 +74,20 @@ pub(crate) fn reader_loop<R: BufRead>(
     loop {
         match session::read_message(reader, &mut line) {
             Ok(Some(message)) => {
+                handlers.retain(|handler| !handler.is_finished());
+                if matches!(message, ShepherdMessage::Shutdown) {
+                    // An `on_shutdown` handler that flushes and exits must
+                    // not race a reply still being computed for an action
+                    // the shepherd sent before it. Looking the shutdown up
+                    // only afterwards also keeps the serial loop's order
+                    // for an action that registers `on_shutdown` itself:
+                    // the handler it registered is the one that runs.
+                    join_handlers(&mut handlers, warn);
+                }
                 let resolved = dispatch
                     .read()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .resolve(message);
-                handlers.retain(|handler| !handler.is_finished());
-                if matches!(
-                    resolved,
-                    Resolved::Shutdown(_) | Resolved::UnhandledShutdown
-                ) {
-                    // An `on_shutdown` handler that flushes and exits must
-                    // not race a reply still being computed for an action
-                    // the shepherd sent before it.
-                    join_handlers(&mut handlers, warn);
-                }
                 if runs_off_reader(&resolved, handlers.len())
                     && let Some(handle) = spawn_handler(&resolved, outbox)
                 {
@@ -666,6 +667,97 @@ mod tests {
             replies_sorted(outbox.take()),
             vec![(Some(1), "slow".to_string(), "slow ok".to_string())],
             "the action sent before the shutdown lost its reply"
+        );
+    }
+
+    /// The other half of the barrier the serial loop gave: joining an
+    /// earlier action is worth nothing unless the shutdown is looked up
+    /// afterwards. An action handler that registers `on_shutdown` has to
+    /// have run by then, or the reader answers the shutdown with the
+    /// registry as it was before the app armed it.
+    #[test]
+    fn a_shutdown_is_resolved_after_a_handler_that_registers_the_shutdown_handler() {
+        let outbox = Arc::new(Outbox::new(4));
+        let dispatch = Arc::new(RwLock::new(Dispatch::default()));
+
+        let (started, started_rx) = mpsc::channel();
+        let (shutdown_ran, shutdown_rx) = mpsc::channel();
+        let (release, waiting) = mpsc::channel();
+        let waiting = Arc::new(std::sync::Mutex::new(waiting));
+        let arming = Arc::clone(&dispatch);
+        let armed = shutdown_ran;
+        let handler: ActionHandler = Box::new(move |_, _| {
+            started.send(()).expect("started");
+            waiting
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .recv()
+                .expect("the test never released the handler");
+            let armed = armed.clone();
+            arming
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .register_shutdown(Box::new(move || {
+                    armed.send(()).expect("the registered shutdown handler ran");
+                }));
+            "armed".to_string()
+        });
+        dispatch
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .register_action("arm".to_string(), handler);
+
+        let warnings: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (done, done_rx) = mpsc::channel();
+        let reading = Arc::clone(&outbox);
+        let registry = Arc::clone(&dispatch);
+        let noted = Arc::clone(&warnings);
+        std::thread::spawn(move || {
+            let mut reader = Cursor::new(
+                b"{\"kind\":\"action\",\"name\":\"arm\",\"id\":1}\n{\"kind\":\"shutdown\"}\n"
+                    .to_vec(),
+            );
+            reader_loop(&mut reader, &reading, &registry, &|message: &str| {
+                noted
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(message.to_string());
+            });
+            let _ = done.send(());
+        });
+
+        started_rx
+            .recv_timeout(DEADLINE)
+            .expect("the action handler never started");
+        assert!(
+            done_rx.recv_timeout(NOT_YET).is_err(),
+            "the reader finished while the action that registers on_shutdown was still held"
+        );
+
+        release.send(()).expect("release the action handler");
+        done_rx
+            .recv_timeout(DEADLINE)
+            .expect("reader_loop never returned");
+        shutdown_rx
+            .recv_timeout(DEADLINE)
+            .expect("the shutdown handler registered by the held action never ran");
+
+        let collected = warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let unhandled: Vec<&String> = collected
+            .iter()
+            .filter(|warning| warning.contains("no on_shutdown handler"))
+            .collect();
+        assert!(
+            unhandled.is_empty(),
+            "the reader answered the shutdown off a registry it resolved before the action armed it: {collected:?}"
+        );
+        assert_eq!(
+            replies_sorted(outbox.take()),
+            vec![(Some(1), "arm".to_string(), "armed".to_string())],
+            "the action that registered the shutdown handler lost its reply"
         );
     }
 
