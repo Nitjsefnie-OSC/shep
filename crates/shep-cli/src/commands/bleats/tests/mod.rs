@@ -1,7 +1,8 @@
 //! Shared test fixtures: the `ProcessInfo` and `BleatsArgs` builders, the
 //! log-file helper, and the run timeout every streamed test in [`follow`]
 //! bounds itself by. [`follow`] covers the bus-subscribed path,
-//! [`tail`] the `--no-follow` file-reading one.
+//! [`tail`] the `--no-follow` file-reading one, [`remote`] the tail read
+//! through a host's shepherd and [`host_follow`] how a run over a host ends.
 
 use std::time::Duration;
 
@@ -116,5 +117,6 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(5);
 
 mod colour;
 mod follow;
+mod host_follow;
 mod remote;
 mod tail;
