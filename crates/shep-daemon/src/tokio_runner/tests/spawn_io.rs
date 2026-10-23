@@ -162,12 +162,7 @@ async fn a_report_names_the_stdin_write_end_it_was_told_about() {
         pipes,
     );
 
-    let (done, ack) = oneshot::channel();
-    ctl.send(LogCtl::ReportFds { done }).await.unwrap();
-    let fds = timeout(PUMP_DEADLINE, ack)
-        .await
-        .expect("a descriptor report must be acknowledged")
-        .expect("the pump must answer rather than drop the acknowledgement");
+    let fds = request_fds(&ctl).await;
 
     assert_eq!(fds.stdin, Some(daemon_end.as_raw_fd()));
 }
@@ -252,13 +247,8 @@ async fn an_adopted_sheep_keeps_its_log_unstamped() {
         .await
         .expect("the adopted pump must forward the line")
         .expect("the pump must not end while its stream is open");
-    let (done, ack) = oneshot::channel();
-    io.log_ctl.send(LogCtl::Flush { done }).await.unwrap();
-    timeout(PUMP_DEADLINE, ack)
-        .await
-        .expect("a flush must be acknowledged")
-        .expect("the pump must answer")
-        .expect("the flush must succeed");
+    let outcome = ctl_acked(&io.log_ctl, "a flush", |done| LogCtl::Flush { done }).await;
+    outcome.expect("the flush must succeed");
 
     let written = fs::read_to_string(dir.path().join("out.log")).unwrap();
     assert_eq!(written, "after the handover\n");
@@ -301,12 +291,7 @@ async fn a_report_names_the_shepherd_channel_it_was_told_about() {
         pipes,
     );
 
-    let (done, ack) = oneshot::channel();
-    ctl.send(LogCtl::ReportFds { done }).await.unwrap();
-    let fds = timeout(PUMP_DEADLINE, ack)
-        .await
-        .expect("a descriptor report must be acknowledged")
-        .expect("the pump must answer rather than drop the acknowledgement");
+    let fds = request_fds(&ctl).await;
 
     assert_eq!(fds.channel, Some(daemon_end.as_raw_fd()));
 }
@@ -460,12 +445,7 @@ async fn a_spawn_reports_the_write_end_it_put_on_the_childs_stdin() {
         .spawn(&child_spec(&dir, "/bin/cat", &[], true))
         .unwrap();
 
-    let (done, ack) = oneshot::channel();
-    io.log_ctl.send(LogCtl::ReportFds { done }).await.unwrap();
-    let fds = timeout(PUMP_DEADLINE, ack)
-        .await
-        .expect("a descriptor report must be acknowledged")
-        .expect("the pump must answer rather than drop the acknowledgement");
+    let fds = request_fds(&io.log_ctl).await;
 
     let stdin = fds
         .stdin
@@ -498,12 +478,7 @@ async fn a_spawn_without_stdin_reports_no_descriptor_for_it() {
         .spawn(&child_spec(&dir, "/bin/sleep", &["30"], false))
         .unwrap();
 
-    let (done, ack) = oneshot::channel();
-    io.log_ctl.send(LogCtl::ReportFds { done }).await.unwrap();
-    let fds = timeout(PUMP_DEADLINE, ack)
-        .await
-        .expect("a descriptor report must be acknowledged")
-        .expect("the pump must answer rather than drop the acknowledgement");
+    let fds = request_fds(&io.log_ctl).await;
 
     assert_eq!(fds.stdin, None);
     // Killed rather than waited out: nothing here reads the child, and
