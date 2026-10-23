@@ -22,18 +22,7 @@ fn declared(name: &str, script: &str, keys: &[&str]) -> DeclaredApp {
 #[tokio::test(start_paused = true)]
 async fn apply_config_refuses_a_request_naming_one_app_twice() {
     let h = harness(vec![ProcScript::never_exits()]);
-    let _started = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::Start {
-                    apps: vec![AppConfig::minimal("web", "./srv")],
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
+    start_web(&h).await;
 
     let reply = reply_of(
         dispatch(
@@ -58,10 +47,7 @@ async fn apply_config_refuses_a_request_naming_one_app_twice() {
     // Refused BEFORE anything was touched, which is the half an error
     // code alone does not prove: the flock still runs what `Start`
     // registered, not either of the two scripts the request carried.
-    let listed = reply_of(dispatch(envelope(3, Request::ListFlock), &h.ctx).await);
-    let Response::Flock(flock) = listed.result.unwrap() else {
-        panic!("expected flock")
-    };
+    let flock = list_flock(&h.ctx, 3).await;
     let roll = h.ctx.registry.roll(&flock, 0);
     assert_eq!(roll.apps[0].app.script, "./srv");
 }
@@ -72,18 +58,7 @@ async fn apply_config_refuses_a_request_naming_one_app_twice() {
 #[tokio::test(start_paused = true)]
 async fn apply_config_records_what_it_applied_in_the_registry() {
     let h = harness(vec![ProcScript::never_exits()]);
-    let _started = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::Start {
-                    apps: vec![AppConfig::minimal("web", "./srv")],
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
+    start_web(&h).await;
 
     let reply = reply_of(
         dispatch(
@@ -114,10 +89,7 @@ async fn apply_config_records_what_it_applied_in_the_registry() {
     assert_eq!(report[0].applied, vec!["max_restarts".to_string()]);
     assert_eq!(report[0].refused, None);
 
-    let listed = reply_of(dispatch(envelope(3, Request::ListFlock), &h.ctx).await);
-    let Response::Flock(flock) = listed.result.unwrap() else {
-        panic!("expected flock")
-    };
+    let flock = list_flock(&h.ctx, 3).await;
     let roll = h.ctx.registry.roll(&flock, 0);
     assert_eq!(roll.apps[0].app.max_restarts, 99);
 }

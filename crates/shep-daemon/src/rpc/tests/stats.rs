@@ -69,21 +69,7 @@ async fn describe_carries_a_live_reading_too() {
     let h = harness_with_stats(vec![ProcScript::never_exits()]);
     start_web(&h).await;
 
-    let described = reply_of(
-        dispatch(
-            envelope(
-                2,
-                Request::Describe {
-                    selector: SelectorSpec::Name("web".to_string()),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    let Ok(Response::Described(infos)) = described.result else {
-        panic!("expected Described, got {:?}", described.result)
-    };
+    let infos = describe(&h.ctx, 2, SelectorSpec::Name("web".to_string())).await;
     assert_eq!(infos[0].memory_bytes, Some(SCRIPTED_TREE_BYTES));
 }
 

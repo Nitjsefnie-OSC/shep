@@ -232,19 +232,7 @@ async fn an_out_file_whose_directory_is_missing_warns() {
 async fn a_live_field_whose_subset_will_not_normalize_parks_instead() {
     let h = harness(vec![ProcScript::never_exits()]);
     // No `cwd`, which is what makes `watch` refusable on its own.
-    let started = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::Start {
-                    apps: vec![AppConfig::minimal("web", "./srv")],
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    assert!(started.result.is_ok(), "{:?}", started.result);
+    start_web(&h).await;
 
     // `cwd` is NeedsRespawn, so this parks and the running spec still
     // has none.
