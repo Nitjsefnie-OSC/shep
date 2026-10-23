@@ -3,10 +3,15 @@
 
 use super::*;
 
-/// Sends a `Hello` naming `protocol` over a fresh connection to `fixture`'s
-/// socket and returns the daemon's `HelloAck` reply, by hand rather than
-/// through [`Fixture::connect`], which always sends a matching protocol.
-async fn handshake_with_protocol(fixture: &Fixture, protocol: u32) -> Result<HelloAck, RpcError> {
+/// Connects to `fixture`'s socket by hand, sends a `Hello` naming `protocol`
+/// and hands back the still-open frame stream beside the daemon's reply.
+///
+/// [`Fixture::connect`] always sends a matching protocol and keeps no handle,
+/// so a test that needs the socket after the handshake goes through here.
+async fn hello_with_protocol(
+    fixture: &Fixture,
+    protocol: u32,
+) -> (Framed<ClientStream, LengthDelimitedCodec>, HelloReply) {
     let stream = transport::connect(&fixture.paths.socket).await.unwrap();
     let mut frames = Framed::new(stream, codec());
     frames
@@ -27,6 +32,12 @@ async fn handshake_with_protocol(fixture: &Fixture, protocol: u32) -> Result<Hel
         .expect("connection closed before replying")
         .unwrap();
     let ack: HelloReply = decode_frame(&frame).unwrap();
+    (frames, ack)
+}
+
+/// The handshake alone: drops the connection and returns the reply.
+async fn handshake_with_protocol(fixture: &Fixture, protocol: u32) -> Result<HelloAck, RpcError> {
+    let (_frames, ack) = hello_with_protocol(fixture, protocol).await;
     ack
 }
 
@@ -70,36 +81,11 @@ async fn a_peer_above_the_daemons_own_version_is_accepted() {
     fixture.shutdown().await;
 }
 
-/// Named `protocol_skew_is_refused_...` until this task: a peer above the
-/// daemon's own version used to be refused as skew. It is now accepted,
-/// since the handshake compares against `MIN_SUPPORTED` rather than exact
-/// equality, so this test moved to asserting the connection stays open
-/// rather than that it closes.
 #[tokio::test]
 async fn a_newer_peer_keeps_the_connection_open_over_the_real_socket() {
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
 
-    // By hand: `Fixture::connect` always sends a matching protocol.
-    let stream = transport::connect(&fixture.paths.socket).await.unwrap();
-    let mut frames = Framed::new(stream, codec());
-    frames
-        .send(
-            encode_frame(&Hello {
-                client_version: "9.9.9".to_string(),
-                protocol: PROTOCOL_VERSION + 1,
-                dog_name: None,
-            })
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    let frame = tokio::time::timeout(RECV_TIMEOUT, frames.next())
-        .await
-        .expect("timed out waiting for the ack")
-        .expect("connection closed before acking")
-        .unwrap();
-    let ack: HelloReply = decode_frame(&frame).unwrap();
+    let (mut frames, ack) = hello_with_protocol(&fixture, PROTOCOL_VERSION + 1).await;
     ack.expect("a peer newer than the daemon must be accepted, not refused as skew");
 
     // A live connection accepts a request rather than staying silent.
