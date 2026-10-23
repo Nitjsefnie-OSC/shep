@@ -135,7 +135,7 @@ pub struct RpcContext {
     /// This daemon's OS pid, echoed in the handshake.
     pub(crate) pid: u32,
     /// Flips to `true` to start graceful daemon shutdown; see [`Self::shutdown`].
-    pub(crate) shutdown: Arc<watch::Sender<bool>>,
+    pub(crate) shutdown: watch::Sender<bool>,
     /// The live resource readings [`super::enrichment::with_live_stats`]
     /// takes a sample from.
     ///
