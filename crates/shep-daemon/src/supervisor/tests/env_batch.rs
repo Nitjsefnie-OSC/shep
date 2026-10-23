@@ -19,6 +19,21 @@ async fn env_batch_harness() -> Harness {
     h
 }
 
+/// The override store as a cold boot would find it: no file, and no record
+/// for `name` inside one. A refusal that wrote leaves either.
+fn assert_store_untouched(h: &Harness, name: &str) {
+    assert!(
+        !h.ctx.paths.overrides.exists(),
+        "{name}: the refusal created the store file"
+    );
+    assert!(
+        shep_core::overrides::get(&h.ctx.paths.overrides, name)
+            .unwrap()
+            .is_none(),
+        "{name}: the refusal still wrote a record"
+    );
+}
+
 /// The stored env of `name`, or a panic naming what was there instead.
 fn stored_env(h: &Harness, name: &str) -> serde_json::Map<String, serde_json::Value> {
     let record = shep_core::overrides::get(&h.ctx.paths.overrides, name)
@@ -275,4 +290,66 @@ async fn a_batch_refuses_a_dog_and_an_unknown_name() {
         .await
         .unwrap_err();
     assert!(matches!(err, SupervisorError::IsADog(_)));
+}
+
+/// The dog refusal is a security boundary, and four pane doors reach it: a
+/// read of a dog's whole config, one env key, a batch, and a bare field.
+/// Each is asserted against the store as well as the code, since a refusal
+/// that still wrote is the same hole with a better error.
+///
+/// The batch door's refusal is already pinned by
+/// [`a_batch_refuses_a_dog_and_an_unknown_name`] above; what this adds for
+/// it is the store half, and for the other three the whole refusal.
+#[tokio::test(start_paused = true)]
+async fn every_pane_door_refuses_a_dog_and_leaves_the_store_untouched() {
+    let h = env_batch_harness().await;
+
+    let err = h
+        .ctx
+        .supervisor
+        .sheep_config("bark".to_string())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SupervisorError::IsADog(_)), "{err:?}");
+    assert_store_untouched(&h, "bark");
+
+    let err = h
+        .ctx
+        .supervisor
+        .set_sheep_env(
+            "bark".to_string(),
+            "PATH".to_string(),
+            Some(EnvValue::from("/tmp/evil".to_string())),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SupervisorError::IsADog(_)), "{err:?}");
+    assert_store_untouched(&h, "bark");
+
+    let err = h
+        .ctx
+        .supervisor
+        .set_sheep_env_batch(
+            "bark".to_string(),
+            BTreeMap::from([("PATH".to_string(), "/tmp/evil".to_string())]),
+            false,
+            false,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SupervisorError::IsADog(_)), "{err:?}");
+    assert_store_untouched(&h, "bark");
+
+    let err = h
+        .ctx
+        .supervisor
+        .set_sheep_field(
+            "bark".to_string(),
+            "script".to_string(),
+            serde_json::json!("/tmp/evil"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SupervisorError::IsADog(_)), "{err:?}");
+    assert_store_untouched(&h, "bark");
 }
