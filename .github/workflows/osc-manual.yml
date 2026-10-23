@@ -1,0 +1,262 @@
+name: osc-manual
+
+# Manual dispatch wrapper used to run shep's Rust gates against an arbitrary
+# ref of this fork, before anything is proposed upstream.
+#
+# It lives on the fork's DEFAULT branch because GitHub honours workflow_dispatch
+# definitions only from there: every dispatch runs THIS definition, whatever
+# target_ref is checked out. Provenance: a dispatch run reports head_branch and
+# head_sha of this default branch, never the tree it checked out, so the
+# checked-out SHA is echoed in the first step's log and a run is matched by that
+# echo, never by recency. Dispatch with a full 40-character target_ref.
+#
+# Stages mirror .github/workflows/test.yml on the checked-out ref (lint on
+# 1.93, nightly rustdoc, typos, the Linux/Windows/ARM test matrix on stable and
+# 1.88, minimal-versions, musl, the windows-gnu cross check, the feature
+# combination legs, cargo-deny). Deliberately omitted, loudly: `slow`
+# (real-clock waits; the upstream pull_request run covers it), `coverage`
+# (an instrumented duplicate of the test matrix), `privileged`
+# (root-only container tests on paths this fork's candidates do not touch),
+# and the non-Rust gates `bench`, `versus-pm2`, `packaging`, `formula`
+# (their paths are untouched by a crates/** candidate; upstream's pull_request
+# CI runs them when its own filter fires). The PR itself is gated by upstream's
+# test.yml on the pull_request event.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Full 40-character ref of this fork to check out and test
+        required: true
+
+concurrency:
+  group: osc-manual-${{ inputs.target_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: fmt + clippy (1.93)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+      - name: Provenance
+        run: |
+          echo "osc-manual sha=$(git rev-parse HEAD)"
+          echo "osc-manual target_ref=${{ inputs.target_ref }}"
+      - run: rustup toolchain install 1.93 --profile minimal --component clippy,rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo +1.93 fmt --all -- --check
+      - run: cargo +1.93 clippy --workspace --all-targets --all-features -- -D warnings
+
+  docs:
+    name: rustdoc (nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+      - name: Provenance
+        run: |
+          echo "osc-manual sha=$(git rev-parse HEAD)"
+      - run: rustup toolchain install nightly --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo +nightly doc --workspace --all-features --no-deps --document-private-items
+        env: { RUSTDOCFLAGS: "-Dwarnings --cfg docsrs" }
+
+  typos:
+    name: typos
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+      - name: Provenance
+        run: |
+          echo "osc-manual sha=$(git rev-parse HEAD)"
+      - uses: crate-ci/typos@512fc24f32f44ab01972217aaaf3dc86ec234d53 # v1.50.2
+
+  test:
+    name: test (${{ matrix.os }}, ${{ matrix.toolchain }})
+    needs: typos
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
+        toolchain: [stable, "1.88"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+      - name: Provenance
+        run: |
+          echo "osc-manual sha=$(git rev-parse HEAD)"
+          echo "osc-manual target_ref=${{ inputs.target_ref }}"
+      - run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with: { tool: nextest }
+      - run: "cargo +${{ matrix.toolchain }} nextest run --profile ci --workspace --locked --all-features -E 'not (test(::slow::) or test(two_concurrent_boots) or test(signal_ignored_then_kill_tree_reaps) or test(a_reload_costs_a))'"
+      - run: 'cargo +${{ matrix.toolchain }} test --workspace --locked --all-features --doc'
+      - uses: ./.github/actions/nextest-report
+        if: ${{ !cancelled() }}
+        with:
+          name: junit-test-${{ matrix.os }}-${{ matrix.toolchain }}
+
+  minimal-versions:
+    name: minimal-versions
+    needs: typos
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+      - name: Provenance
+        run: |
+          echo "osc-manual sha=$(git rev-parse HEAD)"
+      - run: rustup toolchain install nightly stable --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo +nightly generate-lockfile -Z minimal-versions
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with: { tool: nextest }
+      - run: "cargo +stable nextest run --profile ci --workspace -E 'not (test(::slow::) or test(two_concurrent_boots) or test(signal_ignored_then_kill_tree_reaps) or test(a_reload_costs_a))'"
+      - run: 'cargo +stable test --workspace --doc'
+      - uses: ./.github/actions/nextest-report
+        if: ${{ !cancelled() }}
+        with:
+          name: junit-minimal-versions
+
+  musl:
+    name: musl cross
+    needs: typos
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+      - name: Provenance
+        run: |
+          echo "osc-manual sha=$(git rev-parse HEAD)"
+      - run: rustup toolchain install stable --profile minimal --target x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with: { tool: nextest }
+      - run: "cargo nextest run --profile ci --workspace --locked --target x86_64-unknown-linux-musl --test-threads 2 -E 'not (test(::slow::) or test(two_concurrent_boots) or test(signal_ignored_then_kill_tree_reaps) or test(a_reload_costs_a))'"
+      - run: 'cargo test --workspace --locked --target x86_64-unknown-linux-musl --doc'
+      - uses: ./.github/actions/nextest-report
+        if: ${{ !cancelled() }}
+        with:
+          name: junit-musl
+
+  windows-gnu:
+    name: windows-gnu cross check
+    needs: typos
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+      - name: Provenance
+        run: |
+          echo "osc-manual sha=$(git rev-parse HEAD)"
+      - run: rustup toolchain install stable --profile minimal --target x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - id: ubuntu
+        run: echo "release=$(. /etc/os-release && echo "$VERSION_ID")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: mingw
+        with:
+          path: ~/mingw-debs
+          key: mingw-debs-${{ runner.arch }}-ubuntu-${{ steps.ubuntu.outputs.release }}
+      - if: steps.mingw.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/apt/partial" ~/mingw-debs
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends --download-only -o Dir::Cache::Archives="$RUNNER_TEMP/apt" gcc-mingw-w64-x86-64-win32
+          cp "$RUNNER_TEMP"/apt/*.deb ~/mingw-debs/
+      - run: |
+          sudo dpkg -i ~/mingw-debs/*.deb
+          x86_64-w64-mingw32-gcc --version
+      - if: steps.mingw.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/mingw-debs
+          key: ${{ steps.mingw.outputs.cache-primary-key }}
+      - run: cargo check --workspace --all-targets --all-features --locked --target x86_64-pc-windows-gnu
+
+  features:
+    name: features (${{ matrix.os }})
+    needs: typos
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+      - name: Provenance
+        run: |
+          echo "osc-manual sha=$(git rev-parse HEAD)"
+          echo "osc-manual target_ref=${{ inputs.target_ref }}"
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with: { tool: nextest }
+      - run: "cargo nextest run --profile ci -p shep-daemon --locked --no-default-features -E 'not (test(::slow::) or test(two_concurrent_boots) or test(signal_ignored_then_kill_tree_reaps) or test(a_reload_costs_a))'"
+      - uses: ./.github/actions/nextest-report
+        if: ${{ !cancelled() }}
+        with:
+          name: junit-features-${{ matrix.os }}-daemon-no-default-features
+      - run: 'cargo test -p shep-daemon --locked --no-default-features --doc'
+      - run: cargo test -p shep-client --locked --no-default-features
+      - run: cargo test -p shep --lib --locked
+      - run: cargo check -p shep-client --locked
+      - run: cargo check -p shep-channel --locked --no-default-features
+      - run: "cargo nextest run --profile ci --workspace --locked --all-features -E 'not (test(::slow::) or test(two_concurrent_boots) or test(signal_ignored_then_kill_tree_reaps) or test(a_reload_costs_a))'"
+        id: all-features
+      - run: 'cargo test --workspace --locked --all-features --doc'
+      - uses: ./.github/actions/nextest-report
+        if: ${{ !cancelled() && steps.all-features.outcome != 'skipped' }}
+        with:
+          name: junit-features-${{ matrix.os }}
+
+  deny:
+    name: cargo-deny
+    needs: typos
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+      - name: Provenance
+        run: |
+          echo "osc-manual sha=$(git rev-parse HEAD)"
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with: { tool: cargo-deny }
+      - run: cargo +stable deny --log-level warn --all-features check
