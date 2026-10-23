@@ -532,11 +532,11 @@ impl<R: ProcessRunner> Actor<R> {
     /// The `Reloaded` this announces is the one event that says a swap
     /// succeeded, through [`Self::commit_swap_success`]. It is owed only to a
     /// replacement that is serving: one that went down inside the drain window
-    /// keeps its row, and the event would name a process that is not there. Anything else ends
-    /// the reload as an abandonment, the queue with it being the rest of a
-    /// clustered app left on the old code. An overlapping reload of a probed
-    /// app defers the success and asks again with the drainee gone, since its
-    /// `Online` may rest on a probe the drainee answered.
+    /// keeps its row, and the event would name a process that is not there.
+    /// Anything else ends the reload as an abandonment, the queue with it being
+    /// the rest of a clustered app left on the old code. An overlapping reload
+    /// of a probed app defers the success and asks again with the drainee gone,
+    /// since its `Online` may rest on a probe the drainee answered.
     pub(super) fn finish_swap(&mut self, name: &str) {
         let Some(job) = self.reloads.remove(name) else {
             return;
