@@ -190,10 +190,13 @@ impl SupervisorHandle {
     ///   refusal itself.
     pub(crate) async fn sheep_config(
         &self,
-        name: String,
+        name: &str,
     ) -> Result<Option<SheepConfigView>, SupervisorError> {
-        self.call(|reply| Command::SheepConfig { name, reply })
-            .await?
+        self.call(|reply| Command::SheepConfig {
+            name: name.to_string(),
+            reply,
+        })
+        .await?
     }
 
     /// Sets `key` on `name`'s env, or removes it with `None`, recorded as an
@@ -222,13 +225,13 @@ impl SupervisorHandle {
     /// - [`SupervisorError::EngineStopped`] - the actor is gone.
     pub(crate) async fn set_sheep_env(
         &self,
-        name: String,
-        key: String,
+        name: &str,
+        key: &str,
         value: Option<EnvValue>,
     ) -> Result<Option<ResolvedApp>, SupervisorError> {
         self.call(|reply| Command::SetSheepEnv {
-            name,
-            key,
+            name: name.to_string(),
+            key: key.to_string(),
             value,
             reply,
         })
@@ -254,7 +257,7 @@ impl SupervisorHandle {
     /// - [`SupervisorError::EngineStopped`] - the actor is gone.
     pub(crate) async fn set_sheep_env_batch(
         &self,
-        name: String,
+        name: &str,
         entries: BTreeMap<String, String>,
         force: bool,
         dry_run: bool,
@@ -264,7 +267,7 @@ impl SupervisorHandle {
             .map(|(key, value)| (key, EnvValue::from(value)))
             .collect();
         self.call(|reply| Command::SetSheepEnvBatch {
-            name,
+            name: name.to_string(),
             entries,
             force,
             dry_run,
@@ -289,13 +292,13 @@ impl SupervisorHandle {
     /// - [`SupervisorError::EngineStopped`] - the actor is gone.
     pub(crate) async fn set_sheep_field(
         &self,
-        name: String,
-        key: String,
+        name: &str,
+        key: &str,
         value: serde_json::Value,
     ) -> Result<Option<FieldSet>, SupervisorError> {
         self.call(|reply| Command::SetSheepField {
-            name,
-            key,
+            name: name.to_string(),
+            key: key.to_string(),
             value,
             reply,
         })
