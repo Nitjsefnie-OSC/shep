@@ -499,6 +499,28 @@ pub enum Request {
         /// The dog's name: the config key, not a selector
         name: String,
     },
+    /// Ask for one sheep's `[app.dogs.<dog>]` table with every
+    /// `{{secret:...}}` reference replaced by its value, resolved in that
+    /// sheep's own `environment` (the shepherd's when the sheep sets none)
+    ///
+    /// For a dog that consumes a per-sheep credential. [`Self::DogSheepSettings`]
+    /// is unchanged and serves the references as written. One sheep at a
+    /// time, so one sheep's bad reference refuses only its own table and
+    /// nothing resolves a credential nobody asked for. A reference that
+    /// cannot resolve fails the request with [`RpcErrorCode::InvalidConfig`],
+    /// naming the sheep, the dog, the key path and the reference, never a
+    /// value. Nothing is written.
+    ///
+    /// Answers [`Response::SheepDogTable`], [`RpcErrorCode::NotFound`] when no
+    /// sheep has `name`, and the same for a dog's own name. Not a protocol
+    /// bump, as [`Self::DogConfigResolved`] was not.
+    SheepDogSettingsResolved {
+        /// The sheep's name, not a selector, for [`Self::SheepConfig`]'s
+        /// reason.
+        name: String,
+        /// Which dog's table to read.
+        dog: String,
+    },
     /// Start one dog now, marking it as coming from `source`
     EnableDog {
         /// The dog's name

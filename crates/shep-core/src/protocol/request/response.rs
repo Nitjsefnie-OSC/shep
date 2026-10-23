@@ -209,6 +209,16 @@ pub enum Response {
         /// Sheep name to that sheep's table for this dog.
         tables: BTreeMap<String, DogTable>,
     },
+    /// Answer to `SheepDogSettingsResolved`: one sheep's table for one dog,
+    /// each `{{secret:...}}` reference replaced by its value.
+    ///
+    /// `None` when the sheep carries no table for the dog. Printing is the
+    /// same as [`Self::DogSheepSettings`]: [`DogTable`]'s manual `Debug`
+    /// keeps a resolved value out of a `{:?}` (IR-41).
+    SheepDogTable {
+        /// The table, or `None` when the sheep carries none for this dog.
+        table: Option<DogTable>,
+    },
     /// Answer to `SetSheepDogSettings`: which sheep and dog moved.
     ///
     /// Names only, like [`Self::SheepEnvSet`] and [`Self::DogConfigSet`]:

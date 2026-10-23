@@ -319,6 +319,22 @@ impl SupervisorHandle {
             .await
     }
 
+    /// `name`'s table for `dog` and the environment its references resolve
+    /// in. `Ok(None)` when no sheep has that name. See
+    /// [`Actor::handle_sheep_dog_read`].
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::EngineStopped`] - the actor is gone.
+    pub(crate) async fn sheep_dog_read(
+        &self,
+        name: String,
+        dog: String,
+    ) -> Result<Option<SheepDogRead>, SupervisorError> {
+        self.call(|reply| Command::SheepDogRead { name, dog, reply })
+            .await
+    }
+
     /// Sets `dog`'s table on `name`, or removes it with `None`, as an
     /// operator override of the whole `dogs` field. `Ok(None)` when no sheep
     /// has that name.

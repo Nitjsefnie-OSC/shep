@@ -514,6 +514,19 @@ fn reply_wire_snapshots() {
                 reason: "Is a directory (os error 21)".to_string(),
             })),
         },
+        Reply {
+            id: 49,
+            result: Ok(Response::SheepDogTable {
+                table: Some(DogTable::from(serde_json::Map::from_iter([(
+                    "env".to_string(),
+                    serde_json::json!({ "TOKEN": "resolved" }),
+                )]))),
+            }),
+        },
+        Reply {
+            id: 50,
+            result: Ok(Response::SheepDogTable { table: None }),
+        },
     ];
     insta::assert_json_snapshot!("reply_wire_v11", replies);
 }
@@ -626,5 +639,24 @@ fn a_flock_reply_with_one_row_of_unknown_status_still_decodes() {
                 ..sample_info()
             },
         ])
+    );
+}
+
+/// IR-41: the reply prints how many keys the table holds and no value.
+#[test]
+fn sheep_dog_table_debug_prints_no_value() {
+    const SENTINEL: &str = "sentinel-7f3a9c";
+    let table = Response::SheepDogTable {
+        table: Some(DogTable::from(serde_json::Map::from_iter([(
+            "token".to_string(),
+            serde_json::json!(SENTINEL),
+        )]))),
+    };
+    let rendered = format!("{table:?}");
+    assert_eq!(rendered, "SheepDogTable { table: Some(DogTable(<1 key>)) }");
+    assert!(!rendered.contains(SENTINEL));
+    assert_eq!(
+        format!("{:?}", Response::SheepDogTable { table: None }),
+        "SheepDogTable { table: None }"
     );
 }
