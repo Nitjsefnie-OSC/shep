@@ -184,10 +184,7 @@ impl<R: ProcessRunner> Actor<R> {
                     // The one end a reload reaches without `abort_reload`: no
                     // replacement was ever registered, and `spawn_replacement`
                     // has already put the drainee back to `Online`.
-                    if let Some(slot) = self.sheep.get(&old_id) {
-                        let info = to_info(&slot.entry, &self.smits);
-                        self.emit(ProcessEventKind::ReloadAbandoned, info, true);
-                    }
+                    self.emit_reload_abandoned(old_id);
                     return;
                 }
             }
@@ -533,10 +530,9 @@ impl<R: ProcessRunner> Actor<R> {
     /// the reload moves on to the next instance (or ends).
     ///
     /// The `Reloaded` this announces is the one event that says a swap
-    /// succeeded, and it goes out before the next swap begins so a clustered
-    /// app's reload reads in order. It is owed only to a replacement that is
-    /// serving: one that went down inside the drain window keeps its row, and
-    /// the event would name a process that is not there. Anything else ends
+    /// succeeded, through [`Self::commit_swap_success`]. It is owed only to a
+    /// replacement that is serving: one that went down inside the drain window
+    /// keeps its row, and the event would name a process that is not there. Anything else ends
     /// the reload as an abandonment, the queue with it being the rest of a
     /// clustered app left on the old code. An overlapping reload of a probed
     /// app defers the success and asks again with the drainee gone, since its
@@ -579,9 +575,7 @@ impl<R: ProcessRunner> Actor<R> {
         self.clear_reload(new_id);
 
         if serving {
-            let info = to_info(&self.sheep[&new_id].entry, &self.smits);
-            self.emit(ProcessEventKind::Reloaded, info, true);
-            self.advance_reload(name, job.queue);
+            self.commit_swap_success(name, new_id, job.queue);
             return;
         }
 
@@ -591,10 +585,7 @@ impl<R: ProcessRunner> Actor<R> {
             "reload abandoned: the replacement was no longer serving when the instance it \
              replaced went"
         );
-        if let Some(slot) = self.sheep.get(&new_id) {
-            let info = to_info(&slot.entry, &self.smits);
-            self.emit(ProcessEventKind::ReloadAbandoned, info, true);
-        }
+        self.emit_reload_abandoned(new_id);
     }
 
     /// The readiness source a drained swap still has to prove, if it has one.
