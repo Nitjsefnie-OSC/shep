@@ -72,6 +72,40 @@ fn establish_env(next: &mut AppOverrides, incoming: &DeclaredApp) {
         .extend(incoming.declared_env.iter().cloned());
 }
 
+/// The JSON object an `AppConfig` serializes to, the shape every merge here
+/// edits field by field.
+///
+/// Through serde rather than field by field: a hand-written list of
+/// assignments goes stale when a field is added to the struct.
+///
+/// # Errors
+///
+/// A description of the failure, for [`Applied::refused`], if the config
+/// fails to travel through serde, or serializes as something other than an
+/// object.
+fn app_config_object(
+    config: &AppConfig,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    match serde_json::to_value(config) {
+        Ok(serde_json::Value::Object(map)) => Ok(map),
+        Ok(_) => Err("an app config must serialize as an object".to_string()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+/// An `AppConfig` read back out of an object built by [`app_config_object`].
+///
+/// # Errors
+///
+/// A description of the failure, for [`Applied::refused`], if the object is
+/// not a valid `AppConfig`. Only the shape is checked here: `normalize` is
+/// what checks fields against each other, and each caller runs it later.
+fn app_config_from_object(
+    map: serde_json::Map<String, serde_json::Value>,
+) -> Result<AppConfig, String> {
+    serde_json::from_value(serde_json::Value::Object(map)).map_err(|err| err.to_string())
+}
+
 /// Merges what a Flockfile declares into what a sheep is running, returning
 /// the merged config and the override record to write back.
 ///
@@ -90,16 +124,9 @@ pub(super) fn merge_declared(
     overrides: &AppOverrides,
     reset: ResetDepth,
 ) -> Result<(AppConfig, AppOverrides), String> {
-    // Through serde rather than field by field: a hand-written list of
-    // assignments goes stale when a field is added to the struct.
-    let object = |config: &AppConfig| match serde_json::to_value(config) {
-        Ok(serde_json::Value::Object(map)) => Ok(map),
-        Ok(_) => Err("an app config must serialize as an object".to_string()),
-        Err(err) => Err(err.to_string()),
-    };
-    let mut merged = object(stored)?;
-    let file = object(&incoming.config)?;
-    let defaults = object(&AppConfig::default())?;
+    let mut merged = app_config_object(stored)?;
+    let file = app_config_object(&incoming.config)?;
+    let defaults = app_config_object(&AppConfig::default())?;
 
     let mut next = overrides.clone();
     // What the file established on an earlier load, plus what the operator
@@ -189,8 +216,7 @@ pub(super) fn merge_declared(
         }
     }
 
-    let merged: AppConfig =
-        serde_json::from_value(serde_json::Value::Object(merged)).map_err(|err| err.to_string())?;
+    let merged = app_config_from_object(merged)?;
     Ok((merged, next))
 }
 
@@ -206,26 +232,20 @@ pub(super) fn merge_declared(
 ///
 /// A description of the failure if the rebuilt config does not travel through
 /// serde or does not normalize, which a subset of a valid merge can.
-pub(super) fn reached_spec(
+pub(super) fn reached_spec<'a>(
     stored: &AppConfig,
     merged: &AppConfig,
-    reaching: &[String],
+    reaching: impl IntoIterator<Item = &'a String>,
     instances: u32,
 ) -> Result<ResolvedApp, String> {
-    let object = |config: &AppConfig| match serde_json::to_value(config) {
-        Ok(serde_json::Value::Object(map)) => Ok(map),
-        Ok(_) => Err("an app config must serialize as an object".to_string()),
-        Err(err) => Err(err.to_string()),
-    };
-    let mut next = object(stored)?;
-    let source = object(merged)?;
+    let mut next = app_config_object(stored)?;
+    let source = app_config_object(merged)?;
     for field in reaching {
         if let Some(value) = source.get(field) {
             next.insert(field.clone(), value.clone());
         }
     }
-    let mut config: AppConfig =
-        serde_json::from_value(serde_json::Value::Object(next)).map_err(|err| err.to_string())?;
+    let mut config = app_config_from_object(next)?;
     config.instances = instances;
     normalize(config).map_err(|err| err.to_string())
 }
