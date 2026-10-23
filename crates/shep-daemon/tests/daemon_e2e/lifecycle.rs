@@ -11,21 +11,11 @@ async fn handshake_then_start_list_and_stop_a_real_sheep() {
     assert_eq!(client.hello_ack().protocol, PROTOCOL_VERSION);
 
     // Subscribe before starting: the bus delivers from the moment you join.
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["process.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    client.subscribe("process.*").await;
 
-    let app = forever_app("sleeper");
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    assert_eq!(infos.len(), 1);
-    let id = infos[0].id;
-    let spawned_pid = infos[0].pid.expect("a real spawn reports a real pid");
+    let sheep = client.start_first(forever_app("sleeper")).await;
+    let id = sheep.id;
+    let spawned_pid = sheep.pid.expect("a real spawn reports a real pid");
 
     let online = client
         .await_process_event(id, ProcessEventKind::Online)
@@ -60,19 +50,12 @@ async fn log_lines_reach_a_log_subscriber() {
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut client = fixture.connect().await;
 
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["log.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    client.subscribe("log.*").await;
 
-    let app = announce_app("chatty", "hello-flock");
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let id = infos[0].id;
+    let id = client
+        .start_first(announce_app("chatty", "hello-flock"))
+        .await
+        .id;
 
     let line = client.await_log_line(id).await;
     assert_eq!(line, "hello-flock");
@@ -121,23 +104,16 @@ async fn reopen_moves_a_running_sheeps_log_onto_the_recreated_path() {
     let mut client = fixture.connect().await;
 
     // Subscribe before starting: a connection gets no events until it does.
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["log.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    client.subscribe("log.*").await;
 
     // The marker makes "after the reopen" a fact rather than a timing bet.
     let marker = fixture.paths.home.join("go");
-    let app = gated_announce_app("rotator", &marker);
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let id = infos[0].id;
+    let sheep = client
+        .start_first(gated_announce_app("rotator", &marker))
+        .await;
+    let id = sheep.id;
     let out_file = std::path::PathBuf::from(
-        infos[0]
+        sheep
             .out_file
             .clone()
             .expect("this daemon reports its own resolved log paths"),
@@ -193,14 +169,12 @@ async fn reopen_recreates_a_removed_log_directory_owner_only() {
     // The marker lives beside the log directory, not inside it: removing that
     // directory must not disturb it.
     let marker = fixture.paths.home.join("go");
-    let app = gated_announce_app("rotator", &marker);
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let id = infos[0].id;
+    let sheep = client
+        .start_first(gated_announce_app("rotator", &marker))
+        .await;
+    let id = sheep.id;
     let out_file = std::path::PathBuf::from(
-        infos[0]
+        sheep
             .out_file
             .clone()
             .expect("this daemon reports its own resolved log paths"),
@@ -257,21 +231,12 @@ async fn flush_empties_the_recorded_path_and_leaves_a_renamed_archive_alone() {
     let mut client = fixture.connect().await;
 
     // Subscribe before starting: a connection gets no events until it does.
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["log.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    client.subscribe("log.*").await;
 
-    let app = announce_app("noisy", "before");
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let id = infos[0].id;
+    let sheep = client.start_first(announce_app("noisy", "before")).await;
+    let id = sheep.id;
     let out_file = std::path::PathBuf::from(
-        infos[0]
+        sheep
             .out_file
             .clone()
             .expect("this daemon reports its own resolved log paths"),

@@ -245,12 +245,7 @@ pub(crate) async fn reload_under_load(name: &str, defiant: bool) -> Vec<Attempt>
 
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut client = fixture.connect().await;
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["process.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    client.subscribe("process.*").await;
 
     let mut app = AppConfig::minimal(name, &reuse_port_sheep().display().to_string());
     app.interpreter = Some("none".to_string());
@@ -271,12 +266,9 @@ pub(crate) async fn reload_under_load(name: &str, defiant: bool) -> Vec<Attempt>
     // process on this port.
     app.autorestart = false;
 
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let drainee_id = infos[0].id;
-    let drainee_pid = infos[0].pid.expect("a real spawn reports a real pid");
+    let drainee = client.start_first(app).await;
+    let drainee_id = drainee.id;
+    let drainee_pid = drainee.pid.expect("a real spawn reports a real pid");
     client
         .await_process_event(drainee_id, ProcessEventKind::Online)
         .await;

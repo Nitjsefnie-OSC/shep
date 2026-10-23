@@ -10,9 +10,11 @@
 // And so are the imports only those cases use.
 #![cfg_attr(windows, allow(unused_imports))]
 
+use std::future::Future;
 use std::io::ErrorKind;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
+use std::panic::Location;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
