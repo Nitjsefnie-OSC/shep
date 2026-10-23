@@ -196,7 +196,7 @@ async fn a_table_with_no_references_is_answered_over_an_unreadable_store() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn one_sheeps_bad_reference_does_not_refuse_anothers_table() {
+async fn one_sheeps_bad_reference_does_not_refuse_the_other_sheeps_table() {
     let h = harness(vec![ProcScript::never_exits(); 2]);
     start(
         &h.ctx,
