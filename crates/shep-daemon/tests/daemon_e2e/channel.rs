@@ -205,7 +205,7 @@ async fn a_childs_note_reaches_a_note_subscriber_and_not_a_metric_one() {
         .to_string(),
     );
     app.channel = true;
-    notes.request(Request::Start { apps: vec![app] }).await;
+    notes.start_first(app).await;
 
     for (client, topic) in [
         (&mut notes, "channel.note"),
