@@ -37,8 +37,9 @@ impl DogTable {
     /// Every `{{secret:...}}` reference a string in this table names, as
     /// `KEY` or `namespace/KEY`.
     ///
-    /// Walks the same strings [`Self::try_map_strings`] visits, so a table
-    /// this reports nothing for is one a resolve substitutes nothing in.
+    /// Walks the same strings [`Self::try_map_strings`] visits. A table this
+    /// reports nothing for has no reference that resolves, but a resolve can
+    /// still refuse malformed `{{secret:` text, which this does not count.
     /// Keys are not among them.
     #[must_use]
     pub fn references(&self) -> BTreeSet<String> {

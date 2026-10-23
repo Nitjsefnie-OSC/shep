@@ -47,7 +47,9 @@ impl Client {
     ///
     /// As [`Self::request`], including [`RpcErrorCode::NotFound`] for a name
     /// no sheep holds and [`RpcErrorCode::InvalidConfig`] for a reference
-    /// that cannot resolve, and [`RequestError::UnexpectedReply`] for any
+    /// that cannot resolve (an older shepherd is asked `ListFlock` too, to
+    /// tell that name from a sheep without the table), and
+    /// [`RequestError::UnexpectedReply`] for any
     /// answer but [`Response::SheepDogTable`].
     /// [`RequestError::Rpc`] with [`RpcErrorCode::Unsupported`] when an
     /// older shepherd's table names a secret reference it cannot resolve.
@@ -257,6 +259,9 @@ where
                 Response::DogSheepSettings { mut tables } => tables.remove(name),
                 other => return Err(unexpected("DogSheepSettings", &other)),
             };
+            if table.is_none() {
+                ensure_a_sheep(name, &ask).await?;
+            }
             if table
                 .as_ref()
                 .is_some_and(|table| !table.references().is_empty())
@@ -277,6 +282,31 @@ where
             other => Err(unexpected("SheepDogSettingsResolved", &other)),
         },
     }
+}
+
+/// Succeeds when the flock holds a sheep named `name`, and is `NotFound`
+/// otherwise, a dog's own name included.
+///
+/// `DogSheepSettings` lists only the sheep that carry a table, so on its
+/// own it answers an unknown name and a sheep without the table alike.
+/// The request this stands in for tells them apart.
+async fn ensure_a_sheep<F, Fut>(name: &str, ask: &F) -> Result<(), RequestError>
+where
+    F: Fn(Request) -> Fut,
+    Fut: Future<Output = Result<Response, RequestError>>,
+{
+    let sheep = flock(ask(Request::ListFlock).await?)?;
+    if sheep
+        .iter()
+        .any(|entry| entry.name == name && entry.dog.is_none())
+    {
+        return Ok(());
+    }
+    Err(RequestError::Rpc(RpcError {
+        code: RpcErrorCode::NotFound,
+        message: format!("no sheep named {name}"),
+        daemon_version: None,
+    }))
 }
 
 fn dog_section(answer: Response) -> Result<DogSectionToml, RequestError> {
@@ -326,7 +356,8 @@ mod tests {
     use std::collections::BTreeMap;
     use std::time::Duration;
 
-    use shep_core::protocol::{Envelope, HostUsage, RpcError, RpcErrorCode};
+    use shep_core::protocol::{DogSource, Envelope, HostUsage, RpcError, RpcErrorCode};
+    use shep_core::status::ProcStatus;
     use tokio::sync::mpsc::UnboundedReceiver;
 
     use super::*;
@@ -708,8 +739,20 @@ mod tests {
     fn older_shepherd_with_table(path: &std::path::Path, table: DogTable) -> Handovers {
         let shepherd = fake_daemon_across_handovers(path, vec![Handshake::Accept(sample_ack())]);
         shepherd.reply_to_dog_sheep_settings(BTreeMap::from([("web".to_owned(), table)]));
+        shepherd.reply_to_list(vec![
+            sheep_named(1, "web"),
+            sheep_named(2, "api"),
+            // A dog's own name is not a sheep's.
+            ProcessInfo::builder(3, "bark", ProcStatus::Online)
+                .dog(Some(DogSource::BuiltIn))
+                .build(),
+        ]);
         shepherd.refuse_dog_config_resolved(does_not_know_the_request());
         shepherd
+    }
+
+    fn sheep_named(id: u32, name: &str) -> ProcessInfo {
+        ProcessInfo::builder(id, name, ProcStatus::Online).build()
     }
 
     fn resolved_and_plain_table_reads() -> Vec<Request> {
@@ -804,6 +847,27 @@ mod tests {
             "a sheep the older shepherd lists no table for"
         );
         assert_eq!(asked(&shepherd)[..2], resolved_and_plain_table_reads());
+    }
+
+    #[tokio::test]
+    async fn sheep_dog_table_on_an_older_shepherd_is_not_found_for_a_name_no_sheep_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = control_address(dir.path());
+        let _shepherd = older_shepherd_with_table(&path, deploy_table("plain"));
+        let client = Client::connect(&path).await.unwrap();
+
+        for name in ["ghost", "bark"] {
+            let err = client.sheep_dog_table(name, "deploy").await.unwrap_err();
+
+            assert_eq!(
+                err,
+                RequestError::Rpc(RpcError {
+                    code: RpcErrorCode::NotFound,
+                    message: format!("no sheep named {name}"),
+                    daemon_version: None,
+                })
+            );
+        }
     }
 
     #[tokio::test]
