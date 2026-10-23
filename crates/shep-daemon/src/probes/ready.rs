@@ -17,6 +17,7 @@
 //!
 //! - [`ReadinessSource`], [`Readiness`], [`await_ready`]
 
+use core::future::Future;
 use core::time::Duration;
 
 use std::sync::Arc;
@@ -121,17 +122,15 @@ pub async fn await_ready(
         ReadinessSource::Channel => {
             // A dropped sender must not resolve this wait early, since
             // deciding here would race the exit path. A closed channel
-            // switches to a future that never resolves, leaving the outer
-            // `timeout` as the only thing that ends the wait.
+            // switches to a future that never resolves, leaving the
+            // deadline in `within_deadline` as the only thing that ends
+            // the wait.
             let wait_for_signal = async {
                 if channel.await.is_err() {
                     core::future::pending::<()>().await;
                 }
             };
-            match tokio::time::timeout(deadline, wait_for_signal).await {
-                Ok(()) => Readiness::Ready,
-                Err(_elapsed) => Readiness::TimedOut,
-            }
+            within_deadline(deadline, wait_for_signal).await
         }
         ReadinessSource::Probe(config, target) => {
             // Not floored at `MIN_PROBE_INTERVAL` like `spawn_liveness_task`:
@@ -152,10 +151,7 @@ pub async fn await_ready(
                     tokio::time::sleep(interval).await;
                 }
             };
-            match tokio::time::timeout(deadline, poll).await {
-                Ok(()) => Readiness::Ready,
-                Err(_elapsed) => Readiness::TimedOut,
-            }
+            within_deadline(deadline, poll).await
         }
         ReadinessSource::Heuristic => {
             // The elapse is the signal here: the one branch that returns
@@ -164,6 +160,19 @@ pub async fn await_ready(
             tokio::time::sleep(deadline).await;
             Readiness::Ready
         }
+    }
+}
+
+/// Runs `fut` against `deadline`: `Ready` if it finishes inside, `TimedOut`
+/// if the deadline elapses first.
+///
+/// The one place a readiness deadline becomes a [`Readiness`]. A future that
+/// resolves only by the deadline elapsing (a closed channel switched to
+/// `pending`) ends here as `TimedOut`, never early.
+async fn within_deadline<F: Future<Output = ()>>(deadline: Duration, fut: F) -> Readiness {
+    match tokio::time::timeout(deadline, fut).await {
+        Ok(()) => Readiness::Ready,
+        Err(_elapsed) => Readiness::TimedOut,
     }
 }
 
