@@ -20,7 +20,7 @@ go for the full argument. The commit that removed them names itself.
 ## Contents
 
 - [Core types and the daemon's shape](#core-types-and-the-daemons-shape) (5)
-- [The CLI surface](#the-cli-surface) (5)
+- [The CLI surface](#the-cli-surface) (6)
 - [Supervision and lifecycle](#supervision-and-lifecycle) (18)
 - [The log plane](#the-log-plane) (9)
 - [Reload](#reload) (9)
@@ -125,11 +125,19 @@ A dedicated research pass ranked three options for the daemon-boot readiness han
 
 ### The key/value store moved to `shep kv`, with the old verbs left as hidden aliases
 
-`shep kv get`, `shep kv set` and `shep kv unset` are the store's verbs. `shep set`, `shep get` and `shep unset` still parse, still write the same file with the same exit codes, still answer under the `command` key each was called by, and print a `moved` notice on stderr in the table format. Under `--format json` they print no notice at all.
+`shep kv get`, `shep kv set` and `shep kv unset` are the store's verbs. `shep set`, `shep get` and `shep unset` still parse, still write the same file with the same exit codes, still answer under the `command` key each was called by, and print a `moved` notice on stderr in the table format. Under `--format json` they print no notice at all. **Partly superseded:** `shep get` is the settings read now, and only `shep set` and `shep unset` remain hidden aliases. See the entry below.
 
 **Why:** #1073 is about to make `shep set`, `get` and `unset` mean a sheep's or a dog's settings, and a junk drawer cannot hold a name that is about to mean something else. Hidden rather than deleted because the store is a provisioning tool and scripts written against the old spelling are the point of it; the notice is what tells an operator at a terminal the verb moved. It goes on stderr, and only in the table format: `--format json` publishes one object per invocation (`cli::Format::Json`), and a notice envelope beside a failure envelope on the same stream is the shape the reload refusal fix removed (`docs/specs/deferred-history.md`), which a consumer merging the two streams reads as a parse error or as the first object only. `shep welcome`'s first-run notice follows the same rule. Each spelling answers under its own `command` key (`kv`, or the verb as typed) following `rehome`'s precedent, so a script that keys on `envelope["command"]` keeps working through the move. `secret` and `host` are the precedent for a host verb's envelope naming only the host (`"kv"`, not `"kv set"`).
 
 `issue #1073 (Implementation Decisions) and issue #1082; verified crates/shep-cli/src/cli/verbs.rs and crates/shep-cli/src/commands/kv.rs`
+
+### `shep get` reads any settings in the flock, and the store's hidden `get` alias is retired
+
+`shep get <name>[.<path>]` prints one sheep's config, one field of it, one `dogs.<dog>` table inside it, or one dog's own section of `dogs.toml` and a table inside that. The answer is the TOML the address names, spelled as the file it lives in spells it. Bare `shep get` is a usage error, and a name no sheep in the flock is and no dog has a section for is `NotFound` with a sentence naming `shep kv get`.
+
+**Why:** #1073's settings verbs need one reader an operator can point at anything in the flock, and `shep copy` already resolves those addresses: a sheep's name, then a path. `shep get` was the store's hidden alias, and one spelling cannot mean a junk-drawer key and a sheep's config at once; the alias was retired here rather than kept and disambiguated, because the store already has its own home and the notice that kept the alias honest would have to say which of two things was read. A dog's name is the longest run of segments the shepherd answers a section for, rather than a name looked up in a list, because `dogs.toml` spells a dog's sub-table as a header path (`[kelpie.worker]`) and no request lists sections. The dog read is `Request::DogConfig`, the unresolved one, so a `{{secret:...}}` prints as the reference and this verb never reads the secret store; the sheep read is `Request::SheepConfig`, which answers with `env` already emptied, which is why `env` is a refusal naming `shep describe` and `shep import env` rather than an empty table. A dog in the flock with no section is `NotFound` too, but says its settings are all defaults rather than that the name is wrong.
+
+`issue #1095 (parent #1073); verified crates/shep-cli/src/commands/settings_read.rs and crates/shep-cli/src/cli/verbs.rs`
 
 ## Supervision and lifecycle
 

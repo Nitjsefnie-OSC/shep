@@ -54,7 +54,7 @@ VERBS=(
   adopt describe trigger signal whisper fold bleats lookout whistle
   reopen flush barks kv "kv get" "kv set" "kv unset" secret "secret set"
   "secret get" "secret unset" "secret list" host "host add" "host remove"
-  "host list" copy
+  "host list" copy get
   ping kill save muster runtime dev import "import pm2" "import env" startup
   unstartup completions init style welcome
 )

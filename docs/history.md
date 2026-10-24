@@ -558,6 +558,22 @@ wire change: the
 write is `Request::SetSheepField` for a field and
 `Request::SetSheepDogSettings` for a table.
 
+**One read prints any settings in the flock.** `shep get <name>[.<path>]`
+answers a sheep's config (`shep get api`), one field of it
+(`api.max_memory`), one dog's table inside a sheep
+(`api.dogs.kelpie.git`), or one dog's own section of `dogs.toml` and a table
+inside that (`kelpie.worker`). The answer is the TOML the address names,
+spelled as the file it lives in spells it: a sheep's fragment carries its
+`dogs.<dog>` headers, a dog's carries `[<name>]`, and the comments the
+operator wrote inside a dog's section survive the read. A dog's name is the
+longest run of segments the shepherd answers a section for, because
+`dogs.toml` spells a dog's sub-table as a header path rather than as a name.
+`env` is refused for the reason `shep copy` refuses it, and the dog read is
+the unresolved one, so a `{{secret:...}}` prints as the reference. Bare
+`shep get` is a usage error, and a name nothing answers is `NotFound`: the
+key/value store that spelling used to read lives at `shep kv get`. No wire
+change: the reads are `Request::SheepConfig` and `Request::DogConfig`.
+
 **A community dog index lists the dogs others have written, and shep prints
 how to install one without running anything** (2026-08-21 for the index and
 its parser, 2026-08-23 for the verb). `web/public/dogs.json` is a document

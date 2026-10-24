@@ -13,7 +13,7 @@ Run things       start add serve stop restart reload delete stock enable disable
 See what's up    flock describe bleats lookout fold barks
 Survive reboots  save muster startup unstartup
 Talk to a sheep  trigger signal whisper
-The shepherd     ping kill reopen flush kv copy secret host
+The shepherd     ping kill reopen flush kv get copy secret host
 Dogs and agents  dogs adopt whistle
 Foreground runs  runtime dev
 Coming from pm2  import
@@ -1783,7 +1783,7 @@ Options:
           
           A guard against a keystroke in a window you were reading, not a security boundary: lookout
           runs as you, so anything it could do you can already do with `shep stop`. Can also be
-          closed with `shep set lookout.allow_control false`.
+          closed with `shep kv set lookout.allow_control false`.
 
   -q, --quiet
           Suppress non-essential output
@@ -2357,7 +2357,7 @@ Options:
 Store the values a Flockfile refers to and never carries.
 
 Reads and writes `$SHEP_HOME/secrets.json` directly and never connects to the shepherd, exactly as
-`shep set` does: filling the store before the first `shep start` is the ordinary first run.
+`shep kv set` does: filling the store before the first `shep start` is the ordinary first run.
 
 A key holds one value per environment, so production and staging differ without two config files. A
 `{{secret:NAME}}` reference in a Flockfile resolves against the sheep's own environment and then the
@@ -3043,6 +3043,87 @@ Options:
 
       --yes
           Write without asking
+
+      --home <HOME>
+          Talk to a different shepherd
+          
+          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
+          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
+          flock from every directory.
+          
+          [env: SHEP_HOME=]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+@@VERB:get@@
+Print a sheep's or a dog's settings as TOML.
+
+The address is `shep copy`'s: a name, then a path inside the settings that name holds. A sheep's
+name addresses its config and its `dogs.<dog>` tables; a dog's name addresses its own section of
+`dogs.toml`. A sheep is looked for first, among the names the running flock carries, and anything no
+sheep is is read as a dog's section.
+
+`shep get api` prints a sheep's whole config, `shep get api.max_memory` one field, `shep get
+api.dogs.kelpie.git` one dog's table inside a sheep, and `shep get kelpie.worker` one key inside a
+dog's own section.
+
+The answer is the TOML the address names, spelled as the file it lives in spells it: a sheep's
+fragment carries its `dogs.<dog>` headers, a dog's carries `[<name>]`. `--format json` wraps the
+same text in the one envelope every other verb prints.
+
+A sheep's `env` values are never read: a client is never sent them. `shep describe api` lists the
+keys, and `shep import env` writes them.
+
+A name that is neither a sheep nor a dog is refused by name: the key/value store that `shep get`
+used to read lives at `shep kv get`.
+
+Usage: shep get [OPTIONS] <ADDRESS>
+
+Arguments:
+  <ADDRESS>
+          A sheep or a dog, and the path inside its settings, such as `api.max_memory`,
+          `api.dogs.kelpie.git`, or `kelpie.worker`
+
+Options:
+      --format <FORMAT>
+          Output format
+
+          Possible values:
+          - table: Human-readable columns (the default)
+          - json:  A versioned JSON envelope, one object per invocation
+          
+          [default: table]
+
+  -q, --quiet
+          Suppress non-essential output
+          
+          Currently narrows `bleats`' own notices (a dropped-events count, a daemon-shutdown notice,
+          ...): diagnostics distinct from a sheep's own line or a real error, both of which still
+          print regardless.
+
+      --style <STYLE>
+          How much this invocation dresses up its output: `full`, `plain`, or `bare`
+          
+          Wins over `$SHEP_STYLE` and `shep.toml`'s `[style] level`. Omit to let those decide; `shep
+          style` reports which one answered.
+
+          Possible values:
+          - full:  Sheep, boxes and colour
+          - plain: Boxes and colour, no sheep
+          - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
+          `describe`, `fold`, `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`, `enable`,
+          `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb refuses it
+          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
+          no hidden `--exec` form over it. `--home` still names this machine's home, never the
+          host's.
 
       --home <HOME>
           Talk to a different shepherd
