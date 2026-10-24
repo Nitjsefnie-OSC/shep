@@ -108,3 +108,15 @@ fn a_manifest_that_declares_nothing_prints_only_who_the_dog_is() {
         })
     );
 }
+
+#[test]
+fn version_zero_is_not_a_manifest_and_a_later_version_still_reads() {
+    let with = |version: u32| {
+        serde_json::from_value::<Manifest>(serde_json::json!({
+            "manifest": version, "name": "shep-otel", "version": "0.1.3", "protocol": 11,
+        }))
+    };
+
+    assert!(with(0).is_err());
+    assert_eq!(with(2).unwrap().manifest, 2);
+}

@@ -21,6 +21,11 @@ pub const MANIFEST_VERSION: u32 = 1;
 #[non_exhaustive]
 pub struct Manifest {
     /// The manifest's own version, [`MANIFEST_VERSION`] for this format.
+    ///
+    /// Reading refuses 0, which no format has. A higher one is read: later
+    /// versions add fields and never change what a v1 field means, so what
+    /// this shep knows of them stays true.
+    #[serde(deserialize_with = "version_from_one")]
     pub manifest: u32,
     /// The dog's registered name.
     pub name: String,
@@ -73,6 +78,16 @@ impl Manifest {
             depends: Depends::default(),
             validate: false,
         }
+    }
+}
+
+/// Reads the `manifest` field, refusing 0.
+fn version_from_one<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    match u32::deserialize(deserializer)? {
+        0 => Err(serde::de::Error::custom(
+            "manifest versions start at 1, not 0",
+        )),
+        version => Ok(version),
     }
 }
 
