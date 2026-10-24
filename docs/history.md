@@ -642,7 +642,12 @@ is not asked either, because its settings are what an operator edits before
 `shep enable`. What shep cannot read is never an acceptance: an answer with no
 verdict in it, and a manifest or `shep.toml` that could not be read, both stop
 the write and say so, because a dog that declared `validate` and was not asked
-is a check the operator believes is running. `shep adopt` refuses a manifest
+is a check the operator believes is running. `read_manifest` says which of
+those it got (`Read`, `Absent`, `Unreadable`), so a probe that timed out,
+failed, or printed something that is not a manifest is not read as a dog that
+declared nothing. The holder is re-read after the ask as well as before it:
+the ask waits up to the dog's `action_timeout`, and a whole-section or
+whole-table plan carries every key it read. `shep adopt` refuses a manifest
 declaring `validate` without
 `channel`: the check could never run. The ask is client-side, in
 `dog_settings::ask_dog`, and both doors use it, `settings_write::flow::run`
