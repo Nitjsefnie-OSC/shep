@@ -38,6 +38,7 @@ mod adopt_defaults;
 mod adopted_help;
 mod assertions;
 mod available_dogs;
+mod builtin_grants;
 // Shared with `init.rs` and `term_panic_order.rs`, which are separate targets.
 // The file gates itself to unix.
 #[path = "../common/mod.rs"]

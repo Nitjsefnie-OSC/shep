@@ -235,7 +235,7 @@ granted = ["flock.read", "events:process."]
 - `shep adopt` and the first `shep enable` of a dog (no entry, not yet enabled) list the permissions its manifest declares with each reason, and ask `[y/N]`. The prompt says grants keep a dog's requests in bounds and do not confine it. A yes writes `granted` beside `adopted_dogs`; a no leaves the dog adopted and disabled with nothing granted, and the next `shep enable` asks again.
 - `--yes` grants everything declared and nothing else. With no terminal and no `--yes` the command changes nothing and exits 2 (usage).
 - A required permission this shep does not know refuses the adopt or enable (exit 4). An optional one is dropped with a warning and never granted.
-- A dog with no manifest prompts "declares nothing, runs with full access" and records no entry. A manifest that declares no permissions records `granted = []` without a question. A built-in dog has no manifest and is not asked.
+- A dog with no manifest prompts "declares nothing, runs with full access" and records no entry. A manifest that declares no permissions records `granted = []` without a question. A built-in dog is asked like any other, from a manifest built into the binary with no probe: `metrics` declares `flock.read`, `events:channel.metric` and `events:process.`; `bark` declares `flock.read`, `events:process.` and, optional, `events:log.`.
 - Grants keep an honest dog in bounds. They are not a sandbox: a dog runs as the operator and could open the control socket like the CLI.
 
 ## When a dog starts
