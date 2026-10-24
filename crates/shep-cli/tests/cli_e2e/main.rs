@@ -33,6 +33,7 @@ use assert_cmd::cargo::CommandCargoExt as _;
 use tempfile::TempDir;
 
 mod adopt;
+mod adopt_defaults;
 mod assertions;
 mod available_dogs;
 // Shared with `init.rs` and `term_panic_order.rs`, which are separate targets.

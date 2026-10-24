@@ -588,13 +588,13 @@ job was to find the friction rather than resolve it.
 
 Tracked as https://github.com/shep-pm/shep/issues/355.
 
-### A third-party dog has no way to ship its own defaults
+### ~~A third-party dog has no way to ship its own defaults~~ -- done, 2026-10-24
 
 Raised 2026-08-20 while designing `shep-log-rotate`, the first fully external
 dog. `shep adopt <name> <path>` vets, registers, enables and starts in one
 command, and then the operator has an adopted dog with no `[<name>]`
 section in `dogs.toml` and nothing telling them what its knobs are. The
-README is the only answer today.
+README was the only answer.
 
 The maintainer asked whether a dog's repo could ship a `Flockfile.toml` that `shep adopt`
 reads. It cannot: `RawFlockfile` is `deny_unknown_fields` over exactly
@@ -604,17 +604,16 @@ file, committed in a service's repo, describing what to supervise. `shep.toml`
 is the daemon's, one per machine, holding dogs, style and interpreters. A dog's
 registration belongs to the machine.
 
-**Deferred deliberately.** The near-term answer costs shep nothing: a dog
-prints its own commented defaults (`the-dog --print-config >> shep.toml`),
-which is the same shape `shep init` gives a Flockfile, and it puts the
-documentation of a dog's options where its defaults already live.
-
-**The trust question is what any real design has to answer.** A `Dogfile.toml`
-that `adopt` reads means shep parsing a file the dog's author wrote and merging
-it into the operator's `shep.toml`. That is a larger step than "run this
-binary", and `adopt`'s existing vetting ritual exists because this boundary is
-taken seriously. Worth revisiting if a dog ecosystem appears; not worth
-pre-building for one dog.
+**Built as the manifest's `defaults` field** (#1073, #1086): a dog answers
+`--shep-manifest` with TOML text for its own section, and `shep adopt`
+writes it as `[<name>]` in `dogs.toml` when the file holds no section for
+the dog, and never over one that exists. The trust question was answered by
+the route rather than by a new file: the defaults arrive through the
+manifest probe `adopt` already runs on the vetted binary and caches by its
+sha256, so shep parses no file the dog's author wrote. The
+`--print-config`-style flag this deferral recommended as the near-term
+answer is no longer needed, and `docs/dogs.md` and the writing-a-dog page
+say so.
 
 Tracked as https://github.com/shep-pm/shep/issues/356.
 

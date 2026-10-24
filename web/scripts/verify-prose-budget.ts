@@ -85,7 +85,11 @@ export const BUDGETS: Record<string, number> = {
   // Raised again on 2026-10-24 for `--shep-manifest`: `shep adopt` now
   // asks it first, caches the answer by the binary's sha256 and warns about
   // `depends`, which a dog author has to be told before the two older flags.
-  "writing-a-dog": 4705,
+  //
+  // Raised again from 4705 the same day for the `defaults` write: `shep
+  // adopt` filling `dogs.toml` from the manifest is what a dog author ships
+  // defaults with, and it retires the `--print-config`-style flag (#356).
+  "writing-a-dog": 4790,
   overrides: 3380,
   // Raised from 3240 on 2026-09-27 for "A sheep's dogs row": the sub-screen
   // and the per-sheep table pane are new operator-facing surface, not
@@ -166,7 +170,11 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3960 on 2026-10-14 for the `shep copy` sentence: a per-sheep
   // dog table is operator-facing config, and #830 is the verb that moves one
   // onto another sheep.
-  dogs: 3990,
+  //
+  // Raised from 3990 on 2026-10-24 for the `shep adopt` defaults sentence:
+  // the section an adopted dog arrives with is where an operator edits that
+  // dog's settings (#356).
+  dogs: 4030,
   // Raised from 2770 for the "Over --host" section: a lookout over a host
   // leaves panes blank that an operator would otherwise read as broken, so
   // the table naming them is required content.

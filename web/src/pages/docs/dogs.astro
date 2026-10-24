@@ -231,6 +231,11 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
       own section over the wire. The daemon reads the file fresh for every
       such request rather than serving a cached copy.
     </p>
+    <p class="fine">
+      <code>shep adopt</code> fills that section in when the dog's manifest
+      carries <code>defaults</code> and the section is not there yet; it
+      never rewrites one that is.
+    </p>
     <p>
       An environment variable is readable from the process table, inherited
       by every child the dog spawns, and captured into a crash dump.{" "}
