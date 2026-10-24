@@ -323,7 +323,7 @@ fn assert_the_populated_markers(stem: &str, raw: &serde_json::Value, blob: &Hand
     if wrote.get("dog").is_some() {
         assert_eq!(
             sheep.dog(),
-            Some(&DogSource::BuiltIn),
+            Some(&DogSource::BuiltIn { grants: None }),
             "{stem}: a dog that crossed as an ordinary sheep is one `shep dogs` has lost"
         );
     }

@@ -16,7 +16,7 @@ use shep_core::status::ProcStatus;
 fn built_in(name: &str) -> DogSpec {
     DogSpec {
         name: name.to_string(),
-        source: DogSource::BuiltIn,
+        source: DogSource::BuiltIn { grants: None },
     }
 }
 
@@ -51,7 +51,11 @@ async fn a_fresh_home_lists_both_built_ins_disabled_at_ids_0_and_1() {
     for info in &flock {
         assert_eq!(info.status, ProcStatus::Stopped, "{info:?}");
         assert_eq!(info.disabled, Some(true), "{info:?}");
-        assert_eq!(info.dog, Some(DogSource::BuiltIn), "{info:?}");
+        assert_eq!(
+            info.dog,
+            Some(DogSource::BuiltIn { grants: None }),
+            "{info:?}"
+        );
         assert_eq!(info.pid, None, "{info:?}");
     }
 
@@ -133,6 +137,7 @@ async fn an_adopted_disabled_dog_is_listed_with_the_source_it_would_run_from() {
     let _guard = SIGNAL_TEST_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let adopted = DogSource::Adopted {
+        grants: None,
         path: "/usr/local/bin/shep-otel".to_string(),
         channel: true,
     };

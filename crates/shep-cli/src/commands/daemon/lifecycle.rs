@@ -272,14 +272,21 @@ pub fn boot_options(
     }
 }
 
-/// The dog `name` is: adopted from the path `shep.toml` records, or built in.
+/// The dog `name` is: adopted from the path `shep.toml` records, or built in,
+/// with the grants `shep.toml` records for it.
 fn dog_spec(config: &DaemonConfig, name: &str) -> DogSpec {
+    let grants = config
+        .daemon
+        .dog_grants
+        .get(name)
+        .map(|section| section.granted.clone());
     let source = match config.daemon.adopted_dogs.get(name) {
         Some(path) => DogSource::Adopted {
+            grants,
             path: path.display().to_string(),
             channel: config.daemon.channel_dogs.iter().any(|dog| dog == name),
         },
-        None => DogSource::BuiltIn,
+        None => DogSource::BuiltIn { grants },
     };
     DogSpec {
         name: name.to_string(),
@@ -422,11 +429,12 @@ jobs = "/usr/local/bin/shep-jobs"
             vec![
                 DogSpec {
                     name: "metrics".into(),
-                    source: DogSource::BuiltIn
+                    source: DogSource::BuiltIn { grants: None }
                 },
                 DogSpec {
                     name: "otel".into(),
                     source: DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-otel".into(),
                         channel: false,
                     }
@@ -434,6 +442,7 @@ jobs = "/usr/local/bin/shep-jobs"
                 DogSpec {
                     name: "jobs".into(),
                     source: DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-jobs".into(),
                         channel: true,
                     }
@@ -497,15 +506,16 @@ otel = "/usr/local/bin/shep-otel"
             vec![
                 DogSpec {
                     name: "metrics".into(),
-                    source: DogSource::BuiltIn
+                    source: DogSource::BuiltIn { grants: None }
                 },
                 DogSpec {
                     name: "bark".into(),
-                    source: DogSource::BuiltIn
+                    source: DogSource::BuiltIn { grants: None }
                 },
                 DogSpec {
                     name: "otel".into(),
                     source: DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-otel".into(),
                         channel: false,
                     }

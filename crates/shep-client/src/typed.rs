@@ -744,7 +744,7 @@ mod tests {
             sheep_named(2, "api"),
             // A dog's own name is not a sheep's.
             ProcessInfo::builder(3, "bark", ProcStatus::Online)
-                .dog(Some(DogSource::BuiltIn))
+                .dog(Some(DogSource::BuiltIn { grants: None }))
                 .build(),
         ]);
         shepherd.refuse_dog_config_resolved(does_not_know_the_request());

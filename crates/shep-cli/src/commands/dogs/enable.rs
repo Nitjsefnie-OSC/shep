@@ -13,6 +13,7 @@ use crate::exit::ExitCode;
 use crate::output::{DogActionStatus, Streams};
 
 use super::depends::warn_of_unmet_depends;
+use super::grants::warn_if_unenforced;
 use super::vet::{VERSION_BUDGET, read_manifest};
 use super::{
     NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, emit_dog_action, fail_config,
@@ -60,8 +61,9 @@ impl From<ShepTomlError> for EnableRefusal {
 #[cfg_attr(windows, allow(clippy::result_large_err))]
 pub(crate) fn enable_in_config(path: &Path, name: &str) -> Result<DogSource, EnableRefusal> {
     ShepToml::try_edit(path, |cfg| {
-        let source = dog_source(cfg, name);
-        if matches!(source, DogSource::BuiltIn) && !crate::dog::BUILT_IN_DOGS.contains(&name) {
+        let source = dog_source(cfg, name, cfg.granted(name)?);
+        if matches!(source, DogSource::BuiltIn { .. }) && !crate::dog::BUILT_IN_DOGS.contains(&name)
+        {
             return Err(EnableRefusal::UnknownDog {
                 adopted: cfg.adopted_dog_names(),
             });
@@ -153,7 +155,7 @@ pub(crate) fn join_with_and(items: &[String]) -> String {
 /// stale socket file and a daemon that was never started are not
 /// distinguished, so a provisioning script can configure a host before
 /// starting anything.
-async fn enable_after_config(
+pub(super) async fn enable_after_config(
     streams: &mut Streams<'_>,
     name: &str,
     source: &DogSource,
@@ -175,13 +177,16 @@ async fn enable_after_config(
         source: source.clone(),
     };
     match client.request(request).await {
-        Ok(Response::DogStarted(info)) => emit_dog_action(
-            streams,
-            "enable",
-            name,
-            source.clone(),
-            DogActionStatus::Acted(info.status.into()),
-        ),
+        Ok(Response::DogStarted(info)) => {
+            warn_if_unenforced(streams, name, source, client.daemon().protocol);
+            emit_dog_action(
+                streams,
+                "enable",
+                name,
+                source.clone(),
+                DogActionStatus::Acted(info.status.into()),
+            )
+        }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
     }
@@ -247,7 +252,7 @@ mod tests {
 
         let source = enable_in_config(&path, "metrics").unwrap();
 
-        assert!(matches!(source, DogSource::BuiltIn));
+        assert!(matches!(source, DogSource::BuiltIn { .. }));
         assert!(
             ShepToml::read_only(&path)
                 .unwrap()
@@ -294,7 +299,13 @@ mod tests {
             let mut streams = streams(&mut out, &mut err);
             streams.fmt = Format::Json;
 
-            let code = enable_after_config(&mut streams, "bark", &DogSource::BuiltIn, client).await;
+            let code = enable_after_config(
+                &mut streams,
+                "bark",
+                &DogSource::BuiltIn { grants: None },
+                client,
+            )
+            .await;
 
             assert_eq!(code, ExitCode::Success);
             let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -324,7 +335,7 @@ mod tests {
         let _ = enable_after_config(
             &mut streams(&mut out, &mut err),
             "metrics",
-            &DogSource::BuiltIn,
+            &DogSource::BuiltIn { grants: None },
             Some(&client),
         )
         .await;
@@ -334,7 +345,7 @@ mod tests {
             sent.body,
             Request::EnableDog {
                 name: "metrics".to_string(),
-                source: DogSource::BuiltIn,
+                source: DogSource::BuiltIn { grants: None },
             }
         );
     }
@@ -377,6 +388,7 @@ mod tests {
                 Request::EnableDog {
                     name: "otel".to_string(),
                     source: DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-otel".to_string(),
                         channel,
                     },
@@ -562,7 +574,7 @@ mod tests {
         let code = enable_after_config(
             &mut streams(&mut out, &mut err),
             "bark",
-            &DogSource::BuiltIn,
+            &DogSource::BuiltIn { grants: None },
             Some(&client),
         )
         .await;

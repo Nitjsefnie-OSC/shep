@@ -50,6 +50,9 @@ pub mod logstamp;
 pub mod logtail;
 pub mod overrides;
 pub mod paths;
+// What a dog may ask of the shepherd, and the table that maps every request
+// to the permission it takes.
+pub mod permissions;
 pub mod protocol;
 pub mod secrets;
 pub mod selector;

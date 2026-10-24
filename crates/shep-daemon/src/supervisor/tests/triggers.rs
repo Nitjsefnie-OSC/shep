@@ -49,6 +49,7 @@ fn register_dog(
         &test_paths(dir),
     );
     entry.dog = Some(DogSource::Adopted {
+        grants: None,
         path: "./dog".to_string(),
         channel,
     });

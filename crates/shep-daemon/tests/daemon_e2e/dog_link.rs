@@ -40,7 +40,7 @@ exec sleep 30
 }
 
 /// Polls `path` until it exists, failing at [`RECV_TIMEOUT`].
-async fn await_file(path: &std::path::Path) -> String {
+pub(super) async fn await_file(path: &std::path::Path) -> String {
     tokio::time::timeout(RECV_TIMEOUT, async {
         loop {
             if let Ok(text) = std::fs::read_to_string(path) {
@@ -71,6 +71,7 @@ async fn a_boot_first_dog_handshakes_while_the_socket_is_not_served() {
     let dog = DogSpec {
         name: "linkdog".to_string(),
         source: DogSource::Adopted {
+            grants: None,
             path: script.display().to_string(),
             channel: false,
         },

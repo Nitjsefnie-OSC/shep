@@ -234,6 +234,10 @@ IF an operator runs `shep adopt <name> <path>`, THEN:
   trust an ordinary sheep already has, and adopting a dog grants nothing
   beyond what any Flockfile entry already could. There is no seccomp
   profile, no namespace, no separate uid for a dog.
+  `[daemon.dog_grants]` in `shep.toml` limits what a dog may ask of the
+  shepherd on its own connection. That keeps an honest dog in bounds and
+  makes its requests attributable. It does not confine a hostile one, which
+  could open the control socket like the CLI.
 - A dog's `[dog.<name>]` config — a bark sink's webhook URL included —
   reaches it over the Unix socket, never through its environment, so it
   cannot appear in the process table, in a spawned child's own inherited

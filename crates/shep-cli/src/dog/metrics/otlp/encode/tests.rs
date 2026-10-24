@@ -113,7 +113,7 @@ fn sample_info(name: &str) -> ProcessInfo {
 fn sample_dog(name: &str) -> ProcessInfo {
     ProcessInfo::builder(7, name, ProcStatus::Online)
         .uptime_ms(30_000)
-        .dog(Some(DogSource::BuiltIn))
+        .dog(Some(DogSource::BuiltIn { grants: None }))
         .build()
 }
 
@@ -422,7 +422,7 @@ fn the_payload_names_every_series_the_exposition_names() {
 #[test]
 fn a_one_sheep_reading_encodes_to_exactly_this_json() {
     let mut dog = sample_info("bark");
-    dog.dog = Some(DogSource::BuiltIn);
+    dog.dog = Some(DogSource::BuiltIn { grants: None });
     let reading = Reading {
         flock: vec![sample_info("web"), dog],
         host: Some(HostReading {
@@ -534,7 +534,7 @@ fn an_attribute_value_with_a_quote_and_a_newline_survives() {
 #[test]
 fn a_disabled_dog_exports_nothing() {
     let mut parked = sample_info("bark");
-    parked.dog = Some(DogSource::BuiltIn);
+    parked.dog = Some(DogSource::BuiltIn { grants: None });
     parked.status = ProcStatus::Stopped;
     parked.disabled = Some(true);
     let metrics = metrics_by_name(&Reading {

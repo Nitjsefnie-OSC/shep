@@ -141,7 +141,7 @@ mod tests {
         let effect = app.update(Msg::DogWritten {
             edit,
             ticket,
-            result: Ok(DogSource::BuiltIn),
+            result: Ok(DogSource::BuiltIn { grants: None }),
         });
         assert!(matches!(
             effect,
@@ -208,7 +208,7 @@ mod tests {
         let Effect::Send(sent) = app.update(Msg::DogWritten {
             edit,
             ticket,
-            result: Ok(DogSource::BuiltIn),
+            result: Ok(DogSource::BuiltIn { grants: None }),
         }) else {
             panic!("a landed write must raise the daemon half");
         };
@@ -226,7 +226,7 @@ mod tests {
         );
         let info = ProcessInfo::builder(50, "metrics", ProcStatus::Online)
             .pid(Some(50_000))
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .build();
         app.update(Msg::Replied {
             sent,
@@ -289,7 +289,7 @@ mod tests {
                 Response::DogStarted(
                     ProcessInfo::builder(50, name, ProcStatus::Online)
                         .pid(Some(50_000))
-                        .dog(Some(DogSource::BuiltIn))
+                        .dog(Some(DogSource::BuiltIn { grants: None }))
                         .build(),
                 )
             } else {

@@ -205,11 +205,12 @@ mod tests {
     #[test]
     fn a_dog_is_carried_rather_than_refused() {
         let mut built_in = entry_fixture(|_| {});
-        built_in.dog = Some(DogSource::BuiltIn);
+        built_in.dog = Some(DogSource::BuiltIn { grants: None });
         assert_eq!(fitness(&[plain(&built_in)]), Fitness::Carryable);
 
         let mut adopted = entry_fixture(|_| {});
         adopted.dog = Some(DogSource::Adopted {
+            grants: None,
             path: "/opt/bin/shep-log-rotate".to_string(),
             channel: false,
         });

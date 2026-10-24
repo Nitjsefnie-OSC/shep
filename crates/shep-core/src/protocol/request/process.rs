@@ -666,10 +666,10 @@ mod tests {
         // be changed: it feeds pinned snapshots.
         assert_eq!(
             ProcessInfo::builder(1, "metrics", ProcStatus::Online)
-                .dog(Some(DogSource::BuiltIn))
+                .dog(Some(DogSource::BuiltIn { grants: None }))
                 .build()
                 .dog,
-            Some(DogSource::BuiltIn),
+            Some(DogSource::BuiltIn { grants: None }),
             "an empty `dog` setter body is invisible to the comparison above"
         );
 
@@ -808,7 +808,7 @@ mod tests {
         let fixture = r#"{"id":1,"name":"metrics","status":"online","pid":42,"restarts":0,"uptime_ms":10,"fold":null,"out_file":null,"err_file":null,"cpu_percent":null,"memory_bytes":null,"dog":{"kind":"built_in"},"lambs":null,"last_exit":null,"smit":null,"instance":0}"#;
         let info: ProcessInfo = serde_json::from_str(fixture).unwrap();
         assert_eq!(info.handshook, None);
-        assert_eq!(info.dog, Some(DogSource::BuiltIn));
+        assert_eq!(info.dog, Some(DogSource::BuiltIn { grants: None }));
     }
 
     /// The fixture carries `handshook: false`, the case that matters: `None`

@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn a_flock_with_no_silent_dog_says_nothing_about_silence() {
         let mut out = Vec::new();
-        let mut talking = dog_info("bark", DogSource::BuiltIn);
+        let mut talking = dog_info("bark", DogSource::BuiltIn { grants: None });
         talking.handshook = Some(true);
         talking.dog_stale = Some(false);
         emit_flock(

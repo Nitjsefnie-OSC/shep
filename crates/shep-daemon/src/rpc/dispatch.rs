@@ -16,7 +16,7 @@ use shep_core::protocol::{
 
 use crate::bus::TopicFilter;
 use crate::dogs::DogSpec;
-use crate::supervisor::{BatchPolicy, ConnId, SheepDogRead};
+use crate::supervisor::{BatchPolicy, ConnId, SheepDogRead, SupervisorError};
 
 use super::batch::{duplicate_name, persists, staged_plan};
 use super::context::{Outcome, RpcContext, budget};
@@ -25,6 +25,7 @@ use super::enrichment::{
     dog_staleness, handover_refusal, with_dog_contact, with_lambs, with_live_stats,
 };
 use super::error::{invalid_config, no_sheep, rpc_error};
+use super::gate::{check, pin_grants};
 use super::selector_verbs::{not_found, selector_call, selector_of, signal_request, trigger};
 use super::walk::{reload_request, restart_request};
 
@@ -37,14 +38,32 @@ use super::walk::{reload_request, restart_request};
 /// So a `DeadlineExceeded` reply to `Start` means no answer within the
 /// budget, not that nothing happened; a client that retries must reconcile
 /// with `ListFlock`.
-pub(crate) async fn dispatch(envelope: Envelope, conn: ConnId, ctx: &RpcContext) -> Outcome {
+///
+/// `dog` is the dog whose own connection this arrived on, and its request is
+/// checked against its grants before anything runs. `None` is the control
+/// socket, which acts as the operator and is never checked. The check is
+/// inside the deadline: it may ask the supervisor.
+pub(crate) async fn dispatch(
+    envelope: Envelope,
+    conn: ConnId,
+    dog: Option<&str>,
+    ctx: &RpcContext,
+) -> Outcome {
     let id = envelope.id;
-    with_deadline(
-        id,
-        budget(envelope.deadline_ms),
-        run(id, conn, envelope.body, ctx),
-    )
-    .await
+    let work = async {
+        let mut body = envelope.body;
+        if let Some(dog) = dog {
+            if let Err(err) = check(ctx, dog, &body).await {
+                return Outcome::Reply(Reply {
+                    id,
+                    result: Err(err),
+                });
+            }
+            body = pin_grants(ctx, body);
+        }
+        run(id, conn, body, ctx).await
+    };
+    with_deadline(id, budget(envelope.deadline_ms), work).await
 }
 
 // `+ Send`: awaited inside the per-connection `tokio::spawn`, so the bound is
@@ -403,6 +422,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         }
         Request::EnableDog { name, source } => {
             let spec = DogSpec { name, source };
+            let grants = spec.source.grants().cloned();
             match crate::dogs::dog_app(&spec, &ctx.paths) {
                 Err(err) => reply(Err(invalid_config(err))),
                 Ok(app) => {
@@ -410,26 +430,34 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                     // reading the dog's log during an upgrade is usually
                     // asking which file the spawn resolved to.
                     let script = app.config().script.clone();
+                    // Recorded before the start is queued, not after it
+                    // answers. The supervisor starts the dog whether or not
+                    // this dispatch outlives its deadline, and a dog with no
+                    // entry is undeclared, with full access, so a link served
+                    // in that gap would go unchecked. The refusals below put
+                    // back what the name held.
+                    let held = ctx.known_dogs.replace(&spec.name, grants);
                     match ctx.supervisor.start_dog(app, spec.source).await {
                         // `start_dog` is idempotent by name for anything
                         // not at rest, so what comes back is whatever
                         // already holds it. An unmarked entry means a sheep
                         // holds it: nothing was spawned, so the refusal has
-                        // nothing to undo.
-                        Ok(info) if info.dog.is_none() => reply(Err(invalid_config(format!(
-                            "a sheep is already registered as `{}`; rename it or give the dog another name",
-                            spec.name
-                        )))),
+                        // nothing to undo, and that is not a dog to
+                        // remember.
+                        Ok(info) if info.dog.is_none() => {
+                            ctx.known_dogs.restore(&spec.name, held);
+                            reply(Err(invalid_config(format!(
+                                "a sheep is already registered as `{}`; rename it or give the dog another name",
+                                spec.name
+                            ))))
+                        }
                         Ok(info) => {
                             // The one place this daemon learns of a dog it
                             // was not told about at boot. `shep adopt` and
                             // `shep enable` both arrive here, and both have
                             // just written the name into `shep.toml`, which
-                            // this crate does not read. Recorded on the
-                            // success arm only: the refusal above is a
-                            // sheep holding the name, and that is not a dog
-                            // to remember.
-                            ctx.known_dogs.insert(&info.name);
+                            // this crate does not read.
+                            //
                             // Wording is about the binary this shepherd
                             // resolved, not about a spawn having happened:
                             // `start_dog` is idempotent by name for a dog that
@@ -444,7 +472,17 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                             .await;
                             reply(Ok(Response::DogStarted(info)))
                         }
-                        Err(err) => reply(Err(rpc_error(&err))),
+                        // A spawn that fails still registers the dog, as
+                        // `Errored`, and a restart or the restart policy
+                        // brings it up: its grants stay recorded, or its
+                        // link would find none and run unchecked. Anything
+                        // else registered nothing.
+                        Err(err) => {
+                            if !matches!(err, SupervisorError::SpawnFailed(_)) {
+                                ctx.known_dogs.restore(&spec.name, held);
+                            }
+                            reply(Err(rpc_error(&err)))
+                        }
                     }
                 }
             }

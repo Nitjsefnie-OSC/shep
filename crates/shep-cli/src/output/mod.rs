@@ -417,7 +417,10 @@ pub(crate) mod tests {
     /// One sheep (`"web"`), one dog (`"bark"`): the smallest listing that
     /// exercises `emit_flock`'s split, shared by the three tests below.
     pub(crate) fn mixed_listing() -> Vec<ProcessInfo> {
-        vec![sheep_info("web"), dog_info("bark", DogSource::BuiltIn)]
+        vec![
+            sheep_info("web"),
+            dog_info("bark", DogSource::BuiltIn { grants: None }),
+        ]
     }
 
     /// Pins the JSON envelope's exact shape (`--format json` is a stability
@@ -508,7 +511,7 @@ pub(crate) mod tests {
     /// stopped restarting, `Some(false)` for one it is still waiting on,
     /// `None` for a shepherd too old to have an opinion.
     pub(crate) fn silent_dog(name: &str, given_up: Option<bool>) -> ProcessInfo {
-        let mut info = dog_info(name, DogSource::BuiltIn);
+        let mut info = dog_info(name, DogSource::BuiltIn { grants: None });
         info.status = ProcStatus::Online;
         info.handshook = Some(false);
         info.dog_stale = given_up;

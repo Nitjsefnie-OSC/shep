@@ -21,7 +21,7 @@ use tokio::time::Instant;
 /// so no case here has to name a [`ConnId`]. One fresh id per call:
 /// nothing here spans two requests on the same connection.
 async fn dispatch(envelope: Envelope, ctx: &RpcContext) -> Outcome {
-    super::dispatch(envelope, ConnId::next(), ctx).await
+    super::dispatch(envelope, ConnId::next(), None, ctx).await
 }
 
 fn envelope(id: u64, body: Request) -> Envelope {
@@ -131,7 +131,7 @@ async fn enable_dog(ctx: &RpcContext, id: u64, name: &str) -> ProcessInfo {
                 id,
                 Request::EnableDog {
                     name: name.to_string(),
-                    source: DogSource::BuiltIn,
+                    source: DogSource::BuiltIn { grants: None },
                 },
             ),
             ctx,
@@ -188,6 +188,7 @@ mod disabled_wildcards;
 mod dog_at_rest;
 mod dog_delete;
 mod dog_disable;
+mod dog_enable_grants;
 mod dog_env;
 mod dog_fields;
 mod dog_lifecycle;

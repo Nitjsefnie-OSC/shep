@@ -113,6 +113,7 @@ async fn an_adopted_dog_keeps_its_marker_and_stays_out_of_a_wildcard() {
                 Some(4242),
                 |entry| {
                     entry.dog = Some(DogSource::Adopted {
+                        grants: None,
                         path: "/opt/bin/shep-log-rotate".to_string(),
                         channel: false,
                     });
@@ -127,6 +128,7 @@ async fn an_adopted_dog_keeps_its_marker_and_stays_out_of_a_wildcard() {
     assert_eq!(
         info[0].dog,
         Some(DogSource::Adopted {
+            grants: None,
             path: "/opt/bin/shep-log-rotate".to_string(),
             channel: false,
         }),

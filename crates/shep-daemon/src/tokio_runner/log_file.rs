@@ -103,16 +103,11 @@ impl LogFile<tokio::fs::File> {
     /// rotation works on a carried handle as on an opened one.
     #[cfg(unix)]
     pub(super) fn from_file(path: PathBuf, file: tokio::fs::File, stamped: bool) -> Self {
-        Self {
-            // Same path, therefore the same lock as any other handle on it.
-            // A carried descriptor is still one of two writers.
-            record: record_lock(&path),
+        Self::new(
             path,
-            handle: Some(BufWriter::with_capacity(LOG_BUFFER, file)),
-            buffered_since: None,
-            stamp: String::new(),
-            stamper: stamped.then(Stamper::default),
-        }
+            Some(BufWriter::with_capacity(LOG_BUFFER, file)),
+            stamped,
+        )
     }
 
     /// Opens `path` for appending, keeping the path for later reopens.
@@ -126,6 +121,15 @@ impl LogFile<tokio::fs::File> {
             .await
             .ok()
             .map(|file| BufWriter::with_capacity(LOG_BUFFER, file));
+        Self::new(path, handle, stamped)
+    }
+
+    /// Assembles the five fields both constructors share, given the handle
+    /// each one made its own way.
+    ///
+    /// Same path, therefore the same lock as any other handle on it: a
+    /// carried descriptor is still one of two writers.
+    fn new(path: PathBuf, handle: Option<BufWriter<tokio::fs::File>>, stamped: bool) -> Self {
         Self {
             record: record_lock(&path),
             path,

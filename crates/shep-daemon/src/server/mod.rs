@@ -26,6 +26,8 @@ mod peer_auth;
 #[cfg(all(test, unix))]
 mod quiesce_tests;
 #[cfg(all(test, unix))]
+mod resume_grants_tests;
+#[cfg(all(test, unix))]
 mod resume_tests;
 mod server_lifecycle;
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use super::DogGrantsSection;
 use crate::values::UpDuration;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -37,6 +38,13 @@ pub struct DaemonSection {
     /// `dogs.toml` for the reason [`Self::adopted_dogs`] gives. A name
     /// absent from [`Self::adopted_dogs`] is inert here.
     pub channel_dogs: Vec<String>,
+    /// What the operator granted each dog, keyed by dog name.
+    ///
+    /// A dog with no entry is undeclared and keeps full access; the shepherd
+    /// checks every request on a dog's own connection against its entry.
+    /// Here rather than in `dogs.toml` for the reason [`Self::adopted_dogs`]
+    /// gives. A name absent from [`Self::enabled_dogs`] is inert here.
+    pub dog_grants: BTreeMap<String, DogGrantsSection>,
     /// Dogs that run before every sheep, rather than after the flock.
     ///
     /// The default position for a dog is a final stage, for the reason
@@ -75,6 +83,7 @@ impl Default for DaemonSection {
             enabled_dogs: Vec::new(),
             adopted_dogs: BTreeMap::new(),
             channel_dogs: Vec::new(),
+            dog_grants: BTreeMap::new(),
             boot_first_dogs: Vec::new(),
             max_cron_sleep: None,
         }
@@ -251,7 +260,7 @@ mod tests {
         let cfg = DaemonConfig::load(Some("[dog.metrics]\nport = 9615"), &no_env).unwrap();
         assert_eq!(
             format!("{cfg:?}"),
-            "DaemonConfig { daemon: DaemonSection { log_json: false, log_level: Warn, environment: \"production\", socket: None, enabled_dogs: [], adopted_dogs: {}, channel_dogs: [], boot_first_dogs: [], max_cron_sleep: None }, whistle: WhistleSection { allow_control: false }, secrets: SecretsSection { allow_read: false }, style: StyleSection { level: None }, interpreters: {}, hosts: [], dog: <1 tables> }"
+            "DaemonConfig { daemon: DaemonSection { log_json: false, log_level: Warn, environment: \"production\", socket: None, enabled_dogs: [], adopted_dogs: {}, channel_dogs: [], dog_grants: {}, boot_first_dogs: [], max_cron_sleep: None }, whistle: WhistleSection { allow_control: false }, secrets: SecretsSection { allow_read: false }, style: StyleSection { level: None }, interpreters: {}, hosts: [], dog: <1 tables> }"
         );
     }
 }

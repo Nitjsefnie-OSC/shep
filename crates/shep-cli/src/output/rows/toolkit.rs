@@ -318,7 +318,7 @@ pub(crate) fn process_info_paint(header: &str, p: &ProcessInfo) -> Paint {
 /// never a fault.
 pub(crate) fn source_role(source: &DogSource) -> Role {
     match source {
-        DogSource::BuiltIn => Role::Ink3,
+        DogSource::BuiltIn { .. } => Role::Ink3,
         _ => Role::Butter,
     }
 }
@@ -702,17 +702,22 @@ mod tests {
     /// usually has a perfectly healthy dog.
     #[test]
     fn source_draws_the_trust_line_and_never_paints_a_working_dog_red() {
-        assert_eq!(source_role(&DogSource::BuiltIn), Role::Ink3);
+        assert_eq!(
+            source_role(&DogSource::BuiltIn { grants: None }),
+            Role::Ink3
+        );
         assert_eq!(
             source_role(&DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
                 channel: false,
             }),
             Role::Butter
         );
         assert_ne!(
-            source_role(&DogSource::BuiltIn),
+            source_role(&DogSource::BuiltIn { grants: None }),
             source_role(&DogSource::Adopted {
+                grants: None,
                 path: "/x".to_string(),
                 channel: false,
             }),
@@ -784,7 +789,7 @@ mod tests {
             ProcStatus::WaitingRestart,
         ];
         let handshooks = [None, Some(false), Some(true)];
-        let dogs = [None, Some(DogSource::BuiltIn)];
+        let dogs = [None, Some(DogSource::BuiltIn { grants: None })];
 
         for dog in &dogs {
             for &handshook in &handshooks {

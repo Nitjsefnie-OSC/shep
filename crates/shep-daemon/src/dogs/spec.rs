@@ -159,14 +159,14 @@ fn builtin_program() -> Result<PathBuf, DogError> {
 /// - [`DogError::Config`] if the assembled config failed `normalize`.
 pub fn dog_app(spec: &DogSpec, paths: &ShepPaths) -> Result<ResolvedApp, DogError> {
     let (script, args, channel) = match &spec.source {
-        DogSource::BuiltIn => (
+        DogSource::BuiltIn { .. } => (
             builtin_program()?.display().to_string(),
             vec!["dog".to_string(), spec.name.clone()],
             false,
         ),
         // No arguments: an adopted dog is somebody else's binary, and an argv
         // shep invented for it is one more thing it has to agree with.
-        DogSource::Adopted { path, channel } => (path.clone(), Vec::new(), *channel),
+        DogSource::Adopted { path, channel, .. } => (path.clone(), Vec::new(), *channel),
         source => return Err(DogError::UnsupportedSource(format!("{source:?}"))),
     };
 
@@ -380,7 +380,7 @@ mod tests {
         .unwrap();
         let spec = DogSpec {
             name: "bark".to_string(),
-            source: DogSource::BuiltIn,
+            source: DogSource::BuiltIn { grants: None },
         };
         let app = dog_app(&spec, &paths).unwrap();
         // A dog's config is built by `dog_app`, never operator-templated,
@@ -420,7 +420,7 @@ mod tests {
         let built_in = dog_app(
             &DogSpec {
                 name: "metrics".to_string(),
-                source: DogSource::BuiltIn,
+                source: DogSource::BuiltIn { grants: None },
             },
             &paths,
         )
@@ -435,6 +435,7 @@ mod tests {
             &DogSpec {
                 name: "otel".to_string(),
                 source: DogSource::Adopted {
+                    grants: None,
                     path: "/usr/local/bin/shep-otel".to_string(),
                     channel: false,
                 },
@@ -458,7 +459,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let spec = DogSpec {
             name: "metrics".to_string(),
-            source: DogSource::BuiltIn,
+            source: DogSource::BuiltIn { grants: None },
         };
 
         assert!(
@@ -474,6 +475,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = test_paths(&dir);
         let adopted = |channel| DogSource::Adopted {
+            grants: None,
             path: "/usr/local/bin/shep-otel".to_string(),
             channel,
         };
@@ -481,7 +483,7 @@ mod tests {
         for (source, expected) in [
             (adopted(true), true),
             (adopted(false), false),
-            (DogSource::BuiltIn, false),
+            (DogSource::BuiltIn { grants: None }, false),
         ] {
             let spec = DogSpec {
                 name: "otel".to_string(),
@@ -506,6 +508,7 @@ mod tests {
             &DogSpec {
                 name: "telemetry".to_string(),
                 source: DogSource::Adopted {
+                    grants: None,
                     path: "/usr/local/bin/shep-otel".to_string(),
                     channel: false,
                 },
