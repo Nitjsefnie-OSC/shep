@@ -38,6 +38,11 @@ const VERB_COLUMN: usize = 17;
 
 /// One adopted dog, as `--help` and a completion script need it.
 ///
+/// Every string here went through [`printable`]: one line, no control
+/// characters, no clap placeholder braces. A manifest is written by whoever
+/// built the dog, and its text lands in a template clap parses and in a
+/// completion script a shell reads.
+///
 /// `Debug` is derived and needs no redaction: a verb's description and its
 /// subcommands' one-liners are copy an operator is meant to read. The half of
 /// a manifest that can carry a credential, its `defaults`, never reaches
@@ -65,7 +70,8 @@ pub(crate) struct AdoptedVerb {
 /// A name a verb or alias already owns is left out. `shep adopt` refuses such
 /// a name, but a hand-written `shep.toml` can hold one, and clap's verb wins
 /// the token every time, so listing the dog would promise a command that can
-/// never run.
+/// never run. A name [`printable`] would have to rewrite is left out for the
+/// same reason in reverse: it is not the name the operator types.
 #[must_use]
 pub(crate) fn adopted_verbs(paths: &ShepPaths) -> Vec<AdoptedVerb> {
     let Ok(config) = ShepToml::read_only(&paths.daemon_config) else {
@@ -76,14 +82,19 @@ pub(crate) fn adopted_verbs(paths: &ShepPaths) -> Vec<AdoptedVerb> {
         .adopted_dog_names()
         .into_iter()
         .filter(|name| !collides_with_a_verb(name))
+        .filter(|name| printable(name) == *name)
         .map(|name| {
             let verb = config
                 .adopted_dog_path(&name)
                 .as_deref()
                 .and_then(|path| cached_manifest(path, &paths.home))
-                .and_then(|manifest| manifest.verb);
+                .and_then(|manifest| manifest.verb)
+                .and_then(printable_verb);
             AdoptedVerb {
-                description: verb.as_ref().map(|verb| verb.description.clone()),
+                description: verb
+                    .as_ref()
+                    .map(|verb| verb.description.clone())
+                    .filter(|description| !description.is_empty()),
                 subcommands: verb.map_or_else(Vec::new, |verb| verb.subcommands),
                 name,
             }
@@ -91,6 +102,43 @@ pub(crate) fn adopted_verbs(paths: &ShepPaths) -> Vec<AdoptedVerb> {
         .collect();
     verbs.sort_by(|a, b| a.name.cmp(&b.name));
     verbs
+}
+
+/// One string from a manifest, fit for a help line or a completion script.
+///
+/// [`crate::terminal_safe::sanitise`] first: a line break or an escape in a
+/// dog's own copy forges a line of shep's output, and a completion script is
+/// read by a shell. Then the placeholder braces go. clap's
+/// `write_templated_help` splits the help template on `{` and has no escape
+/// for a literal brace, so a spliced `{all-args}` re-renders the options
+/// section rather than naming it, and a `{` with no `}` after it swallows the
+/// rest of the template.
+fn printable(field: &str) -> String {
+    let (cleaned, _) = crate::terminal_safe::sanitise(field);
+    cleaned.replace(['{', '}'], "")
+}
+
+/// The manifest's `verb` with every string shep prints run through
+/// [`printable`], and the pieces a cleaned string cannot be dropped: a
+/// subcommand whose name is not one word, and a verb that declares nothing
+/// once its description is gone.
+fn printable_verb(verb: Verb) -> Option<Verb> {
+    let mut cleaned = Verb::new(printable(&verb.description));
+    cleaned.subcommands = verb
+        .subcommands
+        .into_iter()
+        .filter_map(|sub| {
+            let name = printable(&sub.name);
+            if name.is_empty() || name.chars().any(char::is_whitespace) {
+                return None;
+            }
+            Some(Subcommand::new(name, printable(&sub.about)))
+        })
+        .collect();
+    if cleaned.description.is_empty() && cleaned.subcommands.is_empty() {
+        return None;
+    }
+    Some(cleaned)
 }
 
 /// Whether this argv can want the top-level help, which is the only render
@@ -212,7 +260,9 @@ pub(crate) fn describe_dog(
     if !matches!(argv, [flag] if flag == "--help" || flag == "-h") {
         return None;
     }
-    let verb = cached_manifest(path, home)?.verb?;
+    let verb = cached_manifest(path, home)
+        .and_then(|manifest| manifest.verb)
+        .and_then(printable_verb)?;
     if verb.subcommands.is_empty() {
         return None;
     }
@@ -228,11 +278,17 @@ pub(crate) fn describe_dog(
 fn dog_help(name: &str, verb: &Verb) -> clap::Command {
     let command = clap::Command::new(name.to_owned())
         .bin_name(format!("shep {name}"))
-        .about(verb.description.clone())
         .disable_help_subcommand(true)
         .after_help(format!(
             "Anything else after `shep {name}` goes to the dog unchanged."
         ));
+    // A verb can declare subcommands and no description, and clap prints an
+    // empty about as a blank line above the usage.
+    let command = if verb.description.is_empty() {
+        command
+    } else {
+        command.about(verb.description.clone())
+    };
     verb.subcommands.iter().fold(command, |command, sub| {
         command.subcommand(clap::Command::new(sub.name.clone()).about(sub.about.clone()))
     })

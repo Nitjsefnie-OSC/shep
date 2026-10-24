@@ -948,6 +948,13 @@ screen or a completion script must not spawn a dog. `shep completions` builds
 its script from the registry as it stands at generation time, so adopting a
 dog means generating the script again.
 
+What shep prints of a manifest is one line of text. A placeholder brace, a
+line break or an escape in a `verb.description` or a subcommand's `about`
+goes, an escape's printable tail surviving as inert text, and a subcommand
+whose name is not one word is neither listed nor completed. A manifest is
+written by whoever built the dog, and its text reaches a template clap parses
+and a completion script a shell reads.
+
 `Probe` builds it from what the dog already gives it. `permission`, `verb`,
 `depends_on_dog`, `depends_on_shep`, `defaults` and `validate` add what it
 declares:

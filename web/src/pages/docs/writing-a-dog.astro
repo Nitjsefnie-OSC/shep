@@ -346,7 +346,8 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       keeps <code>--help</code> as a pass-through. Both read the manifest
       cache, never the binary, and completion is generated from the registry
       as it stands, so adopt a dog and run <code>shep completions</code>
-      again.
+      again. What shep prints is one line: a brace, a line break or an escape
+      goes.
     </p>
     <CodeBlock>{`notice[dog_dependency_missing]: \`otel\` depends on \`log-rotate\`, which is not adopted, so \`otel\` may not work until you run \`shep adopt\` for \`log-rotate\`
 notice[dog_needs_newer_shep]: \`otel\` needs shep 0.20.0 or newer, and this is shep 0.16.1, so \`otel\` may not work until you upgrade shep`}</CodeBlock>

@@ -23,6 +23,14 @@ fi"#;
 /// A dog that answers no flag at all: adopted, and undeclared.
 const SILENT_BODY: &str = "";
 
+/// A dog whose `verb` carries clap's own placeholder text, a line break, an
+/// escape and a subcommand name that is two words. Every one of those is a
+/// layout or a section boundary if it reaches the help template or a
+/// completion script.
+const HOSTILE_BODY: &str = r#"if [ "$1" = --shep-manifest ]; then
+  echo '{"manifest":1,"name":"shep-otel","version":"0.2.0","protocol":12,"verb":{"description":"spans {all-args} and\u000amore\u001b[2J","subcommands":[{"name":"one word","about":"not one word"},{"name":"status","about":"show {options}"}]}}'
+fi"#;
+
 fn write_dog(dir: &Path, name: &str, body: &str) -> PathBuf {
     let binary = dir.join(name);
     std::fs::write(&binary, format!("#!/bin/sh\n{body}\nexit 0\n")).unwrap();
@@ -358,4 +366,116 @@ fn an_adopted_verb_debug_carries_no_manifest_body() {
         format!("{verb:?}"),
         "AdoptedVerb { name: \"otel\", description: Some(\"exports traces\"), subcommands: [] }"
     );
+}
+
+/// The finding this covers: a manifest is written by whoever built the dog,
+/// and its text is spliced into a template clap parses. `{all-args}` there is
+/// not copy, it is the options section, and a line break is not a wrap, it is
+/// a line of output shep never wrote.
+#[test]
+fn a_manifest_carrying_a_placeholder_or_a_line_break_is_listed_as_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = a_home_with(dir.path(), [("otel", HOSTILE_BODY)]);
+
+    let verbs = adopted_verbs(&paths);
+    assert_eq!(
+        verbs[0].description.as_deref(),
+        Some("spans all-args and more[2J"),
+        "the placeholder braces go, the line break becomes a space, the escape goes and its tail stays inert text"
+    );
+    assert_eq!(
+        verbs[0]
+            .subcommands
+            .iter()
+            .map(|sub| sub.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["status"],
+        "a subcommand name that is two words is not a subcommand"
+    );
+
+    let mut command = Cli::command();
+    list_in_help(&mut command, &verbs);
+    let listed = command.render_long_help().to_string();
+    let plain = Cli::command().render_long_help().to_string();
+    let at = plain
+        .lines()
+        .position(|line| line.starts_with(DOG_GROUP_HEADING))
+        .unwrap();
+    let expected: Vec<&str> = plain
+        .lines()
+        .take(at + 1)
+        .chain(["                 otel  spans all-args and more[2J"])
+        .chain(plain.lines().skip(at + 1))
+        .collect();
+
+    assert_eq!(listed.lines().collect::<Vec<_>>(), expected, "{listed}");
+    assert_eq!(
+        listed.matches("Options:").count(),
+        plain.matches("Options:").count(),
+        "the spliced line rendered no extra section"
+    );
+}
+
+/// The other render a manifest reaches: `shep <dog> --help`, built out of
+/// clap's own template. `{options}` in a subcommand's one-liner is a value
+/// here rather than a tag, and the cleaned text is what both paths print.
+#[test]
+fn a_dogs_own_help_page_lists_the_cleaned_text_and_one_options_section() {
+    let mut verb = Verb::new("spans {all-args} and\nmore\u{1b}[2J");
+    verb.subcommands
+        .push(Subcommand::new("status", "show {options}"));
+    let cleaned = printable_verb(verb).expect("it declares a subcommand");
+
+    let help = dog_help_text("otel", &cleaned);
+
+    assert!(help.contains("spans all-args and more"), "{help}");
+    assert!(help.contains("status  show options"), "{help}");
+    assert_eq!(help.matches("Options:").count(), 1, "{help}");
+}
+
+/// A `verb` whose copy is nothing but a placeholder, or nothing but an
+/// escape, declares nothing. The dog is listed bare rather than with an
+/// empty line beside its name. A stripped escape's printable tail does
+/// survive, which is [`crate::terminal_safe::sanitise`]'s rule, so `[2J` is
+/// copy and not a reason to drop the verb.
+#[test]
+fn a_verb_that_declares_nothing_once_cleaned_is_no_verb() {
+    for empty in ["{}", "{}{}", "\u{1b}", "\u{200b}\u{202e}"] {
+        assert!(
+            printable_verb(Verb::new(empty)).is_none(),
+            "{empty:?} cleaned to something"
+        );
+    }
+    assert_eq!(
+        printable_verb(Verb::new("\u{1b}[2J"))
+            .map(|verb| verb.description)
+            .as_deref(),
+        Some("[2J"),
+        "the printable tail of a stripped escape stays as inert text"
+    );
+}
+
+/// A name the listing would have to rewrite is not the name the operator
+/// types, so the dog is not listed at all. `shep adopt` cannot produce one;
+/// a hand-written `shep.toml` can.
+#[test]
+fn a_dog_name_the_listing_would_have_to_rewrite_is_left_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join(".shep");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("shep.toml"),
+        "[daemon.adopted_dogs]\n\"otel{all-args}\" = \"/bin/true\"\n",
+    )
+    .unwrap();
+    let paths = resolve_paths(&GlobalArgs {
+        host: None,
+        home: Some(home),
+        format: Format::Table,
+        quiet: false,
+        style: None,
+    })
+    .unwrap();
+
+    assert_eq!(adopted_verbs(&paths), Vec::<AdoptedVerb>::new());
 }

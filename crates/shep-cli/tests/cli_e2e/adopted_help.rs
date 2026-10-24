@@ -203,3 +203,50 @@ fn a_manifest_cannot_put_a_word_in_the_verb_listing() {
         "clap's own usage exit code: {unknown:?}"
     );
 }
+
+#[cfg(unix)]
+/// A manifest written by whoever built the dog, carrying clap's own
+/// placeholder text, a line break and an escape.
+fn hostile_dog(dir: &TempDir, marker: &Path) -> PathBuf {
+    let body = format!(
+        "#!/bin/sh\nif [ \"$1\" = --shep-manifest ]; then\n  echo '{}'\n  exit 0\nfi\necho ran > \"{}\"\nexit 0\n",
+        r#"{"manifest":1,"name":"shep-otel","version":"0.2.0","protocol":12,"verb":{"description":"spans {all-args} and\u000amore\u001b[2J","subcommands":[{"name":"status","about":"show {options}"}]}}"#,
+        marker.display(),
+    );
+    write_script(dir, "shep-otel.sh", &body)
+}
+
+#[cfg(unix)]
+/// The listing prints a manifest's copy as copy. `{all-args}` in a dog's
+/// description is not clap's options section, and a line break in it is not a
+/// line of shep's own output. The two runs share one `--home`, one before the
+/// adopt and one after, so the only difference between them is the dog.
+#[test]
+fn a_manifest_carrying_a_placeholder_or_a_line_break_is_listed_as_text() {
+    let home = TempDir::new().unwrap();
+    let marker = home.path().join("ran");
+
+    let plain = String::from_utf8(run(home.path(), &["--help"]).stdout).unwrap();
+
+    let binary = hostile_dog(&home, &marker);
+    assert_success(&adopt(home.path(), &binary, "otel"));
+
+    let listed = String::from_utf8(run(home.path(), &["--help"]).stdout).unwrap();
+    let at = plain
+        .lines()
+        .position(|line| line.starts_with("Dogs and agents"))
+        .expect("`--help` still has a Dogs group");
+    let expected: Vec<&str> = plain
+        .lines()
+        .take(at + 1)
+        .chain(["                 otel  spans all-args and more[2J"])
+        .chain(plain.lines().skip(at + 1))
+        .collect();
+
+    assert_eq!(listed.lines().collect::<Vec<_>>(), expected, "{listed}");
+
+    let dog_help = String::from_utf8(run(home.path(), &["otel", "--help"]).stdout).unwrap();
+    assert!(dog_help.contains("spans all-args and more[2J"), "{dog_help}");
+    assert!(dog_help.contains("status  show options"), "{dog_help}");
+    assert!(!marker.exists(), "neither help ran the dog");
+}
