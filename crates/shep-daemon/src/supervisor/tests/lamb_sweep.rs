@@ -45,6 +45,7 @@ fn sweep_spec() -> SpawnSpec {
         channel: true,
         stdin: false,
         credentials: None,
+        dog_link: false,
     }
 }
 

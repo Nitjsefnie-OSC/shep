@@ -317,6 +317,7 @@ fn log_ctl_spec() -> SpawnSpec {
         channel: false,
         stdin: false,
         credentials: None,
+        dog_link: false,
     }
 }
 

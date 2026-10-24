@@ -42,6 +42,10 @@ const RECV_TIMEOUT: Duration = Duration::from_secs(10);
 mod app_configs;
 mod channel;
 mod daemon_lifetime;
+// `cfg(unix)` because only unix hands a dog a connection, and its fixture is
+// a `/bin/sh` script.
+#[cfg(unix)]
+mod dog_link;
 mod dog_tables;
 mod harness;
 mod lifecycle;

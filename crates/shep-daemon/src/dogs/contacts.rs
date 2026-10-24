@@ -123,7 +123,9 @@ impl PeerContacts {
     /// Records one connection arriving from `pid`.
     ///
     /// Called before a byte is read, so a peer that connects and says nothing
-    /// still counts as having reached this daemon.
+    /// still counts as having reached this daemon. A dog's own connection is
+    /// the exception: the daemon opened it, so it is recorded at the first
+    /// frame.
     pub fn connected(&self, pid: u32) {
         let mut seen = self.lock();
         seen.clock = seen.clock.saturating_add(1);

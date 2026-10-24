@@ -78,10 +78,14 @@ export const BUDGETS: Record<string, number> = {
   // author keeping a per-sheep credential in a sheep's table has to be told
   // which request resolves it.
   //
-  // Raised from 4520 on 2026-10-24 for `--shep-manifest`: `shep adopt` now
+  // Raised from 4520 on 2026-10-23 for `$SHEP_DOG_FD`: the connection a dog
+  // is spawned holding is a third variable shep sets, and a dog not on
+  // `DogRuntime` has to be told to read it.
+  //
+  // Raised again on 2026-10-24 for `--shep-manifest`: `shep adopt` now
   // asks it first, caches the answer by the binary's sha256 and warns about
   // `depends`, which a dog author has to be told before the two older flags.
-  "writing-a-dog": 4670,
+  "writing-a-dog": 4705,
   overrides: 3380,
   // Raised from 3240 on 2026-09-27 for "A sheep's dogs row": the sub-screen
   // and the per-sheep table pane are new operator-facing surface, not

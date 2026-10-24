@@ -241,7 +241,10 @@ impl<R: ProcessRunner> Actor<R> {
         let id = self.next_id;
         self.next_id += 1;
         let spec = match assemble(app, instance, &self.paths, credentials, secrets) {
-            Ok(spec) => spec,
+            Ok(spec) => SpawnSpec {
+                dog_link: dog.is_some(),
+                ..spec
+            },
             Err(err) => {
                 // Registered before the refusal is routed: a sheep that never
                 // spawned still has to be visible, and `refuse_spawn` reads

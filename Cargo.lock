@@ -2147,6 +2147,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "shep-channel",
  "shep-core",
  "shep-macros",
  "tempfile",
