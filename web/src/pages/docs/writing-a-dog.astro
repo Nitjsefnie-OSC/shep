@@ -540,9 +540,16 @@ shep-channel: true`}</CodeBlock>
       The params carry <code>table</code>: the dog's whole table on that sheep,
       or its own <code>dogs.toml</code> section when there is no sheep. It is
       the table <em>after</em> the write, so a <code>shep unset</code> is judged
-      on what would be left. Silence refuses too: a dog that answers nothing
-      inside its <code>action_timeout</code>, or runs with no channel open, has
-      not cleared the write, and a dog not in the flock is never asked.
+      on what would be left. Silence refuses: a dog that answers nothing inside
+      its <code>action_timeout</code> has not cleared the write.
+    </p>
+    <p>
+      Two cases ask nobody, and the write lands: a dog the shepherd has no live
+      channel for (not in the flock, stopped, or started before it asked for
+      one), and a dog this machine never adopted, which has no manifest to
+      declare <code>validate</code> in. What shep cannot read is never an
+      acceptance: a manifest or a <code>shep.toml</code> it cannot read stops
+      the write and names it.
     </p>
     <p>
       <code>validate</code> without <code>channel</code> is refused at adopt,

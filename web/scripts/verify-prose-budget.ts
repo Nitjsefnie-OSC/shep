@@ -111,7 +111,13 @@ export const BUDGETS: Record<string, number> = {
   // `validate` manifest field, the `shep.validate` ask, and what a refusal
   // prints. Surface a dog author and an operator both have to be able to
   // read, not prose to trim back out to fit.
-  "writing-a-dog": 5180,
+  //
+  // Raised again on #1098, to 5210, to say which cases ask nobody (a dog with
+  // no channel open, a dog never adopted here) and which one refuses because
+  // shep could not read the manifest at all. The first is the case an operator
+  // hits on a stopped dog, and the page said the opposite of what the code
+  // does.
+  "writing-a-dog": 5210,
   // Raised from 3380 on 2026-10-24 for "Dropping one override": `shep unset`
   // is a new verb that undoes `shep set`, and the page's only other way to
   // put a setting back was a whole-file `--reset`, so the section is new
