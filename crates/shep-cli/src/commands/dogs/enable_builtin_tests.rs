@@ -118,7 +118,8 @@ async fn a_built_in_already_decided_is_not_asked_again() {
 }
 
 #[tokio::test]
-async fn a_built_in_already_enabled_before_grants_existed_is_granted_its_list_marked_not_reviewed() {
+async fn a_built_in_already_enabled_before_grants_existed_is_granted_its_list_marked_not_reviewed()
+{
     let dir = tempfile::tempdir().unwrap();
     let paths = ShepPaths::resolve(&|_| None, dir.path());
     std::fs::create_dir_all(&paths.home).unwrap();

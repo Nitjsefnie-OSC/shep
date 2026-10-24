@@ -304,6 +304,11 @@ pub(crate) fn process_info_paint(header: &str, p: &ProcessInfo) -> Paint {
             .dog
             .as_ref()
             .map_or(Paint::Default, |source| Paint::Role(source_role(source))),
+        // A mark is worth a glance, never a fault; `-` reaches the dash rule.
+        "ACCESS" => p
+            .access
+            .as_ref()
+            .map_or(Paint::Default, |_| Paint::Role(Role::Butter)),
         // PID and SMIT reach the dash rule: a real value is plain, an
         // absent one is muted.
         _ => Paint::Default,

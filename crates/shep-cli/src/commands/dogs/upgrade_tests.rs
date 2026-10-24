@@ -169,7 +169,9 @@ fn a_home_with_no_shep_toml_is_left_without_one() {
 
 fn write_dog(dir: &Path, manifest: &str) -> PathBuf {
     let binary = dir.join("shep-otel");
-    let script = format!("#!/bin/sh\nif [ \"$1\" = --shep-manifest ]; then cat <<'EOF'\n{manifest}\nEOF\nexit 0\nfi\nexit 0\n");
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = --shep-manifest ]; then cat <<'EOF'\n{manifest}\nEOF\nexit 0\nfi\nexit 0\n"
+    );
     std::fs::write(&binary, script).unwrap();
     let mut mode = std::fs::metadata(&binary).unwrap().permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
@@ -209,7 +211,9 @@ fn an_adopted_dog_enabled_before_grants_is_granted_what_its_binary_declares() {
 
     assert_eq!(
         recorded(&paths, "otel"),
-        Some(GrantRecord::at_upgrade(Grants::new([Permission::FlockRead])))
+        Some(GrantRecord::at_upgrade(Grants::new([
+            Permission::FlockRead
+        ])))
     );
 }
 
@@ -234,7 +238,10 @@ fn a_rebuilt_dog_that_asks_for_more_is_recorded_as_waiting_and_keeps_its_grants(
         &binary,
         "\n[daemon.dog_grants.otel]\ngranted = [\"flock.read\"]\n",
     );
-    write_dog(&paths.home, &manifest_declaring(&["flock.read", "logs.read"]));
+    write_dog(
+        &paths.home,
+        &manifest_declaring(&["flock.read", "logs.read"]),
+    );
 
     let changed = upgrade_grants(&paths).unwrap();
 

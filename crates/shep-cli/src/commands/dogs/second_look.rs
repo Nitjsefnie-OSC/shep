@@ -13,8 +13,8 @@ use crate::exit::ExitCode;
 use crate::output::Streams;
 
 use super::consent::{Input, not_confined};
-use super::upgrade::upgrade_one;
 use super::fail_config;
+use super::upgrade::upgrade_one;
 use crate::commands::copy::confirm::{Answer, read_answer};
 
 /// [`emit_notice`](crate::output::emit_notice) code for grants left as they
@@ -93,8 +93,10 @@ pub(super) fn second_look(
         reviewed: true,
         ..record
     };
-    ShepToml::try_edit(&paths.daemon_config, |cfg| cfg.set_grant_record(name, &approved))
-        .map_err(|err| fail_config(streams, &err))
+    ShepToml::try_edit(&paths.daemon_config, |cfg| {
+        cfg.set_grant_record(name, &approved)
+    })
+    .map_err(|err| fail_config(streams, &err))
 }
 
 /// What `name` holds, and what it waits on, as the question shows them.
@@ -109,7 +111,9 @@ fn listing(name: &str, record: &GrantRecord) -> String {
         };
         lines.push(format!("{name} holds: {}{mark}", names(&record.granted)));
     } else if !record.reviewed {
-        lines.push(format!("{name} holds no grants (granted at upgrade, not reviewed)"));
+        lines.push(format!(
+            "{name} holds no grants (granted at upgrade, not reviewed)"
+        ));
     }
     if record.waiting.names().next().is_some() {
         lines.push(format!(

@@ -169,8 +169,7 @@ pub(crate) fn upgrade_grants(paths: &ShepPaths) -> Result<Vec<String>, ShepTomlE
 /// [`ShepTomlError`] when `shep.toml` cannot be read or written.
 pub(super) fn upgrade_one(paths: &ShepPaths, name: &str) -> Result<(), ShepTomlError> {
     let cfg = ShepToml::read_only(&paths.daemon_config)?;
-    let known = crate::dog::BUILT_IN_DOGS.contains(&name)
-        || cfg.adopted_dog_path(name).is_some();
+    let known = crate::dog::BUILT_IN_DOGS.contains(&name) || cfg.adopted_dog_path(name).is_some();
     if !known {
         return Ok(());
     }
@@ -195,4 +194,3 @@ pub(crate) fn upgrade_notice(changed: &[String]) -> String {
         changed.join(", ")
     )
 }
-

@@ -37,13 +37,17 @@ pub use settings_write::SetReport;
 pub(crate) use toolkit::*;
 
 #[cfg(test)]
+mod access_tests;
+#[cfg(test)]
 mod disabled_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {
     use std::collections::BTreeSet;
 
-    use shep_core::protocol::{ActionOutcome, ActionReply, DogSource, ExitInfo, ProcessInfo};
+    use shep_core::protocol::{
+        ActionOutcome, ActionReply, DogAccess, DogSource, ExitInfo, ProcessInfo,
+    };
     use shep_core::status::ProcStatus;
 
     use crate::style::Presentation;
@@ -80,6 +84,12 @@ pub(crate) mod tests {
             // `JSON_ONLY` anyway.
             .pending(Some(vec!["env".to_string()]))
             .overridden(Some(vec!["cwd".to_string()]))
+            // What the CLI lays over a dog's row from `shep.toml`.
+            .access(Some(DogAccess {
+                undeclared: true,
+                not_reviewed: true,
+                waiting: vec!["logs.read".to_string()],
+            }))
             .build()
     }
 
@@ -345,7 +355,11 @@ pub(crate) mod tests {
             &["FOLD", "SMIT"],
             "the sheep table's own"
         );
-        assert_eq!(&dogs[common.len()..], &["SOURCE"], "the dogs table's own");
+        assert_eq!(
+            &dogs[common.len()..],
+            &["SOURCE", "ACCESS"],
+            "the dogs table's own"
+        );
 
         // FOLD and SMIT are impossible for a dog rather than empty: a dog
         // belongs to no fold, and a smit is a mark a dog paints on a sheep.

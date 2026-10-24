@@ -53,7 +53,11 @@ fn before_grants() -> (tempfile::TempDir, ShepPaths) {
     let dir = tempfile::tempdir().unwrap();
     let paths = ShepPaths::resolve(&|_| None, dir.path());
     std::fs::create_dir_all(&paths.home).unwrap();
-    std::fs::write(&paths.daemon_config, "[daemon]\nenabled_dogs = [\"bark\"]\n").unwrap();
+    std::fs::write(
+        &paths.daemon_config,
+        "[daemon]\nenabled_dogs = [\"bark\"]\n",
+    )
+    .unwrap();
     (dir, paths)
 }
 

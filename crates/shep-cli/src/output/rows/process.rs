@@ -123,6 +123,8 @@ impl Render for FlockRows {
         "err_file",
         // Always `null`: every row here is a sheep.
         "dog",
+        // A dog's marks from `shep.toml`; absent from a sheep's row.
+        "access",
         // Always `null`: only `Describe` walks for lambs.
         "lambs",
         // A handshake is a fact about a dog, and every row here is a sheep.
@@ -222,6 +224,7 @@ impl Render for FlushedRows {
         // Every row is a sheep: no `dog`, no handshake, and nothing for a
         // shepherd to give up on.
         "dog",
+        "access",
         "handshook",
         "dog_stale",
         // Always `null`: only `Describe` walks for lambs.
