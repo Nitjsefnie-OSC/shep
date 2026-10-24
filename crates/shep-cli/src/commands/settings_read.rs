@@ -402,12 +402,17 @@ fn dog_steps(root: &Table, rest: &[String]) -> Vec<String> {
     let mut next = 0;
     while next < rest.len() {
         let taken = longest_toml_key(&rest[next..], current);
-        steps.push(taken.join("."));
-        for part in &taken {
-            current = current
-                .and_then(|table| table.get(part.as_str()))
-                .and_then(Item::as_table_like);
-        }
+        // One lookup for the key `longest_toml_key` found, not one per segment
+        // of it. A section can hold a key spelled with a dot in it
+        // (`[kelpie."api.token"]`, which holds `auth.key`), and looking for
+        // `api` then `token` loses the table that key names: the walk lands
+        // outside the section and the rest of the path is read as segments
+        // nothing holds.
+        let key = taken.join(".");
+        steps.push(key.clone());
+        current = current
+            .and_then(|table| table.get(key.as_str()))
+            .and_then(Item::as_table_like);
         next += taken.len();
     }
     steps
@@ -470,6 +475,11 @@ fn sheep_document(
                 continue;
             }
             if let Some(item) = json_item(value) {
+                let item = if *key == DOGS {
+                    dogs_container(item)
+                } else {
+                    item
+                };
                 out.as_table_mut().insert(key.as_str(), item);
             }
         }
@@ -485,6 +495,13 @@ fn sheep_document(
     }
     let Some(item) = json_item(current) else {
         return Err(ReadRefusal::Empty(empty(written)));
+    };
+    // `shep get <sheep>.dogs` names the container itself, which is the one
+    // table here that prints no header of its own.
+    let item = if steps.len() == 1 && steps[0] == DOGS {
+        dogs_container(item)
+    } else {
+        item
     };
     let mut spine = vec![written.name.clone()];
     spine.extend(steps.iter().cloned());
@@ -528,6 +545,23 @@ fn attach(doc: &mut DocumentMut, spine: &[String], leaf: Item) {
     table.insert(last, leaf);
 }
 
+/// The sheep's own `dogs` container, the one table of a sheep's config that
+/// prints no header of its own.
+///
+/// A Flockfile spells `[app.dogs.kelpie]` and never `[app.dogs]`, and the
+/// shepherd answers an empty `dogs` for a sheep with no per-sheep dog settings,
+/// which is the same config as one whose Flockfile says nothing about dogs. A
+/// table inside it is the operator's own and keeps its header.
+fn dogs_container(item: Item) -> Item {
+    match item {
+        Item::Table(mut table) => {
+            table.set_implicit(true);
+            Item::Table(table)
+        }
+        other => other,
+    }
+}
+
 /// One `serde_json` value as a table entry.
 ///
 /// A `Null` is no entry at all: TOML has no null, and an unset `Option`
@@ -541,11 +575,17 @@ fn json_item(value: &Json) -> Option<Item> {
                     table.insert(key.as_str(), item);
                 }
             }
-            // A table with nothing of its own to print is a step on the way
-            // down to one that has something: `[dogs.kelpie]` is the header a
-            // Flockfile spells, `[dogs]` is not.
-            let only_tables = table.iter().all(|(_, item)| item.is_table());
-            table.set_implicit(only_tables);
+            // A map with no keys at all is a table the operator wrote a header
+            // for and left empty: `[app.dogs.kelpie.options]` with no entries.
+            // A header is the only way to say it is there, and a dog's settings
+            // are opaque to shep, so an empty table cannot be told apart from
+            // a missing setting.
+            //
+            // A map that holds nothing but tables is a step on the way down to
+            // what has something: `[dogs.kelpie]` is the header a Flockfile
+            // spells, `[dogs]` is not.
+            let a_step_down = !map.is_empty() && table.iter().all(|(_, item)| item.is_table());
+            table.set_implicit(a_step_down);
             Item::Table(table)
         }
         other => Item::Value(json_value(other)?),

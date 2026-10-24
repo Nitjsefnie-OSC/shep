@@ -568,6 +568,9 @@ spelled as the file it lives in spells it: a sheep's fragment carries its
 operator wrote inside a dog's section survive the read. A dog's name is the
 longest run of segments the shepherd answers a section for, because
 `dogs.toml` spells a dog's sub-table as a header path rather than as a name.
+A table the file wrote with nothing under it keeps its header, and a key
+spelled with a dot in it stays one key on the way down, so an answer a dog's
+settings hold still pastes back.
 `env` is refused for the reason `shep copy` refuses it, and the dog read is
 the unresolved one, so a `{{secret:...}}` prints as the reference. Bare
 `shep get` is a usage error, and a name nothing answers is `NotFound`: the

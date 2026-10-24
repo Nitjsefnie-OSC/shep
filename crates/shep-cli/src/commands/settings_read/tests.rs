@@ -126,6 +126,40 @@ fn every_dog_table_prints_when_no_dog_is_named() {
     assert!(toml.contains("[dogs.kelpie]"), "{toml}");
     assert!(toml.contains("[dogs.metrics]"), "{toml}");
 }
+/// An empty table the Flockfile wrote a header for is a setting the operator
+/// set, and the header is the only way to say it is there: a dog's settings
+/// are opaque to shep, so an empty table cannot be told apart from a missing
+/// one. Dropping it would lose configuration from a paste-back answer.
+#[test]
+fn an_empty_dog_table_keeps_its_header() {
+    let mut cfg = config();
+    cfg["dogs"]["kelpie"]["options"] = json!({});
+    let written = sheep_written("api.dogs.kelpie.options");
+    let toml = sheep_document(&written, &cfg, &written.rest).unwrap();
+    assert_eq!(toml, "[dogs.kelpie.options]\n", "{toml}");
+
+    let whole = sheep_document(&sheep_written("api"), &cfg, &[]).unwrap();
+    assert!(whole.contains("[dogs.kelpie.options]"), "{whole}");
+}
+/// The sheep's own `dogs` container is the one table of a config that prints
+/// no header of its own: a Flockfile spells `[app.dogs.kelpie]` and never
+/// `[app.dogs]`, and the shepherd answers an empty `dogs` for a sheep with no
+/// per-sheep dog settings, which is the same config as one that says nothing
+/// about dogs.
+#[test]
+fn a_sheep_with_no_dogs_prints_no_dogs_header() {
+    let mut cfg = config();
+    cfg["dogs"] = json!({});
+    let whole = sheep_document(&sheep_written("api"), &cfg, &[]).unwrap();
+    assert!(!whole.contains("dogs"), "{whole}");
+
+    let bare = sheep_written("api.dogs");
+    assert_eq!(
+        sheep_document(&bare, &cfg, &bare.rest).unwrap(),
+        "",
+        "an empty container has nothing to spell"
+    );
+}
 /// A key inside a dog's table prints beside the table it sits in, which
 /// is where a reader would go to change it.
 #[test]
@@ -285,6 +319,24 @@ fn an_unset_field_named_directly_is_not_found() {
         Err(ReadRefusal::Empty(_))
     ));
 }
+/// A dog's section can hold a key spelled with a dot in it, quoted in the
+/// file: `[kelpie."api.token"]` holding `"auth.key" = 42`. The address names
+/// it segment by segment, and the walk descends by the key it matched rather
+/// than by the segments that spelled it: looking for `api` then `token` lands
+/// outside the table, and the setting reads as absent.
+#[test]
+fn a_dotted_table_header_of_a_dogs_section_stays_one_key_on_the_way_down() {
+    let section = "repo = \"/srv/project\"\n\n[\"api.token\"]\n\"auth.key\" = 42\n";
+    let doc: DocumentMut = section.parse().unwrap();
+    let written = dog_written("kelpie", &["api", "token", "auth", "key"]);
+    let steps = dog_steps(doc.as_table(), &written.rest);
+    assert_eq!(steps, ["api.token", "auth.key"], "{steps:?}");
+    assert_eq!(
+        dog_document(&written, &doc, &steps).unwrap(),
+        "[kelpie.\"api.token\"]\n\"auth.key\" = 42\n"
+    );
+}
+
 /// A dog's section prints under its own name, which is how `dogs.toml`
 /// spells it, and the comments inside it survive.
 #[test]

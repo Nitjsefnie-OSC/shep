@@ -20,6 +20,10 @@ repo = \"/srv/project\"
 [kelpie.worker]
 allowed_domains = [\"github.com\"]
 timeout = 30
+
+# a key spelled with a dot in it, quoted in the file
+[kelpie.\"api.token\"]
+\"auth.key\" = 42
 ";
 
 /// The whole of `shep get` over one live flock.
@@ -32,7 +36,8 @@ fn shep_get_reads_a_sheeps_settings_and_a_dogs_own_section() {
         &dir,
         &format!(
             "[[app]]\nname = \"api\"\nscript = '{}'\nmax_memory = \"1G\"\n\n\
-             [app.dogs.kelpie.git]\ncheckout = \"/srv/api\"\nmerging = \"ff\"\n",
+             [app.dogs.kelpie.git]\ncheckout = \"/srv/api\"\nmerging = \"ff\"\n\n\
+             [app.dogs.kelpie.options]\n",
             script.display()
         ),
     );
@@ -129,6 +134,36 @@ fn shep_get_reads_a_sheeps_settings_and_a_dogs_own_section() {
         String::from_utf8_lossy(&leaf.stdout),
         "[kelpie.worker]\ntimeout = 30\n"
     );
+
+    // A key spelled with a dot in it, quoted in `dogs.toml`, is one key on
+    // the way down too: the address names it segment by segment and the walk
+    // descends by the key it matched.
+    let quoted = shep(home)
+        .arg("get")
+        .arg("kelpie.api.token.auth.key")
+        .output()
+        .unwrap();
+    assert_success(&quoted);
+    assert_eq!(
+        String::from_utf8_lossy(&quoted.stdout),
+        "[kelpie.\"api.token\"]\n\"auth.key\" = 42\n"
+    );
+
+    // `[app.dogs.kelpie.options]` with no entries is a setting the operator
+    // wrote, and its header is the only way to say it is there: a dog's
+    // settings are opaque to shep, so an empty table is not a missing one.
+    let empty = shep(home)
+        .arg("get")
+        .arg("api.dogs.kelpie.options")
+        .output()
+        .unwrap();
+    assert_success(&empty);
+    assert_eq!(
+        String::from_utf8_lossy(&empty.stdout),
+        "[dogs.kelpie.options]\n"
+    );
+    let whole_text = String::from_utf8_lossy(&whole.stdout);
+    assert!(whole_text.contains("[dogs.kelpie.options]"), "{whole_text}");
 
     let absent = shep(home)
         .arg("get")
