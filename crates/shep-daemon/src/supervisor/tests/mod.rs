@@ -899,8 +899,7 @@ fn carried_owed_a_restart(
     CarriedSheep::from_entry(&entry, 0, CarriedFds::none(), false, None, false, due)
 }
 
-/// A carried sheep with no descriptors to rebuild, which is every case
-/// below that does not open real pipes.
+/// A carried sheep with no descriptors to rebuild, for every case below that opens no pipes.
 #[cfg(unix)]
 fn without_handles(carried: CarriedSheep) -> crate::handover::adopt::AdoptedSheep {
     crate::handover::adopt::AdoptedSheep {
