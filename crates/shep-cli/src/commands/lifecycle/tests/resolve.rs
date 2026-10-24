@@ -138,14 +138,9 @@ async fn a_discovered_flockfile_is_started_when_no_target_was_given() {
         .await;
     }
 
-    let sent = next_start(&mut envelopes).await;
-    match sent.body {
-        Request::Start { apps } => {
-            assert_eq!(apps.len(), 1);
-            assert_eq!(apps[0].name, "demo");
-        }
-        other => panic!("expected a Start request, got {other:?}"),
-    }
+    let apps = start_apps(next_start(&mut envelopes).await);
+    assert_eq!(apps.len(), 1);
+    assert_eq!(apps[0].name, "demo");
 }
 
 #[test]
@@ -376,17 +371,14 @@ fn a_pm2_ecosystem_shape_is_refused_naming_the_right_key() {
     assert!(msg.contains("app"), "must name what was expected: {msg}");
 }
 
-/// Armed through `fake_client_on`: the flock has to answer for the
+/// Armed through [`a_daemon_on_a_tempdir`]: the flock has to answer for the
 /// lookup to find anything, and only that fixture lets a test arm the
 /// reply.
 #[tokio::test]
 async fn a_target_naming_a_stopped_sheep_is_acted_on_not_resolved_as_a_path() {
-    use shep_client::testing::fake_client_on;
     use shep_core::status::ProcStatus;
 
-    let dir = tempfile::tempdir().unwrap();
-    let path = shep_client::testing::control_address(dir.path());
-    let (client, daemon) = fake_client_on(&path).await;
+    let (_dir, client, daemon) = a_daemon_on_a_tempdir().await;
     daemon.reply_to_list(vec![
         shep_core::protocol::ProcessInfo::builder(7, "api-auth", ProcStatus::Stopped).build(),
     ]);

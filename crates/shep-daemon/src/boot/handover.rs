@@ -89,7 +89,7 @@ pub(crate) fn successor_handover() -> Result<Option<Successor>, BootError> {
 ///
 /// - [`BootError::Adopt`] if a descriptor the blob names is not open in this
 ///   process, or is not the kind of object it was named as.
-pub(super) fn rehydrate(carried: Successor, paths: &ShepPaths) -> Result<Rehydrated, BootError> {
+pub(super) fn rehydrate(carried: Successor) -> Result<Rehydrated, BootError> {
     let (blob, written) = match carried {
         Successor::Arrived(arrival) => {
             let blob = crate::handover::claim(arrival)
@@ -104,13 +104,14 @@ pub(super) fn rehydrate(carried: Successor, paths: &ShepPaths) -> Result<Rehydra
     if let Some(path) = written {
         crate::handover::adopt::discard_blob(&path);
     }
-    let _ = paths;
     let reloads = blob.reloads().to_vec();
-    Ok((
-        PidfileLock::from_locked(adopted.pidfile),
-        Listener::from_unix_listener(adopted.listener),
-        (adopted.sheep, counters, reloads),
-    ))
+    Ok(Rehydrated {
+        lock: PidfileLock::from_locked(adopted.pidfile),
+        listener: Listener::from_unix_listener(adopted.listener),
+        flock: adopted.sheep,
+        counters,
+        reloads,
+    })
 }
 
 /// A handover this process was handed, and how it reached it.
@@ -155,15 +156,21 @@ const DOG_LINK_PARK: core::time::Duration = core::time::Duration::from_secs(1);
 /// What [`rehydrate`] rebuilds from a blob: the home's lock, the control
 /// listener, and the flock to install with the counters and the in-flight
 /// reloads it ran under.
-type Rehydrated = (
-    PidfileLock,
-    Listener,
-    (
-        Vec<crate::handover::adopt::AdoptedSheep>,
-        crate::handover::Counters,
-        Vec<crate::supervisor::CarriedReload>,
-    ),
-);
+///
+/// No `Debug`: `flock` carries each sheep's environment.
+pub(super) struct Rehydrated {
+    /// The home's pidfile lock, still held by the predecessor's `execve`.
+    pub(super) lock: PidfileLock,
+    /// The control listener, still bound by the predecessor's `execve`.
+    pub(super) listener: Listener,
+    /// Every sheep the predecessor carried, descriptors adopted into this
+    /// process.
+    pub(super) flock: Vec<crate::handover::adopt::AdoptedSheep>,
+    /// The id, deadline and stamp counters the predecessor ran under.
+    pub(super) counters: crate::handover::Counters,
+    /// The reloads in flight when the predecessor handed over.
+    pub(super) reloads: Vec<crate::supervisor::CarriedReload>,
+}
 
 /// Everything the SIGHUP task needs to replace this daemon's image.
 ///
