@@ -26,7 +26,8 @@ use super::vet::{
     warn_unreadable_schema,
 };
 use super::{
-    DECLINED_STATUS, NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, emit_dog_action, fail_config,
+    DECLINED_STATUS, DISABLED_STATUS, NO_SHEPHERD_ENABLE_STATUS, connect_or_absent,
+    emit_dog_action, fail_config,
 };
 
 /// `shep adopt <path> [--name <name>]`: vets a binary shep has never seen,
@@ -144,20 +145,45 @@ pub(super) async fn adopt_asking(
     if let Some(manifest) = &vetted.manifest {
         warn_of_unmet_depends(streams, &name, manifest, &adopted);
     }
+    let client = match connect_or_absent(paths, streams).await {
+        Ok(client) => client,
+        Err(code) => return code,
+    };
     if verdict == Some(Verdict::Declined) {
-        // Nothing for a shepherd to start: the dog is adopted and disabled.
         let source = DogSource::Adopted {
             grants: None,
             path: path.display().to_string(),
             channel,
         };
-        return emit_dog_action(streams, "adopt", &name, source, DECLINED_STATUS);
+        return declined_after_config(streams, &name, source, client.as_ref()).await;
     }
-    let client = match connect_or_absent(paths, streams).await {
-        Ok(client) => client,
-        Err(code) => return code,
-    };
     adopt_after_config(streams, &name, &path, channel, grants, client.as_ref()).await
+}
+
+/// A declined adopt's daemon half: the config now has the dog disabled, so a
+/// shepherd already running it (a re-adopt of a dog from before grants) is told
+/// to stop it. With no shepherd there is nothing running to stop.
+pub(super) async fn declined_after_config(
+    streams: &mut Streams<'_>,
+    name: &str,
+    source: DogSource,
+    client: Option<&Client>,
+) -> ExitCode {
+    let Some(client) = client else {
+        return emit_dog_action(streams, "adopt", name, source, DECLINED_STATUS);
+    };
+    match client
+        .request(Request::DisableDog {
+            name: name.to_string(),
+        })
+        .await
+    {
+        Ok(Response::Deleted(_ids)) => {
+            emit_dog_action(streams, "adopt", name, source, DISABLED_STATUS)
+        }
+        Ok(_unrecognised) => unexpected_response(streams),
+        Err(err) => client_error(streams, &err),
+    }
 }
 
 /// Asks whether to grant `name` what it declares, unless `shep.toml` already
