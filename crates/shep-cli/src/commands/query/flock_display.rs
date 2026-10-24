@@ -1,3 +1,4 @@
+use super::access_marks::mark_access;
 use super::secret_inspection::describe_selector;
 use super::terminal_fitting::fit_rows;
 use crate::cli::{FoldArgs, Format};
@@ -104,7 +105,17 @@ pub fn flock_from_roll(streams: &mut Streams<'_>, paths: &ShepPaths) -> ExitCode
 /// one [`crate::output::Render`] type per verb rather than two tables from one
 /// `Vec<ProcessInfo>`.
 pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
-    flock_from(client, streams, None).await
+    flock_from(client, streams, None, None).await
+}
+
+/// [`flock`] for this machine, its dogs marked with what `shep.toml` records
+/// of their access.
+pub async fn flock_local(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+) -> ExitCode {
+    flock_from(client, streams, None, Some(paths)).await
 }
 
 /// [`flock`] for the shepherd `origin` names, as typed after `--host`, or this
@@ -112,13 +123,20 @@ pub async fn flock(client: &Client, streams: &mut Streams<'_>) -> ExitCode {
 ///
 /// Under `--format json` every row of a named origin carries it; see
 /// [`print_listing`].
+///
+/// `marks` is the paths whose `shep.toml` the dogs' access marks are read
+/// from: only a listing of this machine has one.
 pub async fn flock_from(
     client: &Client,
     streams: &mut Streams<'_>,
     origin: Option<&str>,
+    marks: Option<&ShepPaths>,
 ) -> ExitCode {
     match client.list_flock().await {
-        Ok(procs) => {
+        Ok(mut procs) => {
+            if let Some(paths) = marks {
+                mark_access(&mut procs, paths);
+            }
             // Read before `procs` moves into `emit_flock`.
             let art = (streams.fmt == Format::Table && streams.style.level.sheep())
                 .then(|| sheep_flourish(&procs))

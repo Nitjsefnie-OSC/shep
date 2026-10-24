@@ -470,7 +470,7 @@ pub(crate) async fn run(
             }
             (None, true) => query::available_dogs(&mut streams, args).await,
             (None, false) => match connect_client(&mut streams, &link, guard).await {
-                Ok(client) => query::dogs(&client, &mut streams, args).await,
+                Ok(client) => query::dogs(&client, &mut streams, &paths, args).await,
                 Err(code) => code,
             },
         },

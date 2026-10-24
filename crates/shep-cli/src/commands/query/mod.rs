@@ -9,6 +9,9 @@
 //! [`HelloAck`](shep_core::protocol::HelloAck) [`Client::daemon`](shep_client::Client::daemon) holds. It
 //! still issues `Request::Ping` as the liveness check.
 
+mod access_marks;
+#[cfg(test)]
+mod access_marks_tests;
 mod dog_browsing;
 pub(crate) mod fleet;
 mod flock_display;
@@ -17,6 +20,6 @@ mod terminal_fitting;
 #[cfg(test)]
 mod testing;
 pub use dog_browsing::{available_dogs, dogs};
-pub use flock_display::{flock, flock_from_roll, fold};
+pub use flock_display::{flock, flock_from_roll, flock_local, fold};
 pub(crate) use flock_display::{flock_follow, flock_from, read_roll};
 pub use secret_inspection::describe;

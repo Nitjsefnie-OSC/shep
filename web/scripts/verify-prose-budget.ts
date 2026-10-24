@@ -356,7 +356,10 @@ export const BUDGETS: Record<string, number> = {
   // what each declares, is behaviour a reader cannot guess.
   // Raised again for `shep dogs grant` and `revoke`: what each accepts and
   // refuses is behaviour a reader cannot guess (#1092).
-  "dog-grants": 490,
+  // Raised again for the upgrade path and its ACCESS marks: what an upgrade
+  // writes, what waits and when shep notices are behaviour a reader cannot
+  // guess (#1093).
+  "dog-grants": 700,
 };
 
 
