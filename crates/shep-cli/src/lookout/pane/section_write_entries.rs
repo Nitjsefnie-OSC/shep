@@ -169,7 +169,8 @@ fn a_filed_key_whose_entry_is_gone_writes_nothing() {
 #[test]
 fn a_missing_map_entry_is_not_created() {
     let mut stale = pane("[models.small]\nprovider = \"local\"\n");
-    stale.section.as_mut().expect("a dog pane").toml = "[models.large]\nprovider = \"remote\"\n".to_owned();
+    stale.section.as_mut().expect("a dog pane").toml =
+        "[models.large]\nprovider = \"remote\"\n".to_owned();
     assert_eq!(
         stale.edited_section_with(&edits_of(&[("models[\"small\"].provider", json!("edge"))])),
         SectionWrite::Refused
