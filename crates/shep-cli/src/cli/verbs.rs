@@ -464,7 +464,9 @@ pub enum Commands {
     ///
     /// `shep get api` prints a sheep's whole config, `shep get api.max_memory`
     /// one field, `shep get api.dogs.kelpie.git` one dog's table inside a
-    /// sheep, and `shep get kelpie.worker` one key inside a dog's own section.
+    /// sheep, and `shep get kelpie.worker` one table inside a dog's own
+    /// section. A path that ends at a value prints that value under the header
+    /// of the table that holds it.
     ///
     /// The answer is the TOML the address names, spelled as the file it lives
     /// in spells it: a sheep's fragment carries its `dogs.<dog>` headers, a

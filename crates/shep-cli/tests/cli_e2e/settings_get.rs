@@ -103,11 +103,32 @@ fn shep_get_reads_a_sheeps_settings_and_a_dogs_own_section() {
     assert!(stderr.contains("shep kv get"), "{stderr}");
 
     // A dog the flock runs with nothing written for it is the other answer:
-    // the name is right, and every setting it has is a default.
+    // the name is right, and every setting it has is a default. The dog named
+    // is `bark`, the one the flock carries, not the `bark.interval` the
+    // operator typed, and `shep enable` is aimed at that name.
     let silent = shep(home).arg("get").arg("bark.interval").output().unwrap();
     assert_eq!(silent.status.code(), Some(3), "NotFound; {silent:?}");
     let stderr = String::from_utf8_lossy(&silent.stderr);
+    assert!(
+        stderr.contains("`bark` is a dog with nothing set"),
+        "{stderr}"
+    );
     assert!(stderr.contains("default"), "{stderr}");
+    assert!(stderr.contains("shep enable bark`"), "{stderr}");
+    assert!(!stderr.contains("shep enable bark.interval`"), "{stderr}");
+
+    // A path that ends at a value prints that value under the header of the
+    // table that holds it, which is what `shep get --help` promises.
+    let leaf = shep(home)
+        .arg("get")
+        .arg("kelpie.worker.timeout")
+        .output()
+        .unwrap();
+    assert_success(&leaf);
+    assert_eq!(
+        String::from_utf8_lossy(&leaf.stdout),
+        "[kelpie.worker]\ntimeout = 30\n"
+    );
 
     let absent = shep(home)
         .arg("get")

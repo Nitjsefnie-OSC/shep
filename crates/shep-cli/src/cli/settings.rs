@@ -41,9 +41,9 @@ mod tests {
         args.address
     }
 
-    /// fails if `get` stops taking one address, or stops accepting the three
+    /// fails if `get` stops taking one address, or stops accepting the four
     /// shapes an address has: a name alone, a sheep's field, a dog table key
-    /// inside a sheep, and a key inside a dog's own section.
+    /// inside a sheep, and a table inside a dog's own section.
     #[test]
     fn get_takes_one_address_in_any_of_its_shapes() {
         assert_eq!(address(&["api"]), "api");

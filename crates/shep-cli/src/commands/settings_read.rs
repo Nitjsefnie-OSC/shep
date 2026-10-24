@@ -213,14 +213,18 @@ async fn get_dog(
 ) -> ExitCode {
     // A dog in the flock with nothing written for it is a different answer
     // from a name nothing in the product knows: the first says the settings
-    // are all defaults, the second says the name is wrong.
-    let mut named_a_dog = false;
+    // are all defaults, the second says the name is wrong. The name kept is
+    // the candidate the flock carries, not the address, so the sentence names
+    // the dog it actually found.
+    let mut named: Option<String> = None;
     for name in dog_candidates(segments) {
         let section = match read_dog_section(client, streams, &name).await {
             Ok(section) => section,
             Err(code) => return code,
         };
-        named_a_dog |= flock.dogs.iter().any(|dog| *dog == name);
+        if named.is_none() && flock.dogs.iter().any(|dog| *dog == name) {
+            named = Some(name.clone());
+        }
         if section.trim().is_empty() {
             continue;
         }
@@ -245,10 +249,9 @@ async fn get_dog(
             Err(refusal) => refusal_report(streams, &refusal),
         };
     }
-    let refusal = if named_a_dog {
-        ReadRefusal::Empty(all_defaults(segments))
-    } else {
-        ReadRefusal::Unknown(no_such_name(segments))
+    let refusal = match named {
+        Some(dog) => ReadRefusal::Empty(all_defaults(&dog, segments)),
+        None => ReadRefusal::Unknown(no_such_name(segments)),
     };
     refusal_report(streams, &refusal)
 }
@@ -276,12 +279,23 @@ fn no_such_name(segments: &[String]) -> String {
 }
 
 /// The sentence for a dog the flock has and `dogs.toml` says nothing about.
-fn all_defaults(segments: &[String]) -> String {
+///
+/// `dog` is the name the flock carries and `address` is what the operator
+/// typed, kept apart on purpose: `kelpie.worker.token` names a path inside
+/// `kelpie`, and a dog whose own name is dotted is that whole name. Calling
+/// the address a dog would name a path as a settings holder, and pointing
+/// `shep enable` at its first segment would name a dog the flock does not
+/// have.
+fn all_defaults(dog: &str, address: &[String]) -> String {
+    let typed = address.join(".");
+    let path = if typed == dog {
+        String::new()
+    } else {
+        format!(" `{typed}` names nothing inside it either.")
+    };
     format!(
-        "`{}` is a dog with nothing set for it: `dogs.toml` holds no section, so every setting it \
-         runs on is a default. `shep enable {}` writes one",
-        segments.join("."),
-        segments.first().map(String::as_str).unwrap_or_default()
+        "`{dog}` is a dog with nothing set for it: `dogs.toml` holds no section, so every setting \
+         it runs on is a default.{path} `shep enable {dog}` writes one",
     )
 }
 
@@ -798,14 +812,65 @@ mod tests {
     }
 
     /// A dog the flock runs and `dogs.toml` says nothing about is not a wrong
-    /// name, and the sentence says what is actually true of it.
+    /// name, and the sentence says what is actually true of it: the dog named
+    /// is the one the flock carries, and `shep enable` is aimed at that name.
     #[test]
     fn a_dog_with_no_section_says_its_settings_are_defaults() {
-        let refusal = ReadRefusal::Empty(all_defaults(&segments("metrics.bind").unwrap()));
+        let refusal = ReadRefusal::Empty(all_defaults("metrics", &segments("metrics").unwrap()));
         assert_eq!(refusal.code(), ExitCode::NotFound);
+        assert!(
+            refusal.message().starts_with("`metrics` is a dog"),
+            "{refusal}"
+        );
         assert!(refusal.message().contains("default"), "{refusal}");
         assert!(
             refusal.message().contains("shep enable metrics"),
+            "{refusal}"
+        );
+    }
+
+    /// fails if the address is reported as the settings holder: `bind` is a
+    /// path inside `metrics`, and the operator has to be able to tell which
+    /// name to hand `shep enable`.
+    #[test]
+    fn a_path_inside_a_default_only_dog_names_the_dog_and_not_the_path() {
+        let refusal =
+            ReadRefusal::Empty(all_defaults("metrics", &segments("metrics.bind").unwrap()));
+        assert!(
+            refusal.message().starts_with("`metrics` is a dog"),
+            "{refusal}"
+        );
+        assert!(
+            refusal
+                .message()
+                .contains("`metrics.bind` names nothing inside it"),
+            "{refusal}"
+        );
+        assert!(
+            refusal.message().contains("shep enable metrics"),
+            "{refusal}"
+        );
+    }
+
+    /// A dog whose own name is dotted is that whole name: `shep enable` takes
+    /// it whole, and a suggestion built from the first segment names a dog no
+    /// flock has.
+    #[test]
+    fn a_dotted_dog_name_stays_one_name() {
+        let refusal = ReadRefusal::Empty(all_defaults(
+            "kelpie.worker",
+            &segments("kelpie.worker.token").unwrap(),
+        ));
+        assert!(
+            refusal.message().starts_with("`kelpie.worker` is a dog"),
+            "{refusal}"
+        );
+        assert!(
+            refusal.message().contains("shep enable kelpie.worker`"),
+            "{refusal}"
+        );
+        assert!(
+            !refusal.message().contains("shep enable kelpie `"),
             "{refusal}"
         );
     }
