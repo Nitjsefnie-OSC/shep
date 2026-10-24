@@ -2,8 +2,10 @@
 //! next request needing the revoked permission is refused with no restart,
 //! and a grant the dog never declared is refused before it is written.
 
+#[cfg(unix)]
 use shep_core::protocol::{PROTOCOL_VERSION, Request, SelectorSpec};
 
+#[cfg(unix)]
 use super::dog_grants::{reply, send};
 use super::*;
 
