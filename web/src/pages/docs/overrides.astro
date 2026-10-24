@@ -554,8 +554,8 @@ const store = `$ cat $SHEP_HOME/overrides.json
       dog is asked about if it declared <code>validate</code>. The path is the
       same on both sides, a dog table merges into what the target holds unless{" "}
       <code>--replace</code> says otherwise, and nothing is written until the
-      change list is confirmed. <code>env</code> is never copied: a client is
-      never sent env values. The flags are in the <a
+      change list is confirmed. <code>env</code> copies the same way, a{" "}
+      <code>{'{{secret:NAME}}'}</code> as the reference. The flags are in the <a
       href="/docs/cli#managing-a-sheep">CLI reference</a>.
     </p>
 

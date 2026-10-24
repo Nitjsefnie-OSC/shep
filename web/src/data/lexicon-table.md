@@ -45,7 +45,7 @@ The whole vocabulary, and whether it exists yet.
 | get | read one sheep's settings, or one dog's own section, as TOML | `shep get <name>[.<path>]` | yes |
 | set | change one setting of a sheep or a dog | `shep set <name>[.<path>] <value>` | yes |
 | unset | drop a sheep field's override, or remove a key from a dog's settings | `shep unset <name>[.<path>]` | yes |
-| copy | move one setting, or one dog's table for a sheep, from one sheep onto another | `shep copy <from>.<path> <to>.<path>` | yes |
+| copy | move one setting, one dog's table for a sheep, or a sheep's env, from one sheep onto another | `shep copy <from>.<path> <to>.<path>` | yes |
 
 Sheepdogs and sheep were separate ideas from the start, so "dog" never means
 the daemon. The shepherd is the shepherd. Dogs are plugins that work for it.
