@@ -183,6 +183,37 @@ pub enum Request {
         /// Report what would happen and write nothing.
         dry_run: bool,
     },
+    /// Copies one sheep's env onto another's, inside the shepherd.
+    ///
+    /// Its own request because a client is never sent an env value
+    /// ([`Self::SheepConfig`]), so it has no map to hand to
+    /// [`Self::SetSheepEnvBatch`]. The shepherd reads `from`'s env itself and
+    /// writes it to `to` as operator overrides, a `{{secret:...}}` value as
+    /// the reference and never resolved.
+    ///
+    /// Merges: `to` keeps its own keys and `from`'s overwrite them. `replace`
+    /// makes `to`'s env exactly `from`'s instead, removing the keys only `to`
+    /// had. A key in `except` is left as `to` had it under either.
+    ///
+    /// `dry_run` computes the change list and writes nothing. Parks for the
+    /// next spawn, exactly as [`Self::SetSheepEnv`] does.
+    ///
+    /// Answers [`Response::SheepEnvCopied`], or
+    /// [`RpcErrorCode::NotFound`] when either name is no sheep. Not a protocol
+    /// bump: a shepherd that has never heard of this one decodes
+    /// [`Self::Unrecognized`] and refuses by name.
+    CopySheepEnv {
+        /// The sheep whose env is read.
+        from: String,
+        /// The sheep whose env is written.
+        to: String,
+        /// Make `to`'s env exactly `from`'s, removing what only `to` had.
+        replace: bool,
+        /// Keys left as `to` had them.
+        except: Vec<String>,
+        /// Report what would happen and write nothing.
+        dry_run: bool,
+    },
     /// Sets one config field on one sheep, recorded as an operator
     /// override.
     ///

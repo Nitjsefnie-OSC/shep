@@ -153,6 +153,28 @@ pub fn namespaces_of(config: &AppConfig) -> BTreeSet<String> {
         .collect()
 }
 
+/// What a client may be told about one env value: the value itself when it is
+/// exactly one `{{secret:...}}` reference, and `<redacted>` otherwise.
+///
+/// A reference names a secret and is not one. Text around a reference is
+/// literal and may carry a secret of its own, so a value that merely embeds a
+/// reference is redacted whole.
+#[must_use]
+pub fn shown_env_value(value: &str) -> String {
+    let whole = value
+        .strip_prefix("{{secret:")
+        .and_then(|rest| rest.strip_suffix("}}"))
+        .is_some_and(|body| SecretRef::parse(body).is_some());
+    if whole {
+        value.to_string()
+    } else {
+        REDACTED_ENV.to_string()
+    }
+}
+
+/// What [`shown_env_value`] prints for a value that is not a reference.
+pub const REDACTED_ENV: &str = "<redacted>";
+
 #[cfg(test)]
 mod tests {
 
@@ -272,5 +294,26 @@ mod tests {
             .to_string(),
             "{{secret:vercel/K}}"
         );
+    }
+
+    /// A reference that is the whole value prints as written, and every other
+    /// value, a literal or one that merely embeds a reference, prints as
+    /// `<redacted>`: the text around an embedded reference is a literal too.
+    #[test]
+    fn only_a_value_that_is_one_reference_is_shown() {
+        for shown in ["{{secret:KEY}}", "{{secret:vercel/KEY}}"] {
+            assert_eq!(shown_env_value(shown), shown);
+        }
+        for hidden in [
+            "hunter2",
+            "",
+            "postgres://u:{{secret:PW}}@db/app",
+            "{{secret:A}}{{secret:B}}",
+            "{{secret:bad key}}",
+            "{{name}}",
+            "{{secret:KEY}} ",
+        ] {
+            assert_eq!(shown_env_value(hidden), "<redacted>", "{hidden:?}");
+        }
     }
 }

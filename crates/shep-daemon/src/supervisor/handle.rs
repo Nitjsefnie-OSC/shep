@@ -276,6 +276,40 @@ impl SupervisorHandle {
         .await?
     }
 
+    /// Copies `from`'s env onto `to` as operator overrides, in one write.
+    ///
+    /// [`Actor::handle_copy_sheep_env`] states what `replace`, `except` and
+    /// `dry_run` do. [`EnvCopy::app`] is the config now parked for `to`'s next
+    /// spawn, and is `None` whenever nothing was written; `rpc/dispatch.rs`
+    /// hands it to the registry for [`Self::set_sheep_env`]'s reason.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::NoSuchSheep`] - `from` or `to` is no sheep.
+    /// - [`SupervisorError::IsADog`] - `from` or `to` is a dog's.
+    /// - [`SupervisorError::InvalidEnv`] - `normalize` refuses the result.
+    /// - [`SupervisorError::Overrides`] - the override store could not be
+    ///   read or written, so nothing was recorded and nothing parked.
+    /// - [`SupervisorError::EngineStopped`] - the actor is gone.
+    pub(crate) async fn copy_sheep_env(
+        &self,
+        from: &str,
+        to: &str,
+        replace: bool,
+        except: Vec<String>,
+        dry_run: bool,
+    ) -> Result<EnvCopy, SupervisorError> {
+        self.call(|reply| Command::CopySheepEnv {
+            from: from.to_string(),
+            to: to.to_string(),
+            replace,
+            except,
+            dry_run,
+            reply,
+        })
+        .await?
+    }
+
     /// Sets one config field on one sheep as an operator override.
     ///
     /// [`Actor::handle_set_sheep_field`].

@@ -123,6 +123,13 @@ pub enum SupervisorError {
     /// operator `Restart`. Maps to
     /// [`RpcErrorCode::Disabled`](shep_core::protocol::RpcErrorCode::Disabled).
     Disabled(String),
+    /// A `CopySheepEnv` named a sheep the flock does not hold; carries that
+    /// name.
+    ///
+    /// Its own variant because the copy reads one sheep and writes another,
+    /// so an empty answer would not say which name was wrong. Maps to
+    /// [`RpcErrorCode::NotFound`](shep_core::protocol::RpcErrorCode::NotFound).
+    NoSuchSheep(String),
     /// The actor has shut down; its mailbox is closed.
     EngineStopped,
 }
@@ -145,6 +152,7 @@ impl fmt::Display for SupervisorError {
                 f,
                 "{name} is disabled; `shep enable {name}` clears that and starts it"
             ),
+            Self::NoSuchSheep(name) => write!(f, "no sheep named {name}"),
             Self::EngineStopped => f.write_str("supervisor engine has shut down"),
         }
     }

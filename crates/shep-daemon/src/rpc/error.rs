@@ -41,6 +41,7 @@ pub(super) fn no_sheep(name: &str) -> RpcError {
 pub(super) fn rpc_error(err: &SupervisorError) -> RpcError {
     match err {
         SupervisorError::NotFound => not_found(),
+        SupervisorError::NoSuchSheep(name) => no_sheep(name),
         SupervisorError::SpawnFailed(msg) => RpcError {
             code: RpcErrorCode::SpawnFailed,
             message: msg.clone(),

@@ -229,6 +229,23 @@ pub(crate) enum Command {
         /// or the override store could not be read or written.
         reply: oneshot::Sender<Result<Option<EnvBatch>, SupervisorError>>,
     },
+    /// One sheep's env copied onto another's. See
+    /// [`Actor::handle_copy_sheep_env`].
+    CopySheepEnv {
+        /// The sheep whose env is read.
+        from: String,
+        /// The sheep whose env is written.
+        to: String,
+        /// Make the target's env exactly the source's.
+        replace: bool,
+        /// Keys left as the target had them.
+        except: Vec<String>,
+        /// Compute the change list and write nothing.
+        dry_run: bool,
+        /// Answers the change list, or an error when either name is no sheep,
+        /// is a dog's, or the result will not normalize or be stored.
+        reply: oneshot::Sender<Result<EnvCopy, SupervisorError>>,
+    },
     /// See [`Actor::handle_set_sheep_field`].
     SetSheepField {
         /// The sheep's name, not a selector, for [`Self::Scale`]'s reason.
