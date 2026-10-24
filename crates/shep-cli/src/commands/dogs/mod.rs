@@ -33,6 +33,7 @@ mod consent;
 mod depends;
 mod disable;
 mod enable;
+mod grant;
 mod grants;
 mod remove;
 mod vet;
@@ -48,6 +49,8 @@ mod defaults_adoption_tests;
 #[cfg(all(test, unix))]
 mod emit_dog_action_tests;
 #[cfg(all(test, unix))]
+mod grant_tests;
+#[cfg(all(test, unix))]
 mod manifest_adoption_tests;
 #[cfg(test)]
 mod test_support;
@@ -56,6 +59,7 @@ pub use adopt::adopt;
 pub use barks::barks;
 pub use disable::disable;
 pub use enable::enable;
+pub(crate) use grant::{Change, change};
 pub use remove::rehome;
 pub(crate) use remove::{Removal, remove_dog};
 pub use vet::{DogSchema, warn_of_a_dog_a_restart_would_break};

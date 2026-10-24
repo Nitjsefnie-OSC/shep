@@ -443,14 +443,36 @@ pub(crate) async fn run(
         // Falls back to the muster roll rather than refusing: looking at the
         // flock must not be a dead end on a machine that just rebooted.
         Commands::Flock(ref args) => flock_command(&mut streams, &link, guard, args).await,
-        // The guard arm is what makes `--available` work with no shepherd
-        // running: it never reaches `connect_client`.
-        Commands::Dogs(ref args) if args.available => {
-            query::available_dogs(&mut streams, args).await
-        }
-        Commands::Dogs(ref args) => match connect_client(&mut streams, &link, guard).await {
-            Ok(client) => query::dogs(&client, &mut streams, args).await,
-            Err(code) => code,
+        // `grant` and `revoke` write `shep.toml` and tell a shepherd only if
+        // one is running: tightening a dog must work with none, and never
+        // autostarts one. The guard arm is what makes `--available` work with
+        // no shepherd running: it never reaches `connect_client`.
+        Commands::Dogs(ref args) => match (&args.command, args.available) {
+            (Some(cli::DogsCommand::Grant(grant)), _) => {
+                dogs::change(
+                    &mut streams,
+                    &paths,
+                    dogs::Change::Grant,
+                    &grant.name,
+                    &grant.permission,
+                )
+                .await
+            }
+            (Some(cli::DogsCommand::Revoke(revoke)), _) => {
+                dogs::change(
+                    &mut streams,
+                    &paths,
+                    dogs::Change::Revoke,
+                    &revoke.name,
+                    &revoke.permission,
+                )
+                .await
+            }
+            (None, true) => query::available_dogs(&mut streams, args).await,
+            (None, false) => match connect_client(&mut streams, &link, guard).await {
+                Ok(client) => query::dogs(&client, &mut streams, args).await,
+                Err(code) => code,
+            },
         },
         // None of the four goes through the connect helpers: all four must
         // write the config with no shepherd running, so each connects

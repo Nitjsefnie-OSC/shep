@@ -15,6 +15,8 @@
 //! `#[cfg(unix)]` module could not own.
 
 mod dogs;
+#[cfg(test)]
+mod dogs_grant_tests;
 mod flock;
 mod help;
 mod hosts;
@@ -39,7 +41,7 @@ use help::version_text;
 // template; the template itself is what ships and stays hand-written.
 pub(crate) use help::HELP_TEMPLATE;
 
-pub use dogs::{AdoptArgs, DisableArgs, DogArgs, DogsArgs, EnableArgs};
+pub use dogs::{AdoptArgs, DisableArgs, DogArgs, DogsArgs, DogsCommand, EnableArgs};
 pub use flock::{FlockArgs, FoldArgs, LookoutArgs};
 pub use hosts::{HostArgs, HostCommand};
 pub use import::{ImportArgs, ImportCommand, ImportEnvArgs, ImportPm2Args};
