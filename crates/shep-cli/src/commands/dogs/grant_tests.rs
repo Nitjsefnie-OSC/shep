@@ -229,7 +229,9 @@ async fn a_name_that_is_no_dog_is_refused() {
 /// that name alone.
 #[tokio::test]
 async fn a_dog_with_no_recorded_grants_is_left_alone_by_both_verbs() {
-    let (_dir, paths) = home_with(DECLARES_TWO, None, true);
+    // Disabled: an enabled dog with a manifest and no entry is a home from
+    // before grants, and is granted its list at the first look.
+    let (_dir, paths) = home_with(DECLARES_TWO, None, false);
     let before = std::fs::read_to_string(&paths.daemon_config).unwrap();
 
     for verb in [Change::Grant, Change::Revoke] {
@@ -246,7 +248,8 @@ async fn a_dog_with_no_recorded_grants_is_left_alone_by_both_verbs() {
 
 #[tokio::test]
 async fn revoking_what_is_not_held_changes_nothing_and_succeeds() {
-    let (_dir, paths) = home_with(DECLARES_TWO, Some(&["flock.read"]), true);
+    let declares_one = r#"{"manifest":1,"name":"otel","version":"0.2.0","protocol":12,"permissions":[{"name":"flock.read","required":true,"reason":"reads the flock to report on it"}]}"#;
+    let (_dir, paths) = home_with(declares_one, Some(&["flock.read"]), true);
     let before = std::fs::read_to_string(&paths.daemon_config).unwrap();
 
     let (code, _) = run(Change::Revoke, &paths, "events:process.").await;
