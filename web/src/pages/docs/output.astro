@@ -190,7 +190,7 @@ import ShortVersion from "../../components/docs/ShortVersion.astro";
     <div class="rows">
       <div class="row"><span>both</span><span><code>ID NAME STATUS PID RESTARTS EXIT CPU MEM UPTIME</code></span></div>
       <div class="row"><span>sheep only</span><span><code>CFG FOLD SMIT</code></span></div>
-      <div class="row"><span>dogs only</span><span><code>SOURCE</code></span></div>
+      <div class="row"><span>dogs only</span><span><code>SOURCE ACCESS</code></span></div>
     </div>
     <CodeBlock label="shep flock">{`┌────┬────────┬──────────────┬───────┬──────────┬──────┬─────┬──────┬────────┬────────┬──────┐
 │ ID │ NAME   │ STATUS       │ PID   │ RESTARTS │ EXIT │ CFG │ CPU │ MEM  │ UPTIME │ FOLD   │ SMIT │
@@ -211,6 +211,9 @@ Dogs
       <em>on</em> a sheep, and no Flockfile load ever reaches a dog, so
       nothing can park config on one. A column that reads <code>-</code> on
       every row teaches nothing.
+    </p>
+    <p>
+      <code>ACCESS</code> is in <a href="/docs/dog-grants#upgrading">grants</a>.
     </p>
     <p>
       Colours match too, column for column. Same face and status colour, same
