@@ -36,6 +36,18 @@ pub const SHEP_CHANNEL_KEY: &str = "shep-channel";
 /// and the probes. A built-in dog reads its name from argv instead.
 pub const DOG_NAME_VAR: &str = "SHEP_DOG_NAME";
 
+/// The variable that names the descriptor a supervised dog was spawned with
+/// an open connection to its shepherd on.
+///
+/// Unix only, and set on every supervised dog. A process nothing supervised
+/// has no such variable and connects on the control socket, where it acts as
+/// the operator. See [`DOG_LINK_FD`].
+pub const DOG_LINK_FD_VAR: &str = "SHEP_DOG_FD";
+
+/// The descriptor number a dog's connection arrives on, beside the shepherd
+/// channel's fd 3.
+pub const DOG_LINK_FD: i32 = 4;
+
 /// The schemars extension key that marks a config field as a credential.
 /// Written by the `dog_config` attribute. A typo fails silently: the schema
 /// still validates, the field is simply not marked, and a credential can

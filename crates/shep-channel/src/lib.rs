@@ -36,9 +36,11 @@
 //!   process on its own.
 
 #![doc(test(attr(deny(warnings))))]
-// Not `forbid`: `endpoint` needs unsafe to reach the channel. Two blocks
-// on unix probe the inherited descriptor and then take it. One on
-// Windows peeks a pipe's buffer. Each carries its own `// SAFETY:` comment.
+// Not `forbid`: `endpoint` needs unsafe to reach the channel. Three blocks
+// on unix probe an inherited descriptor and then take it: the channel's
+// own, and a dog's connection to its shepherd, which `shep-client` cannot
+// adopt itself. One on Windows peeks a pipe's buffer. Each carries its own
+// `// SAFETY:` comment.
 #![deny(unsafe_code)]
 
 #[cfg(feature = "client")]
@@ -67,6 +69,8 @@ pub use channel::Channel;
 pub use dispatch::{ActionHandler, ShutdownHandler};
 #[cfg(feature = "client")]
 pub use endpoint::{Endpoint, FD_VAR, PIPE_VAR, VERSION_VAR, discover};
+#[cfg(all(feature = "client", unix))]
+pub use endpoint::take_inherited_socket;
 #[cfg(feature = "client")]
 pub use error::ChannelError;
 #[cfg(feature = "client")]

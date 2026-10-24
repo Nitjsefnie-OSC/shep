@@ -74,14 +74,19 @@ pub fn discover() -> Result<Endpoint, ChannelError> {
 /// be worse than a merely wrong number.
 /// This crate would own the app's stdout, write JSON into it, and close it on drop.
 fn descriptor_from(text: &str) -> Result<Endpoint, ChannelError> {
+    descriptor_in(FD_VAR, text)
+}
+
+/// [`descriptor_from`] for the variable `var`, which the messages name.
+fn descriptor_in(var: &str, text: &str) -> Result<Endpoint, ChannelError> {
     let Ok(fd) = text.trim().parse::<i32>() else {
-        return Err(ChannelError::Unusable(format!("{FD_VAR}={text}")));
+        return Err(ChannelError::Unusable(format!("{var}={text}")));
     };
     if fd < FIRST_INHERITABLE_FD {
         return Err(ChannelError::Unusable(format!(
-            "{FD_VAR}={fd} must be {FIRST_INHERITABLE_FD} or above: the shepherd passes \
-             the channel as {FIRST_INHERITABLE_FD}, and 0, 1 and 2 are this process's own \
-             standard streams"
+            "{var}={fd} must be {FIRST_INHERITABLE_FD} or above: the shepherd passes \
+             the descriptor as {FIRST_INHERITABLE_FD} or higher, and 0, 1 and 2 are this \
+             process's own standard streams"
         )));
     }
     Ok(Endpoint::Descriptor(fd))
@@ -284,6 +289,12 @@ static CHANNEL_TAKEN: AtomicBool = AtomicBool::new(false);
 /// It is left open either way.
 #[cfg(unix)]
 fn refuse_unless_socket(fd: i32) -> Result<(), ChannelError> {
+    refuse_unless_socket_in(FD_VAR, fd)
+}
+
+/// [`refuse_unless_socket`] for the variable `var`, which the message names.
+#[cfg(unix)]
+fn refuse_unless_socket_in(var: &str, fd: i32) -> Result<(), ChannelError> {
     use std::os::fd::FromRawFd as _;
 
     // SAFETY: `ManuallyDrop` is the invariant. The value is never dropped,
@@ -293,11 +304,61 @@ fn refuse_unless_socket(fd: i32) -> Result<(), ChannelError> {
     let probe = core::mem::ManuallyDrop::new(unsafe { Transport::from_raw_fd(fd) });
     probe.local_addr().map_err(|error| {
         ChannelError::Unusable(format!(
-            "{FD_VAR}={fd} is not an open socket ({error}): the shepherd passes \
-             the channel as one end of a socketpair"
+            "{var}={fd} is not an open socket ({error}): the shepherd passes \
+             this as one end of a socketpair"
         ))
     })?;
     Ok(())
+}
+
+/// Guards the inherited dog connection from being taken twice in one process.
+///
+/// Separate from [`CHANNEL_TAKEN`]: a dog holds both, and taking one leaves
+/// the other alone.
+#[cfg(unix)]
+static LINK_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// Takes the connected socket the shepherd handed this process, named by the
+/// environment variable `var`.
+///
+/// For `shep-client`, which forbids unsafe code and so cannot adopt a
+/// descriptor itself. `var` is `shep_core::dogs::DOG_LINK_FD_VAR`, passed in
+/// because `shep-core` depends on this crate and not the other way round.
+/// The number comes from the environment and never from the caller, the
+/// channel's own rule: a descriptor a caller could name is one a safe caller
+/// could alias.
+///
+/// `Ok(None)` when `var` is unset: not a supervised process, the ordinary
+/// case. The probe and the once-per-process claim are the channel's, so a
+/// refusal takes nothing and a second call finds the first's claim.
+///
+/// # Errors
+///
+/// - [`ChannelError::Unusable`]: `var` holds something that is not a
+///   descriptor, a number below 3, or a descriptor that is not an open
+///   socket.
+/// - [`ChannelError::AlreadyTaken`]: this process already took it.
+#[cfg(unix)]
+pub fn take_inherited_socket(
+    var: &str,
+) -> Result<Option<std::os::unix::net::UnixStream>, ChannelError> {
+    let Some(raw) = std::env::var_os(var) else {
+        return Ok(None);
+    };
+    let Endpoint::Descriptor(fd) = descriptor_in(var, &raw.to_string_lossy())? else {
+        return Ok(None);
+    };
+    refuse_unless_socket_in(var, fd)?;
+    if LINK_TAKEN.swap(true, Ordering::SeqCst) {
+        return Err(ChannelError::AlreadyTaken);
+    }
+    use std::os::fd::FromRawFd as _;
+    // SAFETY: as the channel's own take in `connect`. Soundness rests on the
+    // shepherd naming a descriptor it handed this process; the probe rules
+    // out everything but another socket this process owns, and `LINK_TAKEN`
+    // makes this block reachable once per process.
+    #[allow(unsafe_code)]
+    Ok(Some(unsafe { Transport::from_raw_fd(fd) }))
 }
 
 /// Opens the endpoint, returning the reader's half and the writer's clone.
