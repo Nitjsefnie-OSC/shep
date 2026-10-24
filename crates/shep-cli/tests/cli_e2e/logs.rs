@@ -2,6 +2,23 @@
 
 use super::*;
 
+/// Where the daemon writes the one sheep's stdout, off the daemon's own
+/// snapshot: poll until that sheep is online, then read the `out_file` its row
+/// carries.
+///
+/// A sheep's log path is the shepherd's to hand out, so a test that names the
+/// file it is about to rename or truncate reads it back rather than guessing
+/// it from `$SHEP_HOME`.
+#[track_caller]
+fn sheep_out_file(home: &Path) -> PathBuf {
+    let row = poll_flock(home, |info| info["status"] == "online");
+    PathBuf::from(
+        row["out_file"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {row}")),
+    )
+}
+
 /// Both of a sheep's streams by default, only the requested one under `--out`.
 #[test]
 fn bleats_no_follow_prints_what_a_sheep_actually_wrote() {
@@ -134,12 +151,7 @@ fn reopen_puts_a_rotated_log_back_where_bleats_can_read_it() {
          rotation: stdout={printed}"
     );
 
-    let online = poll_flock(home, |info| info["status"] == "online");
-    let out_file = PathBuf::from(
-        online["out_file"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
-    );
+    let out_file = sheep_out_file(home);
     let archive = out_file.with_extension("log.1");
     std::fs::rename(&out_file, &archive).unwrap();
     assert!(!out_file.exists(), "sanity: the rename really moved it");
@@ -224,13 +236,10 @@ fn a_reopen_that_cannot_open_a_path_again_exits_internal() {
     );
 
     // Off the daemon's own snapshot, so the test cannot disagree about which
-    // file it is blocking.
+    // file it is blocking. The row is polled again for the `id` the refusal's
+    // message has to name.
+    let out_file = sheep_out_file(home);
     let online = poll_flock(home, |info| info["status"] == "online");
-    let out_file = PathBuf::from(
-        online["out_file"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
-    );
 
     // Renamed, not deleted: a real rotation leaves the pump holding an inode
     // under a different name, with the live path unopenable.
@@ -306,12 +315,7 @@ fn copytruncate_leaves_the_next_line_at_offset_zero(stamped: bool) {
 
     // Off the daemon's own snapshot, so the test cannot disagree about which
     // file this is.
-    let online = poll_flock(home, |info| info["status"] == "online");
-    let out_file = PathBuf::from(
-        online["out_file"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
-    );
+    let out_file = sheep_out_file(home);
 
     // `logrotate copytruncate` spelled out. Nothing here is a shep verb, so
     // the daemon is never told and the pump holds the same inode at size zero.
@@ -409,12 +413,7 @@ fn no_log_timestamps_reaches_a_stopped_sheep_started_again() {
 
     // Off the daemon's own snapshot, so the test cannot disagree about which
     // file this is.
-    let online = poll_flock(home, |info| info["status"] == "online");
-    let out_file = PathBuf::from(
-        online["out_file"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
-    );
+    let out_file = sheep_out_file(home);
     let stamped_first = std::fs::read_to_string(&out_file).unwrap();
     assert_eq!(unstamped_file(&out_file), format!("{ROTATE_BEFORE}\n"));
     let first = stamped_first.lines().next().unwrap_or_default();
@@ -528,12 +527,7 @@ fn flush_empties_a_log_the_sheep_goes_on_appending_to() {
 
     // Off the daemon's own snapshot, so the test cannot disagree about which
     // file this is.
-    let online = poll_flock(home, |info| info["status"] == "online");
-    let out_file = PathBuf::from(
-        online["out_file"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
-    );
+    let out_file = sheep_out_file(home);
 
     // The selector is explicit because the verb requires one. `--format json`
     // for the `command` label, since `flush` and `reopen` render one table.
@@ -610,12 +604,7 @@ fn a_daemon_flush_and_a_flock_flush_never_reach_each_others_files() {
     guard.adopt_home(home);
     assert_success(&boot);
 
-    let online = poll_flock(home, |info| info["status"] == "online");
-    let out_file = PathBuf::from(
-        online["out_file"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
-    );
+    let out_file = sheep_out_file(home);
     // Read back rather than assumed: this is the precondition both halves of
     // the case are checked against.
     let before = bleats_no_follow_until_written(home, &["all"]);
