@@ -27,6 +27,14 @@ const SILENT_BODY: &str = "";
 /// escape and a subcommand name that is two words. Every one of those is a
 /// layout or a section boundary if it reaches the help template or a
 /// completion script.
+/// A dog whose `verb` names subcommands a shell cannot take as bare words: a
+/// command substitution, and a `)` that closes a `case` pattern early. Safe
+/// names here are `pipeline` and `drain`, words no other part of a generated
+/// script contains.
+const SHELL_UNSAFE_BODY: &str = r#"if [ "$1" = --shep-manifest ]; then
+  echo '{"manifest":1,"name":"shep-otel","version":"0.2.0","protocol":12,"verb":{"description":"exports traces","subcommands":[{"name":"pipeline","about":"show the pipeline"},{"name":"$(touch>marker)","about":"a command substitution"},{"name":"two)words","about":"a case pattern breaker"},{"name":"drain","about":"empty the export queue"}]}}'
+fi"#;
+
 const HOSTILE_BODY: &str = r#"if [ "$1" = --shep-manifest ]; then
   echo '{"manifest":1,"name":"shep-otel","version":"0.2.0","protocol":12,"verb":{"description":"spans {all-args} and\u000amore\u001b[2J","subcommands":[{"name":"one word","about":"not one word"},{"name":"status","about":"show {options}"}]}}'
 fi"#;
@@ -478,4 +486,131 @@ fn a_dog_name_the_listing_would_have_to_rewrite_is_left_out() {
     .unwrap();
 
     assert_eq!(adopted_verbs(&paths), Vec::<AdoptedVerb>::new());
+}
+
+/// The finding this covers. `clap_complete` 4.6.9 writes subcommand names
+/// into its scripts with no quoting at all: bash gets `opts="pipeline
+/// $(touch>marker)"` inside double quotes and `shep,two)words)` case
+/// patterns, fish gets the names inside `-n "…"`, and zsh escapes its help
+/// text while writing the name raw. A name carrying `$(…)` is then run by a
+/// shell that sources the script and completes once, and a name carrying `)`
+/// stops the bash script parsing at all.
+///
+/// A name is an identifier the operator types, not copy to clean, so an
+/// unsafe one is dropped from the script rather than rewritten: completing a
+/// doctored name would hand back a word no dog answers to. The dog's own help
+/// page keeps it, because the manifest declared it and the dog's argv really
+/// can hold it.
+#[test]
+fn a_name_a_shell_cannot_take_as_a_bare_word_is_never_completed() {
+    use clap_complete::aot::Shell;
+
+    let dir = tempfile::tempdir().unwrap();
+    let paths = a_home_with(dir.path(), [("otel", SHELL_UNSAFE_BODY)]);
+    let verbs = adopted_verbs(&paths);
+
+    assert_eq!(
+        verbs[0]
+            .subcommands
+            .iter()
+            .map(|sub| sub.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["pipeline", "$(touch>marker)", "two)words", "drain"],
+        "the help surface stays faithful to what the manifest declared"
+    );
+
+    for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
+        let mut command = with_completion_entries(Cli::command(), &verbs);
+        let mut buf = Vec::new();
+        clap_complete::aot::generate(shell, &mut command, "shep", &mut buf);
+        let script = String::from_utf8(buf).unwrap();
+        for safe in ["pipeline", "drain"] {
+            assert!(script.contains(safe), "{shell}: `{safe}` must be completed");
+        }
+        for dangerous in ["$(touch>marker)", "two)words"] {
+            assert!(
+                !script.contains(dangerous),
+                "{shell}: `{dangerous}` is code to a shell reading the script: {script}"
+            );
+        }
+    }
+}
+
+/// The same rule for the dog's own name, which reaches the script as a
+/// top-level completion word. `shep adopt --name` takes any string, and a
+/// hand-written `shep.toml` any key.
+#[test]
+fn a_dog_named_what_a_shell_cannot_take_is_listed_but_never_completed() {
+    use clap_complete::aot::Shell;
+
+    let dir = tempfile::tempdir().unwrap();
+    let paths = a_home_with(
+        dir.path(),
+        [("$(touch>marker)", SILENT_BODY), ("otel", DECLARING_BODY)],
+    );
+    let verbs = adopted_verbs(&paths);
+
+    assert_eq!(
+        listed(&verbs),
+        vec![
+            ("$(touch>marker)", None),
+            ("otel", Some("exports traces to an OTLP collector"))
+        ],
+        "a running dog stays in `shep --help`, which prints text rather than writing a script"
+    );
+
+    for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
+        let mut command = with_completion_entries(Cli::command(), &verbs);
+        let mut buf = Vec::new();
+        clap_complete::aot::generate(shell, &mut command, "shep", &mut buf);
+        let script = String::from_utf8(buf).unwrap();
+        assert!(
+            script.contains("otel"),
+            "{shell}: the safe dog must be completed"
+        );
+        assert!(
+            !script.contains("touch>marker"),
+            "{shell}: the unsafe dog must not be: {script}"
+        );
+    }
+}
+
+/// The grammar, named: a word a shell takes as a bare word. Letters of any
+/// script and digits, separated by `-`, `_` or `.`, starting on a letter or
+/// digit. Everything else, `$(…)` and `)` included, is out.
+#[test]
+fn shell_safe_is_the_words_a_shell_takes_as_a_bare_word() {
+    for safe in [
+        "otel",
+        "log-rotate",
+        "log_rotate",
+        "v1.2",
+        "drain2",
+        "A1",
+        "café",
+        "日本語",
+    ] {
+        assert!(shell_safe(safe), "{safe} must be completed");
+    }
+    for dangerous in [
+        "",
+        "-x",
+        "_x",
+        ".hidden",
+        "$(touch>marker)",
+        "two)words",
+        "a'b",
+        "a\"b",
+        "a;b",
+        "a|b",
+        "a*b",
+        "a$b",
+        "a`b",
+        "a b",
+        "a/b",
+        "a:b",
+        "a\nb",
+    ] {
+        assert!(!shell_safe(dangerous), "{dangerous} must not be completed");
+    }
 }

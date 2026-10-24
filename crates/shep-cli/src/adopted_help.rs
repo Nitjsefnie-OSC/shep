@@ -220,19 +220,49 @@ fn dog_lines(verbs: &[AdoptedVerb]) -> Vec<String> {
         .collect()
 }
 
+/// Whether `name` is a word a shell takes as a bare word.
+///
+/// `clap_complete` 4.6.9 writes subcommand names into its scripts with no
+/// quoting at all. Its bash generator emits `opts="pipeline $(touch>x)"`
+/// inside double quotes, which the shell expands when the completion runs,
+/// and `shep,two)words)` case patterns, which stop the script parsing. Its
+/// fish generator puts the names inside `-n "…"`, and its zsh generator
+/// escapes the help text while writing the name raw. Nothing to escape
+/// against: a name is an identifier the operator types, so an unsafe one is
+/// dropped from the script rather than rewritten, and a doctored name would
+/// complete to a word no dog answers to.
+///
+/// Letters of any script and digits, separated by `-`, `_` or `.`, starting
+/// on a letter or digit. The punctuation is ASCII-only, and a leading `-`
+/// would read as a flag.
+fn shell_safe(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_alphanumeric() && chars.all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 /// Add each dog, and each declared subcommand under it, to a command tree
 /// built only to generate a completion script.
 ///
 /// This tree is never parsed. `shep <dog>` still reaches the dog through
 /// clap's unknown-subcommand path, which is what keeps a dog's argv a
 /// pass-through and keeps a manifest from claiming a verb.
+///
+/// A name [`shell_safe`] rejects is left out of this tree alone: the dog is
+/// still in `shep --help`, and still runs, because help prints text and a
+/// completion script is code a shell reads.
 pub(crate) fn with_completion_entries(
     command: clap::Command,
     verbs: &[AdoptedVerb],
 ) -> clap::Command {
-    verbs.iter().fold(command, |command, verb| {
-        command.subcommand(completion_entry(verb))
-    })
+    verbs
+        .iter()
+        .filter(|verb| shell_safe(&verb.name))
+        .fold(command, |command, verb| {
+            command.subcommand(completion_entry(verb))
+        })
 }
 
 /// The completion tree's entry for one dog.
@@ -241,6 +271,9 @@ fn completion_entry(verb: &AdoptedVerb) -> clap::Command {
         .about(verb.description.clone().unwrap_or_default())
         .disable_help_subcommand(true);
     for sub in &verb.subcommands {
+        if !shell_safe(&sub.name) {
+            continue;
+        }
         command = command.subcommand(clap::Command::new(sub.name.clone()).about(sub.about.clone()));
     }
     command

@@ -253,3 +253,109 @@ fn a_manifest_carrying_a_placeholder_or_a_line_break_is_listed_as_text() {
     assert!(dog_help.contains("status  show options"), "{dog_help}");
     assert!(!marker.exists(), "neither help ran the dog");
 }
+
+/// A dog whose manifest declares exactly `names` as its subcommands.
+/// `$(touch>…)` is a command substitution and `two)words` closes a `case`
+/// pattern early: `clap_complete` 4.6.9 writes subcommand names into its
+/// scripts with no quoting at all.
+#[cfg(unix)]
+fn dog_with_subs(dir: &TempDir, ran: &Path, names: &[&str]) -> PathBuf {
+    let mut subs = String::new();
+    for name in names {
+        if !subs.is_empty() {
+            subs.push(',');
+        }
+        subs.push_str("{\"name\":\"");
+        subs.push_str(name);
+        subs.push_str("\",\"about\":\"an about\"}");
+    }
+    let manifest = String::from(
+        r#"{"manifest":1,"name":"shep-otel","version":"0.2.0","protocol":12,"verb":{"description":"exports traces","subcommands":["#,
+    ) + &subs
+        + r#"]}}"#;
+    let body = format!(
+        "#!/bin/sh\nif [ \"$1\" = --shep-manifest ]; then\n  echo '{manifest}'\n  exit 0\nfi\necho ran > \"{}\"\nexit 0\n",
+        ran.display(),
+    );
+    write_script(dir, "shep-otel.sh", &body)
+}
+
+/// Generates this home's bash script into `home/script.bash`.
+#[cfg(unix)]
+fn bash_script(home: &Path) -> PathBuf {
+    let script = run(home, &["completions", "bash"]);
+    assert_success(&script);
+    let path = home.join("script.bash");
+    std::fs::write(&path, &script.stdout).unwrap();
+    path
+}
+
+#[cfg(unix)]
+/// The reproduction the reviewer ran: source the generated script, complete
+/// `shep otel `, and the marker the manifest named must not appear. The
+/// script parses on its own, so nothing but the name is at fault.
+#[test]
+fn a_completion_script_never_runs_a_name_a_manifest_gave_it() {
+    let home = TempDir::new().unwrap();
+    let executed = home.path().join("executed");
+    let ran = home.path().join("ran");
+    let substitution = format!("$(touch>{})", executed.display());
+    let binary = dog_with_subs(&home, &ran, &["pipeline", &substitution, "drain"]);
+
+    assert_success(&adopt(home.path(), &binary, "otel"));
+    let script = bash_script(home.path());
+
+    // bash's own calling convention for `complete -F`: `$1` the command
+    // being completed, `$2` the word being completed, `$3` the word before
+    // it. Here that is `shep otel ` with an empty current word.
+    let completed = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(r#"source "$1"; COMP_WORDS=(shep otel ""); COMP_CWORD=2; _shep shep "" otel; printf '%s\n' "${COMPREPLY[@]}""#)
+        .arg("bash")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        completed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&completed.stderr)
+    );
+    assert!(
+        !executed.exists(),
+        "completing `shep otel ` ran the name the manifest gave it"
+    );
+    let offered = String::from_utf8_lossy(&completed.stdout).to_string();
+    assert!(
+        offered.contains("pipeline") && offered.contains("drain"),
+        "the completion still offers the safe subcommands: {offered}"
+    );
+    assert!(
+        !ran.exists(),
+        "generating or completing from a script never runs the dog"
+    );
+}
+
+#[cfg(unix)]
+/// The other symptom, on its own: one name carrying a `)` makes the whole
+/// script fail to parse, which takes completion away from every command, not
+/// only from the dog that was given the bad name.
+#[test]
+fn a_generated_script_still_parses_whatever_a_manifest_names() {
+    let home = TempDir::new().unwrap();
+    let ran = home.path().join("ran");
+    let binary = dog_with_subs(&home, &ran, &["pipeline", "two)words", "drain"]);
+
+    assert_success(&adopt(home.path(), &binary, "otel"));
+    let script = bash_script(home.path());
+
+    let parsed = std::process::Command::new("bash")
+        .arg("-n")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        parsed.status.success(),
+        "the generated script must parse: {}",
+        String::from_utf8_lossy(&parsed.stderr)
+    );
+}
