@@ -925,5 +925,7 @@ impl core::error::Error for ShepTomlError {
 
 mod grants;
 
+pub(crate) use grants::GrantRecord;
+
 #[cfg(all(test, unix))]
 mod tests;
