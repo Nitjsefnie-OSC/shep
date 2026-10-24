@@ -90,7 +90,10 @@ fn a_dog_that_refuses_its_settings_stops_the_write_and_says_why() {
         &format!(
             "[[app]]\nname = \"api\"\nscript = '{}'\n\n\
              [app.dogs.kelpie.git]\ncheckout = \"/srv/api\"\nnote = \"{BANNED}\"\n\n\
-             [app.dogs.quiet.git]\nnote = \"{BANNED}\"\n",
+             [app.dogs.quiet.git]\nnote = \"{BANNED}\"\n\n\
+             [[app]]\nname = \"web\"\nscript = '{}'\n\n\
+             [app.dogs.kelpie.git]\nnote = \"kept\"\n",
+            script.display(),
             script.display()
         ),
     );
@@ -156,6 +159,32 @@ fn a_dog_that_refuses_its_settings_stops_the_write_and_says_why() {
         "a refused removal removes nothing"
     );
 
+    // `shep copy` carries a dog's whole table onto another sheep, which is a
+    // write to that dog's settings through a door an operator would not think
+    // of as one. The dog is asked about the table the target would hold.
+    let copied_refused = shep(home)
+        .arg("copy")
+        .arg("api.dogs.kelpie.git")
+        .arg("web.dogs.kelpie.git")
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert_eq!(
+        copied_refused.status.code(),
+        Some(4),
+        "InvalidConfig; {copied_refused:?}"
+    );
+    let stderr = String::from_utf8_lossy(&copied_refused.stderr);
+    assert!(
+        stderr.contains("nothing was written") && stderr.contains(REASON),
+        "the dog's own words, on a copy: {stderr}"
+    );
+    assert_eq!(
+        read_table(home, "web.dogs.kelpie.git"),
+        "[dogs.kelpie.git]\nnote = \"kept\"\n",
+        "a copy the dog refused wrote nothing to the target"
+    );
+
     // Removing the key the dog objects to is accepted, and it lands.
     let cleared = shep(home)
         .arg("unset")
@@ -181,6 +210,27 @@ fn a_dog_that_refuses_its_settings_stops_the_write_and_says_why() {
     assert_eq!(
         read_table(home, "api.dogs.kelpie.git"),
         "[dogs.kelpie.git]\ncheckout = \"/srv/other\"\n"
+    );
+
+    // The same copy, now that the table is one the dog accepts: it lands on the
+    // target, key by key, keeping the key only the target had.
+    let copied = shep(home)
+        .arg("copy")
+        .arg("api.dogs.kelpie.git")
+        .arg("web.dogs.kelpie.git")
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert_success(&copied);
+    let web_now = read_table(home, "web.dogs.kelpie.git");
+    assert!(
+        web_now.contains("checkout = \"/srv/other\"") && web_now.contains("note = \"kept\""),
+        "{web_now}"
+    );
+    assert_eq!(
+        read_table(home, "api.dogs.kelpie.git"),
+        "[dogs.kelpie.git]\ncheckout = \"/srv/other\"\n",
+        "a copy reads the source and never edits it"
     );
 
     // The control: the same value the dog objects to, a dog that declared
