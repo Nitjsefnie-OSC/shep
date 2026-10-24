@@ -178,6 +178,26 @@ fn a_dotted_key_of_a_dog_table_stays_one_key() {
         "[dogs.kelpie]\n\"api.token\" = \"literal-dotted-key\"\n"
     );
 }
+/// The sheep half of the rule `shep copy`'s resolver carries: a dotted key
+/// inside a dotted key is two keys, and the read stays inside the table the
+/// first one names rather than falling out of it.
+#[test]
+fn a_dotted_key_inside_a_dotted_key_reads_from_a_sheeps_dog_table() {
+    let mut cfg = config();
+    cfg["dogs"]["kelpie"]["api.token"] = json!({ "auth.key": 42 });
+    let dogs = address::DogNames::new(&flock(), &cfg, &Json::Null);
+    let written = sheep_written("api.dogs.kelpie.api.token.auth.key");
+    let steps = sheep_steps(&written.name, &written.rest, &dogs, &cfg).unwrap();
+    assert_eq!(
+        steps,
+        ["dogs", "kelpie", "api.token", "auth.key"],
+        "{steps:?}"
+    );
+    assert_eq!(
+        sheep_document(&written, &cfg, &steps).unwrap(),
+        "[dogs.kelpie.\"api.token\"]\n\"auth.key\" = 42\n"
+    );
+}
 /// `we.b` is a sheep, so the split lands after it rather than after `we`.
 #[test]
 fn a_sheep_name_with_a_dot_is_one_name() {
@@ -292,7 +312,11 @@ fn env_names_the_verbs_that_hold_a_sheeps_env() {
     };
     assert_eq!(refusal.code(), ExitCode::InvalidConfig);
     assert!(refusal.message().contains("shep import env"), "{refusal}");
-    assert!(refusal.message().contains("shep describe"), "{refusal}");
+    assert!(
+        refusal.message().contains("shep describe api"),
+        "the refusal has to name the sheep it refused, {refusal}"
+    );
+    assert!(!refusal.message().contains("{sheep}"), "{refusal}");
 }
 #[test]
 fn a_path_nothing_is_set_at_is_not_found() {

@@ -282,6 +282,12 @@ pub(crate) fn path_of(
 /// `api` then `token` when it holds a table under `api`. A key nothing holds
 /// stays one segment, which is what lets the plan name the source that is
 /// missing rather than invent a path.
+///
+/// The walk descends by the key it matched, not by the segments that spelled
+/// it. A table holding `api.token` has no `api` to fall into, so stepping one
+/// segment at a time lands outside the table and reads the rest of the address
+/// as segments nothing holds: `api.token.auth.key` becomes `api.token`, `auth`,
+/// `key` instead of `api.token`, `auth.key`.
 pub(crate) fn resolve_keys(
     rest: &[String],
     source: Option<&Value>,
@@ -293,11 +299,10 @@ pub(crate) fn resolve_keys(
     let mut next = 0;
     while next < rest.len() {
         let taken = longest_key(&rest[next..], src, tgt);
-        keys.push(taken.join("."));
-        for part in &taken {
-            src = src.and_then(|value| value.as_object().and_then(|map| map.get(part)));
-            tgt = tgt.and_then(|value| value.as_object().and_then(|map| map.get(part)));
-        }
+        let key = taken.join(".");
+        keys.push(key.clone());
+        src = src.and_then(|value| value.as_object().and_then(|map| map.get(key.as_str())));
+        tgt = tgt.and_then(|value| value.as_object().and_then(|map| map.get(key.as_str())));
         next += taken.len();
     }
     keys
@@ -658,6 +663,35 @@ mod tests {
                 dog: "kelpie".into(),
                 keys: vec!["api".into(), "limit".into()]
             }
+        );
+    }
+
+    /// fails if the walk falls out of the table a dotted key names: a key
+    /// holding a dot has no shorter key to step through, so the second dotted
+    /// key has to be read inside the first, and `api.token.auth.key` is two
+    /// keys rather than `api.token` and two segments nothing holds.
+    #[test]
+    fn a_dotted_key_inside_a_dotted_key_stays_two_keys() {
+        let source = json!({ "dogs": { "kelpie": { "api.token": { "auth.key": 42 } } } });
+        let deep = parse_against(
+            "web.dogs.kelpie.api.token.auth.key",
+            &flock(),
+            &source,
+            &Value::Null,
+        )
+        .unwrap();
+        assert_eq!(
+            deep.path,
+            ConfigPath::Dog {
+                dog: "kelpie".into(),
+                keys: vec!["api.token".into(), "auth.key".into()]
+            },
+            "the walk stays inside the table `api.token` names"
+        );
+        assert_eq!(
+            deep.path.dotted(),
+            "dogs.kelpie.api.token.auth.key",
+            "it prints back as it was typed"
         );
     }
 

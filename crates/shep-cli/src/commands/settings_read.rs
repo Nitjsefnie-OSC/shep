@@ -374,12 +374,11 @@ fn sheep_steps(
         )));
     }
     if *first == ENV {
-        return Err(ReadRefusal::Refused(
+        return Err(ReadRefusal::Refused(format!(
             "`env` is not read: a client is never sent a sheep's env values, so there is nothing \
              here to print. `shep describe {sheep}` lists the keys, and `shep import env` writes \
              them"
-                .to_string(),
-        ));
+        )));
     }
     if !address::app_fields().any(|name| name == first.as_str()) {
         return Err(ReadRefusal::Usage(format!(

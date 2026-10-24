@@ -37,7 +37,8 @@ fn shep_get_reads_a_sheeps_settings_and_a_dogs_own_section() {
         &format!(
             "[[app]]\nname = \"api\"\nscript = '{}'\nmax_memory = \"1G\"\n\n\
              [app.dogs.kelpie.git]\ncheckout = \"/srv/api\"\nmerging = \"ff\"\n\n\
-             [app.dogs.kelpie.options]\n",
+             [app.dogs.kelpie.options]\n\n\
+             [app.dogs.kelpie.\"api.token\"]\n\"auth.key\" = 42\n",
             script.display()
         ),
     );
@@ -165,6 +166,19 @@ fn shep_get_reads_a_sheeps_settings_and_a_dogs_own_section() {
     let whole_text = String::from_utf8_lossy(&whole.stdout);
     assert!(whole_text.contains("[dogs.kelpie.options]"), "{whole_text}");
 
+    // The sheep half of the same rule: a dotted key inside a dotted key is
+    // two keys, and the read stays inside the table the first one names.
+    let deep = shep(home)
+        .arg("get")
+        .arg("api.dogs.kelpie.api.token.auth.key")
+        .output()
+        .unwrap();
+    assert_success(&deep);
+    assert_eq!(
+        String::from_utf8_lossy(&deep.stdout),
+        "[dogs.kelpie.\"api.token\"]\n\"auth.key\" = 42\n"
+    );
+
     let absent = shep(home)
         .arg("get")
         .arg("api.dogs.kelpie.git.remote")
@@ -177,6 +191,7 @@ fn shep_get_reads_a_sheeps_settings_and_a_dogs_own_section() {
     assert_eq!(env.status.code(), Some(4), "InvalidConfig; {env:?}");
     let stderr = String::from_utf8_lossy(&env.stderr);
     assert!(stderr.contains("shep import env"), "{stderr}");
+    assert!(stderr.contains("shep describe api"), "{stderr}");
 
     // `--format json` is one envelope, and the document rides in it as text.
     let json = shep(home)
