@@ -1,15 +1,17 @@
 //! Arguments for the key/value store: `shep kv get`, `shep kv set` and
-//! `shep kv unset`, and the hidden `shep set`, `shep get` and `shep unset`
-//! that still reach it.
+//! `shep kv unset`, and the hidden `shep set` and `shep unset` that still
+//! reach it.
 //!
 //! The store is read and written with no shepherd running, and takes a flat
 //! key grammar. Nothing here connects, and nothing here parses a value: the
 //! value is a string, and [`shep_core::kv`] caps it.
 //!
-//! The three argument structs are shared by both spellings on purpose. An
-//! operator who has already typed `shep set bark.cooldown 30s` gets the same
-//! grammar and the same reply from `shep kv set`, so the move is a rename of
-//! where the verb sits, not a change to what it accepts.
+//! `set` and `unset` keep the argument structs their `shep kv` spelling takes,
+//! so an operator who has already typed `shep set bark.cooldown 30s` gets the
+//! same grammar and the same reply from `shep kv set`: the move is a rename of
+//! where the verb sits, not a change to what it accepts. `shep get` is the one
+//! old spelling that did not move here: it reads a sheep's or a dog's
+//! settings now, which is a different store of values.
 
 /// Arguments to `shep kv`.
 #[derive(Debug, clap::Args)]
@@ -50,7 +52,7 @@ pub struct KvSetArgs {
     pub value: String,
 }
 
-/// Arguments to `shep kv get`, and to the hidden `shep get`.
+/// Arguments to `shep kv get`.
 #[derive(Debug, clap::Args)]
 pub struct KvGetArgs {
     /// The key; omit to list every key
@@ -187,11 +189,6 @@ mod tests {
         };
         assert_eq!((args.key.as_str(), args.value.as_str()), ("a", "1"));
 
-        let Commands::Get(args) = Cli::try_parse_from(["shep", "get"]).unwrap().command else {
-            panic!("`shep get` must still parse")
-        };
-        assert!(args.key.is_none(), "bare `shep get` still lists the store");
-
         let Commands::Unset(args) = Cli::try_parse_from(["shep", "unset", "--all"])
             .unwrap()
             .command
@@ -202,8 +199,10 @@ mod tests {
     }
 
     /// fails if `kv` stops being a verb an operator can find in `--help`, or
-    /// if `set`, `get` and `unset` become visible again beside it. Two spellings
-    /// in `--help` for one store is how the old one outlives the note.
+    /// if `set` and `unset` become visible again beside it. Two spellings
+    /// in `--help` for one store is how the old one outlives the note. `get`
+    /// is checked here too because it is the one old spelling that is gone
+    /// rather than hidden: it names the settings read now.
     #[test]
     fn kv_is_visible_and_the_old_verbs_are_hidden() {
         use clap::CommandFactory;
@@ -212,7 +211,11 @@ mod tests {
             !cmd.find_subcommand("kv").unwrap().is_hide_set(),
             "`kv` must be a verb `--help` lists"
         );
-        for hidden in ["set", "get", "unset"] {
+        assert!(
+            !cmd.find_subcommand("get").unwrap().is_hide_set(),
+            "`get` is the settings read, not a store alias"
+        );
+        for hidden in ["set", "unset"] {
             assert!(
                 cmd.find_subcommand(hidden).unwrap().is_hide_set(),
                 "`{hidden}` must stay hidden from --help"

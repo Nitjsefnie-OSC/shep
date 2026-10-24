@@ -8,7 +8,8 @@
 //! `ProcessInfo` rows, [`lambs`] for its lamb tree, [`dogs`] for the
 //! dog-specific ones, [`toolkit`] for the paint/cell rules both share,
 //! [`lifecycle`] for one-shot verb results, [`replies`] for a daemon
-//! action's reply, [`secrets`] for the KV store and `shep secret`, [`hosts`] for
+//! action's reply, [`secrets`] for the KV store and `shep secret`, [`settings`]
+//! for `shep get`, [`hosts`] for
 //! `shep host`.
 
 mod copy;
@@ -19,6 +20,7 @@ mod lifecycle;
 mod process;
 mod replies;
 mod secrets;
+mod settings;
 mod toolkit;
 
 pub use copy::{CopyChange, CopyReport};
@@ -29,6 +31,7 @@ pub use lifecycle::*;
 pub use process::*;
 pub use replies::*;
 pub use secrets::*;
+pub use settings::SettingsAnswer;
 pub(crate) use toolkit::*;
 
 #[cfg(test)]
@@ -256,6 +259,7 @@ pub(crate) mod tests {
         assert_priorities_match_headers::<SecretKeyRows>(&["KEY", "ENVIRONMENTS"]);
         assert_priorities_match_headers::<SecretSlotRow>(&["KEY", "ENVIRONMENT"]);
         assert_priorities_match_headers::<SecretValueRow>(&["KEY", "VALUE"]);
+        assert_priorities_match_headers::<SettingsAnswer>(&["NAME"]);
     }
 
     /// The 256-colour presentation these cases render at.

@@ -71,6 +71,7 @@ mod real_clock;
 mod rendering;
 mod runtime;
 mod serve;
+mod settings_get;
 mod spawn_failures;
 mod ssh_stand_in;
 mod startup;

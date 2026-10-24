@@ -1,6 +1,9 @@
 //! The key/value store through the real binary: `shep kv get`, `shep kv set`
-//! and `shep kv unset`, and the hidden `shep set`, `shep get` and `shep unset`
-//! that still reach it.
+//! and `shep kv unset`, and the hidden `shep set` and `shep unset` that still
+//! reach it.
+//!
+//! `shep get` is not one of them: it reads a sheep's or a dog's settings, and
+//! `settings_get.rs` is where that is driven.
 //!
 //! None of these cases starts a shepherd: the store is a file under
 //! `$SHEP_HOME`, and provisioning is exactly the moment nothing is running.
@@ -175,7 +178,8 @@ fn kv_json_envelope_is_an_array_with_the_schema_version() {
 
 /// The old verbs are hidden, not gone. Each keeps its exit code and its
 /// stdout answer, and says where it moved on stderr, in the format an operator
-/// at a terminal reads.
+/// at a terminal reads. `shep get` is absent here: it is the settings read now
+/// (`settings_get.rs`), and `shep kv get` is the store's spelling.
 #[test]
 fn the_hidden_store_verbs_still_work_and_name_where_they_moved() {
     let dir = tempfile::tempdir().unwrap();
@@ -198,19 +202,6 @@ fn the_hidden_store_verbs_still_work_and_name_where_they_moved() {
         note.trim_end(),
         "notice[moved]: `shep set` moved to `shep kv set`; the old spelling still works",
         "{note}"
-    );
-
-    let get = shep(home).arg("get").arg("bark.cooldown").output().unwrap();
-    assert_success(&get);
-    assert!(
-        String::from_utf8_lossy(&get.stdout).contains("30s"),
-        "{}",
-        String::from_utf8_lossy(&get.stdout)
-    );
-    assert!(
-        String::from_utf8_lossy(&get.stderr).contains("`shep get` moved to `shep kv get`"),
-        "{}",
-        String::from_utf8_lossy(&get.stderr)
     );
 
     let unset = shep(home)
@@ -242,7 +233,6 @@ fn a_json_alias_run_prints_one_object_and_no_note() {
 
     for (verb, args) in [
         ("set", vec!["bark.cooldown", "30s"]),
-        ("get", vec!["bark.cooldown"]),
         ("unset", vec!["bark.cooldown"]),
     ] {
         let run = shep(home)
@@ -277,6 +267,7 @@ fn a_json_alias_run_prints_one_object_and_no_note() {
     let missing = shep(home)
         .arg("--format")
         .arg("json")
+        .arg("kv")
         .arg("get")
         .arg("nope")
         .output()
@@ -320,7 +311,12 @@ fn the_two_spellings_share_one_store() {
         .unwrap();
     assert_success(&gone);
 
-    let missing = shep(home).arg("get").arg("feature.flag").output().unwrap();
+    let missing = shep(home)
+        .arg("kv")
+        .arg("get")
+        .arg("feature.flag")
+        .output()
+        .unwrap();
     assert_eq!(missing.status.code(), Some(3), "NotFound; {missing:?}");
 }
 
