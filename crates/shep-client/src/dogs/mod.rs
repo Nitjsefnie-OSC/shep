@@ -25,6 +25,11 @@
 //! for it and stops it with a message, which the dog serves with
 //! `shep_channel::serve`, handing `on_shutdown` a [`StopRequest`].
 //!
+//! A [`Probe`] also answers `--shep-manifest` with a [`Manifest`]: the same
+//! name, version, schema and channel ask, plus whatever the dog declares
+//! through [`Probe::permission`], [`Probe::verb`], [`Probe::depends_on_dog`],
+//! [`Probe::depends_on_shep`], [`Probe::defaults`] and [`Probe::validate`].
+//!
 //! [`parse_sheep_settings`] answers a different question: a dog that acts
 //! per sheep reads its `[app.dogs.<dog>]` table off
 //! `Request::DogSheepSettings` and parses one sheep's table at a time, so a
@@ -118,6 +123,7 @@ pub use runtime::DogRuntime;
 pub use section::{SectionError, parse_section};
 use serde::de::DeserializeOwned;
 use shep_core::config::DogTable;
+pub use shep_core::dogs::manifest::{DogDependency, Manifest, Permission, Subcommand, Verb};
 pub use shep_core::dogs::{SECRET_KEY, SHEEP_SCHEMA_KEY};
 /// The attribute that implements [`DogConfig`], re-exported so a dog takes
 /// one dependency rather than two.

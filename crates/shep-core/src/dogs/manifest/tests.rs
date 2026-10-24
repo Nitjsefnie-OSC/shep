@@ -41,7 +41,10 @@ fn fixture() -> Manifest {
 
 #[test]
 fn every_v1_field_reads_from_its_documented_name() {
-    assert_eq!(serde_json::from_str::<Manifest>(FIXTURE).unwrap(), fixture());
+    assert_eq!(
+        serde_json::from_str::<Manifest>(FIXTURE).unwrap(),
+        fixture()
+    );
 }
 
 #[test]
