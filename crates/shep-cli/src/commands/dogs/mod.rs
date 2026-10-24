@@ -59,6 +59,8 @@ mod grant_tests;
 #[cfg(all(test, unix))]
 mod manifest_adoption_tests;
 #[cfg(test)]
+mod second_look_race_tests;
+#[cfg(test)]
 mod second_look_tests;
 #[cfg(test)]
 mod test_support;

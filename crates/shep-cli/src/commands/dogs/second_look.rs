@@ -31,9 +31,13 @@ const GRANTS_NOTICE: &str = "dog_grants";
 /// `yes` approves without asking. With no terminal and no `--yes` the dog
 /// carries on with what it holds and a notice says so.
 ///
+/// The answer is written only if the record is still the one that was shown,
+/// so a grant or revoke made meanwhile is never overwritten.
+///
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`: `shep.toml` could not be
-/// read or written, or the answer could not be read.
+/// read or written, the answer could not be read, or the record changed
+/// while the question was open.
 pub(super) fn second_look(
     streams: &mut Streams<'_>,
     paths: &ShepPaths,
@@ -93,12 +97,25 @@ pub(super) fn second_look(
         ),
         waiting: Grants::default(),
         reviewed: true,
-        ..record
+        ..record.clone()
     };
-    ShepToml::try_edit(&paths.daemon_config, |cfg| {
-        cfg.set_grant_record(name, &approved)
+    let written = ShepToml::try_edit(&paths.daemon_config, |cfg| {
+        if cfg.grant_record(name)?.as_ref() != Some(&record) {
+            return Ok(false);
+        }
+        cfg.set_grant_record(name, &approved).map(|()| true)
     })
-    .map_err(|err| fail_config(streams, &err))
+    .map_err(|err| fail_config(streams, &err))?;
+    if written {
+        return Ok(());
+    }
+    Err(streams.fail(
+        ExitCode::Failure,
+        &format!(
+            "no permission was approved: the grants for {name} changed while the question was \
+             open. Run `shep enable {name}` again to see them"
+        ),
+    ))
 }
 
 /// What `name` holds, and what it waits on, as the question shows them.
