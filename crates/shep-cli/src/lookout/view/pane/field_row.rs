@@ -312,7 +312,7 @@ pub(super) fn top_lines(pane: &ConfigPane, palette: Palette, width: u16) -> Vec<
 }
 
 /// What an operator would call `field`'s shape: not the schema keyword, the
-/// grammar the widget and [`super::super::super::validation`] already treat it as.
+/// grammar the widget and [`crate::dog_settings`] already treat it as.
 pub(super) fn type_label(field: &Field) -> &'static str {
     match field.value_kind {
         Some(ValueKind::UpDuration) => return "duration",

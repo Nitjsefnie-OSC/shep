@@ -48,6 +48,7 @@ mod union;
 mod union_tests;
 mod walk;
 
+pub(in crate::lookout) use config::toml_table;
 pub use config::{ConfigPane, ReloadKind};
 pub(crate) use dogs::dog_names;
 pub use dogs::{DogTableState, DogsPane, SheepDogEntry};

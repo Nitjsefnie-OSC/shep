@@ -61,7 +61,7 @@ impl ConfigPane {
     /// none, since the request would replace the table with it.
     #[must_use]
     pub fn edited_section_with(&self, edits: &Edits) -> SectionWrite {
-        let Some(section) = self.section.as_deref() else {
+        let Some(section) = self.section_text() else {
             return SectionWrite::Nothing;
         };
         let Ok(mut doc) = section.parse::<toml_edit::DocumentMut>() else {

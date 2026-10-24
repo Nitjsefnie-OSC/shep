@@ -17,11 +17,12 @@ use super::entries::EntryRows;
 use super::union::arm_fields;
 use super::{ConfigPane, PaneEdit, PaneTarget};
 
-/// The table a [`ConfigPane::sheep_dog`] pane edits, and where each of its
-/// dotted rows lives in it.
+/// The table a [`ConfigPane::sheep_dog`] pane edits, where each of its
+/// dotted rows lives in it, and the schema its rows were built from.
 ///
 /// `Debug` is manual and redacted (IR-41): the table can hold a credential,
-/// so it prints how many rows and keys there are and nothing else.
+/// so it prints how many rows and keys there are and nothing else. The
+/// schema can hold one as a `default`, and is named by nothing.
 #[derive(Clone)]
 pub(in crate::lookout) struct SheepDogTable {
     /// Dotted row key to the real key path. A row key is never split on its
@@ -30,6 +31,9 @@ pub(in crate::lookout) struct SheepDogTable {
     /// The table as the shepherd holds it, keys the schema does not name
     /// included.
     table: Map<String, Value>,
+    /// The dog's `x-shep-sheep` answer, kept so a write can be checked
+    /// against it. See [`crate::dog_settings::touched_refusal`].
+    pub(super) schema: Value,
 }
 
 impl core::fmt::Debug for SheepDogTable {
@@ -81,7 +85,11 @@ impl ConfigPane {
             list: None,
             dogs: None,
             section: None,
-            dog_table: Some(Box::new(SheepDogTable { paths, table })),
+            dog_table: Some(Box::new(SheepDogTable {
+                paths,
+                table,
+                schema: schema.clone(),
+            })),
             reshapes: Arc::default(),
             arms,
             section_paths: Arc::default(),
