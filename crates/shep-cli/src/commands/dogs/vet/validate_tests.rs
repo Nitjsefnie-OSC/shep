@@ -78,6 +78,7 @@ async fn adopt_refuses_that_manifest_and_writes_nothing() {
     let paths = ShepPaths::resolve(&|_| None, dir.path());
     let bin = manifest_dog(dir.path(), "shep-kelpie", &declared(false, true));
     let args = AdoptArgs {
+        yes: true,
         name: Some("kelpie".to_string()),
         path: bin,
     };
@@ -105,6 +106,7 @@ async fn the_same_manifest_with_a_channel_is_adopted() {
     let paths = ShepPaths::resolve(&|_| None, dir.path());
     let bin = manifest_dog(dir.path(), "shep-kelpie", &declared(true, true));
     let args = AdoptArgs {
+        yes: true,
         name: Some("kelpie".to_string()),
         path: bin.clone(),
     };
