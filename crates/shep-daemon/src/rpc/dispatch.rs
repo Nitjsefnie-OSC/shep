@@ -583,6 +583,25 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 Err(err) => reply(Err(rpc_error(&err))),
             }
         }
+        Request::ResetSheepField { name, key } => {
+            match ctx.supervisor.reset_sheep_field(&name, &key).await {
+                // Recorded for `SetSheepField`'s reason: nothing on the
+                // restore path reads the override store.
+                Ok(Some(set)) => {
+                    let (pending, warning, value) = (set.pending, set.warning, set.value);
+                    ctx.registry.record(&[set.app]);
+                    reply(Ok(Response::SheepFieldReset {
+                        name,
+                        key,
+                        value,
+                        pending,
+                        warning,
+                    }))
+                }
+                Ok(None) => reply(Err(no_sheep(&name))),
+                Err(err) => reply(Err(rpc_error(&err))),
+            }
+        }
         Request::DogSheepSettings { dog } => match ctx.supervisor.dog_sheep_settings(dog).await {
             Ok(tables) => reply(Ok(Response::DogSheepSettings { tables })),
             Err(err) => reply(Err(rpc_error(&err))),

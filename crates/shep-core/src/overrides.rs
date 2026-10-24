@@ -60,7 +60,10 @@ impl fmt::Debug for AppOverrides {
             .field("fields", &format_args!("<{} fields>", self.fields.len()))
             .field("declared", &self.declared)
             .field("declared_env", &self.declared_env)
-            .field("template", &format_args!("<{} fields>", self.template.len()))
+            .field(
+                "template",
+                &format_args!("<{} fields>", self.template.len()),
+            )
             .finish()
     }
 }

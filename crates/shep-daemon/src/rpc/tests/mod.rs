@@ -199,6 +199,7 @@ mod lambs_staleness;
 mod log_tail;
 mod misc_verbs;
 mod push;
+mod reset_field;
 mod sheep_dog_names;
 mod sheep_dog_secrets;
 mod start_add;
