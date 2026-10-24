@@ -344,3 +344,6 @@ fn remove_toml(table: &mut dyn TableLike, keys: &[String]) -> Option<Item> {
     let child = table.get_mut(head)?.as_table_like_mut()?;
     remove_toml(child, rest)
 }
+
+#[cfg(test)]
+mod tests;

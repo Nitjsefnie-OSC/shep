@@ -25,6 +25,8 @@ mod settings;
 mod sheep;
 mod store;
 mod system;
+#[cfg(test)]
+mod unset_tests;
 mod verbs;
 
 use std::path::PathBuf;

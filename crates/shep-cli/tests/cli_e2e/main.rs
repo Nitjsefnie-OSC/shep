@@ -76,6 +76,7 @@ mod runtime;
 mod serve;
 mod settings_get;
 mod settings_set;
+mod settings_unset;
 mod spawn_failures;
 mod ssh_stand_in;
 mod startup;
