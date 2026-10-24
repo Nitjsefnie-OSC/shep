@@ -82,6 +82,10 @@ impl Origin {
 
     /// Notes on the link's row what the dog now subscribes to. A socket has no
     /// row.
+    #[cfg_attr(
+        not(unix),
+        allow(unused_variables, reason = "only a unix link has a row to note it on")
+    )]
     pub(super) fn subscribed(&self, patterns: &[String]) {
         #[cfg(unix)]
         if let Self::Dog { lease, .. } = self {
