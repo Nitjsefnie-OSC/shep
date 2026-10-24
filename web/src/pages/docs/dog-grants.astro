@@ -50,6 +50,14 @@ granted = ["flock.read", "events:process."]`}</CodeBlock>
       <li><code>--yes</code> grants everything declared. With no terminal and no <code>--yes</code>, nothing changes and the exit is 2.</li>
       <li>A dog with no manifest prompts <code>declares nothing, runs with full access</code>, and a yes records no entry.</li>
       <li>An unknown required permission refuses the command. An unknown optional one is dropped with a warning.</li>
+      <li>
+        The built-in dogs ask too. <code>metrics</code> declares{" "}
+        <code>flock.read</code>, <code>events:channel.metric</code> and{" "}
+        <code>events:process.</code>; <code>bark</code> declares{" "}
+        <code>flock.read</code>, <code>events:process.</code> and an optional{" "}
+        <code>events:log.</code> for log rules.
+        A built-in enabled before grants existed keeps full access.
+      </li>
     </ul>
     <p>
       The shepherd reads the list at boot. A name it cannot read stops the

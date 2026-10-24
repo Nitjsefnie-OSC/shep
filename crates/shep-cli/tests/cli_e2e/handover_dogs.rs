@@ -188,7 +188,12 @@ fn a_carried_dog_a_hand_edit_dropped_from_enabled_dogs_is_stopped_and_marked() {
     );
 
     // The way back is the ordinary one.
-    let enabled = shep(home).arg("enable").arg("metrics").output().unwrap();
+    let enabled = shep(home)
+        .arg("enable")
+        .arg("--yes")
+        .arg("metrics")
+        .output()
+        .unwrap();
     assert_success(&enabled);
     let revived = wait_for_dog_pid(home, "metrics");
     guard.adopt_dog_pid(revived);

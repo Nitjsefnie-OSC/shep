@@ -282,5 +282,7 @@ async fn enable_of_a_built_in_dog_says_nothing_of_dependencies() {
     let code = enable(&mut streams(&mut out, &mut err), &paths, "metrics", true).await;
 
     assert_eq!(code, ExitCode::Success);
-    assert_eq!(String::from_utf8(err).unwrap(), "");
+    let notices = String::from_utf8(err).unwrap();
+    assert!(!notices.contains("depends on"), "{notices}");
+    assert!(!notices.contains("needs shep"), "{notices}");
 }

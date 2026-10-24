@@ -39,7 +39,12 @@ fn a_real_shepherd_runs_a_real_metrics_dog_that_answers_a_scrape() {
          anything real to name: {online}"
     );
 
-    let enabled = shep(home).arg("enable").arg("metrics").output().unwrap();
+    let enabled = shep(home)
+        .arg("enable")
+        .arg("--yes")
+        .arg("metrics")
+        .output()
+        .unwrap();
     assert_success(&enabled);
 
     // Registered before the scrape: one that hangs or panics on an assertion
@@ -97,7 +102,12 @@ fn a_carried_dog_answers_a_scrape_after_a_real_reload() {
     let online = poll_flock(home, |info| info["status"] == "online");
     let sheep_pid = online["pid"].as_u64().expect("an online sheep has a pid");
 
-    let enabled = shep(home).arg("enable").arg("metrics").output().unwrap();
+    let enabled = shep(home)
+        .arg("enable")
+        .arg("--yes")
+        .arg("metrics")
+        .output()
+        .unwrap();
     assert_success(&enabled);
     let dog_pid = wait_for_dog_pid(home, "metrics");
     guard.adopt_dog_pid(dog_pid);
@@ -264,7 +274,12 @@ fn dogs_and_flock_render_the_two_populations_the_right_way_round() {
     assert_success(&started);
     poll_flock(home, |info| info["status"] == "online");
 
-    let enabled = shep(home).arg("enable").arg("metrics").output().unwrap();
+    let enabled = shep(home)
+        .arg("enable")
+        .arg("--yes")
+        .arg("metrics")
+        .output()
+        .unwrap();
     assert_success(&enabled);
     guard.adopt_dog_pid(wait_for_dog_pid(home, "metrics"));
 

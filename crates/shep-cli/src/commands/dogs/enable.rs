@@ -18,8 +18,8 @@ use super::depends::warn_of_unmet_depends;
 use super::grants::warn_if_unenforced;
 use super::vet::{VERSION_BUDGET, fail_adopt, read_manifest};
 use super::{
-    DECLINED_STATUS, NO_SHEPHERD_ENABLE_STATUS, adopted_source, connect_or_absent, dog_source,
-    emit_dog_action, fail_config,
+    DECLINED_STATUS, NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, emit_dog_action,
+    fail_config,
 };
 
 /// [`enable`]'s own failure, so its `try_edit` closure can refuse from
@@ -139,13 +139,15 @@ pub(super) async fn enable_asking(
     enable_after_config(streams, name, &source, client.as_ref()).await
 }
 
-/// The first enable of an adopted dog: shows what it declares and asks
-/// whether to grant it.
+/// The first enable of a dog: shows what it declares and asks whether to
+/// grant it.
 ///
 /// "First" is a dog with no `dog_grants` entry that is not already enabled:
-/// one an operator declined at `shep adopt`, or hand-wrote into
-/// `[daemon.adopted_dogs]`. A built-in dog has no manifest to show yet, and a
-/// name that is no dog is left for [`enable_in_config`] to refuse. A config
+/// one an operator declined at `shep adopt`, hand-wrote into
+/// `[daemon.adopted_dogs]`, or a built-in nobody has enabled. A built-in
+/// declares itself with no probe ([`crate::dog::builtin_manifest`]) and asks
+/// like any other. A name that is no dog is left for [`enable_in_config`] to
+/// refuse. A config
 /// that cannot be read is reported here: carrying on would enable the dog
 /// without the question.
 ///
@@ -165,21 +167,28 @@ fn ask_before_first_enable(
 ) -> Result<Option<Grants>, ExitCode> {
     let cfg =
         ShepToml::read_only(&paths.daemon_config).map_err(|err| fail_config(streams, &err))?;
-    let Some(binary) = cfg.adopted_dog_path(name) else {
+    let binary = cfg.adopted_dog_path(name);
+    if binary.is_none() && crate::dog::builtin_manifest(name).is_none() {
         return Ok(None);
-    };
+    }
     let already_decided = !matches!(cfg.granted(name), Ok(None));
     if already_decided || cfg.enabled_dog_names().iter().any(|dog| dog == name) {
         return Ok(None);
     }
-    let read = read_manifest(&binary, &paths.home, name, VERSION_BUDGET)
-        .map_err(|refusal| fail_adopt(streams, &binary, &refusal))?;
+    // A built-in is this binary, so it declares itself with no probe.
+    let manifest = match &binary {
+        Some(binary) => read_manifest(binary, &paths.home, name, VERSION_BUDGET)
+            .map_err(|refusal| fail_adopt(streams, binary, &refusal))?
+            .manifest()
+            .cloned(),
+        None => crate::dog::builtin_manifest(name),
+    };
     let reviewed =
-        review(read.manifest()).map_err(|refusal| refusal.report(streams, name, "enabled"))?;
+        review(manifest.as_ref()).map_err(|refusal| refusal.report(streams, name, "enabled"))?;
     match consent_from(streams, name, "enable", &reviewed, yes, input)? {
         Verdict::Grant(grants) => Ok(grants),
         Verdict::Declined => {
-            let source = adopted_source(&cfg, name, None);
+            let source = dog_source(&cfg, name, None);
             Err(emit_dog_action(
                 streams,
                 "enable",
