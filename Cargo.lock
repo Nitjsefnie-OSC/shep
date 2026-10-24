@@ -2104,6 +2104,7 @@ dependencies = [
  "ring",
  "rmcp",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "shep-client",
