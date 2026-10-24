@@ -7,6 +7,7 @@ use std::io::Read as _;
 use std::path::Path;
 use std::time::Duration;
 
+use shep_core::atomic_file;
 use shep_core::dogs::{DogVersion, MANIFEST_FLAG, manifest::Manifest};
 
 use super::{AdoptRefusal, DogSchema, ask};
@@ -22,7 +23,8 @@ const CACHE_DIR: &str = "manifests";
 /// that is not a manifest, or a run that outlasted `budget`. That is never a
 /// fault, and is never cached, so a dog that gains a manifest is noticed on
 /// the next call. The cache is derived and safe to delete: one that cannot
-/// be read, parsed or written is skipped.
+/// be read, parsed or written is skipped, and a binary that changed while it
+/// was probed is not cached.
 ///
 /// # Errors
 /// [`AdoptRefusal::WillNotExec`], and only that, from the probe.
@@ -32,7 +34,10 @@ pub(crate) fn read_manifest(
     name: &str,
     budget: Duration,
 ) -> Result<Option<Manifest>, AdoptRefusal> {
-    let cached = sha256_hex(path).map(|digest| home.join(CACHE_DIR).join(format!("{digest}.json")));
+    let digest = sha256_hex(path);
+    let cached = digest
+        .as_ref()
+        .map(|digest| home.join(CACHE_DIR).join(format!("{digest}.json")));
     if let Some(manifest) = cached
         .as_deref()
         .and_then(|file| std::fs::read_to_string(file).ok())
@@ -46,13 +51,38 @@ pub(crate) fn read_manifest(
     let Ok(manifest) = serde_json::from_str::<Manifest>(&text) else {
         return Ok(None);
     };
-    if let Some(file) = &cached {
-        let _ = file
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| std::fs::write(file, &text));
+    // A binary swapped while it ran may have answered as the new build, and
+    // the old digest would file that answer under the wrong key.
+    if let Some(file) = cached.filter(|_| sha256_hex(path) == digest) {
+        let _ = store(&file, &text);
     }
     Ok(Some(manifest))
+}
+
+/// Writes `text` to `file` the way every store under `$SHEP_HOME` is
+/// written: staged beside it owner-only and renamed into place, so a reader
+/// sees a whole manifest or none.
+///
+/// The manifest's `defaults` can hold a credential, so nobody else may read
+/// the cache.
+fn store(file: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    let dir = file.parent().unwrap_or_else(|| Path::new("."));
+    create_cache_dir(dir)?;
+    let mut staged = atomic_file::create_staging_file(dir, ".manifest-", ".tmp")?;
+    staged.write_all(text.as_bytes())?;
+    atomic_file::publish(staged, file)
+}
+
+/// Creates `dir` and any missing parents, owner-only on unix at the `mkdir`
+/// itself, as the rest of `$SHEP_HOME` is.
+fn create_cache_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir)
 }
 
 /// `manifest` as the `--version` answer it replaces.

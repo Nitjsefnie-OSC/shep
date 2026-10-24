@@ -3,6 +3,7 @@ use std::time::Duration;
 use shep_core::dogs::manifest::Manifest;
 
 use super::super::{DogSchema, VettedBinary, vet_binary_within};
+use super::read_manifest;
 
 /// Generous: the question is the answer, not the clock.
 const BUDGET: Duration = Duration::from_secs(10);
@@ -55,4 +56,50 @@ fn vetted_binary_debug_never_prints_the_manifest() {
         "VettedBinary { path: \"/opt/shep-otel\", group_writable: [], answer: None, \
          schema: Silent, manifest: Some(\"..\") }"
     );
+}
+
+const MANIFEST_BODY: &str = r#"if [ "$1" = --shep-manifest ]; then
+  echo '{"manifest":1,"name":"otel","version":"0.2.0","protocol":12,"defaults":"token = 1"}'
+fi"#;
+
+fn cached_files(home: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(home.join("manifests"))
+        .map(|entries| entries.map(|entry| entry.unwrap().path()).collect())
+        .unwrap_or_default()
+}
+
+/// The `defaults` of a manifest can hold a credential, so the cache is
+/// readable by its owner alone.
+#[test]
+fn the_cache_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let binary = write_dog(dir.path(), MANIFEST_BODY);
+
+    read_manifest(&binary, dir.path(), "otel", BUDGET).unwrap();
+
+    let files = cached_files(dir.path());
+    assert_eq!(files.len(), 1, "{files:?}");
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&files[0]), 0o600);
+    assert_eq!(mode(&dir.path().join("manifests")), 0o700);
+}
+
+/// A binary replaced while it answers may have answered as the new build, so
+/// its answer is not filed under the digest of the old one.
+#[test]
+fn a_binary_that_changes_while_probed_is_not_cached() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = format!(
+        "{MANIFEST_BODY}\nif [ \"$1\" = --shep-manifest ]; then\n  \
+         printf '#!/bin/sh\\n# rebuilt\\n' > \"$0.new\" && mv \"$0.new\" \"$0\"\nfi"
+    );
+    let binary = write_dog(dir.path(), &body);
+
+    let manifest = read_manifest(&binary, dir.path(), "otel", BUDGET).unwrap();
+
+    assert!(manifest.is_some(), "the answer is still used");
+    assert_eq!(cached_files(dir.path()), Vec::<std::path::PathBuf>::new());
 }
