@@ -31,7 +31,11 @@ use std::path::PathBuf;
 
 use shep_core::destination::Destination;
 
-use help::{HELP_TEMPLATE, version_text};
+use help::version_text;
+
+// `crate::adopted_help` renders the registry's dogs into a copy of this
+// template; the template itself is what ships and stays hand-written.
+pub(crate) use help::HELP_TEMPLATE;
 
 pub use dogs::{AdoptArgs, DisableArgs, DogArgs, DogsArgs, EnableArgs};
 pub use flock::{FlockArgs, FoldArgs, LookoutArgs};

@@ -60,6 +60,12 @@ pub(crate) fn dispatch_adopted_dog(
         ));
     }
     let dog_argv = argv[index + 1..].to_vec();
+    // A dog that declared its subcommands gets shep's own help page for them;
+    // every other invocation, and every dog that declared nothing, is passed
+    // through to the binary as it always was.
+    if let Some(code) = crate::adopted_help::describe_dog(name, &path, &paths.home, &dog_argv) {
+        return Some(std::process::ExitCode::from(code as u8));
+    }
     Some(run_adopted_dog(&path, &paths.home, name, &dog_argv))
 }
 
@@ -69,7 +75,7 @@ pub(crate) fn dispatch_adopted_dog(
 /// The only global flag [`resolve_paths`] reads. Falls back to `$SHEP_HOME`
 /// by hand, since clap's own `env = "SHEP_HOME"` attribute never ran on an
 /// argv it could not parse.
-fn home_before(prefix: &[OsString]) -> Option<PathBuf> {
+pub(crate) fn home_before(prefix: &[OsString]) -> Option<PathBuf> {
     let mut tokens = prefix.iter();
     while let Some(arg) = tokens.next() {
         if let Some(value) = home_equals_value(arg) {

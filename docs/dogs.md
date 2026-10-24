@@ -509,9 +509,9 @@ on `$PATH` (which is where `cargo install`/`go install` put it).
 every later boot or every `enable`. It refuses a path that does not
 exist, is not a file, has no execute bit for anyone, or is world-writable
 (the binary itself or its containing directory); it also refuses a name
-that already belongs to a built-in verb or alias, since a dog by that
-name could never be reached. It warns rather than refuses on a merely
-group-writable path. Passing all of that, it actually spawns the binary
+that already belongs to a built-in verb or alias, `help` included, since a
+dog by that name could never be reached. It warns rather than refuses on a
+merely group-writable path. Passing all of that, it actually spawns the binary
 and kills it immediately, because the only honest way to know whether this
 kernel can exec a file is to ask this kernel. The `--version` probe below
 is that spawn, so the exec proof and the version answer cost one child
@@ -529,6 +529,17 @@ argv and two environment variables (`$SHEP_HOME` and `$SHEP_DOG_NAME`,
 below, and a third, `$SHEP_DOG_FD` on unix or `$SHEP_DOG_PIPE` on Windows); a dog you name on the command line gets whatever you typed after
 it, passed straight through, plus those same two. A built-in verb or alias
 always wins over a same-named dog.
+
+An adopted dog is part of shep's own listing from then on. It appears in the
+Dogs group of `shep --help`, with the `verb.description` its manifest
+declared beside its name, and shell completion offers it. An undeclared dog
+is listed bare: the listing says what is known and is silent about what
+isn't. A dog that declared `verb.subcommands` gets a shep-rendered page for
+them from `shep <name> --help`, and its binary never runs to answer that
+flag; a dog that declared none keeps `--help` as a pass-through like every
+other argument. Nothing in a manifest claims a top-level verb: the registry
+in `shep.toml` is what makes a name a dog, and a dog gets exactly
+`shep <name>`.
 
 No argv is the adopted case specifically. The two built-in dogs are
 started as `shep dog <name>` and read their own name from that argv, but
@@ -983,6 +994,27 @@ nothing, and no dog needs a `--print-config`-style flag of its own to ship
 them any more. `shep adopt` and `shep enable` warn, and go ahead, when a dog
 in `depends` is not adopted or `depends.shep` is newer than this shep. A
 dependency's own version is not checked.
+
+`verb` is read from that same cache, never by asking the binary again: a help
+screen or a completion script must not spawn a dog. `shep completions` builds
+its script from the registry as it stands at generation time, so adopting a
+dog means generating the script again.
+
+What shep prints of a manifest is one line of text. A placeholder brace, a
+line break or an escape in a `verb.description` or a subcommand's `about`
+goes, an escape's printable tail surviving as inert text, and a subcommand
+whose name is not one word is neither listed nor completed. A manifest is
+written by whoever built the dog, and its text reaches a template clap parses
+and a completion script a shell reads.
+
+A completion word is code before it is text. `clap_complete` writes
+subcommand names into its scripts with no quoting: bash gets them inside
+`opts="…"` and inside `case` patterns, fish inside `-n "…"`, and zsh escapes
+its help text while writing the name raw. So a name reaches a completion
+script only when it is a word a shell takes as a bare word: letters of any
+script and digits, separated by `-`, `_` or `.`, starting on a letter or
+digit. A dog named `$(touch>x)` stays in `shep --help` and still runs, and is
+not completed.
 
 `Probe` builds it from what the dog already gives it. `permission`, `verb`,
 `depends_on_dog`, `depends_on_shep`, `defaults` and `validate` add what it

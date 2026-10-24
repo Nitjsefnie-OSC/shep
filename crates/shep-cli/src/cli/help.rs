@@ -56,7 +56,11 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
 /// alphabetical `Commands:` list underneath the grouped one, which is the
 /// wall this replaces. The options section stays generated, so `--home`'s
 /// `Less common` heading is still clap's work.
-pub(super) const HELP_TEMPLATE: &str = "\
+///
+/// `pub(crate)` because [`crate::adopted_help`] renders adopted dogs into the
+/// Dogs group of a copy of it: the group listing is hand-written, and clap
+/// has no grouping of its own to hand the dogs to.
+pub(crate) const HELP_TEMPLATE: &str = "\
 {about}
 
 {usage-heading} {usage}

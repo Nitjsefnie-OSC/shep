@@ -4,10 +4,11 @@
 use std::ffi::OsString;
 use std::io::IsTerminal;
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use cli::Cli;
 
 use crate::adopted::dispatch_adopted_dog;
+use crate::adopted_help;
 use crate::config::{must_render_bare, resolve_style};
 use crate::dispatch::run;
 use crate::home::print_shepherd_status;
@@ -41,7 +42,20 @@ pub(crate) fn run_argv(argv: Vec<OsString>) -> std::process::ExitCode {
     }
     // `try_parse_from`, not `parse_from`: the latter prints and exits inside
     // clap, so bare `shep` and `shep help` could not carry a status line.
-    let parsed = Cli::try_parse_from(argv.clone());
+    // `try_get_matches_from` on a command built here, not `Cli::try_parse_from`:
+    // the grouped verb listing in `--help` is hand-written copy that adopted
+    // dogs join, and clap bakes the rendered help into the error it answers a
+    // `--help` with. Anything that changes that render has to change the
+    // command before the parse.
+    let mut command = Cli::command();
+    if adopted_help::top_level_help_asked(&argv)
+        && let Some(paths) = adopted_help::paths_from_argv(&argv)
+    {
+        adopted_help::list_in_help(&mut command, &adopted_help::adopted_verbs(&paths));
+    }
+    let parsed = command
+        .try_get_matches_from(argv.clone())
+        .and_then(|mut matches| Cli::from_arg_matches_mut(&mut matches));
     // Before clap renders its own "unrecognized subcommand" error, check
     // whether the token it could not place names an adopted dog.
     if let Err(ref err) = parsed
