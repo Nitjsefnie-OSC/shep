@@ -212,6 +212,9 @@ instability.workspace = true
 # by regex instead of literal text. Adds zero crates: shep-core already
 # resolves this version for its own selector matching.
 regex.workspace = true
+# `commands::dogs::depends`: whether this shep is the version a dog's manifest
+# asks for.
+semver.workspace = true
 
 [dev-dependencies]
 # `test-util` for `#[tokio::test(start_paused = true)]`, `crate::http`'s "a

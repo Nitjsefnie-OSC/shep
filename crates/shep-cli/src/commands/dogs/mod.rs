@@ -28,6 +28,7 @@ use crate::output::{DogActionRow, DogActionStatus, Streams, emit, write_outcome}
 
 mod adopt;
 mod barks;
+mod depends;
 mod disable;
 mod enable;
 mod remove;

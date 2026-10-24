@@ -95,3 +95,6 @@ fn sha256_hex(path: &Path) -> Option<String> {
             }),
     )
 }
+
+#[cfg(all(test, unix))]
+mod tests;

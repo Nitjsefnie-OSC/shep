@@ -14,6 +14,7 @@ use crate::commands::shep_toml::ShepToml;
 use crate::exit::ExitCode;
 use crate::output::{DogActionStatus, Streams};
 
+use super::depends::warn_of_unmet_depends;
 use super::vet::{
     DogSchema, fail_adopt, report_channel_ask, report_dog_version, vet_binary, warn_group_writable,
     warn_unreadable_schema,
@@ -44,7 +45,7 @@ pub async fn adopt(streams: &mut Streams<'_>, paths: &ShepPaths, args: &AdoptArg
         Ok(vetted) => vetted,
         Err(refusal) => return fail_adopt(streams, &candidate, &refusal),
     };
-    let path = vetted.path;
+    let path = vetted.path.clone();
     for writable in &vetted.group_writable {
         warn_group_writable(streams, writable);
     }
@@ -60,10 +61,15 @@ pub async fn adopt(streams: &mut Streams<'_>, paths: &ShepPaths, args: &AdoptArg
     if vetted.schema == DogSchema::Unreadable {
         warn_unreadable_schema(streams, &name);
     }
-    if let Err(err) = ShepToml::try_edit(&paths.daemon_config, |cfg| {
-        cfg.adopt_dog(&name, &path, channel)
+    let adopted = match ShepToml::try_edit(&paths.daemon_config, |cfg| {
+        cfg.adopt_dog(&name, &path, channel)?;
+        Ok(cfg.adopted_dog_names())
     }) {
-        return fail_config(streams, &err);
+        Ok(adopted) => adopted,
+        Err(err) => return fail_config(streams, &err),
+    };
+    if let Some(manifest) = &vetted.manifest {
+        warn_of_unmet_depends(streams, &name, manifest, &adopted);
     }
     let client = match connect_or_absent(paths, streams).await {
         Ok(client) => client,

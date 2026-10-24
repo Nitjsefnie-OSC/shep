@@ -156,3 +156,129 @@ async fn a_manifest_protocol_below_the_floor_refuses_the_adopt() {
     assert!(notices.contains("built for shep protocol 1"), "{notices}");
     assert!(!paths.daemon_config.exists());
 }
+
+fn manifest_depending_on(depends: &str) -> String {
+    format!(r#"{{"manifest":1,"name":"otel","version":"0.2.0","protocol":12,"depends":{depends}}}"#)
+}
+
+const NEEDS_LOG_ROTATE: &str = r#"{"dogs":[{"name":"log-rotate","version":">=0.1"}]}"#;
+
+#[tokio::test]
+async fn adopt_warns_of_a_dependency_that_is_not_adopted_and_still_adopts() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    let (binary, _) = write_dog(dir.path(), &manifest_depending_on(NEEDS_LOG_ROTATE), "");
+
+    let (code, notices) = adopt_otel(&paths, &binary).await;
+
+    assert_eq!(code, ExitCode::Success);
+    assert!(
+        notices.contains("`otel` depends on `log-rotate`, which is not adopted"),
+        "{notices}"
+    );
+    assert!(
+        std::fs::read_to_string(&paths.daemon_config)
+            .unwrap()
+            .contains("otel")
+    );
+}
+
+#[tokio::test]
+async fn adopt_stays_quiet_about_a_dependency_that_is_adopted_or_built_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    let (rotate, _) = write_dog(dir.path(), "", "");
+    let rotate = {
+        let renamed = dir.path().join("shep-log-rotate");
+        std::fs::rename(rotate, &renamed).unwrap();
+        renamed
+    };
+    let args = AdoptArgs {
+        name: Some("log-rotate".to_string()),
+        path: rotate,
+    };
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    adopt(&mut streams(&mut out, &mut err), &paths, &args).await;
+    let depends =
+        r#"{"dogs":[{"name":"log-rotate","version":">=0.1"},{"name":"metrics","version":"*"}]}"#;
+    let (binary, _) = write_dog(dir.path(), &manifest_depending_on(depends), "");
+
+    let (code, notices) = adopt_otel(&paths, &binary).await;
+
+    assert_eq!(code, ExitCode::Success);
+    assert!(!notices.contains("depends on"), "{notices}");
+}
+
+#[tokio::test]
+async fn adopt_warns_of_a_dog_that_needs_a_newer_shep_and_still_adopts() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    let (binary, _) = write_dog(
+        dir.path(),
+        &manifest_depending_on(r#"{"shep":"999.0.0"}"#),
+        "",
+    );
+
+    let (code, notices) = adopt_otel(&paths, &binary).await;
+
+    assert_eq!(code, ExitCode::Success);
+    assert!(
+        notices.contains(&format!(
+            "`otel` needs shep 999.0.0 or newer, and this is shep {}",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{notices}"
+    );
+    assert!(
+        std::fs::read_to_string(&paths.daemon_config)
+            .unwrap()
+            .contains("otel")
+    );
+}
+
+#[tokio::test]
+async fn adopt_stays_quiet_when_this_shep_is_new_enough() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    let (binary, _) = write_dog(
+        dir.path(),
+        &manifest_depending_on(r#"{"shep":"0.1.0"}"#),
+        "",
+    );
+
+    let (_, notices) = adopt_otel(&paths, &binary).await;
+
+    assert!(!notices.contains("needs shep"), "{notices}");
+}
+
+#[tokio::test]
+async fn enable_of_an_adopted_dog_gives_both_warnings_and_still_enables() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    let depends = r#"{"dogs":[{"name":"log-rotate","version":">=0.1"}],"shep":"999.0.0"}"#;
+    let (binary, _) = write_dog(dir.path(), &manifest_depending_on(depends), "");
+    adopt_otel(&paths, &binary).await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let code = enable(&mut streams(&mut out, &mut err), &paths, "otel").await;
+
+    assert_eq!(code, ExitCode::Success);
+    let notices = String::from_utf8(err).unwrap();
+    assert!(notices.contains("depends on `log-rotate`"), "{notices}");
+    assert!(notices.contains("needs shep 999.0.0 or newer"), "{notices}");
+}
+
+#[tokio::test]
+async fn enable_of_a_built_in_dog_says_nothing_of_dependencies() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+
+    let code = enable(&mut streams(&mut out, &mut err), &paths, "metrics").await;
+
+    assert_eq!(code, ExitCode::Success);
+    assert_eq!(String::from_utf8(err).unwrap(), "");
+}
