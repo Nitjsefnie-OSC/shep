@@ -9,7 +9,7 @@
 //! dog-specific ones, [`toolkit`] for the paint/cell rules both share,
 //! [`lifecycle`] for one-shot verb results, [`replies`] for a daemon
 //! action's reply, [`secrets`] for the KV store and `shep secret`, [`settings`]
-//! for `shep get`, [`hosts`] for
+//! for `shep get`, [`settings_write`] for `shep set`, [`hosts`] for
 //! `shep host`.
 
 mod copy;
@@ -21,6 +21,7 @@ mod process;
 mod replies;
 mod secrets;
 mod settings;
+mod settings_write;
 mod toolkit;
 
 pub use copy::{CopyChange, CopyReport};
@@ -32,6 +33,7 @@ pub use process::*;
 pub use replies::*;
 pub use secrets::*;
 pub use settings::SettingsAnswer;
+pub use settings_write::SetReport;
 pub(crate) use toolkit::*;
 
 #[cfg(test)]

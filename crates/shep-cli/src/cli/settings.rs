@@ -1,5 +1,5 @@
-//! Arguments for the settings verbs: `shep get <name>[.<path>]`, and the
-//! `set` and `unset` that write the same addresses.
+//! Arguments for the settings verbs: `shep get <name>[.<path>]` and
+//! `shep set <name>[.<path>] <value>`.
 //!
 //! One address, spelled [`CopyArgs`](crate::cli::CopyArgs)'s way: a sheep's
 //! or a dog's name, then a path inside the settings that name holds. Nothing
@@ -18,6 +18,29 @@ pub struct GetArgs {
     /// A sheep or a dog, and the path inside its settings, such as
     /// `api.max_memory`, `api.dogs.kelpie.git`, or `kelpie.worker`
     pub address: String,
+}
+
+/// Arguments to `shep set`.
+///
+/// [`GetArgs`]'s address and [`CopyArgs`](crate::cli::CopyArgs)'s two flags:
+/// a write is a read followed by one value, and the question `copy` asks
+/// before it writes is the question `set` asks too. There is no `--replace`
+/// and no `--except`: `set` writes the one path it was given, and a path that
+/// names a whole table takes a value that is one.
+#[derive(Debug, clap::Args)]
+pub struct SetArgs {
+    /// A sheep or a dog, and the path inside its settings, such as
+    /// `api.max_memory`, `api.dogs.kelpie.git`, or `kelpie.worker`
+    pub address: String,
+    /// The new value, as TOML: `5`, `true`, `["a", "b"]`, `{ keep = 1 }`. Text
+    /// that is not TOML is the string as typed, such as `3s`
+    pub value: String,
+    /// Print what would change and write nothing
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Write without asking
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[cfg(test)]
@@ -66,5 +89,50 @@ mod tests {
     fn get_takes_exactly_one_address() {
         use clap::Parser;
         assert!(Cli::try_parse_from(["shep", "get", "api.max_memory", "web.max_memory"]).is_err());
+    }
+
+    /// fails if `set` stops taking one address and one value, or stops
+    /// accepting a value that is TOML rather than a bare word.
+    #[test]
+    fn set_takes_an_address_a_value_and_two_flags() {
+        use clap::Parser;
+        let parse = |argv: &[&str]| match Cli::try_parse_from(argv).unwrap().command {
+            Commands::Set(args) => args,
+            other => panic!("expected set, got {other:?}"),
+        };
+
+        let plain = parse(&["shep", "set", "api.max_memory", "512M"]);
+        assert_eq!(plain.address, "api.max_memory");
+        assert_eq!(plain.value, "512M");
+        assert!(!plain.dry_run);
+        assert!(!plain.yes);
+
+        let table = parse(&["shep", "set", "api.dogs.kelpie.git", "{ keep = 1 }"]);
+        assert_eq!(table.value, "{ keep = 1 }");
+
+        let flagged = parse(&[
+            "shep",
+            "set",
+            "kelpie.worker.timeout",
+            "30",
+            "--dry-run",
+            "--yes",
+        ]);
+        assert!(flagged.dry_run);
+        assert!(flagged.yes);
+    }
+
+    /// fails if bare `shep set` becomes accepted. It used to be the
+    /// key/value store's verb, and a write with no address named has nothing
+    /// to write into.
+    #[test]
+    fn set_needs_both_positionals() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(["shep", "set"]).is_err());
+        assert!(Cli::try_parse_from(["shep", "set", "api.max_memory"]).is_err());
+        assert!(
+            Cli::try_parse_from(["shep", "set", "api.max_memory", "1", "2"]).is_err(),
+            "one value per write is what keeps `shep set api.name a` saying one thing"
+        );
     }
 }

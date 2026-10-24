@@ -65,6 +65,11 @@ const verbTable: { pm2: string; shep: string; note?: string }[] = [
   },
   { pm2: "-", shep: "shep enable / disable / adopt", note: "dogs have no pm2 analogue" },
   { pm2: "-", shep: "shep kv get / set / unset", note: "the KV store; nothing in pm2 does this" },
+  {
+    pm2: "pm2 set",
+    shep: "shep set",
+    note: "pm2 configures a module's own options; shep writes one setting of a sheep or a dog, into the file that holds it",
+  },
 ];
 ---
 

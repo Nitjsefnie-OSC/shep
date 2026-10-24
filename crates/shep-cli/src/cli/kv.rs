@@ -1,17 +1,16 @@
 //! Arguments for the key/value store: `shep kv get`, `shep kv set` and
-//! `shep kv unset`, and the hidden `shep set` and `shep unset` that still
-//! reach it.
+//! `shep kv unset`, and the hidden `shep unset` that still reaches it.
 //!
 //! The store is read and written with no shepherd running, and takes a flat
 //! key grammar. Nothing here connects, and nothing here parses a value: the
 //! value is a string, and [`shep_core::kv`] caps it.
 //!
-//! `set` and `unset` keep the argument structs their `shep kv` spelling takes,
-//! so an operator who has already typed `shep set bark.cooldown 30s` gets the
-//! same grammar and the same reply from `shep kv set`: the move is a rename of
-//! where the verb sits, not a change to what it accepts. `shep get` is the one
-//! old spelling that did not move here: it reads a sheep's or a dog's
-//! settings now, which is a different store of values.
+//! `unset` keeps the argument struct its `shep kv` spelling takes, so an
+//! operator who has already typed `shep unset bark.cooldown` gets the same
+//! grammar and the same reply from `shep kv unset`: the move is a rename of
+//! where the verb sits, not a change to what it accepts. `get` and `set` are
+//! the two old spellings that did not move here: they name the settings read
+//! and the settings write now, which are different stores of values.
 
 /// Arguments to `shep kv`.
 #[derive(Debug, clap::Args)]
@@ -43,7 +42,7 @@ pub enum KvCommand {
     Unset(KvUnsetArgs),
 }
 
-/// Arguments to `shep kv set`, and to the hidden `shep set`.
+/// Arguments to `shep kv set`.
 #[derive(Debug, clap::Args)]
 pub struct KvSetArgs {
     /// The key
@@ -178,17 +177,12 @@ mod tests {
     /// fails if a hidden alias stops parsing, or stops reaching the argument
     /// struct its `shep kv` spelling reaches. The aliases exist for the scripts
     /// written against them, and a script reads this binary's argv.
+    ///
+    /// `set` is absent on purpose: it writes a sheep's or a dog's settings now,
+    /// and the store's spelling is `shep kv set`.
     #[test]
-    fn the_hidden_aliases_still_parse_to_their_own_commands() {
+    fn the_hidden_alias_still_parses_to_its_own_command() {
         use clap::Parser;
-        let Commands::Set(args) = Cli::try_parse_from(["shep", "set", "a", "1"])
-            .unwrap()
-            .command
-        else {
-            panic!("`shep set` must still parse")
-        };
-        assert_eq!((args.key.as_str(), args.value.as_str()), ("a", "1"));
-
         let Commands::Unset(args) = Cli::try_parse_from(["shep", "unset", "--all"])
             .unwrap()
             .command
@@ -198,29 +192,29 @@ mod tests {
         assert!(args.all);
     }
 
-    /// fails if `kv` stops being a verb an operator can find in `--help`, or
-    /// if `set` and `unset` become visible again beside it. Two spellings
-    /// in `--help` for one store is how the old one outlives the note. `get`
-    /// is checked here too because it is the one old spelling that is gone
-    /// rather than hidden: it names the settings read now.
+    /// fails if `kv` stops being a verb an operator can find in `--help`, or if
+    /// `unset` becomes visible again beside it. Two spellings in `--help` for
+    /// one store is how the old one outlives the note. `get` and `set` are
+    /// checked here too because they are the two old spellings that are gone
+    /// rather than hidden: they name the settings read and write now.
     #[test]
-    fn kv_is_visible_and_the_old_verbs_are_hidden() {
+    fn kv_is_visible_and_the_old_verbs_are_gone() {
         use clap::CommandFactory;
         let cmd = Cli::command();
         assert!(
             !cmd.find_subcommand("kv").unwrap().is_hide_set(),
             "`kv` must be a verb `--help` lists"
         );
-        assert!(
-            !cmd.find_subcommand("get").unwrap().is_hide_set(),
-            "`get` is the settings read, not a store alias"
-        );
-        for hidden in ["set", "unset"] {
+        for settings in ["get", "set"] {
             assert!(
-                cmd.find_subcommand(hidden).unwrap().is_hide_set(),
-                "`{hidden}` must stay hidden from --help"
+                !cmd.find_subcommand(settings).unwrap().is_hide_set(),
+                "`{settings}` is a settings verb, not a store alias"
             );
         }
+        assert!(
+            cmd.find_subcommand("unset").unwrap().is_hide_set(),
+            "`unset` must stay hidden from --help"
+        );
     }
 
     /// fails if `shep kv` grows a subcommand `--help` does not reach, or loses

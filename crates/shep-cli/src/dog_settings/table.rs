@@ -128,11 +128,6 @@ fn report(scope: Scope<'_>, path: &[String], text: String) -> Option<TableRefusa
 /// [`None`] is not a promise that the dog accepts the table. It says no rule
 /// the schema published is broken by it, which is all shep can know about a
 /// config its author wrote in another binary.
-/// No non-test caller yet: `#[allow(dead_code)]` says so rather than
-/// inventing one. `shep set` (#1096) is the caller this door was cut for, and
-/// it will ask about every key it writes, because it writes a table it chose
-/// whole.
-#[allow(dead_code)]
 #[must_use]
 pub fn table_refusal(schema: &Value, table: &Map<String, Value>) -> Option<TableRefusal> {
     flattened_refusal(&flattened(schema), table, &[], "", Scope::Whole)

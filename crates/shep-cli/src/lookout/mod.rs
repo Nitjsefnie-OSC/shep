@@ -27,7 +27,7 @@ pub mod link;
 pub mod pane;
 pub mod pane_bleats;
 pub mod pane_sheep;
-mod probe_sheep_dogs;
+pub(crate) mod probe_sheep_dogs;
 pub(crate) mod secrets;
 pub mod source;
 pub mod tail;
