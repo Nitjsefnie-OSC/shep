@@ -42,6 +42,7 @@ const RECV_TIMEOUT: Duration = Duration::from_secs(10);
 mod app_configs;
 mod channel;
 mod daemon_lifetime;
+mod dog_link;
 mod dog_tables;
 mod harness;
 mod lifecycle;
