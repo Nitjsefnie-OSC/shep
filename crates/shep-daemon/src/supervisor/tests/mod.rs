@@ -911,6 +911,7 @@ fn without_handles(carried: CarriedSheep) -> crate::handover::adopt::AdoptedShee
         err_log: None,
         stdin_pipe: None,
         channel: None,
+        dog_link: None,
     }
 }
 

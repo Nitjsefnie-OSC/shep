@@ -110,6 +110,8 @@ pub struct StdinWrite {
 #[cfg(unix)]
 #[derive(Debug)]
 pub struct AdoptSpec {
+    /// The sheep's name, which a dog's connection is attributed to.
+    pub name: String,
     /// The pid the sheep has been running under all along, unchanged by the
     /// handover.
     pub pid: u32,
@@ -142,6 +144,14 @@ pub struct AdoptSpec {
     /// a sheep whose app asked for no channel, and for one whose child has
     /// closed fd 3.
     pub channel: Option<tokio::net::UnixStream>,
+    /// The daemon's end of the dog's own connection, still the one whose other
+    /// end is the child's fd 4. `None` for a sheep that is not a dog, and for
+    /// a dog whose connection had closed, which falls back to the control
+    /// socket.
+    pub dog_link: Option<tokio::net::UnixStream>,
+    /// What `dog_link` had subscribed to, or `None` if its dog had not yet
+    /// sent its `Hello`. Read only with `dog_link`.
+    pub dog_topics: Option<Vec<String>>,
     /// The one reaper this successor waits every adopted pid through.
     ///
     /// Shared rather than owned per sheep: a status can be collected once,

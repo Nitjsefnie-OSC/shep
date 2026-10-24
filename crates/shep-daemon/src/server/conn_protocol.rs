@@ -3,7 +3,7 @@ use super::peer_auth::ConnError;
 #[cfg(unix)]
 use super::peer_auth::{check_peer, daemon_uid, peer_pid};
 use super::server_lifecycle::{CONN_QUEUE, HANDSHAKE_TIMEOUT_MS};
-use crate::bus::spawn_forwarder;
+use crate::bus::{TopicFilter, spawn_forwarder};
 use crate::rpc::{Outcome, RpcContext, dispatch};
 use crate::supervisor::ConnId;
 use bytes::Bytes;
@@ -11,8 +11,8 @@ use core::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use shep_core::protocol::{
-    Envelope, Hello, HelloAck, HelloReply, MIN_SUPPORTED, PROTOCOL_VERSION, RpcError, RpcErrorCode,
-    codec, decode_frame, encode_frame,
+    BusEvent, Envelope, Hello, HelloAck, HelloReply, MIN_SUPPORTED, PROTOCOL_VERSION, RpcError,
+    RpcErrorCode, codec, decode_frame, encode_frame,
 };
 use shep_core::transport::{ServerReadHalf, ServerStream};
 use tokio::io::AsyncWrite;
@@ -88,10 +88,24 @@ async fn converse(
     origin: &Origin,
     ctx: &RpcContext,
 ) -> Result<(), ConnError> {
-    handshake(frames, out, peer, origin, ctx).await?;
     let mut forwarder: Option<JoinHandle<()>> = None;
+    if let Some(topics) = origin.resumed() {
+        forwarder = resume(out, peer, origin, ctx, topics).await?;
+    } else {
+        handshake(frames, out, peer, origin, ctx).await?;
+        origin.greeted();
+    }
     let mut attribution = Attribution::new(origin);
-    let outcome = read_loop(frames, out, conn, ctx, &mut forwarder, &mut attribution).await;
+    let outcome = read_loop(
+        frames,
+        out,
+        conn,
+        ctx,
+        origin,
+        &mut forwarder,
+        &mut attribution,
+    )
+    .await;
     // Every path out of `read_loop` lands here, and a live forwarder must be
     // aborted rather than dropped: dropping a `JoinHandle` detaches the task,
     // which keeps its clone of `out` alive, which keeps `write_loop` from ever
@@ -107,6 +121,7 @@ async fn read_loop(
     out: &mpsc::Sender<Bytes>,
     conn: ConnId,
     ctx: &RpcContext,
+    origin: &Origin,
     forwarder: &mut Option<JoinHandle<()>>,
     attribution: &mut Attribution,
 ) -> Result<(), ConnError> {
@@ -118,6 +133,7 @@ async fn read_loop(
             Outcome::Reply(reply) => send(out, &reply).await?,
             Outcome::Subscribe { reply, filter } => {
                 send(out, &reply).await?; // ordered ahead of any event by the queue
+                origin.subscribed(filter.patterns());
                 // A second Subscribe REPLACES the first: spec §6 gives a
                 // connection one topic list, not a growing union.
                 if let Some(old) =
@@ -134,6 +150,51 @@ async fn read_loop(
         }
     }
     Ok(())
+}
+
+/// Picks up a connection whose dog shook hands with the shepherd this one
+/// replaced
+///
+/// No `Hello` is read: the dog sent it once, to the predecessor, and its next
+/// frame is a request. What the handshake would have recorded is recorded
+/// here, since the silence watch and the refusal ledger start empty in a
+/// successor and would otherwise read a dog that is talking as one that never
+/// has. Its subscription died with the predecessor's memory, so it is armed
+/// again from `topics`, after a [`BusEvent::Dropped`] notice: events were
+/// published between the exec and now, and a dog that sees no end to its
+/// stream would not know to ask for them.
+///
+/// The notice's count is 1, the least that is true: the number lost is
+/// unknowable from here.
+async fn resume(
+    out: &mpsc::Sender<Bytes>,
+    peer: Option<u32>,
+    origin: &Origin,
+    ctx: &RpcContext,
+    topics: &[String],
+) -> Result<Option<JoinHandle<()>>, ConnError> {
+    if let Some(pid) = peer {
+        ctx.peer_contacts.connected(pid);
+        ctx.peer_contacts.named_a_dog(pid);
+    }
+    if let Some(dog) = origin.dog(None) {
+        // Not narrated, unlike a handshake: the dog was accepted by the
+        // predecessor, and this is the same connection continuing.
+        ctx.dog_refusals.handshook(dog);
+    }
+    if topics.is_empty() {
+        return Ok(None);
+    }
+    let filter = match TopicFilter::new(topics) {
+        Ok(filter) => filter,
+        Err(error) => {
+            // Compiled once already, by the predecessor that accepted it.
+            tracing::warn!(%error, "a carried dog subscription no longer compiles");
+            return Ok(None);
+        }
+    };
+    send(out, &BusEvent::Dropped { count: 1 }).await?;
+    Ok(Some(spawn_forwarder(&ctx.events, filter, out.clone())))
 }
 
 async fn handshake(

@@ -175,6 +175,9 @@ pub(crate) struct HandoverSeam {
     pub(super) fds: crate::handover::DaemonFds,
     /// The home, for the blob's path.
     pub(super) paths: ShepPaths,
+    /// The connections the dogs hold to this shepherd, which the actor never
+    /// sees: the server tasks serving them own their descriptors.
+    pub(super) dog_links: crate::server::DogLinks,
 }
 
 /// Replace this process with a successor holding `seam`'s flock.
@@ -191,11 +194,17 @@ pub(crate) struct HandoverSeam {
 pub(super) async fn hand_over_now(
     seam: &HandoverSeam,
 ) -> Result<core::convert::Infallible, String> {
-    let (candidates, blob, parked) = seam
+    let (candidates, mut blob, parked) = seam
         .supervisor
         .handover_snapshot(seam.fds)
         .await
         .map_err(|err| format!("the supervisor could not describe its flock: {err}"))?;
+    // Held until this function returns, which is only ever on a refusal: the
+    // numbers written into the blob stay live sockets for as long as these
+    // duplicates are open. A dog that connected after the snapshot above is
+    // not in the blob and so not carried; it falls back to the control socket.
+    let dog_links = seam.dog_links.snapshot();
+    blob.carry_dog_links(&dog_links);
     let refusal = match hand_over_carrying(&candidates, &blob, seam) {
         Ok(never) => match never {},
         Err(refusal) => refusal,
@@ -303,6 +312,7 @@ mod tests {
                 pidfile: -1,
             },
             paths: paths.clone(),
+            dog_links: crate::server::DogLinks::default(),
         };
         let refusal = hand_over_now(&seam)
             .await
@@ -361,6 +371,7 @@ mod tests {
                 pidfile: -2,
             },
             paths: paths.clone(),
+            dog_links: crate::server::DogLinks::default(),
         };
         let refusal = hand_over_now(&seam)
             .await
@@ -440,6 +451,7 @@ mod tests {
                 pidfile: -1,
             },
             paths: paths.clone(),
+            dog_links: crate::server::DogLinks::default(),
         };
         let refusal = hand_over_now(&seam)
             .await
@@ -529,6 +541,7 @@ mod tests {
                 pidfile: -1,
             },
             paths: paths.clone(),
+            dog_links: crate::server::DogLinks::default(),
         };
         let refusal = hand_over_now(&seam)
             .await
@@ -588,6 +601,7 @@ mod tests {
             err_log: None,
             stdin_pipe: None,
             channel: None,
+            dog_link: None,
         }
     }
 

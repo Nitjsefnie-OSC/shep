@@ -45,6 +45,7 @@ pub(super) fn carried_slot(instance: u32, fds: CarriedFds) -> CarriedSheep {
         last_exit: None,
         credentials: SpawnIdentity::Resolved(None),
         fds,
+        dog_topics: None,
         pending_delete: Some(false),
         manual: None,
         reload: Some(crate::entry::ReloadState::None),
@@ -96,6 +97,8 @@ pub(super) struct Predecessor {
     pub(super) stdin_write: std::io::PipeWriter,
     pub(super) channel: std::os::unix::net::UnixStream,
     pub(super) child_channel: std::os::unix::net::UnixStream,
+    pub(super) dog_link: std::os::unix::net::UnixStream,
+    pub(super) child_dog_link: std::os::unix::net::UnixStream,
 }
 
 impl Predecessor {
@@ -105,6 +108,7 @@ impl Predecessor {
         let (out_read, out_write) = std::io::pipe().unwrap();
         let (stdin_read, stdin_write) = std::io::pipe().unwrap();
         let (channel, child_channel) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (dog_link, child_dog_link) = std::os::unix::net::UnixStream::pair().unwrap();
         Self {
             listener: std::os::unix::net::UnixListener::bind(dir.path().join("shep.sock")).unwrap(),
             pidfile: tempfile::tempfile().unwrap(),
@@ -115,6 +119,8 @@ impl Predecessor {
             stdin_write,
             channel,
             child_channel,
+            dog_link,
+            child_dog_link,
             dir,
         }
     }
@@ -122,6 +128,15 @@ impl Predecessor {
     /// Where this fixture's listener is bound.
     pub(super) fn socket(&self) -> std::path::PathBuf {
         self.dir.path().join("shep.sock")
+    }
+
+    /// [`Self::blob`], for a sheep that is a dog holding its own connection.
+    pub(super) fn blob_with_dog_link(&self) -> Handover {
+        use std::os::fd::AsRawFd as _;
+        let mut blob = self.blob();
+        blob.sheep[0].fds.dog_link = Some(self.dog_link.as_raw_fd());
+        blob.sheep[0].dog_topics = Some(vec!["process.*".to_owned()]);
+        blob
     }
 
     /// A blob naming every one of them, for one sheep called `web`.
@@ -135,6 +150,7 @@ impl Predecessor {
                 err_log: None,
                 stdin: Some(self.stdin_write.as_raw_fd()),
                 channel: Some(self.channel.as_raw_fd()),
+                dog_link: None,
             })],
             DaemonFds {
                 listener: self.listener.as_raw_fd(),
@@ -190,6 +206,11 @@ impl Drop for Duplicates {
 }
 
 pub(super) fn adopt_a_copy(blob: &Handover) -> io::Result<()> {
+    adopt_a_copy_keeping(blob).map(drop)
+}
+
+/// [`adopt_a_copy`], handing back what was adopted so a case can use it.
+pub(super) fn adopt_a_copy_keeping(blob: &Handover) -> io::Result<super::Adopted> {
     // Propagated, never `unwrap_or(fd)`: falling back to the original
     // hands `adopt` the fixture's own live descriptor to close.
     let mut dups = Duplicates(Vec::new());
@@ -204,11 +225,12 @@ pub(super) fn adopt_a_copy(blob: &Handover) -> io::Result<()> {
             err_log: sheep.fds.err_log.map(|fd| dups.of(fd)).transpose()?,
             stdin: sheep.fds.stdin.map(|fd| dups.of(fd)).transpose()?,
             channel: sheep.fds.channel.map(|fd| dups.of(fd)).transpose()?,
+            dog_link: sheep.fds.dog_link.map(|fd| dups.of(fd)).transpose()?,
         };
     }
     // Released before the fallible call: `adopt` consumes the numbers it
     // reaches and says nothing about which, so holding the guard across it
     // would close some twice. A leak bounded by a test binary is better.
     dups.release();
-    adopt(&copy).map(drop)
+    adopt(&copy)
 }

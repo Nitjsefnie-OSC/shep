@@ -156,6 +156,7 @@ fn open_reportable_fds() -> ([std::fs::File; 6], crate::handover::CarriedFds) {
         err_log: Some(files[3].as_raw_fd()),
         stdin: Some(files[4].as_raw_fd()),
         channel: Some(files[5].as_raw_fd()),
+        dog_link: None,
     };
     (files, fds)
 }
