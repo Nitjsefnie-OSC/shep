@@ -73,10 +73,10 @@ impl Origin {
 
     /// Notes on the link's row that the dog has said `Hello`. A socket has no
     /// row.
-    pub(super) fn greeted(&self) {
+    pub(super) async fn greeted(&self) {
         #[cfg(unix)]
         if let Self::Dog { lease, .. } = self {
-            lease.greeted();
+            lease.greeted().await;
         }
     }
 
@@ -86,10 +86,10 @@ impl Origin {
         not(unix),
         allow(unused_variables, reason = "only a unix link has a row to note it on")
     )]
-    pub(super) fn subscribed(&self, patterns: &[String]) {
+    pub(super) async fn subscribed(&self, patterns: &[String]) {
         #[cfg(unix)]
         if let Self::Dog { lease, .. } = self {
-            lease.subscribed(patterns);
+            lease.subscribed(patterns).await;
         }
     }
 

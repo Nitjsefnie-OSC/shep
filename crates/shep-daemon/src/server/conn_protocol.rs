@@ -93,7 +93,6 @@ async fn converse(
         forwarder = resume(out, peer, origin, ctx, topics).await?;
     } else {
         handshake(frames, out, peer, origin, ctx).await?;
-        origin.greeted();
     }
     let mut attribution = Attribution::new(origin);
     let outcome = read_loop(
@@ -132,8 +131,10 @@ async fn read_loop(
         match dispatch(envelope, conn, ctx).await {
             Outcome::Reply(reply) => send(out, &reply).await?,
             Outcome::Subscribe { reply, filter } => {
+                // Recorded ahead of the reply: a handover's snapshot then never
+                // says less than the dog has been told.
+                origin.subscribed(filter.patterns()).await;
                 send(out, &reply).await?; // ordered ahead of any event by the queue
-                origin.subscribed(filter.patterns());
                 // A second Subscribe REPLACES the first: spec §6 gives a
                 // connection one topic list, not a growing union.
                 if let Some(old) =
@@ -296,6 +297,10 @@ async fn handshake(
             );
         }
     }
+    // Ahead of the ack, for the same reason as a subscription: a successor
+    // that did not know the dog had greeted would wait for a `Hello` that is
+    // never coming.
+    origin.greeted().await;
     let ack: HelloReply = Ok(HelloAck {
         daemon_version: ctx.daemon_version.clone(),
         protocol: PROTOCOL_VERSION,

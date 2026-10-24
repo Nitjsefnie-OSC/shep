@@ -55,9 +55,10 @@ pub struct AdoptedSheep {
     /// The daemon's end of the dog's own connection, whose other end is the
     /// child's fd 4.
     ///
-    /// Goes both ways, and has already completed its handshake: the successor
-    /// serves it from the next request. `None` for a sheep that is not a dog,
-    /// a dog that is not running, and one whose connection had closed.
+    /// Goes both ways. The successor serves it from the next request when the
+    /// dog had completed its handshake, and from a fresh handshake when it had
+    /// not (the blob's `dog_topics` says which). `None` for a sheep that is not
+    /// a dog, a dog that is not running, and one whose connection had closed.
     pub dog_link: Option<tokio::net::UnixStream>,
 }
 

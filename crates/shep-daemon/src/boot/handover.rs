@@ -203,7 +203,9 @@ pub(super) async fn hand_over_now(
     // numbers written into the blob stay live sockets for as long as these
     // duplicates are open. A dog that connected after the snapshot above is
     // not in the blob and so not carried; it falls back to the control socket.
-    let dog_links = seam.dog_links.snapshot();
+    // The freeze holds the tasks serving the dogs from changing what the blob
+    // says until the exec, or until a refusal thaws them below.
+    let dog_links = seam.dog_links.freeze();
     blob.carry_dog_links(&dog_links);
     let refusal = match hand_over_carrying(&candidates, &blob, seam) {
         Ok(never) => match never {},
@@ -213,6 +215,7 @@ pub(super) async fn hand_over_now(
     // sends a resume, so without this the flock logs nothing through the
     // graceful stop the caller falls back to. Here rather than in
     // `exec_into`'s error path: this is where every way out meets.
+    seam.dog_links.thaw();
     parked.resume().await;
     Err(refusal)
 }

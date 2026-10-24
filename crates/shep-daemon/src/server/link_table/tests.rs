@@ -21,26 +21,26 @@ fn a_registered_connection_is_snapshotted_until_its_lease_drops() {
     assert!(links.snapshot().is_empty());
 }
 
-#[test]
-fn a_connection_is_ungreeted_until_the_dog_says_hello() {
+#[tokio::test]
+async fn a_connection_is_ungreeted_until_the_dog_says_hello() {
     let links = DogLinks::default();
     let stream = socket();
     let lease = links.register("metrics", 41, &stream, None);
     assert_eq!(links.snapshot()[0].topics, None);
 
-    lease.greeted();
+    lease.greeted().await;
 
     assert_eq!(links.snapshot()[0].topics, Some(vec![]));
 }
 
-#[test]
-fn a_second_subscribe_replaces_the_first() {
+#[tokio::test]
+async fn a_second_subscribe_replaces_the_first() {
     let links = DogLinks::default();
     let stream = socket();
     let lease = links.register("metrics", 41, &stream, None);
 
-    lease.subscribed(&["process.*".to_owned()]);
-    lease.subscribed(&["log.out".to_owned()]);
+    lease.subscribed(&["process.*".to_owned()]).await;
+    lease.subscribed(&["log.out".to_owned()]).await;
 
     assert_eq!(links.snapshot()[0].topics, Some(vec!["log.out".to_owned()]));
 }
@@ -84,9 +84,46 @@ fn the_snapshot_keeps_its_descriptor_open_after_the_connection_ends() {
     assert!(probe.is_ok(), "the carried number must stay a live socket");
 }
 
-#[test]
-fn an_untracked_lease_changes_nothing() {
+#[tokio::test]
+async fn an_untracked_lease_changes_nothing() {
     let lease = Lease::untracked();
-    lease.greeted();
-    lease.subscribed(&["x".to_owned()]);
+    lease.greeted().await;
+    lease.subscribed(&["x".to_owned()]).await;
+}
+
+#[tokio::test]
+async fn a_frozen_table_holds_a_greeting_until_it_thaws() {
+    let links = DogLinks::default();
+    let stream = socket();
+    let lease = links.register("metrics", 41, &stream, None);
+
+    let carried = links.freeze();
+    let greeting = tokio::spawn(async move {
+        lease.greeted().await;
+        lease
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    assert_eq!(carried[0].topics, None, "the copy is what the blob carries");
+    assert_eq!(links.snapshot()[0].topics, None, "the row did not move");
+    assert!(
+        !greeting.is_finished(),
+        "the task waits rather than replying"
+    );
+
+    links.thaw();
+    let _lease = greeting.await.unwrap();
+    assert_eq!(links.snapshot()[0].topics, Some(vec![]));
+}
+
+#[tokio::test]
+async fn a_change_made_before_the_freeze_is_in_the_copy() {
+    let links = DogLinks::default();
+    let stream = socket();
+    let lease = links.register("metrics", 41, &stream, None);
+
+    lease.subscribed(&["process.*".to_owned()]).await;
+    let carried = links.freeze();
+
+    assert_eq!(carried[0].topics, Some(vec!["process.*".to_owned()]));
 }

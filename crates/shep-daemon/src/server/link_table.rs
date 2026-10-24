@@ -5,10 +5,20 @@
 //! else can name it. This table holds a duplicate of each, plus the two facts
 //! about the connection the exec would otherwise erase: whether the dog has
 //! said `Hello`, and what it subscribed to.
+//!
+//! The serving tasks keep running while a handover takes its snapshot, so the
+//! table has a freeze. [`DogLinks::freeze`] copies the rows and from then on
+//! holds every task that would change one, until [`DogLinks::thaw`]. A task
+//! records a change before it replies, so a row never says less than the dog
+//! has been told, and it never changes after the copy. What the dog sent in
+//! the gap goes unanswered and is lost with the exec, as any request in
+//! flight is.
 
 use std::collections::BTreeMap;
 use std::os::fd::{AsFd, OwnedFd};
 use std::sync::{Arc, Mutex, PoisonError};
+
+use tokio::sync::Notify;
 
 use crate::handover::DogConnection;
 
@@ -26,6 +36,8 @@ struct Held {
 /// dog (the old and the new across a respawn) never share a row.
 #[derive(Debug, Default)]
 struct Rows {
+    /// Set by [`DogLinks::freeze`]: no row changes until it clears.
+    frozen: bool,
     next: u64,
     held: BTreeMap<u64, Held>,
 }
@@ -38,6 +50,8 @@ struct Rows {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DogLinks {
     rows: Arc<Mutex<Rows>>,
+    /// Woken when the freeze ends.
+    thawed: Arc<Notify>,
 }
 
 impl DogLinks {
@@ -79,15 +93,34 @@ impl DogLinks {
         }
     }
 
-    /// A fresh duplicate of every connection being served, for a handover to
-    /// carry.
+    /// Freezes the table and returns a fresh duplicate of every connection
+    /// being served, for a handover to carry.
     ///
     /// Duplicates rather than the table's own descriptors, so the numbers the
     /// blob names stay valid for as long as the caller holds these, whatever
-    /// happens to the connections meanwhile.
-    pub(crate) fn snapshot(&self) -> Vec<DogConnection> {
-        self.lock()
-            .held
+    /// happens to the connections meanwhile. The caller that does not exec
+    /// calls [`thaw`](Self::thaw).
+    pub(crate) fn freeze(&self) -> Vec<DogConnection> {
+        let mut rows = self.lock();
+        rows.frozen = true;
+        Self::copy(&rows)
+    }
+
+    /// Ends a freeze, for a handover that was refused: the tasks it held
+    /// carry on.
+    pub(crate) fn thaw(&self) {
+        self.lock().frozen = false;
+        self.thawed.notify_waiters();
+    }
+
+    /// [`freeze`](Self::freeze) without the freeze.
+    #[cfg(test)]
+    pub(super) fn snapshot(&self) -> Vec<DogConnection> {
+        Self::copy(&self.lock())
+    }
+
+    fn copy(rows: &Rows) -> Vec<DogConnection> {
+        rows.held
             .values()
             .filter_map(|held| {
                 Some(DogConnection {
@@ -121,25 +154,43 @@ impl Lease {
     }
 
     /// Records that the dog has said `Hello`, so a successor treats its next
-    /// frame as a request.
-    pub(super) fn greeted(&self) {
+    /// frame as a request. Before the reply, and held through a freeze.
+    pub(super) async fn greeted(&self) {
         self.update(|topics| {
             topics.get_or_insert_with(Vec::new);
-        });
+        })
+        .await;
     }
 
     /// Records the dog's current subscription, replacing the last: a
-    /// connection has one topic list.
-    pub(super) fn subscribed(&self, patterns: &[String]) {
-        self.update(|topics| *topics = Some(patterns.to_vec()));
+    /// connection has one topic list. Before the reply, and held through a
+    /// freeze.
+    pub(super) async fn subscribed(&self, patterns: &[String]) {
+        self.update(|topics| *topics = Some(patterns.to_vec()))
+            .await;
     }
 
-    fn update(&self, change: impl FnOnce(&mut Option<Vec<String>>)) {
+    async fn update(&self, change: impl FnOnce(&mut Option<Vec<String>>)) {
         let Some((links, key)) = &self.tracked else {
             return;
         };
-        if let Some(held) = links.lock().held.get_mut(key) {
-            change(&mut held.topics);
+        let mut change = Some(change);
+        loop {
+            // Registered before the check, so a thaw between the two is not
+            // missed.
+            let thawed = links.thawed.notified();
+            tokio::pin!(thawed);
+            thawed.as_mut().enable();
+            {
+                let mut rows = links.lock();
+                if !rows.frozen {
+                    if let (Some(held), Some(change)) = (rows.held.get_mut(key), change.take()) {
+                        change(&mut held.topics);
+                    }
+                    return;
+                }
+            }
+            thawed.await;
         }
     }
 }
