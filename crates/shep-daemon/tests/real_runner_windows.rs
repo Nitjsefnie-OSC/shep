@@ -66,6 +66,7 @@ fn cmd_spec(dir: &tempfile::TempDir, args: &[&str]) -> SpawnSpec {
         channel: false,
         stdin: false,
         credentials: None,
+        dog_link: false,
     }
 }
 

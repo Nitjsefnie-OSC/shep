@@ -959,7 +959,17 @@ Each dog gets a connection of its own: a second descriptor handed to it at spawn
 
 **What it costs:** a dog started by hand has no descriptor, connects like the CLI and acts as the operator. A dog's own child processes inherit the descriptor and so its grants. The shepherd has to carry each dog's end across a handover, as it already does for the shepherd channel.
 
-The maintainer, 2026-10-12, in the dogs-as-plugins grill (`docs/brainstorming/specs/2026-10-12-dogs-as-plugins-design.md`). Not built yet.
+The maintainer, 2026-10-12, in the dogs-as-plugins grill (`docs/brainstorming/specs/2026-10-12-dogs-as-plugins-design.md`). The connection is built (below); the grants and their checks are not.
+
+### A dog gets a connection of its own, served from its spawn
+
+Each supervised dog is spawned with a socketpair end on fd 4 and `SHEP_DOG_FD=4`, the way the channel is on fd 3. The shepherd serves the other end from the moment the dog spawns, in a task of its own that does not wait for the control socket's listener, so `boot` starts it before the first dog spawns and a dog promoted ahead of the muster restore handshakes during it (#360). The runner hands each link over on a channel and the server names the dog by the spawn that opened it, so a `dog_name` claimed in the `Hello` on a link is ignored. `DogRuntime` takes the link when the variable is set, builds its first generation on it, and reaches the socket through the unchanged reconnect loop when the link is lost or never completes a handshake.
+
+**Why:** #1084, under #1073. A dog that retries its first connect would have made every third-party dog on the SDK carry a guess at how long a restore takes. Serving the whole control socket before the restore gives up what `boot` argues for: readiness after the restore, and no client reading a half-restored flock. A link is the dog's own, so it can be served early without either cost. The link rides a socketpair, whose peer credentials name the shepherd itself, so the child's pid travels with the link and feeds the silence watch that peer credentials fed on the socket. Requests on it are narrated once per kind per connection, so a dog polling does not flood its own bleats.
+
+**What it costs:** the link answers every request from spawn, so a boot-first dog that reads the flock during the restore sees it as restored so far. That is the point of the ticket (a dog that works during the restore), and the control socket keeps its own rule of waiting for the restore. A `SHEP_DOG_FD` that is set but names no usable descriptor fails the dog's start rather than falling back to the socket, since the shepherd said this dog has a link and the socket would let it act as the operator. A link that was valid and is lost does fall back. The shepherd's end is close-on-exec, so an `execve` handover closes it and the dog falls back to the socket. Carrying it across, and the grants checked on it, are later work under #1073. A dog's own children inherit fd 4. A dog started by hand has no link and waits for the listener like the CLI. The Windows arm is not built, and waits on the same DACL work as the channel's (#350).
+
+`verified crates/shep-core/src/dogs.rs (DOG_LINK_FD_VAR), crates/shep-daemon/src/tokio_runner/runner.rs, crates/shep-daemon/src/server/dog_links.rs, crates/shep-daemon/src/server/origin.rs, crates/shep-daemon/src/boot/mod.rs, crates/shep-client/src/dogs/link.rs, crates/shep-channel/src/endpoint.rs (take_inherited_socket)`
 
 ## Audit debt
 

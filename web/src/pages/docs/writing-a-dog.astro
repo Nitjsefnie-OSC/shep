@@ -153,7 +153,10 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       <code>$SHEP_HOME</code>, which is how it finds that socket in the first
       place, and <code>$SHEP_DOG_NAME</code>, which is the name to put in
       that request. No <code>[&lt;name&gt;]</code> value rides along
-      beside them.
+      beside them. On unix a third, <code>$SHEP_DOG_FD</code>, names a
+      connection already open as descriptor 4, which works before the socket
+      does. Use it first and fall back to the socket.
+      <code>DogRuntime</code> does.
     </p>
     <p>
       Put that name in the <code>Hello</code> too, as{" "}
@@ -249,7 +252,7 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       than after a handover.
     </p>
     <p>
-      Those two are what shep adds, not the whole environment. A dog is a
+      Those are what shep adds, not the whole environment. A dog is a
       supervised process like any other, so it also starts from the small
       base every sheep gets: <code>PATH</code>, plus whichever of{" "}
       <code>HOME</code>, <code>USER</code>, <code>LANG</code> and{" "}
