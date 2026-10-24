@@ -208,7 +208,7 @@ async fn the_first_enable_of_a_declined_dog_asks_and_a_yes_grants_and_enables() 
 
     assert_eq!(code, ExitCode::Success);
     assert!(asked.contains("flock.read"), "{asked}");
-    assert_eq!(recorded(&paths).1, true);
+    assert!(recorded(&paths).1);
     assert_eq!(recorded(&paths).0.map(|names| names.len()), Some(2));
 }
 
@@ -237,5 +237,5 @@ async fn enabling_a_dog_that_was_already_granted_does_not_ask() {
 
     assert_eq!(code, ExitCode::Success);
     assert!(!err.contains("[y/N]"), "{err}");
-    assert_eq!(recorded(&paths).1, true);
+    assert!(recorded(&paths).1);
 }
