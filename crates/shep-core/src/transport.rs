@@ -11,7 +11,7 @@
 //! `peer_cred` check; Windows relies on the pipe's ACL, which grants
 //! `Everyone` read but not write (canonical writeup: shep-daemon's `RpcServer`).
 //! A pipe that must admit only the shepherd's own user is bound with
-//! [`Listener::bind_with`], whose [`PipeInstances`] the daemon implements
+//! `Listener::bind_with`, whose `PipeInstances` the daemon implements
 //! where its unsafe code lives.
 
 use std::io;

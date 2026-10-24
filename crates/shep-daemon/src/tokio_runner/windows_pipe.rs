@@ -86,3 +86,6 @@ pub(super) fn serve_dog_link<T: Send + 'static>(
         }
     });
 }
+
+#[cfg(test)]
+mod tests;
