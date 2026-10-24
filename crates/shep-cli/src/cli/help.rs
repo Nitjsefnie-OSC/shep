@@ -41,7 +41,8 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "The shepherd",
         &[
-            "ping", "kill", "reopen", "flush", "kv", "get", "set", "copy", "secret", "host",
+            "ping", "kill", "reopen", "flush", "kv", "get", "set", "unset", "copy", "secret",
+            "host",
         ],
     ),
     ("Dogs and agents", &["dogs", "adopt", "whistle"]),
