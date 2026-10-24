@@ -244,8 +244,9 @@ mod tests {
     }
 
     /// An armed delete is the fourth armed thing in this module the tick
-    /// expires, mirroring the config pane's own `armed_at` at
-    /// `app.rs:1999-2005`.
+    /// expires: [`CONFIRM_EXPIRY`] in `lookout/app/action.rs` is the
+    /// deadline, and `App::on_tick` in `lookout/app/update/link.rs` drops
+    /// an action still armed past it.
     #[test]
     fn an_armed_delete_expires_like_every_other_armed_thing() {
         let mut app = fixtures::app_with_secrets_and_control();

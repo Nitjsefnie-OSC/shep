@@ -289,8 +289,9 @@ mod tests {
     /// `#![forbid(unsafe_code)]`, so nothing here can establish an ambient
     /// `$SHEP_HOME` and observe clap actually reading it. The next best
     /// thing, and the thing that actually matters for `$SHEP_HOME` to keep
-    /// working, is pinning that clap was *told* to read it: if `env =
-    /// "SHEP_HOME"` (`cli.rs:30`) is ever deleted, this fails.
+    /// working, is pinning that clap was *told* to read it: if
+    /// [`GlobalArgs::home`]'s `env = "SHEP_HOME"` attribute is ever
+    /// deleted, this fails.
     #[test]
     fn home_flag_is_wired_to_the_shep_home_env_var() {
         use clap::CommandFactory;
