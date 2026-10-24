@@ -25,6 +25,7 @@ use super::enrichment::{
     dog_staleness, handover_refusal, with_dog_contact, with_lambs, with_live_stats,
 };
 use super::error::{invalid_config, no_sheep, rpc_error};
+use super::gate::check;
 use super::selector_verbs::{not_found, selector_call, selector_of, signal_request, trigger};
 use super::walk::{reload_request, restart_request};
 
@@ -37,14 +38,30 @@ use super::walk::{reload_request, restart_request};
 /// So a `DeadlineExceeded` reply to `Start` means no answer within the
 /// budget, not that nothing happened; a client that retries must reconcile
 /// with `ListFlock`.
-pub(crate) async fn dispatch(envelope: Envelope, conn: ConnId, ctx: &RpcContext) -> Outcome {
+///
+/// `dog` is the dog whose own connection this arrived on, and its request is
+/// checked against its grants before anything runs. `None` is the control
+/// socket, which acts as the operator and is never checked. The check is
+/// inside the deadline: it may ask the supervisor.
+pub(crate) async fn dispatch(
+    envelope: Envelope,
+    conn: ConnId,
+    dog: Option<&str>,
+    ctx: &RpcContext,
+) -> Outcome {
     let id = envelope.id;
-    with_deadline(
-        id,
-        budget(envelope.deadline_ms),
-        run(id, conn, envelope.body, ctx),
-    )
-    .await
+    let work = async {
+        if let Some(dog) = dog
+            && let Err(err) = check(ctx, dog, &envelope.body).await
+        {
+            return Outcome::Reply(Reply {
+                id,
+                result: Err(err),
+            });
+        }
+        run(id, conn, envelope.body, ctx).await
+    };
+    with_deadline(id, budget(envelope.deadline_ms), work).await
 }
 
 // `+ Send`: awaited inside the per-connection `tokio::spawn`, so the bound is
@@ -403,6 +420,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
         }
         Request::EnableDog { name, source } => {
             let spec = DogSpec { name, source };
+            let grants = spec.source.grants().cloned();
             match crate::dogs::dog_app(&spec, &ctx.paths) {
                 Err(err) => reply(Err(invalid_config(err))),
                 Ok(app) => {
@@ -429,7 +447,7 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                             // success arm only: the refusal above is a
                             // sheep holding the name, and that is not a dog
                             // to remember.
-                            ctx.known_dogs.insert(&info.name);
+                            ctx.known_dogs.insert(&info.name, grants);
                             // Wording is about the binary this shepherd
                             // resolved, not about a spawn having happened:
                             // `start_dog` is idempotent by name for a dog that

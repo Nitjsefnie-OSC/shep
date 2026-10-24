@@ -21,7 +21,7 @@ use tokio::time::Instant;
 /// so no case here has to name a [`ConnId`]. One fresh id per call:
 /// nothing here spans two requests on the same connection.
 async fn dispatch(envelope: Envelope, ctx: &RpcContext) -> Outcome {
-    super::dispatch(envelope, ConnId::next(), ctx).await
+    super::dispatch(envelope, ConnId::next(), None, ctx).await
 }
 
 fn envelope(id: u64, body: Request) -> Envelope {

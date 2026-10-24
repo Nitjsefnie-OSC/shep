@@ -134,7 +134,7 @@ async fn read_loop(
         let frame = frame?; // oversize/short frame ends the connection
         let envelope: Envelope = decode_frame(&frame).map_err(ConnError::Decode)?;
         attribution.note(ctx, &envelope.body);
-        match dispatch(envelope, conn, ctx).await {
+        match dispatch(envelope, conn, origin.bound_dog(), ctx).await {
             Outcome::Reply(reply) => send(out, &reply).await?,
             Outcome::Subscribe { reply, filter } => {
                 // Recorded ahead of the reply: a handover's snapshot then never

@@ -394,7 +394,7 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         registry: registry.clone(),
         snapshot_path: paths.snapshot.clone(),
         dogs_config: paths.dogs_config.clone(),
-        known_dogs: crate::rpc::KnownDogs::new(known_dog_names(&options)),
+        known_dogs: known_dog_grants(&options),
         dog_names: dog_names.clone(),
         boot_first_dogs: options.boot_first_dogs.clone(),
         paths: paths.clone(),
@@ -512,14 +512,16 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
     })
 }
 
-/// Every dog name `options` makes known: the known list plus the enabled one.
-fn known_dog_names(options: &BootOptions) -> std::collections::BTreeSet<String> {
-    options
-        .known_dogs
-        .iter()
-        .chain(&options.dogs)
-        .map(|spec| spec.name.clone())
-        .collect()
+/// Every dog `options` makes known, with the grants its source carries: the
+/// known list plus the enabled one.
+fn known_dog_grants(options: &BootOptions) -> crate::rpc::KnownDogs {
+    crate::rpc::KnownDogs::with_grants(
+        options
+            .known_dogs
+            .iter()
+            .chain(&options.dogs)
+            .map(|spec| (spec.name.clone(), spec.source.grants().cloned())),
+    )
 }
 
 /// The cron sleep bound this boot runs with: [`BootOptions::max_cron_sleep`],

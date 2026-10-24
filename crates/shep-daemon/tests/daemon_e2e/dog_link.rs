@@ -40,7 +40,7 @@ exec sleep 30
 }
 
 /// Polls `path` until it exists, failing at [`RECV_TIMEOUT`].
-async fn await_file(path: &std::path::Path) -> String {
+pub(super) async fn await_file(path: &std::path::Path) -> String {
     tokio::time::timeout(RECV_TIMEOUT, async {
         loop {
             if let Ok(text) = std::fs::read_to_string(path) {
