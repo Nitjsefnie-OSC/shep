@@ -89,6 +89,12 @@ tokio-util.workspace = true
 tokio-stream.workspace = true   # wrappers::BroadcastStream, for the event-bus subscription stream
 futures-util.workspace = true
 
+# `dogs::DogRuntime` takes the connection the shepherd spawned a dog holding,
+# through `take_inherited_socket`. Unix only: that is the only place the
+# shepherd hands one.
+[target.'cfg(unix)'.dependencies]
+shep-channel = { workspace = true, features = ["client"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "io-util"] }
 tempfile.workspace = true

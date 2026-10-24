@@ -4,7 +4,7 @@ use serde::de::DeserializeOwned;
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::DogSectionToml;
 
-use super::{DogIdentity, SectionError, ShepherdError, parse_section};
+use super::{DogIdentity, SectionError, ShepherdError, link, parse_section};
 use crate::ReconnectingClient;
 
 /// A dog's connection to its shepherd, and its own section of `dogs.toml`.
@@ -42,8 +42,12 @@ pub struct DogRuntime {
 }
 
 impl DogRuntime {
-    /// Connects as `identity` through `paths`' socket and asks for its
-    /// section.
+    /// Connects as `identity` and asks for its section.
+    ///
+    /// Over the connection the shepherd spawned this process holding, when
+    /// there is one, and through `paths`' socket when there is not or it
+    /// is lost. The shepherd serves the first from spawn, so a dog started
+    /// ahead of the muster restore connects during it.
     ///
     /// # Errors
     ///
@@ -52,7 +56,7 @@ impl DogRuntime {
     /// - [`ShepherdError::Request`]: the section request failed, or was
     ///   answered with something other than the section.
     pub async fn start(identity: DogIdentity, paths: ShepPaths) -> Result<Self, ShepherdError> {
-        let client = ReconnectingClient::connect_as(&paths.socket, &identity).await?;
+        let client = link::connect(&identity, &paths.socket).await?;
         let section = client.dog_config(identity.section()).await?;
         Ok(Self {
             client,

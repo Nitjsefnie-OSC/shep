@@ -260,6 +260,30 @@ impl Client {
         ))
     }
 
+    /// As [`Self::connect_as`], over `stream`, a connection the shepherd
+    /// already opened. Dialled again through `socket` on a reconnect.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::connect_with_timeout`], bar [`ConnectError::Connect`]:
+    /// there is no `connect(2)` to fail.
+    #[cfg(unix)]
+    pub(crate) async fn connect_over(
+        stream: tokio::net::UnixStream,
+        socket: &Path,
+        timeout: Duration,
+        dog_name: Option<&str>,
+    ) -> Result<Self, ConnectError> {
+        let connection = tokio::time::timeout(timeout, Connection::open_over(stream, dog_name))
+            .await
+            .map_err(|_elapsed| ConnectError::HandshakeTimeout { after: timeout })??;
+        Ok(Self::from_connection(
+            connection,
+            Dial::Socket(socket.to_path_buf()),
+            dog_name,
+        ))
+    }
+
     fn from_connection(connection: Connection, dial: Dial, dog_name: Option<&str>) -> Self {
         let (frames, ack) = connection.into_parts();
         let commands = actor::spawn(frames);

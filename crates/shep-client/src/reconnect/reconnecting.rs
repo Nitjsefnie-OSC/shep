@@ -261,6 +261,30 @@ impl ReconnectingClient {
         dog_name: Option<&str>,
     ) -> Result<Self, ConnectError> {
         let client = Client::connect_as(socket, timeout, dog_name).await?;
+        Ok(Self::supervised(client, socket, timeout, dog_name))
+    }
+
+    /// As [`Self::connect_as`], with the first generation over `link`, a
+    /// connection the shepherd opened for this process.
+    ///
+    /// Every later generation dials `socket`, so a lost link is not the end
+    /// of the connection.
+    ///
+    /// # Errors
+    ///
+    /// See [`Client::connect_over`].
+    #[cfg(unix)]
+    pub(crate) async fn connect_over_link(
+        link: tokio::net::UnixStream,
+        socket: &Path,
+        timeout: Duration,
+        dog_name: Option<&str>,
+    ) -> Result<Self, ConnectError> {
+        let client = Client::connect_over(link, socket, timeout, dog_name).await?;
+        Ok(Self::supervised(client, socket, timeout, dog_name))
+    }
+
+    fn supervised(client: Client, socket: &Path, timeout: Duration, dog_name: Option<&str>) -> Self {
         let shared = Arc::new(Shared {
             socket: socket.to_path_buf(),
             handshake_timeout: timeout,
@@ -271,7 +295,7 @@ impl ReconnectingClient {
             }),
         });
         let supervisor = tokio::spawn(supervise(Arc::clone(&shared)));
-        Ok(Self { shared, supervisor })
+        Self { shared, supervisor }
     }
 
     /// The name this client announces itself as a dog under, or `None` for

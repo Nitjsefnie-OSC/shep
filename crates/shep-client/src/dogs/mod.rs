@@ -105,6 +105,7 @@ use core::fmt;
 
 mod error;
 mod identity;
+mod link;
 mod probes;
 mod runtime;
 mod section;
