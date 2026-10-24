@@ -133,10 +133,7 @@ async fn a_credential_failure_never_shifts_another_apps_identity() {
         actor_with_one_online_sheep(&dir, vec![ProcScript::never_exits(); 2]);
 
     let own_uid = nix::unistd::geteuid();
-    let own_user = nix::unistd::User::from_uid(own_uid)
-        .expect("the passwd database is readable")
-        .expect("this process's own uid has a passwd entry")
-        .name;
+    let own_user = own_user_name();
 
     let mut bad = AppConfig::minimal("a-bad", "./a");
     bad.user = Some("definitely-not-a-real-shep-user".to_string());
