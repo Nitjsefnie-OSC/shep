@@ -92,9 +92,10 @@ bark.cooldown  30s`;
     <h2 id="the-old-spelling">The old spelling</h2>
     <p>
       <code>shep set</code>, <code>shep get</code> and <code>shep unset</code>{" "}
-      still work, and print where the verb went. The note is on stderr, so a
-      script's stdout envelope is unchanged. Those three names are being saved
-      for a sheep's or a dog's settings.
+      still work, and print where the verb went on stderr. A{" "}
+      <code>--format json</code> run prints no note: that format is one object
+      per invocation. Those three names are being saved for a sheep's or a
+      dog's settings.
     </p>
     <CodeBlock label="table form">{oldSpelling}</CodeBlock>
 

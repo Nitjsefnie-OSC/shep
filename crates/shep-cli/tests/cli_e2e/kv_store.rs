@@ -173,39 +173,40 @@ fn kv_json_envelope_is_an_array_with_the_schema_version() {
     assert_json_error(&bad_key, 2, "usage");
 }
 
-/// The old verbs are hidden, not gone: a script written against `shep get`
-/// keeps its exit codes, keeps its `command` key, and keeps its envelope on
-/// stdout. The note about where the verb went is what an operator at a
-/// terminal sees, and it goes on stderr so `shep get | jq` is unaffected.
+/// The old verbs are hidden, not gone. Each keeps its exit code and its
+/// stdout answer, and says where it moved on stderr, in the format an operator
+/// at a terminal reads.
 #[test]
 fn the_hidden_store_verbs_still_work_and_name_where_they_moved() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();
 
     let set = shep(home)
-        .arg("--format")
-        .arg("json")
         .arg("set")
         .arg("bark.cooldown")
         .arg("30s")
         .output()
         .unwrap();
     assert_success(&set);
-    let envelope: serde_json::Value = serde_json::from_slice(&set.stdout).unwrap();
-    assert_eq!(envelope["command"], "set", "{envelope}");
+    assert!(
+        String::from_utf8_lossy(&set.stdout).contains("bark.cooldown"),
+        "{}",
+        String::from_utf8_lossy(&set.stdout)
+    );
     let note = String::from_utf8_lossy(&set.stderr);
-    assert!(note.contains("`shep set` moved to `shep kv set`"), "{note}");
+    assert_eq!(
+        note.trim_end(),
+        "notice[moved]: `shep set` moved to `shep kv set`; the old spelling still works",
+        "{note}"
+    );
 
-    let get = shep(home)
-        .arg("--format")
-        .arg("json")
-        .arg("get")
-        .arg("bark.cooldown")
-        .output()
-        .unwrap();
+    let get = shep(home).arg("get").arg("bark.cooldown").output().unwrap();
     assert_success(&get);
-    let envelope: serde_json::Value = serde_json::from_slice(&get.stdout).unwrap();
-    assert_eq!(envelope["command"], "get", "{envelope}");
+    assert!(
+        String::from_utf8_lossy(&get.stdout).contains("30s"),
+        "{}",
+        String::from_utf8_lossy(&get.stdout)
+    );
     assert!(
         String::from_utf8_lossy(&get.stderr).contains("`shep get` moved to `shep kv get`"),
         "{}",
@@ -213,31 +214,74 @@ fn the_hidden_store_verbs_still_work_and_name_where_they_moved() {
     );
 
     let unset = shep(home)
-        .arg("--format")
-        .arg("json")
         .arg("unset")
         .arg("bark.cooldown")
         .output()
         .unwrap();
     assert_success(&unset);
-    let envelope: serde_json::Value = serde_json::from_slice(&unset.stdout).unwrap();
-    assert_eq!(envelope["command"], "unset", "{envelope}");
+    assert!(
+        String::from_utf8_lossy(&unset.stdout).contains("REMOVED"),
+        "{}",
+        String::from_utf8_lossy(&unset.stdout)
+    );
     assert!(
         String::from_utf8_lossy(&unset.stderr).contains("`shep unset` moved to `shep kv unset`"),
         "{}",
         String::from_utf8_lossy(&unset.stderr)
     );
+}
 
-    // The note is a notice envelope on stderr, not a failure: the run's own
-    // exit code and its stdout envelope are untouched by it.
-    assert_eq!(unset.status.code(), Some(0), "{unset:?}");
-    assert!(
-        !serde_json::from_slice::<serde_json::Value>(&unset.stderr)
-            .expect("a notice under --format json is still one JSON object")
-            .is_null(),
-        "{}",
-        String::from_utf8_lossy(&unset.stderr)
-    );
+/// Under `--format json` a hidden alias prints one object per invocation: its
+/// own envelope on stdout, and on failure its error envelope on stderr. The
+/// note is a terminal reader's, and a second object on the same stream is what
+/// a consumer merging the two streams chokes on.
+#[test]
+fn a_json_alias_run_prints_one_object_and_no_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+
+    for (verb, args) in [
+        ("set", vec!["bark.cooldown", "30s"]),
+        ("get", vec!["bark.cooldown"]),
+        ("unset", vec!["bark.cooldown"]),
+    ] {
+        let run = shep(home)
+            .arg("--format")
+            .arg("json")
+            .arg(verb)
+            .args(&args)
+            .output()
+            .unwrap();
+        assert_success(&run);
+        let envelope: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+        assert_eq!(envelope["command"], verb, "{envelope}");
+        assert!(
+            run.stderr.is_empty(),
+            "{verb}: a JSON run prints its own envelope and nothing else: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+
+    // `assert_json_error` parses stderr whole, so a notice riding in front of
+    // the failure fails here rather than passing on a substring.
+    let bad_key = shep(home)
+        .arg("--format")
+        .arg("json")
+        .arg("set")
+        .arg("not a key")
+        .arg("1")
+        .output()
+        .unwrap();
+    assert_json_error(&bad_key, 2, "usage");
+
+    let missing = shep(home)
+        .arg("--format")
+        .arg("json")
+        .arg("get")
+        .arg("nope")
+        .output()
+        .unwrap();
+    assert_json_error(&missing, 3, "not_found");
 }
 
 /// Both spellings reach one store. An operator mid-migration writes with the

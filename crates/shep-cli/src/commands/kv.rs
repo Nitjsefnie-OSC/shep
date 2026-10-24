@@ -9,7 +9,7 @@
 use shep_core::kv::{self, KvError};
 use shep_core::paths::ShepPaths;
 
-use crate::cli::{KvGetArgs, KvSetArgs, KvUnsetArgs};
+use crate::cli::{Format, KvGetArgs, KvSetArgs, KvUnsetArgs};
 use crate::exit::ExitCode;
 use crate::output::{KvEntry, KvRows, KvUnsetRow, Streams, emit, write_outcome};
 
@@ -39,14 +39,25 @@ impl KvVia {
     }
 
     /// Prints the move notice on stderr for a hidden alias, and does nothing
-    /// for `shep kv`.
+    /// for `shep kv` or under `--format json`.
     ///
-    /// Stderr, so a `--format json` run on stdout is byte-identical to the one
-    /// an operator gets from `shep kv`.
+    /// Stderr, so a run's stdout envelope is byte-identical to the one an
+    /// operator gets from `shep kv`. Suppressed outright under
+    /// [`Format::Json`]: that format publishes one object per invocation
+    /// ([`crate::cli::Format::Json`]), and a notice envelope beside a failure
+    /// envelope on the same stream is the shape the reload refusal fix removed
+    /// (`docs/specs/deferred-history.md`), which a consumer merging the two
+    /// streams reads as a parse error or as the first object only. A JSON
+    /// consumer has no use for news about a spelling, and it learns the move
+    /// from the verb's own help. `shep welcome`'s first-run notice follows the
+    /// same rule.
     fn announce(self, streams: &mut Streams<'_>) {
         let Self::Alias(verb) = self else {
             return;
         };
+        if streams.fmt == Format::Json {
+            return;
+        }
         streams.aside(
             MOVED_NOTICE,
             &format!("`shep {verb}` moved to `shep kv {verb}`; the old spelling still works"),
@@ -206,6 +217,17 @@ mod tests {
             err,
             style: crate::style::Presentation::BARE,
             fmt: Format::Json,
+        }
+    }
+
+    /// The same pair in the format an operator at a terminal gets: the note a
+    /// hidden alias prints is for that reader.
+    fn table_streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
+        Streams {
+            out,
+            err,
+            style: crate::style::Presentation::BARE,
+            fmt: Format::Table,
         }
     }
 
@@ -374,16 +396,56 @@ mod tests {
             assert_eq!(code, ExitCode::Success, "{via:?}");
             let envelope: serde_json::Value = serde_json::from_slice(&out).unwrap();
             assert_eq!(envelope["command"], expected, "{via:?}: {envelope}");
+            assert!(
+                err.is_empty(),
+                "{via:?}: a JSON run prints its own envelope and nothing else: {}",
+                String::from_utf8_lossy(&err)
+            );
         }
     }
 
     /// fails if a hidden alias goes quiet, or writes its note into stdout where
-    /// it would land inside the `--format json` envelope an operator is piping
-    /// to `jq`.
+    /// it would sit inside the table an operator is reading.
     #[test]
     fn a_hidden_alias_names_the_new_verb_on_stderr_only() {
         let dir = tempfile::tempdir().unwrap();
         let paths = kv_path(&dir);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = set(
+            &mut table_streams(&mut out, &mut err),
+            &paths,
+            &KvSetArgs {
+                key: "bark.cooldown".to_string(),
+                value: "30s".to_string(),
+            },
+            KvVia::Alias("set"),
+        );
+        assert_eq!(code, ExitCode::Success);
+
+        let note = String::from_utf8(err).unwrap();
+        assert!(note.contains("`shep set` moved to `shep kv set`"), "{note}");
+        assert_eq!(
+            note.trim_end(),
+            "notice[moved]: `shep set` moved to `shep kv set`; the old spelling still works",
+            "{note}"
+        );
+
+        // stdout is the answer alone: the note is not in it.
+        let table = String::from_utf8(out).unwrap();
+        assert!(table.contains("bark.cooldown"), "{table}");
+        assert!(!table.contains("moved to"), "{table}");
+    }
+
+    /// A JSON run of a hidden alias prints one object per invocation, which is
+    /// what `--format json` promises: the note is for the terminal reader, and
+    /// a notice envelope beside a failure envelope on stderr is what a consumer
+    /// merging the streams chokes on.
+    #[test]
+    fn a_json_alias_run_prints_one_object_and_no_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = kv_path(&dir);
+
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = set(
@@ -396,16 +458,27 @@ mod tests {
             KvVia::Alias("set"),
         );
         assert_eq!(code, ExitCode::Success);
-
-        let note = String::from_utf8(err).unwrap();
-        assert!(note.contains("`shep set` moved to `shep kv set`"), "{note}");
-        let notice: serde_json::Value = serde_json::from_slice(note.as_bytes()).unwrap();
-        assert_eq!(notice["notice"]["code"], MOVED_NOTICE, "{notice}");
-
-        // stdout is one envelope and nothing else: the note is not in it.
+        assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
         let envelope: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(envelope["command"], "set", "{envelope}");
-        assert!(envelope.get("notice").is_none(), "{envelope}");
+
+        // A failure is the one object on stderr, parseable whole.
+        out.clear();
+        let code = set(
+            &mut streams(&mut out, &mut err),
+            &paths,
+            &KvSetArgs {
+                key: "not a key".to_string(),
+                value: "1".to_string(),
+            },
+            KvVia::Alias("set"),
+        );
+        assert_eq!(code, ExitCode::Usage);
+        assert!(out.is_empty(), "{out:?}");
+        let failure: serde_json::Value = serde_json::from_slice(&err)
+            .unwrap_or_else(|err| panic!("stderr must stay one JSON object: {err}"));
+        assert_eq!(failure["error"]["code"], "usage", "{failure}");
+        assert!(failure.get("notice").is_none(), "{failure}");
     }
 
     /// fails if `shep kv` starts printing the note too: the move is news about

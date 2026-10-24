@@ -39,7 +39,9 @@ having a key called `all` and `shep kv unset all` would then mean something
 different depending on your own store.
 
 `shep set`, `shep get` and `shep unset` still work as hidden aliases and
-print a note on stderr naming the verb each moved to. They are hidden because
+print a note on stderr naming the verb each moved to, in the table format an
+operator reads: under `--format json` they print no note, because that format
+is one object per invocation. They are hidden because
 those three names are being saved for a sheep's or a dog's settings, and a
 script written against them keeps its exit codes, its `--format json`
 envelope, and the `command` key it reads.

@@ -380,7 +380,8 @@ pub enum Commands {
     ///
     /// `shep set` is the store's old spelling. It still works, writes the same
     /// store with the same exit codes, and prints a notice on stderr naming
-    /// `shep kv set`.
+    /// `shep kv set`. Under `--format json` it prints no notice: that format is
+    /// one object per invocation.
     #[command(hide = true)]
     Set(KvSetArgs),
     /// Read one value from the store, or list the whole store with no key, as
@@ -398,7 +399,7 @@ pub enum Commands {
     /// Store the values a Flockfile refers to and never carries.
     ///
     /// Reads and writes `$SHEP_HOME/secrets.json` directly and never
-    /// connects to the shepherd, exactly as `shep set` does: filling the
+    /// connects to the shepherd, exactly as `shep kv set` does: filling the
     /// store before the first `shep start` is the ordinary first run.
     ///
     /// A key holds one value per environment, so production and staging
