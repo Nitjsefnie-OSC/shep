@@ -373,7 +373,7 @@ mod tests {
             BootOptions {
                 dogs: vec![DogSpec {
                     name: "metrics".to_string(),
-                    source: DogSource::BuiltIn,
+                    source: DogSource::BuiltIn { grants: None },
                 }],
                 ..BootOptions::default()
             },

@@ -71,6 +71,7 @@ async fn a_boot_first_dog_handshakes_while_the_socket_is_not_served() {
     let dog = DogSpec {
         name: "linkdog".to_string(),
         source: DogSource::Adopted {
+            grants: None,
             path: script.display().to_string(),
             channel: false,
         },

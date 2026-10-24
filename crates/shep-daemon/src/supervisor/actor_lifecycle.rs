@@ -433,7 +433,8 @@ impl<R: ProcessRunner> Actor<R> {
     /// name is the only thing the two have in common.
     fn built_in_dog_name(&self, id: u32) -> Option<String> {
         let slot = self.sheep.get(&id)?;
-        (slot.entry.dog == Some(DogSource::BuiltIn)).then(|| slot.entry.spec.config().name.clone())
+        matches!(slot.entry.dog, Some(DogSource::BuiltIn { .. }))
+            .then(|| slot.entry.spec.config().name.clone())
     }
 
     /// [`Self::begin_manual`]'s per-id aggregation, taking the matched ids

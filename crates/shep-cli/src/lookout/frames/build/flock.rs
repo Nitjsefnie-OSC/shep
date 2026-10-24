@@ -124,7 +124,7 @@ pub(super) fn build_flock(app: &mut App, which: Scene, t0: Instant) -> Vec<Proce
                     Some(11 << 20),
                     None,
                 ),
-                dog_sheep(90, "bark", DogSource::BuiltIn, None),
+                dog_sheep(90, "bark", DogSource::BuiltIn { grants: None }, None),
             ],
             &[
                 (20, 30, 54),
@@ -200,8 +200,8 @@ pub(super) fn build_flock(app: &mut App, which: Scene, t0: Instant) -> Vec<Proce
         // handshook. `ledger` has no row here, which is what "enabled and
         // absent" means in the settings snapshot `super::armed` applies.
         Scene::SettingsDogs | Scene::SettingsNarrow | Scene::SettingsShort => vec![
-            dog_sheep(90, "otel", DogSource::BuiltIn, None),
-            dog_sheep(91, "bark", DogSource::BuiltIn, Some(false)),
+            dog_sheep(90, "otel", DogSource::BuiltIn { grants: None }, None),
+            dog_sheep(91, "bark", DogSource::BuiltIn { grants: None }, Some(false)),
         ],
         // A flock's two sections at once: three sheep, a healthy built-in
         // dog and a silent adopted one.
@@ -239,11 +239,12 @@ pub(super) fn build_flock(app: &mut App, which: Scene, t0: Instant) -> Vec<Proce
                     Some(8 << 20),
                     None,
                 ),
-                dog_sheep(90, "bark", DogSource::BuiltIn, None),
+                dog_sheep(90, "bark", DogSource::BuiltIn { grants: None }, None),
                 dog_sheep(
                     91,
                     "log-rotate",
                     DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-log-rotate".to_string(),
                         channel: false,
                     },

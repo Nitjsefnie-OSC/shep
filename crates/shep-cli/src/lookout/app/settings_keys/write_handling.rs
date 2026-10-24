@@ -471,7 +471,7 @@ mod tests {
         let Effect::Send(dog) = app.update(Msg::DogWritten {
             edit,
             ticket,
-            result: Ok(DogSource::BuiltIn),
+            result: Ok(DogSource::BuiltIn { grants: None }),
         }) else {
             panic!("a landed file half must raise the daemon half");
         };
@@ -486,7 +486,7 @@ mod tests {
 
         let info = ProcessInfo::builder(50, "metrics", ProcStatus::Online)
             .pid(Some(50_000))
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .build();
         let effect = app.update(Msg::Replied {
             sent: dog,

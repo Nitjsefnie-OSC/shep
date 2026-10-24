@@ -559,7 +559,9 @@ mod tests {
             ProcessInfo::builder(1, "web", ProcStatus::Online).build(),
             ProcessInfo::builder(90, "otel", ProcStatus::Online)
                 .pid(Some(90_000))
-                .dog(Some(shep_core::protocol::DogSource::BuiltIn))
+                .dog(Some(shep_core::protocol::DogSource::BuiltIn {
+                    grants: None,
+                }))
                 .build(),
         ];
         let app = super::super::fixtures::app_with(flock, super::super::fixtures::coloured());

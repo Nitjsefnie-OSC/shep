@@ -61,7 +61,8 @@ impl From<ShepTomlError> for EnableRefusal {
 pub(crate) fn enable_in_config(path: &Path, name: &str) -> Result<DogSource, EnableRefusal> {
     ShepToml::try_edit(path, |cfg| {
         let source = dog_source(cfg, name);
-        if matches!(source, DogSource::BuiltIn) && !crate::dog::BUILT_IN_DOGS.contains(&name) {
+        if matches!(source, DogSource::BuiltIn { .. }) && !crate::dog::BUILT_IN_DOGS.contains(&name)
+        {
             return Err(EnableRefusal::UnknownDog {
                 adopted: cfg.adopted_dog_names(),
             });
@@ -247,7 +248,7 @@ mod tests {
 
         let source = enable_in_config(&path, "metrics").unwrap();
 
-        assert!(matches!(source, DogSource::BuiltIn));
+        assert!(matches!(source, DogSource::BuiltIn { .. }));
         assert!(
             ShepToml::read_only(&path)
                 .unwrap()
@@ -294,7 +295,13 @@ mod tests {
             let mut streams = streams(&mut out, &mut err);
             streams.fmt = Format::Json;
 
-            let code = enable_after_config(&mut streams, "bark", &DogSource::BuiltIn, client).await;
+            let code = enable_after_config(
+                &mut streams,
+                "bark",
+                &DogSource::BuiltIn { grants: None },
+                client,
+            )
+            .await;
 
             assert_eq!(code, ExitCode::Success);
             let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -324,7 +331,7 @@ mod tests {
         let _ = enable_after_config(
             &mut streams(&mut out, &mut err),
             "metrics",
-            &DogSource::BuiltIn,
+            &DogSource::BuiltIn { grants: None },
             Some(&client),
         )
         .await;
@@ -334,7 +341,7 @@ mod tests {
             sent.body,
             Request::EnableDog {
                 name: "metrics".to_string(),
-                source: DogSource::BuiltIn,
+                source: DogSource::BuiltIn { grants: None },
             }
         );
     }
@@ -377,6 +384,7 @@ mod tests {
                 Request::EnableDog {
                     name: "otel".to_string(),
                     source: DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-otel".to_string(),
                         channel,
                     },
@@ -562,7 +570,7 @@ mod tests {
         let code = enable_after_config(
             &mut streams(&mut out, &mut err),
             "bark",
-            &DogSource::BuiltIn,
+            &DogSource::BuiltIn { grants: None },
             Some(&client),
         )
         .await;

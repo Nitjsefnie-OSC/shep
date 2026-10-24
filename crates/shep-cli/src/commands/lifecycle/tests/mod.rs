@@ -108,6 +108,7 @@ fn a_flock_with_a_dog() -> Vec<shep_core::protocol::ProcessInfo> {
         ProcessInfo::builder(2, "rotom", ProcStatus::Online).build(),
         ProcessInfo::builder(3, "log-rotate", ProcStatus::Online)
             .dog(Some(DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
                 channel: false,
             }))
@@ -131,7 +132,7 @@ fn a_foldable_flock() -> Vec<shep_core::protocol::ProcessInfo> {
             .build(),
         ProcessInfo::builder(2, "rotom", ProcStatus::Stopped).build(),
         ProcessInfo::builder(3, "log-rotate", ProcStatus::Online)
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .build(),
     ]
 }

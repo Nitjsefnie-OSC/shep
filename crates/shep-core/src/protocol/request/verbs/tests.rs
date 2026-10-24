@@ -234,7 +234,7 @@ fn request_wire_snapshots() {
             12,
             Request::EnableDog {
                 name: "metrics".to_string(),
-                source: DogSource::BuiltIn,
+                source: DogSource::BuiltIn { grants: None },
             },
         ),
         envelope(

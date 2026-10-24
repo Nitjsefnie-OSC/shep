@@ -291,6 +291,7 @@ pub(crate) mod tests {
             .cpu_percent(pid.map(|_| 0.0))
             .memory_bytes(pid.map(|_| 3 * 1024 * 1024))
             .dog(Some(DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
                 channel: false,
             }))
@@ -387,6 +388,7 @@ pub(crate) mod tests {
         let adopted = DogActionRow::new(
             "log-rotate",
             DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
                 channel: false,
             },

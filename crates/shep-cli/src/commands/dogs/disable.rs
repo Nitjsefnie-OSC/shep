@@ -159,8 +159,13 @@ mod tests {
         let mut streams = streams(&mut out, &mut err);
         streams.fmt = Format::Json;
 
-        let code =
-            disable_after_config(&mut streams, "bark", &DogSource::BuiltIn, Some(&client)).await;
+        let code = disable_after_config(
+            &mut streams,
+            "bark",
+            &DogSource::BuiltIn { grants: None },
+            Some(&client),
+        )
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -183,7 +188,13 @@ mod tests {
         let mut streams = streams(&mut out, &mut err);
         streams.fmt = Format::Json;
 
-        let code = disable_after_config(&mut streams, "bark", &DogSource::BuiltIn, None).await;
+        let code = disable_after_config(
+            &mut streams,
+            "bark",
+            &DogSource::BuiltIn { grants: None },
+            None,
+        )
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -206,7 +217,7 @@ mod tests {
         let _ = disable_after_config(
             &mut streams(&mut out, &mut err),
             "bark",
-            &DogSource::BuiltIn,
+            &DogSource::BuiltIn { grants: None },
             Some(&client),
         )
         .await;
@@ -251,7 +262,7 @@ mod tests {
         let code = disable_after_config(
             &mut streams(&mut out, &mut err),
             "ghost",
-            &DogSource::BuiltIn,
+            &DogSource::BuiltIn { grants: None },
             Some(&client),
         )
         .await;

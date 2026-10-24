@@ -334,6 +334,7 @@ async fn adopt_after_config(
     client: Option<&Client>,
 ) -> ExitCode {
     let source = DogSource::Adopted {
+        grants: None,
         path: path.display().to_string(),
         channel,
     };
@@ -411,6 +412,7 @@ mod tests {
                 Request::EnableDog {
                     name: "otel".to_string(),
                     source: DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-otel".to_string(),
                         channel,
                     },

@@ -278,7 +278,7 @@ mod tests {
             let code = remove_after_config(
                 &mut streams,
                 "otel",
-                Some(DogSource::BuiltIn),
+                Some(DogSource::BuiltIn { grants: None }),
                 client,
                 Removal::Rehome,
             )
@@ -313,6 +313,7 @@ mod tests {
             &mut streams(&mut out, &mut err),
             "otel",
             Some(DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-otel".to_string(),
                 channel: false,
             }),

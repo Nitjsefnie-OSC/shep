@@ -158,7 +158,10 @@ mod tests {
 
         events.send(errored_event("web", None)).unwrap();
         events
-            .send(errored_event("bark", Some(DogSource::BuiltIn)))
+            .send(errored_event(
+                "bark",
+                Some(DogSource::BuiltIn { grants: None }),
+            ))
             .unwrap();
 
         let recorded = await_barks(&barks_path, 1).await;
@@ -184,13 +187,16 @@ mod tests {
             .send(process_event(
                 "bark",
                 ProcessEventKind::Exit,
-                Some(DogSource::BuiltIn),
+                Some(DogSource::BuiltIn { grants: None }),
             ))
             .unwrap();
         // A real `Errored` after it proves the watcher was listening at all:
         // without it, a watcher that recorded nothing would pass.
         events
-            .send(errored_event("bark", Some(DogSource::BuiltIn)))
+            .send(errored_event(
+                "bark",
+                Some(DogSource::BuiltIn { grants: None }),
+            ))
             .unwrap();
 
         let recorded = await_barks(&barks_path, 1).await;

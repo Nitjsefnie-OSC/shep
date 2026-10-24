@@ -781,6 +781,7 @@ mod tests {
         let dog = ProcessInfo::builder(9, "log-rotate", ProcStatus::Online)
             .pid(Some(4_242))
             .dog(Some(DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
                 channel: false,
             }))
@@ -810,6 +811,7 @@ mod tests {
         let dog = ProcessInfo::builder(9, "log-rotate", ProcStatus::Online)
             .pid(Some(4_242))
             .dog(Some(DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
                 channel: false,
             }))

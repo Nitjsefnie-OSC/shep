@@ -131,7 +131,7 @@ async fn enable_dog(ctx: &RpcContext, id: u64, name: &str) -> ProcessInfo {
                 id,
                 Request::EnableDog {
                     name: name.to_string(),
-                    source: DogSource::BuiltIn,
+                    source: DogSource::BuiltIn { grants: None },
                 },
             ),
             ctx,

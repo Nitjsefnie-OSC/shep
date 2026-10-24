@@ -5,7 +5,7 @@ use super::*;
 fn built_in(name: &str) -> crate::dogs::DogSpec {
     crate::dogs::DogSpec {
         name: name.to_string(),
-        source: DogSource::BuiltIn,
+        source: DogSource::BuiltIn { grants: None },
     }
 }
 

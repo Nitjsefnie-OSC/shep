@@ -102,7 +102,7 @@ mod tests {
 
     fn dog_info(name: &str, status: ProcStatus) -> ProcessInfo {
         ProcessInfo::builder(1, name, status)
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .build()
     }
 
