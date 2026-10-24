@@ -195,13 +195,20 @@ pub trait Render: Serialize {
     fn rows_for(&self, _presentation: Presentation, _status_word: bool) -> Vec<Vec<String>> {
         self.rows()
     }
-    /// Table header -> JSON key, the documented name mapping
-    /// (`UPTIME` -> `uptime_ms`, and so on).
+    /// Table header -> JSON key.
     ///
-    /// Defaults to the lowercased header, which is every table whose JSON key
-    /// is its header spelled in lowercase: an impl overrides this only for a
-    /// real rename (`EXIT` -> `last_exit`, `WHEN` -> `at_ms`), and those
-    /// still panic on a header outside their own `headers()`.
+    /// Defaults to the lowercased header, which is the whole mapping for
+    /// every table whose JSON key is its header spelled in lowercase. A table
+    /// whose key is renamed overrides it, and an override keeps the contract
+    /// this method used to state for every impl: it panics on a header
+    /// outside its own `headers()`. `FlockRows` maps `EXIT` -> `last_exit`
+    /// and `UPTIME` -> `uptime_ms`, `BarkRows` maps `WHEN` -> `at_ms`.
+    ///
+    /// The default never panics, and no rendering path calls it: every call
+    /// site sits in `rows`' anti-drift tests, which pass only values taken
+    /// from `Self::headers()` and compare the mapped set against the keys the
+    /// payload really serializes. A header with no key, or a key with no
+    /// header, fails there.
     fn json_key_for(header: &str) -> String {
         header.to_lowercase()
     }
