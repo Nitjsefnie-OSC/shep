@@ -206,6 +206,7 @@ pub(super) fn build<E>(
         channel,
         stdin: config.stdin,
         credentials,
+        dog_link: false,
     })
 }
 

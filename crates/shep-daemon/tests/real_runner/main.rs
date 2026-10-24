@@ -31,6 +31,7 @@ use shep_daemon::tokio_runner::TokioRunner;
 
 mod adoption;
 mod channel;
+mod dog_link;
 mod environment;
 mod identity;
 mod logs;
@@ -52,6 +53,7 @@ fn sh_spec(script: &str, channel: bool, out_file: PathBuf, err_file: PathBuf) ->
         channel,
         stdin: false,
         credentials: None,
+        dog_link: false,
     }
 }
 

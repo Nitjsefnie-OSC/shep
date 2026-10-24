@@ -16,10 +16,17 @@
 
 mod accept_backoff;
 mod conn_protocol;
+#[cfg(unix)]
+mod dog_links;
+#[cfg(all(test, unix))]
+mod link_tests;
+mod origin;
 mod peer_auth;
 mod server_lifecycle;
 #[cfg(test)]
 mod testing;
+#[cfg(unix)]
+pub(crate) use dog_links::serve_dog_links;
 #[cfg(unix)]
 pub use peer_auth::daemon_uid;
 pub use server_lifecycle::RpcServer;

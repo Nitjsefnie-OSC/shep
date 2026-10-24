@@ -421,6 +421,7 @@ fn child_spec(dir: &tempfile::TempDir, program: &str, args: &[&str], stdin: bool
         channel: false,
         stdin,
         credentials: None,
+        dog_link: false,
     }
 }
 
@@ -507,6 +508,7 @@ fn preflight_spec(program: &str, cwd: Option<PathBuf>, path: Option<&str>) -> Sp
         channel: false,
         stdin: false,
         credentials: None,
+        dog_link: false,
     }
 }
 
