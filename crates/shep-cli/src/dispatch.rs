@@ -41,7 +41,8 @@ use crate::home::{
 use crate::remote::{HostScope, Link, host_scope, refuse_host};
 use crate::version_guard::{VersionGuard, connect_client, flock_command};
 use crate::{
-    cli, commands, completions, dog, exit, lookout, output, status, style, welcome, whistle,
+    adopted_help, cli, commands, completions, dog, exit, lookout, output, status, style, welcome,
+    whistle,
 };
 
 /// Parses, resolves `$SHEP_HOME` for the verbs that need it, and dispatches
@@ -94,15 +95,23 @@ pub(crate) async fn run(
         Commands::Completions(ref args) => {
             // Status to stderr: the script on stdout is meant to be sourced,
             // and a status line in it would be executed.
-            if let Ok(paths) = resolve_paths(&cli.global) {
-                let shepherd = status::ShepherdStatus::probe(&paths).await;
+            let paths = resolve_paths(&cli.global).ok();
+            if let Some(paths) = paths.as_ref() {
+                let shepherd = status::ShepherdStatus::probe(paths).await;
                 if std::io::stderr().is_terminal() {
                     let mut err = std::io::stderr();
                     let _ = writeln!(err, "{}", status::one_line(&shepherd));
                 }
             }
+            // The same tolerant read: a home that resolves nothing names no
+            // dogs, and a completion script for the built-in verbs still
+            // prints.
+            let dogs = paths
+                .as_ref()
+                .map(adopted_help::adopted_verbs)
+                .unwrap_or_default();
             let mut out = std::io::stdout().lock();
-            return completions::completions(&mut out, args);
+            return completions::completions(&mut out, args, &dogs);
         }
         Commands::Daemon(ref args) => {
             // `daemon reload` stops a shepherd and starts one rather than

@@ -16,7 +16,15 @@ set -euo pipefail
 # Clean environment: clap renders an `[env: VAR=]` line showing the
 # variable's CURRENT value, so a generator run with e.g. SHEP_HOME set would
 # bake that path into the published reference.
-shep() { env -u SHEP_HOME -u SHEP_STYLE -u NO_COLOR "$BIN" "$@"; }
+#
+# HOME points at an empty directory rather than merely being left alone:
+# `shep --help` lists the adopted dogs registered in the operator's own
+# `~/.shep/shep.toml`, and a published reference must not carry the dogs from
+# whichever machine last regenerated it. USERPROFILE is the same variable
+# under Git Bash and WSL.
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "$SCRATCH"' EXIT
+shep() { env -u SHEP_HOME -u SHEP_STYLE -u NO_COLOR HOME="$SCRATCH" USERPROFILE="$SCRATCH" "$BIN" "$@"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"

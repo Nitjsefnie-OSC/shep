@@ -401,48 +401,6 @@ half. Its entry, and every other item this section used to hold, is now in
 
 ## Known debt, recorded rather than built
 
-### The Windows shepherd channel has no DACL, and the random name is not one
-
-`tokio_runner.rs` creates the channel pipe with the DEFAULT security
-descriptor, which on Windows grants read to Everyone and restricts write, and
-the `accept` that follows authenticates nobody. The 128 random bits in the
-name were added against that, and they close less than the comment there
-originally claimed.
-
-**Prediction versus observation.** The nonce means a hostile local account
-cannot park itself on a name it worked out in advance. It does not stop that
-account WATCHING: the pipe namespace enumerates to any unprivileged local
-user. Measured on Windows 10, from a non-elevated PowerShell,
-`[System.IO.Directory]::GetFiles("//./pipe/")` returned 190 names. An account
-polling that in a loop sees `shep-channel-<pid>-<n>-<nonce>` appear in the
-window between `Listener::bind` and the child's own open, and can connect
-first. What it gets is daemon-to-child frames plus a `wait_ready` sheep that
-never goes online, so: disclosure of whatever an app puts on its channel, and
-a local denial of service against startup.
-
-**Why it is not fixed here.** A restrictive descriptor means
-`ServerOptions::create_with_security_attributes_raw`, which takes a raw
-pointer to a `SECURITY_ATTRIBUTES` this code would have to build, and
-`shep-core` is `#![forbid(unsafe_code)]`. The transport seam would have to
-grow a way to pass a descriptor down, and the descriptor itself would have to
-be built behind `shep_daemon::sys_windows`, which is the only place on that
-platform allowed to write `unsafe`. That is a real design change to the seam
-rather than a one-line fix, which is why it is written down rather than
-squeezed into the Windows tier's own pull request.
-
-**Severity, honestly: this is recorded, not queued.** It needs an attacker
-already running code as a DIFFERENT account on the same machine, winning a
-millisecond race, against a Windows install running shep. The maintainer's read, and it
-is the right one: a shep-on-Windows user who also has a hostile local account
-on the same box is close to a nonexistent population, and the fix costs a
-redesign of the transport seam plus new unsafe FFI. Do not spend that on
-this. It is written down because the docs used to imply a random name was a
-security boundary, and a false claim in published docs is worth correcting
-whatever the exploit likelihood. The claim is fixed. The DACL is a someday.
-
-Tracked as https://github.com/shep-pm/shep/issues/350.
-
-
 ### What the reload-readiness fix does NOT cover -- open, 2026-08-28
 
 Three residuals, recorded because each was a deliberate stopping point rather

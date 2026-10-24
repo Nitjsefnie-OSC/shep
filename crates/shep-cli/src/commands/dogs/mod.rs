@@ -50,6 +50,11 @@ pub use enable::enable;
 pub use remove::rehome;
 pub(crate) use remove::{Removal, remove_dog};
 pub use vet::{DogSchema, warn_of_a_dog_a_restart_would_break};
+// `adopted_help` lists the registry's dogs in `--help` and in a completion
+// script from the cache `adopt` already filled, and skips a name a verb
+// already owns. Both reach this directory's own machinery.
+pub(crate) use adopt::collides_with_a_verb;
+pub(crate) use vet::cached_manifest;
 
 // `pub(crate)` re-exports: reached from other modules by their original
 // `dogs::<name>` path, so the split stays invisible to every caller outside
