@@ -107,7 +107,11 @@ export const BUDGETS: Record<string, number> = {
   // measures 4942 with neither side's prose cut. Neither is trimmable for
   // the other's sake.
   "writing-a-dog": 4950,
-  overrides: 3380,
+  // Raised from 3380 on 2026-10-24 for "Dropping one override": `shep unset`
+  // is a new verb that undoes `shep set`, and the page's only other way to
+  // put a setting back was a whole-file `--reset`, so the section is new
+  // operator-facing surface, not prose to trim back out.
+  overrides: 3440,
   // Raised from 3240 on 2026-09-27 for "A sheep's dogs row": the sub-screen
   // and the per-sheep table pane are new operator-facing surface, not
   // prose to trim back out.
