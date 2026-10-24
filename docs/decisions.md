@@ -20,7 +20,7 @@ go for the full argument. The commit that removed them names itself.
 ## Contents
 
 - [Core types and the daemon's shape](#core-types-and-the-daemons-shape) (5)
-- [The CLI surface](#the-cli-surface) (4)
+- [The CLI surface](#the-cli-surface) (5)
 - [Supervision and lifecycle](#supervision-and-lifecycle) (18)
 - [The log plane](#the-log-plane) (9)
 - [Reload](#reload) (9)
@@ -122,6 +122,14 @@ A dedicated research pass ranked three options for the daemon-boot readiness han
 **Why:** The actual outcome (recorded in the Phase 2b/3 plan corrections) took neither pure C nor pure A: sys.rs, adopt_fd, and BootOptions::ready_fd all still exist in the codebase today, but the CLI's main() never populates ready_fd (stays None unconditionally) and never calls adopt_fd - readiness is established entirely via the HelloAck handshake instead. This is functionally equivalent to C's argument (the mechanism carries zero production weight) while stopping short of deleting the code, likely because deleting a spec'd protocol and retiring numbered IR rules needed a maintainer sign-off the researcher explicitly flagged as a judgement call outside CLAUDE.md's decision-reservation list.
 
 `docs/research/phase3-readiness-decision.md (research); shipped resolution recorded in docs/writing-plans/plans/2026-08-07-shep-phase2b-daemon-plane.md:2033; verified still true at crates/shep-daemon/src/sys.rs and boot.rs`
+
+### The key/value store moved to `shep kv`, with the old verbs left as hidden aliases
+
+`shep kv get`, `shep kv set` and `shep kv unset` are the store's verbs. `shep set`, `shep get` and `shep unset` still parse, still write the same file with the same exit codes, still answer under the `command` key each was called by, and print a `moved` notice on stderr.
+
+**Why:** #1073 is about to make `shep set`, `get` and `unset` mean a sheep's or a dog's settings, and a junk drawer cannot hold a name that is about to mean something else. Hidden rather than deleted because the store is a provisioning tool and scripts written against the old spelling are the point of it; the notice is what tells an operator at a terminal the verb moved. The notice goes on stderr so a `--format json` run's stdout envelope is unchanged by it. Each spelling answers under its own `command` key (`kv`, or the verb as typed) following `rehome`'s precedent, so a script that keys on `envelope["command"]` keeps working through the move. `secret` and `host` are the precedent for a host verb's envelope naming only the host (`"kv"`, not `"kv set"`).
+
+`issue #1073 (Implementation Decisions) and issue #1082; verified crates/shep-cli/src/cli/verbs.rs and crates/shep-cli/src/commands/kv.rs`
 
 ## Supervision and lifecycle
 
