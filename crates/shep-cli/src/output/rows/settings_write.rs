@@ -13,7 +13,7 @@ use super::toolkit::{Paint, paint};
 /// One settings write: which holder the address named, the keys it changed,
 /// and the run's own verdict.
 ///
-/// The four fields beside `changes` have no column, for [`CopyReport`]'s
+/// The four fields beside `changes` have no column, for [`crate::output::CopyReport`]'s
 /// reason: the table prints the change list, which is what the confirmation
 /// question is asked beside, and the run's state rides as a notice line.
 ///

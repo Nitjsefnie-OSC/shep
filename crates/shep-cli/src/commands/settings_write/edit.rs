@@ -1,10 +1,10 @@
 //! The `dogs.toml` half of `shep set`: one key written into the section text
 //! the shepherd answered, in the form that text already spells it in.
 //!
-//! [`Request::SetDogConfig`] replaces a whole section, so the only way a
-//! comment the operator wrote inside one survives the write is to change the
-//! text that was read rather than render a map back. Every helper here works
-//! on a `toml_edit` document for that reason.
+//! [`shep_core::protocol::Request::SetDogConfig`] replaces a whole section, so
+//! the only way a comment the operator wrote inside one survives the write is
+//! to change the text that was read rather than render a map back. Every
+//! helper here works on a `toml_edit` document for that reason.
 
 use serde_json::{Map, Value as Json};
 use toml_edit::{Decor, DocumentMut, Item, Table, Value as TomlValue};
@@ -105,8 +105,8 @@ fn header_table(map: &Map<String, Json>, decor: Decor) -> Table {
     nested
 }
 
-/// `held` as the dotted suffix [`copy::plan::set_path`] names a held value
-/// with.
+/// `held` as the dotted suffix [`crate::commands::copy::plan::set_path`] names
+/// a held value with.
 pub(super) fn dotted(held: &str) -> String {
     if held.is_empty() {
         String::new()
