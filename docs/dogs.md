@@ -531,6 +531,14 @@ socket in the first place, and `$SHEP_DOG_NAME`, which is the `name` to put
 in that request. No `[<name>]` value ever rides along beside them, for
 the reason given above. A section's key is not one of its values.
 
+On unix the shepherd also hands a supervised dog a connection that is already
+open, as descriptor 4 named in `$SHEP_DOG_FD`. It speaks the same protocol as
+the socket and is served from the dog's spawn, so it works during the muster
+restore, when the socket does not yet answer. The connection is the dog's
+identity: a `dog_name` sent on it is ignored. Fall back to the socket when the
+variable is absent or the connection closes. A dog started by hand has none.
+`DogRuntime` does all of this.
+
 **Put that name in the `Hello` too, as `dog_name`.** Optional, and nothing
 breaks without it right up until the shepherd is replaced by one your binary
 is too old to speak to. A refused handshake never reaches a request, so the
@@ -575,7 +583,7 @@ for a new one after a handover and reconciles whatever it missed. See
 "When the shepherd goes away" below for what a dog does when no successor
 answers.
 
-Those two are what shep ADDS, not the whole environment. A dog is a
+Those are what shep ADDS, not the whole environment. A dog is a
 supervised process like any other, so it also starts from the small base
 every sheep gets: `PATH`, plus whichever of `HOME`, `USER`, `LANG` and `TZ`
 the shepherd itself has, plus `SHEP_INSTANCE`, `SHEP_NAME` and
