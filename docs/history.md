@@ -624,6 +624,27 @@ sheep. `shep unset` stopped being the key/value store's hidden spelling at the
 same time, so none of the store's old verbs remain. Wire change: additive
 `ResetSheepField` and `SheepFieldReset`, no `PROTOCOL_VERSION` move.
 
+**A dog can refuse a settings write before shep makes it** (issue #1098,
+under the settings spec #1073). A manifest declaring `validate` gets a
+`shep.validate` trigger on its channel before `shep set`, `shep unset` or a
+lookout write to that dog's settings lands, carrying the table the write would
+leave behind: `{"table": {...}, "sheep": "api"}`, with no `sheep` key for a
+dog's own section. The dog answers `{"accept":true}` or
+`{"accept":false,"reason":"..."}` on the channel it already answers `shep
+trigger` and its stop message on, and `shep_client::dogs::validate_answer`
+writes that body from one closure. A refusal, an answer that is not a verdict,
+and a dog that answered nothing inside its own `action_timeout` each stop the
+write, and the dog's own sentence is what the operator reads: `shep set` exits
+`invalid_config`, and lookout's pane reports the same
+`RequestError::Rpc` it reports a shepherd's own refusal with. A dog that
+declared nothing is never asked, and a dog in the flock with no live channel
+is not asked either, because its settings are what an operator edits before
+`shep enable`. `shep adopt` refuses a manifest declaring `validate` without
+`channel`: the check could never run. The ask is client-side, in
+`dog_settings::ask_dog`, and both doors use it, `settings_write::flow::run`
+and `lookout::source::ClientFlock::send`. No wire change: the ask is
+`Request::Trigger`, and `Manifest.validate` shipped with the manifest.
+
 **A community dog index lists the dogs others have written, and shep prints
 how to install one without running anything** (2026-08-21 for the index and
 its parser, 2026-08-23 for the verb). `web/public/dogs.json` is a document
