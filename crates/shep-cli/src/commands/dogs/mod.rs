@@ -36,6 +36,7 @@ mod enable;
 mod grant;
 mod grants;
 mod remove;
+mod upgrade;
 mod vet;
 
 #[cfg(all(test, unix))]
@@ -54,6 +55,8 @@ mod enable_builtin_tests;
 mod grant_tests;
 #[cfg(all(test, unix))]
 mod manifest_adoption_tests;
+#[cfg(all(test, unix))]
+mod upgrade_tests;
 #[cfg(test)]
 mod test_support;
 
@@ -62,6 +65,7 @@ pub use barks::barks;
 pub use disable::disable;
 pub use enable::enable;
 pub(crate) use grant::{Change, change};
+pub(crate) use upgrade::{upgrade_grants, upgrade_notice};
 pub use remove::rehome;
 pub(crate) use remove::{Removal, remove_dog};
 pub use vet::{DogSchema, warn_of_a_dog_a_restart_would_break};

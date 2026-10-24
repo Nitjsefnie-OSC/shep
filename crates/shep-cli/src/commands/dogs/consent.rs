@@ -38,9 +38,9 @@ pub(super) struct Mode {
 /// One permission a dog declared that this shep knows.
 #[derive(Debug)]
 pub(super) struct Listed {
-    name: String,
-    required: bool,
-    reason: String,
+    pub(super) name: String,
+    pub(super) required: bool,
+    pub(super) reason: String,
 }
 
 /// What a dog's manifest comes to once read by this shep.
