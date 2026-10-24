@@ -28,19 +28,21 @@ pub(super) enum Side {
 pub(super) enum Origin {
     /// Accepted on the control socket.
     Socket,
-    /// The connection a dog was spawned holding. Unix only, as the socketpair
-    /// it is made from is.
-    #[cfg(unix)]
+    /// The connection a dog was spawned holding: a socketpair on unix, a pipe
+    /// the dog opened by name on Windows.
     Dog {
         /// The dog's name, from the spec that spawned it.
         name: String,
         /// The pid it was spawned under.
         pid: u32,
-        /// This connection's row in the table a handover carries from.
+        /// This connection's row in the table a handover carries from. Unix
+        /// only, as the handover is.
+        #[cfg(unix)]
         lease: Arc<Lease>,
         /// The topics the dog had subscribed to, for a connection a
         /// predecessor had already greeted and handed over, and `None` for
-        /// one opened at this spawn, whose dog has yet to say `Hello`.
+        /// one opened at this spawn, whose dog has yet to say `Hello`. Always
+        /// `None` on Windows.
         resumed: Option<Vec<String>>,
     },
 }
@@ -53,7 +55,6 @@ impl Origin {
     pub(super) fn dog<'a>(&'a self, claimed: Option<&'a str>) -> Option<&'a str> {
         match self {
             Self::Socket => claimed,
-            #[cfg(unix)]
             Self::Dog { name, .. } => Some(name),
         }
     }
@@ -65,7 +66,6 @@ impl Origin {
     pub(super) fn pid(&self, reported: Option<u32>) -> Option<u32> {
         match self {
             Self::Socket => reported,
-            #[cfg(unix)]
             Self::Dog { pid, .. } => Some(*pid),
         }
     }
@@ -75,7 +75,6 @@ impl Origin {
     pub(super) fn resumed(&self) -> Option<&[String]> {
         match self {
             Self::Socket => None,
-            #[cfg(unix)]
             Self::Dog { resumed, .. } => resumed.as_deref(),
         }
     }
@@ -169,7 +168,6 @@ impl Attribution {
     pub(super) fn new(origin: &Origin) -> Self {
         match origin {
             Origin::Socket => Self::default(),
-            #[cfg(unix)]
             Origin::Dog { name, .. } => Self {
                 dog: Some(name.clone()),
                 seen: BTreeSet::new(),

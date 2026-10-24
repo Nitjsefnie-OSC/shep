@@ -1410,3 +1410,22 @@ removal or a retype of `data` itself. The key is dropped when empty, so every
 reload that refused nothing prints the three fields it always did. Verified
 against a live daemon and documented on the JSON output page, which claimed
 three fields for every command.
+
+### The Windows shepherd channel has no DACL, and the random name is not one -- FIXED, 2026-10-24
+
+The channel pipe was created with the default security descriptor, which on
+Windows grants read to Everyone, and the `accept` that followed authenticated
+nobody. The 128 random bits in its name closed less than the comment there
+claimed: the pipe namespace enumerates to any local user, so another account
+could watch for the name and connect first.
+
+The channel pipe and each dog's own pipe are now created with a descriptor
+that admits only the shepherd's own user. `shep_core::transport::Listener`
+takes a `PipeInstances` through `bind_with`, and `shep_daemon::sys_windows`
+implements it, the one place on Windows allowed to write `unsafe`. The name
+keeps its nonce as a second layer.
+
+The control pipe still has the default descriptor and is not covered. The
+descriptor is checked by reading the DACL back from a pipe, as no second
+account can be signed in from a test. Tracked as
+https://github.com/shep-pm/shep/issues/350.

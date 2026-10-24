@@ -1,6 +1,5 @@
 #[cfg(unix)]
 use super::AdoptedReaper;
-#[cfg(unix)]
 use super::dog_link::DogLink;
 use super::log_protocol::{ExitOutcome, LogCtl, LogLine};
 use crate::channel::{ChildMessage, ShepherdMessage};
@@ -224,11 +223,13 @@ pub struct SpawnSpec {
     /// identity). Resolved once per `Start` by `crate::privilege::resolve`;
     /// see that module for how `user`/`group` config names become this.
     pub credentials: Option<Credentials>,
-    /// Hand the child a connection to the shepherd, open from spawn (a dog's
-    /// fd 4 socketpair, named in [`shep_core::dogs::DOG_LINK_FD_VAR`]).
+    /// Hand the child a connection to the shepherd: on unix a dog's fd 4
+    /// socketpair, open from spawn and named in
+    /// [`shep_core::dogs::DOG_LINK_FD_VAR`], and on Windows a named pipe the
+    /// dog opens, named in [`shep_core::dogs::DOG_LINK_PIPE_VAR`].
     ///
-    /// Unix only: a runner on Windows ignores it. Set by the supervisor for a
-    /// dog and never by `assemble`, so a sheep cannot ask for one.
+    /// Set by the supervisor for a dog and never by `assemble`, so a sheep
+    /// cannot ask for one.
     pub dog_link: bool,
 }
 
@@ -378,7 +379,6 @@ pub trait ProcessRunner: Send + Sync + 'static {
     /// set, once the child has a pid. The first call returns the receiver and
     /// every later one `None`, so a runner has one server. The default is
     /// `None`: a runner that opens no connections has nothing to serve.
-    #[cfg(unix)]
     fn dog_links(&self) -> Option<mpsc::UnboundedReceiver<DogLink>> {
         None
     }

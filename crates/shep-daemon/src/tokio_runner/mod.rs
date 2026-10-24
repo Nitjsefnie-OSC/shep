@@ -55,6 +55,8 @@ mod line_reader;
 mod log_file;
 mod pump;
 mod runner;
+#[cfg(windows)]
+mod windows_pipe;
 
 #[cfg(test)]
 mod tests;
