@@ -165,10 +165,13 @@ automatically.** The first boot of a shep carrying this move reads any
 `[dog.<name>]` sections still in `shep.toml`, writes them into `dogs.toml`
 under their bare name, strikes them from `shep.toml`, and prints which
 dogs moved. Every boot after that finds nothing to do. `shep runtime` and
-`shep dev` migrate too: any boot does. If a name carries values in both
-files, the daemon refuses to boot rather than guess which is right, and
-`shep daemon reload` refuses before it signals the shepherd it was going
-to replace. Delete one of the two sections. The likeliest way to hit that
+`shep dev` migrate too: any boot does, and `shep adopt` of a dog whose
+manifest carries `defaults` migrates before writing them, so a legacy
+section moves instead of colliding with a seeded one. If a name carries
+values in both files, the daemon refuses to boot rather than guess which is
+right, `shep daemon reload` refuses before it signals the shepherd it was
+going to replace, and so does an `adopt` that would seed defaults into that
+home. Delete one of the two sections. The likeliest way to hit that
 is hand-writing `[dog.metrics]` back into `shep.toml` after it already
 migrated, so check `dogs.toml` first. An empty `[dog.<name>]`, which
 `shep enable` scaffolded before this move, is not a value and refuses
@@ -915,7 +918,7 @@ manifest.
 | `name`, `version`, `protocol` | Who the dog is, and the wire protocol it speaks. |
 | `channel` | Whether it asks for the shepherd channel. |
 | `settings` | The JSON Schema `--schema` answers, byte for byte. |
-| `defaults` | TOML text for the dog's own section. |
+| `defaults` | TOML text for the dog's own section. `shep adopt` writes it as that section in `dogs.toml` when the dog has none. |
 | `permissions` | Each with `name`, `required` and `reason`. |
 | `verb` | `description`, and `subcommands` each with `name` and `about`. |
 | `depends` | `dogs`, each with `name` and a version range `version`; `shep`, the oldest shep supported. |
@@ -930,8 +933,14 @@ non-zero exit, means the dog has none: it is adopted through `--version` and
 `shep adopt` takes the version, protocol, channel ask and schema from the
 manifest when there is one. It caches the manifest in `$SHEP_HOME/manifests`
 under the binary's sha256, so a build is asked once and a rebuilt binary is
-asked again. `shep adopt` and `shep enable` warn, and go ahead, when a dog in
-`depends` is not adopted or `depends.shep` is newer than this shep. A
+asked again. When the manifest carries `defaults` and `dogs.toml` holds no
+section for the dog, `shep adopt` writes them as that section; a section the
+operator already wrote is never touched, a `defaults` that is not valid
+TOML is a warning, not a refusal, and a `dogs.toml` that is not valid TOML
+refuses the adopt rather than being replaced. A dog that declares no `defaults` writes
+nothing, and no dog needs a `--print-config`-style flag of its own to ship
+them any more. `shep adopt` and `shep enable` warn, and go ahead, when a dog
+in `depends` is not adopted or `depends.shep` is newer than this shep. A
 dependency's own version is not checked.
 
 `Probe` builds it from what the dog already gives it. `permission`, `verb`,

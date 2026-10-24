@@ -325,6 +325,18 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       asked once, and a rebuilt binary is asked again.
     </p>
     <p>
+      <code>defaults</code> is TOML text for the body of the dog's own
+      section. When a manifest carries it and <code>dogs.toml</code> holds no
+      section for the dog, <code>shep adopt</code> writes it as that section:
+      the adopted dog arrives with its knobs filled in, where the operator
+      edits them, so a dog needs no <code>--print-config</code>-style flag of
+      its own any more. A section the operator already wrote is never
+      touched, and a <code>defaults</code> that is not valid TOML earns a
+      warning, not a refusal.
+    </p>
+    <CodeBlock>{`notice[dog_defaults_written]: otel's manifest defaults are now its \`[otel]\` section in dogs.toml, where you can edit them
+notice[dog_defaults_unreadable]: otel shipped a manifest whose \`defaults\` is not valid TOML, so nothing was added to dogs.toml for it. The dog is adopted and runs normally; this is a bug to report to whoever wrote it`}</CodeBlock>
+    <p>
       <code>depends</code> names the dogs a dog needs and the oldest shep it
       supports. <code>shep adopt</code> and <code>shep enable</code> warn
       when a named dog isn't adopted or this shep is older, and go ahead

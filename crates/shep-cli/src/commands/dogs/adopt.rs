@@ -9,6 +9,9 @@ use shep_core::paths::{ShepPaths, user_home};
 use shep_core::protocol::{DogSource, Request, Response};
 
 use crate::cli::AdoptArgs;
+use crate::commands::dog_migration::{
+    DefaultsOutcome, DogMigrationError, migrate_dog_sections, seed_dog_defaults,
+};
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::shep_toml::ShepToml;
 use crate::exit::ExitCode;
@@ -68,6 +71,39 @@ pub async fn adopt(streams: &mut Streams<'_>, paths: &ShepPaths, args: &AdoptArg
         Ok(adopted) => adopted,
         Err(err) => return fail_config(streams, &err),
     };
+    // The registration is in, so the defaults half is the last config write
+    // `adopt` makes and it still precedes any socket: a dog adopted against
+    // no shepherd gets its section too.
+    if let Some(defaults) = vetted
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.defaults.as_deref())
+    {
+        // A home that still holds `[dog.<name>]` values in `shep.toml` must
+        // move them before a seeded section could sit beside them: seeding
+        // first would write a second copy of a section the boot's migration
+        // then refuses to move for holding values in both files. The
+        // migration is what the next boot runs anyway, and it is idempotent,
+        // so running it here only moves that boot's work earlier, where the
+        // operator is watching. Same report as `shep reload` gives.
+        match migrate_dog_sections(paths) {
+            Ok(moved) if moved.is_empty() => {}
+            Ok(moved) => streams.aside(
+                "adopt",
+                &format!(
+                    "moved dog config out of shep.toml and into dogs.toml: {}",
+                    moved.join(", ")
+                ),
+            ),
+            Err(err) => return fail_dogs_config(streams, &err),
+        }
+        match seed_dog_defaults(paths, &name, defaults) {
+            Ok(DefaultsOutcome::Written) => report_defaults_written(streams, &name),
+            Ok(DefaultsOutcome::Kept | DefaultsOutcome::Empty) => {}
+            Ok(DefaultsOutcome::Unreadable) => warn_unreadable_defaults(streams, &name),
+            Err(err) => return fail_dogs_config(streams, &err),
+        }
+    }
     if let Some(manifest) = &vetted.manifest {
         warn_of_unmet_depends(streams, &name, manifest, &adopted);
     }
@@ -233,6 +269,59 @@ fn fail_adopt_name_collision(streams: &mut Streams<'_>, name: &str) -> ExitCode 
          be reached -- pick another name with --name"
     );
     streams.fail(code, &message)
+}
+
+/// [`emit_notice`](crate::output::emit_notice) code for the report that a
+/// manifest's defaults became the dog's section; not a failure.
+const DOG_DEFAULTS_WRITTEN_NOTICE: &str = "dog_defaults_written";
+
+/// Tells the operator that the dog's own defaults are now its section in
+/// `dogs.toml`.
+///
+/// The whole point of writing them is that the operator now has the knobs
+/// where they can edit them, and this is the one line saying where that is.
+fn report_defaults_written(streams: &mut Streams<'_>, name: &str) {
+    let message = format!(
+        "{name}'s manifest defaults are now its `[{name}]` section in dogs.toml, where \
+         you can edit them"
+    );
+    streams.aside(DOG_DEFAULTS_WRITTEN_NOTICE, &message);
+}
+
+/// [`emit_notice`](crate::output::emit_notice) code for the unreadable-
+/// defaults warning; not a failure.
+const DOG_DEFAULTS_UNREADABLE_NOTICE: &str = "dog_defaults_unreadable";
+
+/// Warns that `name` shipped a manifest whose `defaults` is not valid
+/// TOML, and lets the adopt proceed.
+///
+/// The dog's bug, told the same way an unreadable schema is told: the dog
+/// is adopted, its section is not written, and the one who wrote the dog
+/// is the one to fix it.
+fn warn_unreadable_defaults(streams: &mut Streams<'_>, name: &str) {
+    let message = format!(
+        "{name} shipped a manifest whose `defaults` is not valid TOML, so nothing was \
+         added to dogs.toml for it. The dog is adopted and runs normally; this is a bug to \
+         report to whoever wrote it"
+    );
+    streams.aside(DOG_DEFAULTS_UNREADABLE_NOTICE, &message);
+}
+
+/// Renders a `dogs.toml` or migration failure and returns its exit code.
+///
+/// A `dogs.toml` that is not valid TOML is the operator's broken config, so
+/// [`ExitCode::InvalidConfig`] like a broken `shep.toml`, and so are the
+/// migration's two refusals: a name holding values in both files, and a
+/// `[dog]` whose names did not come back as sections. The I/O modes have no
+/// more specific code than [`ExitCode::Failure`].
+fn fail_dogs_config(streams: &mut Streams<'_>, err: &DogMigrationError) -> ExitCode {
+    let code = match err {
+        DogMigrationError::Parse(_)
+        | DogMigrationError::WouldOverwrite { .. }
+        | DogMigrationError::SectionsUnreadable { .. } => ExitCode::InvalidConfig,
+        _ => ExitCode::Failure,
+    };
+    streams.fail(code, &err.to_string())
 }
 
 /// `adopt`'s daemon half; see enable_after_config for the split and for
