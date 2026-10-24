@@ -27,6 +27,10 @@ fn schema() -> Value {
                     "rate": { "type": "number", "exclusiveMinimum": 0 },
                     "tags": { "type": "array", "items": { "type": "string", "minLength": 3 } },
                     "levels": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+                    "modes": {
+                        "type": "array",
+                        "items": { "oneOf": [{ "const": "ask" }, { "const": "auto" }] },
+                    },
                     "merge": { "enum": ["ask", "auto"] },
                     "hours": {
                         "type": "object",
@@ -94,6 +98,7 @@ fn accepted() -> Value {
         "rate": 1.5,
         "tags": ["ask", "auto"],
         "levels": [1, 2],
+        "modes": ["ask", "auto"],
         "merge": "ask",
         "hours": { "start": "09:30" },
         "hosts": [{ "name": "build", "weight": 2 }],
@@ -593,4 +598,18 @@ fn a_type_refusal_for_a_secret_names_the_marker_and_not_the_value() {
         "token is \"<set>\", which is not a string shep accepts"
     );
     assert!(!refused.text.contains("90210"), "{}", refused.text);
+}
+
+/// The closed set spelled as a `oneOf` of `const`s, which publishes no `enum`
+/// and so leaves `bounds.choices` empty: the names reach the walk through
+/// [`ListItem::Choice`], and an element outside them is refused at its index.
+#[test]
+fn a_list_item_closed_set_spelled_as_a_one_of_refuses_a_name_it_does_not_carry() {
+    let refused = table_refusal(&schema(), &table(json!({ "modes": ["ask", "never"] })))
+        .expect("never is not one of the two names the item carries");
+    assert_eq!(refused.path, ["modes", "1"]);
+    assert_eq!(
+        refused.text,
+        "modes.1 is \"never\"; modes.1 takes one of ask, auto"
+    );
 }

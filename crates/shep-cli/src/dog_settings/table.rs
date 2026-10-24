@@ -48,7 +48,7 @@ use crate::lookout::field::{
 };
 
 use super::numbers::{integer_refusal, number_refusal};
-use super::{item_refusal, not_a_number, not_a_whole_number, refusal, shown_value};
+use super::{item_refusal, not_a_number, not_a_whole_number, refusal, shown_value, takes_one_of};
 
 /// Why a proposed table is not one the dog's schema takes.
 ///
@@ -278,7 +278,7 @@ fn scalar_refusal(
         // never reaches [`refusal`] at all. A table can hold anything.
         FieldKind::Choice(names) => match value.as_str() {
             Some(text) if names.iter().any(|name| name == text) => None,
-            _ => report(scope, path, takes_one_of(key, &shown, names)),
+            _ => report(scope, path, takes_one_of(key, &shown, names).text),
         },
         FieldKind::List(item) => {
             let Some(elements) = value.as_array() else {
@@ -525,17 +525,4 @@ fn not_a_list(key: &str, shown: &str) -> String {
 
 fn not_a_table(key: &str, shown: &str) -> String {
     format!("{key} is \"{shown}\", which is not a table shep accepts")
-}
-
-/// The refusal for a value a closed set does not name, in the sentence shape
-/// [`super::enum_refusal`] gives an `enum`, built from the set the
-/// [`crate::lookout::field::FieldKind::Choice`] itself holds rather than
-/// through that door: a closed set can come from a `oneOf` of `const`s, where
-/// `bounds.choices` holds nothing and [`super::enum_refusal`] would fail open.
-/// The set is the one rule an operator can satisfy by copying from it.
-fn takes_one_of(key: &str, shown: &str, names: &[String]) -> String {
-    format!(
-        "{key} is \"{shown}\"; {key} takes one of {}",
-        names.join(", ")
-    )
 }

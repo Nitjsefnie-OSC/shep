@@ -227,6 +227,30 @@ fn takes_no_value(key: &str) -> Refusal {
     }
 }
 
+/// The refusal for a value a closed set does not name, where the set is the
+/// one the field's own kind holds rather than the one `bounds.choices` holds.
+///
+/// Not [`enum_refusal`]: a closed set can come from a `oneOf` of `const`s,
+/// where `bounds.choices` holds nothing and [`enum_refusal`] fails open on it.
+/// [`table`]'s scalar arm and [`items`]'s choice-item arm answer with this one
+/// so a set is enforced whichever way the schema spelled it.
+///
+/// The refusal lists the set because it is the one rule an operator can
+/// satisfy by copying from it.
+///
+/// `shown` is what may be printed, which [`shown_value`] has already resolved.
+///
+/// `pub(crate)`: [`table`] and [`items`] build their closed-set refusals with
+/// it, and neither can reach [`enum_refusal`], which is private to this module.
+pub(crate) fn takes_one_of(key: &str, shown: &str, names: &[String]) -> Refusal {
+    Refusal {
+        text: format!(
+            "{key} is \"{shown}\"; {key} takes one of {}",
+            names.join(", ")
+        ),
+    }
+}
+
 /// The refusal for a value a schema's `enum` does not list, [`None`] when the
 /// schema named no `enum` or `value` is one of the values it named.
 ///
@@ -243,11 +267,10 @@ fn takes_no_value(key: &str) -> Refusal {
 /// the numbers, and comparing a typed `"1"` against a published `1` is a
 /// comparison of strings.
 ///
-/// [`items`] and [`numbers`] each build their `enum` arm with it. [`table`]'s
-/// arm for a closed set the pane drew as a cycle widget does not: a
-/// [`crate::lookout::field::FieldKind::Choice`] can come from a `oneOf` of
-/// `const`s, where `bounds.choices` holds nothing, and this door would fail
-/// open on the set the schema really published.
+/// [`items`] and [`numbers`] each build their `enum` arm with it, from the set
+/// `bounds.choices` holds. A closed set spelled as a `oneOf` of `const`s lands
+/// in the kind instead, and [`table`] and [`items`] answer for it through
+/// [`takes_one_of`].
 fn enum_refusal(key: &str, bounds: &Bounds, value: &Value, shown: &str) -> Option<Refusal> {
     if bounds.choices.is_empty()
         || bounds
