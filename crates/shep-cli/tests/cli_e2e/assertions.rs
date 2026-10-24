@@ -153,6 +153,16 @@ pub(crate) fn assert_envelope_matches_fixture(
     );
 }
 
+/// `output`'s two streams joined, stdout then stderr, each decoded lossily.
+///
+/// For a claim about what an operator could have seen anywhere: a secret's
+/// value must reach neither stream, so neither one gets read alone.
+pub(crate) fn combined_output(output: &Output) -> String {
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    text
+}
+
 /// Asserts a failed `--format json` invocation kept `stdout` empty and put a
 /// parseable `{"schema_version", "error": {"code", "message"}}` object on
 /// `stderr`. Only this tier has two real streams.
