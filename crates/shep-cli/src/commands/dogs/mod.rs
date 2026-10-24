@@ -80,7 +80,7 @@ pub(crate) use vet::cached_manifest;
 // `VERSION_BUDGET`.
 pub(crate) use disable::disable_in_config;
 pub(crate) use enable::{EnableRefusal, enable_in_config, join_with_and};
-pub(crate) use vet::{VERSION_BUDGET, ask_schema, dog_env, read_manifest};
+pub(crate) use vet::{ManifestRead, VERSION_BUDGET, ask_schema, dog_env, read_manifest};
 
 /// [`DogActionRow`]'s status when
 /// `enable` wrote the config and no shepherd answered. A success outcome:

@@ -16,14 +16,56 @@ use super::{AdoptRefusal, DogSchema, ask};
 /// that answered [`MANIFEST_FLAG`].
 const CACHE_DIR: &str = "manifests";
 
+/// What a binary's manifest answered. Three answers, in the shape
+/// [`super::DogSchema`] uses one flag over.
+///
+/// The line is between a dog that has no manifest and a record of one this
+/// machine cannot read. A dog that gave nothing, in any of the ways a dog gives
+/// nothing, declared nothing: that is every dog adopted before
+/// [`MANIFEST_FLAG`], every dog built on a `parse_args` that rejects an unknown
+/// flag, and every dog that ignores the flag and runs. A cache file is the
+/// other thing: shep wrote it itself, out of a probe that answered a manifest,
+/// and a record it cannot read back leaves a declaration unread rather than
+/// never made.
+// `large_enum_variant` allowed, not fixed: clippy's remedy is to box
+// `Manifest`, and that buys nothing. This enum lives for one read of one
+// manifest inside one command, its payload is read field by field and
+// dropped, and nothing here holds a collection of them.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub(crate) enum ManifestRead {
+    /// The manifest, from the cache or from the binary.
+    Read(Manifest),
+    /// The binary gave no manifest: it printed nothing, printed something that
+    /// is not a manifest, exited with a failure, or was still running when
+    /// `budget` ran out. Nothing was ever recorded for this build, so no
+    /// declaration is being missed.
+    Absent,
+    /// The cache holds a file for this exact binary, and neither that file nor
+    /// a fresh probe says what the manifest was.
+    Unreadable,
+}
+
+impl ManifestRead {
+    /// The manifest, where there is one to read.
+    #[must_use]
+    pub(crate) fn manifest(&self) -> Option<&Manifest> {
+        match self {
+            Self::Read(manifest) => Some(manifest),
+            Self::Absent | Self::Unreadable => None,
+        }
+    }
+}
+
 /// What `path` declares, from the cache when this exact binary has been read
 /// before and from the binary otherwise.
 ///
-/// `Ok(None)` is a dog with no manifest: a non-zero exit, no output, output
-/// that is not a manifest, or a run that outlasted `budget`. That is never a
-/// fault, and is never cached, so a dog that gains a manifest is noticed on
-/// the next call. The cache is derived and safe to delete: one that cannot
-/// be read, parsed or written is skipped, and a binary that changed while it
+/// A binary that gives nothing gives no declaration, and a cache file for this
+/// exact binary is a record of one: [`ManifestRead::Unreadable`] is only where
+/// a record exists and a fresh probe could not replace it, which is also what
+/// heals one. A dog that gains a manifest is noticed on the next call, because
+/// neither [`ManifestRead::Absent`] nor [`ManifestRead::Unreadable`] is cached.
+/// The cache is derived and safe to delete, and a binary that changed while it
 /// was probed is not cached.
 ///
 /// # Errors
@@ -33,29 +75,49 @@ pub(crate) fn read_manifest(
     home: &Path,
     name: &str,
     budget: Duration,
-) -> Result<Option<Manifest>, AdoptRefusal> {
+) -> Result<ManifestRead, AdoptRefusal> {
     let digest = sha256_hex(path);
     let cached = digest
         .as_ref()
         .map(|digest| home.join(CACHE_DIR).join(format!("{digest}.json")));
-    if let Some(manifest) = digest
-        .as_deref()
-        .and_then(|digest| read_cached(home, digest))
-    {
-        return Ok(Some(manifest));
+    if let Some(manifest) = cached.as_deref().and_then(read_cached) {
+        return Ok(ManifestRead::Read(manifest));
     }
+    // A file filed under this digest is a manifest some earlier read of this
+    // exact binary printed. Ask the binary once more before calling this a dog
+    // with nothing to say: the answer is what a corrupt record is healed by.
+    let record = cached.as_deref().is_some_and(cache_record);
     let Some(text) = ask(path, MANIFEST_FLAG, home, name, budget)? else {
-        return Ok(None);
+        // No answer at all: still running when the budget ran out, or a run
+        // that failed. `docs/dogs.md` asks for a manifest on stdout and exit 0,
+        // so a dog that could not answer said nothing about what it wants.
+        return Ok(no_manifest(record));
     };
+    // Empty output is a dog with no manifest, not a manifest that failed to
+    // parse: the same guard `ask_schema` makes, so the ordinary case earns no
+    // reading meant for a broken one.
+    if text.trim().is_empty() {
+        return Ok(no_manifest(record));
+    }
     let Ok(manifest) = serde_json::from_str::<Manifest>(&text) else {
-        return Ok(None);
+        return Ok(no_manifest(record));
     };
     // A binary swapped while it ran may have answered as the new build, and
     // the old digest would file that answer under the wrong key.
     if let Some(file) = cached.filter(|_| sha256_hex(path) == digest) {
         let _ = store(&file, &text);
     }
-    Ok(Some(manifest))
+    Ok(ManifestRead::Read(manifest))
+}
+
+/// What a binary that gave no manifest answered, which is no manifest at all
+/// unless a record of one was sitting there to be read.
+fn no_manifest(record: bool) -> ManifestRead {
+    if record {
+        ManifestRead::Unreadable
+    } else {
+        ManifestRead::Absent
+    }
 }
 
 /// What the cache already holds for `path`, and nothing else: this never
@@ -70,13 +132,28 @@ pub(crate) fn read_manifest(
 /// answers no manifest, one whose recorded binary has since moved, and a
 /// cache file that will not parse all answer it.
 pub(crate) fn cached_manifest(path: &Path, home: &Path) -> Option<Manifest> {
-    read_cached(home, &sha256_hex(path)?)
+    read_cached(
+        &home
+            .join(CACHE_DIR)
+            .join(format!("{}.json", sha256_hex(path)?)),
+    )
 }
 
-/// The manifest filed under `digest`, or `None`.
-fn read_cached(home: &Path, digest: &str) -> Option<Manifest> {
-    let file = home.join(CACHE_DIR).join(format!("{digest}.json"));
+/// The manifest filed at `file`, or `None`: no file, a file that will not
+/// read, or one that will not parse.
+fn read_cached(file: &Path) -> Option<Manifest> {
     serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()
+}
+
+/// Whether a cache file sits at `file`, whatever is in it.
+///
+/// A read error that is not "no such file" counts as one: a file this process
+/// cannot read is a record shep wrote and cannot read back.
+fn cache_record(file: &Path) -> bool {
+    match std::fs::metadata(file) {
+        Ok(_) => true,
+        Err(err) => err.kind() != std::io::ErrorKind::NotFound,
+    }
 }
 
 /// Writes `text` to `file` the way every store under `$SHEP_HOME` is

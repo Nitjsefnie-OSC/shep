@@ -555,7 +555,7 @@ pub(crate) async fn run(
         // Reads two sheep's configs and writes one, so it needs the shepherd:
         // the copy is of what the running flock holds, not of a file.
         Commands::Copy(ref args) => match connect_client(&mut streams, &link, guard).await {
-            Ok(client) => commands::copy::copy(&client, &mut streams, args).await,
+            Ok(client) => commands::copy::copy(&client, &mut streams, &paths, args).await,
             Err(code) => code,
         },
         // Reads the running flock's settings rather than a file, so it needs

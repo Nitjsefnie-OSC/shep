@@ -9,7 +9,11 @@
 //!
 //! The order is resolve, read, plan, print, ask, write. Nothing is sent until
 //! the operator has seen every key the copy touches, which is also why a
-//! refusal never leaves a half-written sheep behind.
+//! refusal never leaves a half-written sheep behind. A copy that carries a
+//! dog's whole table asks that dog first, through the same
+//! [`crate::dog_settings::ask_dog`] `shep set` and the lookout dashboard ask
+//! through: the table the copy would leave behind is the table the dog is shown
+//! whether it declared `validate` or not.
 //!
 //! The table form prints the change list before the question, because that is
 //! what the question is asked beside. The JSON form prints one envelope at the
@@ -25,10 +29,12 @@ use std::fmt;
 use std::io::IsTerminal as _;
 
 use shep_client::Client;
+use shep_core::paths::ShepPaths;
 use shep_core::protocol::{Request, Response};
 
 use crate::cli::{CopyArgs, Format};
 use crate::commands::rpc::{client_error, typed_request_error, unexpected_response};
+use crate::dog_settings::{AskFailure, ask_dog};
 use crate::exit::ExitCode;
 use crate::output::Streams;
 
@@ -53,6 +59,11 @@ pub(crate) enum CopyRefusal {
     MissingSource(String),
     /// A key this verb never copies, in the reason the shepherd gives for it.
     Refused(String),
+    /// The dog refused the table the copy would write, in its own words.
+    ///
+    /// Separate from [`Self::Refused`]: that is the shepherd refusing a key this
+    /// verb never carries, and this is the dog refusing what it was asked about.
+    ByDog(String),
 }
 
 impl CopyRefusal {
@@ -62,7 +73,8 @@ impl CopyRefusal {
             Self::Usage(message)
             | Self::UnknownSheep(message)
             | Self::MissingSource(message)
-            | Self::Refused(message) => message,
+            | Self::Refused(message)
+            | Self::ByDog(message) => message,
         }
     }
 
@@ -70,7 +82,8 @@ impl CopyRefusal {
     ///
     /// [`ExitCode::InvalidConfig`] for a refused key is the code the shepherd's
     /// own refusal of that key carries, so `copy` and the request it stands in
-    /// for exit alike.
+    /// for exit alike. A dog's refusal of its own table takes the same code for
+    /// the same reason: `shep set` refuses it that way too.
     ///
     /// `pub(crate)`: `shep set` refuses the same keys with the same reasons
     /// (issue #1096).
@@ -78,7 +91,7 @@ impl CopyRefusal {
         match self {
             Self::Usage(_) => ExitCode::Usage,
             Self::UnknownSheep(_) | Self::MissingSource(_) => ExitCode::NotFound,
-            Self::Refused(_) => ExitCode::InvalidConfig,
+            Self::Refused(_) | Self::ByDog(_) => ExitCode::InvalidConfig,
         }
     }
 
@@ -100,11 +113,20 @@ impl core::error::Error for CopyRefusal {}
 
 /// `shep copy <from> <to>`.
 ///
+/// `paths` is this machine's `$SHEP_HOME`, which is where a dog's cached
+/// manifest says whether the copy has to ask that dog first.
+///
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`: a malformed address, a name
 /// no sheep answers, a key this verb refuses, a missing source, a refusal to
-/// write with no terminal to ask on, or a write the shepherd refused.
-pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &CopyArgs) -> ExitCode {
+/// write with no terminal to ask on, a dog refusing its own table, or a write
+/// the shepherd refused.
+pub(crate) async fn copy(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    args: &CopyArgs,
+) -> ExitCode {
     let flock = match flock_names(client, streams).await {
         Ok(names) => names,
         Err(code) => return code,
@@ -230,7 +252,7 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
         let message = format!("the plan named {} changes and no write", plan.changes.len());
         return streams.fail(ExitCode::Internal, &message);
     };
-    let pending = match write_plan(client, streams, &to.sheep, write).await {
+    let pending = match write_plan(client, streams, paths, &to.sheep, write).await {
         Ok(pending) => pending,
         Err(code) => return code,
     };
@@ -388,11 +410,17 @@ fn build_plan(
 
 /// Sends the plan's write, and reports which keys wait for a respawn.
 ///
+/// A write that carries a dog's whole table is put past [`ask_dog`] first, the
+/// way `shep set` puts one: the copy replaces a dog's table on the target, and a
+/// dog that declared `validate` is shown the table it would end up with before
+/// anything is written.
+///
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`.
 async fn write_plan(
     client: &Client,
     streams: &mut Streams<'_>,
+    paths: &ShepPaths,
     target: &str,
     write: Write,
 ) -> Result<Vec<String>, ExitCode> {
@@ -417,6 +445,25 @@ async fn write_plan(
             }
         }
         Write::DogTable { dog, table } => {
+            match ask_dog(client, paths, &dog, table.as_map(), Some(target)).await {
+                Ok(()) => {}
+                Err(AskFailure::Refused { reason }) => {
+                    return Err(CopyRefusal::ByDog(format!(
+                        "nothing was written: `{dog}` refused `{target}`'s table for `{dog}`: \
+                         {reason}"
+                    ))
+                    .report(streams));
+                }
+                // No dog said this one: shep could not read whether the dog
+                // wanted to be asked, or could not read what it answered.
+                Err(AskFailure::Unknown { reason }) => {
+                    return Err(
+                        CopyRefusal::Refused(format!("nothing was written: {reason}"))
+                            .report(streams),
+                    );
+                }
+                Err(AskFailure::Transport(err)) => return Err(client_error(streams, &err)),
+            }
             let request = Request::SetSheepDogSettings {
                 name: target.to_string(),
                 dog,
@@ -431,6 +478,8 @@ async fn write_plan(
     }
 }
 
+#[cfg(test)]
+mod validate_tests;
 #[cfg(test)]
 mod tests {
     use serde_json::json;

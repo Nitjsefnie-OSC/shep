@@ -624,6 +624,39 @@ sheep. `shep unset` stopped being the key/value store's hidden spelling at the
 same time, so none of the store's old verbs remain. Wire change: additive
 `ResetSheepField` and `SheepFieldReset`, no `PROTOCOL_VERSION` move.
 
+**A dog can refuse a settings write before shep makes it** (issue #1098,
+under the settings spec #1073). A manifest declaring `validate` gets a
+`shep.validate` trigger on its channel before `shep set`, `shep unset` or a
+lookout write to that dog's settings lands, carrying the table the write would
+leave behind: `{"table": {...}, "sheep": "api"}`, with no `sheep` key for a
+dog's own section. The dog answers `{"accept":true}` or
+`{"accept":false,"reason":"..."}` on the channel it already answers `shep
+trigger` and its stop message on, and `shep_client::dogs::validate_answer`
+writes that body from one closure. A refusal, an answer that is not a verdict,
+and a dog that answered nothing inside its own `action_timeout` each stop the
+write, and the dog's own sentence is what the operator reads: `shep set` exits
+`invalid_config`, and lookout's pane reports the same
+`RequestError::Rpc` it reports a shepherd's own refusal with. A dog that
+declared nothing is never asked, and a dog in the flock with no live channel
+is not asked either, because its settings are what an operator edits before
+`shep enable`. What shep cannot read is never an acceptance: an answer with no
+verdict in it, and a manifest or `shep.toml` that could not be read, both stop
+the write and say so, because a dog that declared `validate` and was not asked
+is a check the operator believes is running. `read_manifest` says which of
+those it got (`Read`, `Absent`, `Unreadable`), and the line is at the cache: a
+dog that gave nothing, in any of the ways a dog gives nothing, declared
+nothing, and only a cache file for this exact binary that neither it nor a
+fresh probe restates is a record of a declaration shep wrote and cannot read.
+The holder is re-read after the ask as well as before it: the ask waits up to
+the dog's `action_timeout`, and a whole-section or whole-table plan carries
+every key it read. `shep copy` is a third door: it replaces a dog's whole table
+on another sheep, so it asks the dog about that table before it writes. `shep adopt` refuses a manifest
+declaring `validate` without
+`channel`: the check could never run. The ask is client-side, in
+`dog_settings::ask_dog`, and three doors use it: `settings_write::flow::run`,
+`copy::write_plan`, and `lookout::source::ClientFlock::send`. No wire change: the ask is
+`Request::Trigger`, and `Manifest.validate` shipped with the manifest.
+
 **A community dog index lists the dogs others have written, and shep prints
 how to install one without running anything** (2026-08-21 for the index and
 its parser, 2026-08-23 for the verb). `web/public/dogs.json` is a document

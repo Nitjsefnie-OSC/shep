@@ -3,10 +3,14 @@ use std::time::Duration;
 use shep_core::dogs::manifest::Manifest;
 
 use super::super::{DogSchema, VettedBinary, vet_binary_within};
-use super::read_manifest;
+use super::{ManifestRead, read_manifest};
 
 /// Generous: the question is the answer, not the clock.
 const BUDGET: Duration = Duration::from_secs(10);
+
+/// Shorter than the fixture dog sleeps, for the case where the budget is the
+/// answer: a probe still running when it runs out.
+const BUDGET_SHORT: Duration = Duration::from_millis(300);
 
 fn write_dog(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
     let binary = dir.join("shep-otel");
@@ -98,8 +102,142 @@ fn a_binary_that_changes_while_probed_is_not_cached() {
     );
     let binary = write_dog(dir.path(), &body);
 
-    let manifest = read_manifest(&binary, dir.path(), "otel", BUDGET).unwrap();
+    let read = read_manifest(&binary, dir.path(), "otel", BUDGET).unwrap();
 
-    assert!(manifest.is_some(), "the answer is still used");
+    assert!(
+        matches!(read, ManifestRead::Read(_)),
+        "the answer is still used"
+    );
     assert_eq!(cached_files(dir.path()), Vec::<std::path::PathBuf>::new());
+}
+
+/// A dog that gave no manifest gave no declaration, in every way a dog gives
+/// none: nothing printed, something that is not a manifest printed, a run that
+/// failed, a run still going when the budget ran out. Each is the shape of a
+/// dog built before `--shep-manifest` or one that ignores an unknown flag, and a
+/// caller deciding whether to ask such a dog anything has no declaration to
+/// weigh. A cache file is the other thing: a record of a manifest this exact
+/// binary once printed.
+#[test]
+fn a_probe_that_gives_nothing_is_read_as_a_dog_with_no_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let silent = write_dog(dir.path(), "true");
+    assert!(matches!(
+        read_manifest(&silent, dir.path(), "otel", BUDGET).unwrap(),
+        ManifestRead::Absent
+    ));
+
+    let broken = write_dog(
+        dir.path(),
+        r#"if [ "$1" = --shep-manifest ]; then
+  echo 'not a manifest'
+fi"#,
+    );
+    assert!(
+        matches!(
+            read_manifest(&broken, dir.path(), "otel", BUDGET).unwrap(),
+            ManifestRead::Absent
+        ),
+        "a dog that prints a usage banner for a flag it does not know"
+    );
+
+    let failed = dir.path().join("shep-otel-failed");
+    std::fs::write(
+        &failed,
+        "#!/bin/sh\nif [ \"$1\" = --shep-manifest ]; then\n  echo 'unknown flag'\n  exit 1\nfi\n",
+    )
+    .unwrap();
+    let mut mode = std::fs::metadata(&failed).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
+    std::fs::set_permissions(&failed, mode).unwrap();
+    assert!(
+        matches!(
+            read_manifest(&failed, dir.path(), "otel", BUDGET).unwrap(),
+            ManifestRead::Absent
+        ),
+        "a dog whose argument parser rejects the flag"
+    );
+
+    let slow = write_dog(
+        dir.path(),
+        r#"if [ "$1" = --shep-manifest ]; then
+  sleep 5
+fi"#,
+    );
+    assert!(
+        matches!(
+            read_manifest(&slow, dir.path(), "otel", BUDGET_SHORT).unwrap(),
+            ManifestRead::Absent,
+        ),
+        "a probe that outlasted its budget said nothing about what it declares"
+    );
+}
+
+/// A cache file filed under this binary's own digest is a manifest some earlier
+/// read of it printed. Neither that file nor a fresh probe says what it said, so
+/// this read did not find a dog with no manifest: it lost a record of one.
+#[test]
+fn a_cache_file_that_will_not_parse_and_a_binary_that_cannot_restate_it_is_unreadable() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = write_dog(dir.path(), "true");
+    let digest = digest_of(&binary);
+    let cache = dir.path().join("manifests");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(cache.join(format!("{digest}.json")), "{ truncated").unwrap();
+
+    assert!(matches!(
+        read_manifest(&binary, dir.path(), "otel", BUDGET).unwrap(),
+        ManifestRead::Unreadable
+    ));
+}
+
+/// The same record, and a binary that can still answer for itself: the answer
+/// is used, and the record is written over, so one bad file is not permanent.
+#[test]
+fn a_cache_file_that_will_not_parse_is_healed_by_the_answer_it_replaces() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = write_dog(dir.path(), MANIFEST_BODY);
+    let digest = digest_of(&binary);
+    let cache = dir.path().join("manifests");
+    std::fs::create_dir_all(&cache).unwrap();
+    let file = cache.join(format!("{digest}.json"));
+    std::fs::write(&file, "{ truncated").unwrap();
+
+    let read = read_manifest(&binary, dir.path(), "otel", BUDGET).unwrap();
+
+    assert!(
+        matches!(read, ManifestRead::Read(manifest) if manifest.name == "otel"),
+        "the probe answered, and the answer is the manifest"
+    );
+    assert_eq!(
+        cached_files(dir.path()),
+        vec![file],
+        "the record is written back over the broken one"
+    );
+}
+
+/// The sha256 the cache keys a binary on.
+fn digest_of(path: &std::path::Path) -> String {
+    use std::fmt::Write as _;
+    use std::io::Read as _;
+
+    let mut file = std::fs::File::open(path).unwrap();
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut chunk).unwrap();
+        if read == 0 {
+            break;
+        }
+        context.update(&chunk[..read]);
+    }
+    context
+        .finish()
+        .as_ref()
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }

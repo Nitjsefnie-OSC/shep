@@ -270,6 +270,20 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
       it, and <code>shep unset</code> removes one.
     </p>
     <p>
+      A dog declaring <code>validate</code> is asked before any write to its
+      settings lands, and its refusal stops the write in its own words. A copy
+      of a table is one of those writes:
+    </p>
+    <CodeBlock>{`$ shep set api.dogs.kelpie.git.checkout /srv/other --yes
+KEY       CHANGE   OLD       NEW
+checkout  changed  /srv/api  /srv/other
+error[invalid_config]: nothing was written: \`kelpie\` refused \`api\`'s table for \`kelpie\`: this checkout belongs to another project`}</CodeBlock>
+    <p>
+      A dog that declared nothing is never asked, and one that isn't running has
+      nothing to ask. <a href="/docs/writing-a-dog#being-asked-about-its-settings">Writing
+      a dog</a> has what it is asked.
+    </p>
+    <p>
       A third place, <code>[dog.&lt;name&gt;]</code> at the top level of a
       Flockfile, is read and discarded: shep parses it so the file still
       loads, but keeps nothing from it. It exists for a dog that reads its

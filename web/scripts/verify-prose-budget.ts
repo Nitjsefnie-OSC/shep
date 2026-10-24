@@ -106,12 +106,35 @@ export const BUDGETS: Record<string, number> = {
   // and this one's help-and-completion copy are both on the page, which
   // measures 4942 with neither side's prose cut. Neither is trimmable for
   // the other's sake.
-  "writing-a-dog": 4950,
+  //
+  // Raised on #1098 for the dog's say in a write to its own settings: the
+  // `validate` manifest field, the `shep.validate` ask, and what a refusal
+  // prints. Surface a dog author and an operator both have to be able to
+  // read, not prose to trim back out to fit.
+  //
+  // Raised again on #1098, to 5210, to say which cases ask nobody (a dog with
+  // no channel open, a dog never adopted here) and which one refuses because
+  // shep could not read the manifest at all. The first is the case an operator
+  // hits on a stopped dog, and the page said the opposite of what the code
+  // does.
+  //
+  // Raised a third time on #1098, to 5262, for the other half of the same
+  // sentence: a dog that answers `--shep-manifest` with nothing, because it is
+  // older than the flag or its argument parser rejects an unknown one, has no
+  // manifest and is never asked. A dog author deciding whether to declare
+  // `validate` has to be able to tell those apart from a cached manifest shep
+  // lost the reading of, which is the case that stops the write.
+  "writing-a-dog": 5262,
   // Raised from 3380 on 2026-10-24 for "Dropping one override": `shep unset`
   // is a new verb that undoes `shep set`, and the page's only other way to
   // put a setting back was a whole-file `--reset`, so the section is new
   // operator-facing surface, not prose to trim back out.
-  overrides: 3440,
+  //
+  // Raised on #1098, to 3447, because `shep copy <from>.dogs.<dog>
+  // <to>.dogs.<dog>` is a write to that dog's settings and a dog that declared
+  // `validate` is asked about it. An operator reading the copy section needs to
+  // know the dog can refuse it.
+  overrides: 3447,
   // Raised from 3240 on 2026-09-27 for "A sheep's dogs row": the sub-screen
   // and the per-sheep table pane are new operator-facing surface, not
   // prose to trim back out.
@@ -148,7 +171,12 @@ export const BUDGETS: Record<string, number> = {
   // kind that now edits, say a whole number typed into one is filed as a
   // float, and say a list of numbers is still read-only, which the old text
   // left implied by silence.
-  "lookout-config": 3920,
+  //
+  // Raised on #1098 for the dog's say in a write to its own settings: the
+  // `validate` manifest field, the `shep.validate` ask, and what a refusal
+  // prints. Surface a dog author and an operator both have to be able to
+  // read, not prose to trim back out to fit.
+  "lookout-config": 3970,
   // Raised from 2930 on 2026-09-14 for the host line, which `shep flock`
   // began printing on a one-shot listing and not only under `--follow`. It
   // shows above every table on this page, so four transcripts gained a line
@@ -195,7 +223,12 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3990 on 2026-10-24 for the `shep adopt` defaults sentence:
   // the section an adopted dog arrives with is where an operator edits that
   // dog's settings (#356).
-  dogs: 4030,
+  //
+  // Raised on #1098 for the dog's say in a write to its own settings: the
+  // `validate` manifest field, the `shep.validate` ask, and what a refusal
+  // prints. Surface a dog author and an operator both have to be able to
+  // read, not prose to trim back out to fit.
+  dogs: 4090,
   // Raised from 2770 for the "Over --host" section: a lookout over a host
   // leaves panes blank that an operator would otherwise read as broken, so
   // the table naming them is required content.
@@ -251,7 +284,12 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 2165 for "Handlers may run at the same time": an app author
   // who does not echo `id` has to be told the Rust library can answer
   // actions out of the order it was asked. Required content for #1071.
-  "shepherd-channel": 2220,
+  //
+  // Raised on #1098 for the dog's say in a write to its own settings: the
+  // `validate` manifest field, the `shep.validate` ask, and what a refusal
+  // prints. Surface a dog author and an operator both have to be able to
+  // read, not prose to trim back out to fit.
+  "shepherd-channel": 2280,
   "from-pm2": 1720,
   "boot-order": 1670,
   "talking-to-a-sheep": 1620,

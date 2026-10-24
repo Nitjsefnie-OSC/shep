@@ -196,7 +196,8 @@ impl<'a> Probe<'a> {
 
     /// Declares that the dog validates a proposed settings table before it
     /// is written. It answers over the shepherd channel, so it also needs
-    /// [`Self::ask_for_channel`].
+    /// [`Self::ask_for_channel`], and [`validate_answer`](super::validate_answer)
+    /// is the call that answers.
     pub const fn validate(mut self) -> Self {
         self.validate = true;
         self
