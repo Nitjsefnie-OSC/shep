@@ -605,7 +605,7 @@ mod tests {
     /// half. Only the second one is something this write can get wrong.
     #[test]
     fn setting_each_scalar_writes_it_and_the_loader_reads_it_back() {
-        let cases: [(SettingField, &str, &str); 5] = [
+        let cases: [(SettingField, &str, &str); 6] = [
             (SettingField::LogLevel, "debug", "debug"),
             (SettingField::LogJson, "1", "true"),
             (
@@ -613,6 +613,7 @@ mod tests {
                 "/tmp/shep-settings-scalar.sock",
                 "/tmp/shep-settings-scalar.sock",
             ),
+            (SettingField::MaxCronSleep, "30s", "30s"),
             (SettingField::AllowControl, "false", "false"),
             (SettingField::StyleLevel, "plain", "plain"),
         ];
