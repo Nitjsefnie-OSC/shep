@@ -270,6 +270,15 @@ pub(crate) mod tests {
         assert_eq!(BarkRows::json_key_for("WHEN"), "at_ms");
     }
 
+    /// The permissive half is the default alone. An impl with a real rename
+    /// still refuses a header it does not have, which is the surviving half
+    /// of the old trait contract.
+    #[test]
+    #[should_panic(expected = "FlockRows::headers() does not include \"NOPE\"")]
+    fn an_override_still_rejects_a_header_it_does_not_have() {
+        FlockRows::json_key_for("NOPE");
+    }
+
     /// The 256-colour presentation these cases render at.
     pub(crate) fn coloured() -> Presentation {
         use crate::style::StyleLevel;
