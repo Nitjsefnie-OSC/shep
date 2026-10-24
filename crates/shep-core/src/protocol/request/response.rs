@@ -194,6 +194,25 @@ pub enum Response {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         warning: Option<String>,
     },
+    /// Answer to `ResetSheepField`: which field went back, to what, and
+    /// whether the running child has it.
+    ///
+    /// [`Self::SheepFieldSet`]'s twin, with the value the field now holds
+    /// beside it, since the caller asked for the Flockfile's value without
+    /// being told it.
+    SheepFieldReset {
+        /// The sheep.
+        name: String,
+        /// The field that went back.
+        key: String,
+        /// The value the field holds now, in the shape it serializes as.
+        value: serde_json::Value,
+        /// As [`Self::SheepFieldSet`]'s `pending`.
+        pending: bool,
+        /// As [`Self::SheepFieldSet`]'s `warning`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        warning: Option<String>,
+    },
     /// Answer to `DogSheepSettings`: one dog's table from every sheep
     /// carrying one.
     ///

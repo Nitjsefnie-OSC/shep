@@ -42,6 +42,14 @@ pub struct AppOverrides {
     pub declared: BTreeSet<String>,
     /// Names of `env` keys the current Flockfile declares.
     pub declared_env: BTreeSet<String>,
+    /// What each overridden field held before the operator spoke for it: the
+    /// Flockfile's value as of the last load that named it, or the value the
+    /// sheep was created with. `ResetSheepField` puts it back.
+    ///
+    /// Absent for a field overridden before this was recorded, and the reset
+    /// then falls back to the built-in default.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub template: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Redacted: `fields` can hold an `env` map, and this store is where an
@@ -52,6 +60,7 @@ impl fmt::Debug for AppOverrides {
             .field("fields", &format_args!("<{} fields>", self.fields.len()))
             .field("declared", &self.declared)
             .field("declared_env", &self.declared_env)
+            .field("template", &format_args!("<{} fields>", self.template.len()))
             .finish()
     }
 }
@@ -273,6 +282,9 @@ pub fn update(
 }
 
 #[cfg(test)]
+mod template_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -384,7 +396,7 @@ mod tests {
         let value = AppOverrides {
             fields,
             declared: ["name", "script"].iter().map(|s| s.to_string()).collect(),
-            declared_env: BTreeSet::new(),
+            ..AppOverrides::default()
         };
         put(&path, "web", &value).unwrap();
         assert_eq!(get(&path, "web").unwrap().as_ref(), Some(&value));
@@ -425,7 +437,7 @@ mod tests {
         // matching `config::app`'s own `debug_redacts_env_values`.
         assert_eq!(
             rendered,
-            "AppOverrides { fields: <1 fields>, declared: {}, declared_env: {} }"
+            "AppOverrides { fields: <1 fields>, declared: {}, declared_env: {}, template: <0 fields> }"
         );
     }
 

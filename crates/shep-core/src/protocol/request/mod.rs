@@ -14,6 +14,9 @@ mod selector_spec;
 mod smit;
 mod verbs;
 
+#[cfg(test)]
+mod reset_field_tests;
+
 pub use config_reply::{SheepApplied, SheepConfigView, SheepDrift, SheepRefusal};
 pub use dog_source::DogSource;
 pub use envelope::{Envelope, HelloReply, Reply, RpcError, RpcErrorCode};

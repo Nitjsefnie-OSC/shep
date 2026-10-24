@@ -1084,7 +1084,7 @@ fn established(
             .map(|(key, value)| (key.to_string(), value))
             .collect(),
         declared: keys.iter().map(|key| (*key).to_string()).collect(),
-        declared_env: BTreeSet::new(),
+        ..Default::default()
     }
 }
 
