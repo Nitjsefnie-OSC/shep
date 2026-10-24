@@ -227,6 +227,22 @@ fn takes_no_value(key: &str) -> Refusal {
     }
 }
 
+/// The refusal for an arm of a tagged union that holds no value for a field
+/// the arm's own `required` list names.
+///
+/// `field` and `tag` are those two keys as the caller's door names them: bare
+/// for a pane's rows (`path`, `kind`), dotted to the union for the table walk
+/// (`retro.path`, `retro.kind`). `arm` is the tag the table named.
+///
+/// `pub(crate)`: [`table`] answers a proposed table with it and
+/// `ConfigPane::incomplete_union` answers the pane's filed edits with it, so
+/// the two doors say one sentence for one rule.
+pub(crate) fn required_field(field: &str, tag: &str, arm: &str) -> Refusal {
+    Refusal {
+        text: format!("{field} is required when {tag} is {arm}; give it a value"),
+    }
+}
+
 /// The refusal for a value a closed set does not name, where the set is the
 /// one the field's own kind holds rather than the one `bounds.choices` holds.
 ///

@@ -35,9 +35,10 @@
 //!   is taken as it comes, and a read-only row ([`FieldKind::Opaque`], which
 //!   is what a nullable item list and a table that holds itself flatten to)
 //!   is not checked.
-//! - It refuses nothing for a key the table does not carry. An absent key and
-//!   a `null` both mean unset, which is the pane's own unset spelling and,
-//!   for a dog, the way a value goes back to the dog's default.
+//! - It refuses nothing for a key the table does not carry, with one
+//!   exception: a field the arm a tagged union names lists as required. An
+//!   absent key and a `null` both mean unset, which is the pane's own unset
+//!   spelling and, for a dog, the way a value goes back to the dog's default.
 
 use std::collections::BTreeSet;
 
@@ -48,7 +49,10 @@ use crate::lookout::field::{
 };
 
 use super::numbers::{integer_refusal, number_refusal};
-use super::{item_refusal, not_a_number, not_a_whole_number, refusal, shown_value, takes_one_of};
+use super::{
+    item_refusal, not_a_number, not_a_whole_number, refusal, required_field, shown_value,
+    takes_one_of,
+};
 
 /// Why a proposed table is not one the dog's schema takes.
 ///
@@ -397,8 +401,17 @@ fn entries_refusal(
     }
 }
 
-/// A tagged union: the table has to name one of the arms, and every field of
-/// the arm it names is held to its own bounds.
+/// A tagged union: the table has to name one of the arms, every field of the
+/// arm it names is held to its own bounds, and the arm's own `required` list
+/// is enforced.
+///
+/// A required field the table does not hold is the one refusal this walk gives
+/// for a key that is absent, and it is reported at the union rather than at
+/// the field: the key the operator has to fix is the table that holds no value
+/// for it. A field this pane has no editor for is not asked for, the same rule
+/// [`crate::lookout::pane::ConfigPane`] applies to the pane's filed edits
+/// through `incomplete_union`, which builds its sentence through
+/// [`required_field`] as this door does.
 ///
 /// A union is never a secret row: a schema that reaches a secret is read as
 /// no [`crate::lookout::field::Union`] at all, so nothing here has to redact
@@ -435,14 +448,21 @@ fn union_refusal(
             ),
         );
     };
+    let tag_key = below(key, &segment(&union.tag));
     for arm_field in &arm.fields {
+        let arm_key = below(key, &segment(&arm_field.key));
         let Some(held) = table.get(&arm_field.key) else {
+            if arm_field.editable && arm.requires(&arm_field.key) {
+                let refused = required_field(&arm_key, &tag_key, &arm.tag);
+                if let Some(refused) = report(scope, path, refused.text) {
+                    return Some(refused);
+                }
+            }
             continue;
         };
         if held.is_null() {
             continue;
         }
-        let arm_key = below(key, &segment(&arm_field.key));
         let arm_path = below_path(path, &arm_field.key);
         if let Some(refused) = scalar_refusal(arm_field, held, &arm_key, &arm_path, scope) {
             return Some(refused);

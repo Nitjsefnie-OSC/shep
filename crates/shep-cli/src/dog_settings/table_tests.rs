@@ -690,3 +690,103 @@ fn an_untouched_map_entry_that_is_not_a_table_does_not_hide_a_touched_one() {
         "hosts.b.weight is \"0\"; hosts.b.weight starts at 1"
     );
 }
+
+/// The arm's own `required` list is a rule the schema published, and this is
+/// the one key the walk refuses for being absent. The refusal lands on the
+/// union, because the key to fix is the table that holds no value for the
+/// field, and it names both keys the way the table names them.
+#[test]
+fn a_union_arm_that_requires_a_field_the_table_does_not_hold_is_refused() {
+    let refused = table_refusal(&schema(), &table(json!({ "retro": { "kind": "path" } })))
+        .expect("the path arm requires path");
+    assert_eq!(refused.path, ["retro"]);
+    assert_eq!(
+        refused.text,
+        "retro.path is required when retro.kind is path; give it a value"
+    );
+}
+
+/// The control: an arm that requires nothing but its tag, and an arm holding
+/// what it requires, are refused nowhere.
+#[test]
+fn a_union_arm_that_holds_what_it_requires_is_refused_nowhere() {
+    assert_eq!(
+        table_refusal(&schema(), &table(json!({ "retro": { "kind": "none" } }))),
+        None,
+        "the none arm requires the tag and nothing else"
+    );
+    assert_eq!(
+        table_refusal(
+            &schema(),
+            &table(json!({ "retro": { "kind": "path", "path": "skills/a" } }))
+        ),
+        None,
+        "the path arm holding its own field"
+    );
+}
+
+/// A `null` is the pane's unset spelling, and `ConfigPane::incomplete_union`
+/// reads a key held as `null` as present. The table door reads it the same way
+/// rather than refusing a table the pane let through.
+#[test]
+fn a_required_field_held_as_null_is_left_as_the_pane_leaves_it() {
+    assert_eq!(
+        table_refusal(
+            &schema(),
+            &table(json!({ "retro": { "kind": "path", "path": null } }))
+        ),
+        None,
+        "the pane files a null for a field it clears, and does not refuse it"
+    );
+}
+
+/// A field this pane has no editor for is not asked for, which is the rule
+/// `ConfigPane::incomplete_union` applies and the one this door mirrors: an
+/// arm's nested table would need a sub-screen the arm's rows do not have.
+#[test]
+fn a_required_field_with_no_editor_is_not_asked_for() {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "retro": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "kind": { "const": "blob" },
+                            "blob": {
+                                "type": "object",
+                                "properties": { "keep": { "type": "integer" } },
+                            },
+                        },
+                        "required": ["kind", "blob"],
+                    },
+                ],
+            },
+        },
+    });
+    assert_eq!(
+        table_refusal(&schema, &table(json!({ "retro": { "kind": "blob" } }))),
+        None,
+        "the arm's nested table is a read-only row, and a read-only row is not asked for"
+    );
+}
+
+/// The refusal sits on the union's own path, which is the path a pane's edit
+/// of any row under the union files, so the scoped door answers it too.
+#[test]
+fn a_touched_union_missing_a_required_field_is_refused_and_an_untouched_one_is_not() {
+    let proposed = table(json!({ "retro": { "kind": "path" } }));
+    let refused = touched_refusal(&schema(), &proposed, &touched(&[&["retro"]]))
+        .expect("the union row is the one that was edited");
+    assert_eq!(refused.path, ["retro"]);
+    assert_eq!(
+        refused.text,
+        "retro.path is required when retro.kind is path; give it a value"
+    );
+    assert_eq!(
+        touched_refusal(&schema(), &proposed, &touched(&[&["keep"]])),
+        None,
+        "an untouched union keeps its own business"
+    );
+}
