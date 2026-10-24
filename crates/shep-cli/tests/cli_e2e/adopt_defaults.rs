@@ -82,3 +82,39 @@ fn shep_adopt_creates_no_dogs_toml_for_a_dog_without_defaults() {
         );
     }
 }
+
+/// The exact notice lines the `writing-a-dog` docs quote, pinned through
+/// the real binary: the dog name prints bare, and a docs sample that
+/// decorates it is a string nobody's stderr will match.
+#[cfg(unix)]
+#[test]
+fn shep_adopt_prints_the_defaults_notices_the_docs_quote() {
+    let home = TempDir::new().unwrap();
+    let binary = write_manifest_dog(&home, &manifest_with_defaults("interval = \"1h\"\n"));
+
+    let output = adopt(&home, &binary);
+    assert_success(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "notice[dog_defaults_written]: otel's manifest defaults are now its \
+             `[otel]` section in dogs.toml, where you can edit them"
+        ),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let home = TempDir::new().unwrap();
+    let binary = write_manifest_dog(&home, &manifest_with_defaults("interval = \n"));
+
+    let output = adopt(&home, &binary);
+    assert_success(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "notice[dog_defaults_unreadable]: otel shipped a manifest whose `defaults` \
+             is not valid TOML, so nothing was added to dogs.toml for it. The dog is \
+             adopted and runs normally; this is a bug to report to whoever wrote it"
+        ),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
