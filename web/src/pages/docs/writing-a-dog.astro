@@ -131,6 +131,13 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       wins over a same-named dog.
     </p>
     <p>
+      An adopted dog is part of shep's own listing from then on: it appears
+      in the Dogs group of <code>shep --help</code>, and shell completion
+      offers it, with what its manifest declared beside its name. An
+      undeclared dog is listed bare. Nothing a manifest declares claims a
+      top-level verb: a dog gets exactly <code>shep &lt;name&gt;</code>.
+    </p>
+    <p>
       What gets recorded in <code>shep.toml</code> is the canonicalized,
       absolute path because the
       daemon may resolve it again after a reboot from a different working
@@ -328,6 +335,18 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       supports. <code>shep adopt</code> and <code>shep enable</code> warn
       when a named dog isn't adopted or this shep is older, and go ahead
       anyway. A dependency's version isn't checked yet.
+    </p>
+    <p>
+      <code>verb</code> is how shep describes <code>shep &lt;name&gt;</code>:
+      its <code>description</code> is the line the dog gets in the Dogs group
+      of <code>shep --help</code>, and its <code>subcommands</code> are what
+      <code>shep &lt;name&gt; --help</code> prints and what completion offers.
+      A dog that declares subcommands gets shep's page for them and its
+      binary never runs to answer <code>--help</code>; one that declares none
+      keeps <code>--help</code> as a pass-through. Both read the manifest
+      cache, never the binary, and completion is generated from the registry
+      as it stands, so adopt a dog and run <code>shep completions</code>
+      again.
     </p>
     <CodeBlock>{`notice[dog_dependency_missing]: \`otel\` depends on \`log-rotate\`, which is not adopted, so \`otel\` may not work until you run \`shep adopt\` for \`log-rotate\`
 notice[dog_needs_newer_shep]: \`otel\` needs shep 0.20.0 or newer, and this is shep 0.16.1, so \`otel\` may not work until you upgrade shep`}</CodeBlock>

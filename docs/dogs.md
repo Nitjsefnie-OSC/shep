@@ -494,6 +494,17 @@ below, and on unix a third, `$SHEP_DOG_FD`); a dog you name on the command line 
 it, passed straight through, plus those same two. A built-in verb or alias
 always wins over a same-named dog.
 
+An adopted dog is part of shep's own listing from then on. It appears in the
+Dogs group of `shep --help`, with the `verb.description` its manifest
+declared beside its name, and shell completion offers it. An undeclared dog
+is listed bare: the listing says what is known and is silent about what
+isn't. A dog that declared `verb.subcommands` gets a shep-rendered page for
+them from `shep <name> --help`, and its binary never runs to answer that
+flag; a dog that declared none keeps `--help` as a pass-through like every
+other argument. Nothing in a manifest claims a top-level verb: the registry
+in `shep.toml` is what makes a name a dog, and a dog gets exactly
+`shep <name>`.
+
 No argv is the adopted case specifically. The two built-in dogs are
 started as `shep dog <name>` and read their own name from that argv, but
 neither is a dog anybody writes: they ship inside the binary.
@@ -931,6 +942,11 @@ under the binary's sha256, so a build is asked once and a rebuilt binary is
 asked again. `shep adopt` and `shep enable` warn, and go ahead, when a dog in
 `depends` is not adopted or `depends.shep` is newer than this shep. A
 dependency's own version is not checked.
+
+`verb` is read from that same cache, never by asking the binary again: a help
+screen or a completion script must not spawn a dog. `shep completions` builds
+its script from the registry as it stands at generation time, so adopting a
+dog means generating the script again.
 
 `Probe` builds it from what the dog already gives it. `permission`, `verb`,
 `depends_on_dog`, `depends_on_shep`, `defaults` and `validate` add what it

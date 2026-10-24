@@ -85,7 +85,13 @@ export const BUDGETS: Record<string, number> = {
   // Raised again on 2026-10-24 for `--shep-manifest`: `shep adopt` now
   // asks it first, caches the answer by the binary's sha256 and warns about
   // `depends`, which a dog author has to be told before the two older flags.
-  "writing-a-dog": 4705,
+  //
+  // Raised again the same day for an adopted dog inside shep's own listing:
+  // `shep --help` prints a manifest's `verb.description` beside the dog's
+  // name, `shep <dog> --help` prints its declared subcommands, and
+  // `shep completions` offers both. An operator sees all three, and a dog
+  // author writes the manifest that drives them.
+  "writing-a-dog": 4860,
   overrides: 3380,
   // Raised from 3240 on 2026-09-27 for "A sheep's dogs row": the sub-screen
   // and the per-sheep table pane are new operator-facing surface, not
@@ -265,7 +271,11 @@ export const BUDGETS: Record<string, number> = {
   // exactly 440, one word from failing the build, and the `// 413` beside
   // the old number was 27 words stale: the figure in this comment is only
   // as good as the run that wrote it.
-  "getting-started": 500,
+  //
+  // Raised from 500 on 2026-10-24 for the completions sentence: the script
+  // now completes adopted dogs and the subcommands their manifests declare,
+  // and generating it before an adopt leaves it stale.
+  "getting-started": 520,
   serve: 480,
   hosts: 500,
   // Raised from 380 on 2026-10-21 for the global `--host` flag, which is new
