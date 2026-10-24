@@ -52,6 +52,8 @@ mod defaults_adoption_tests;
 mod emit_dog_action_tests;
 #[cfg(test)]
 mod enable_builtin_tests;
+#[cfg(test)]
+mod grant_builtin_tests;
 #[cfg(all(test, unix))]
 mod grant_record_tests;
 #[cfg(all(test, unix))]

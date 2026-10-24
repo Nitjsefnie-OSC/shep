@@ -96,22 +96,23 @@ pub(crate) async fn change(
         return fail_enable_unknown_dog(streams, name, &cfg.adopted_dog_names());
     }
     if change == Change::Grant {
-        let declared = match &binary {
+        let manifest = match &binary {
             Some(binary) => match read_manifest(binary, &paths.home, name, VERSION_BUDGET) {
                 Ok(ManifestRead::Unreadable) => {
                     return streams.fail(ExitCode::Usage, &unreadable(name));
                 }
-                Ok(read) => read.manifest().map_or_else(Vec::new, |manifest| {
-                    manifest
-                        .permissions
-                        .iter()
-                        .map(|p| p.name.clone())
-                        .collect()
-                }),
+                Ok(read) => read.manifest().cloned(),
                 Err(refusal) => return fail_adopt(streams, binary, &refusal),
             },
-            None => Vec::new(),
+            None => crate::dog::builtin_manifest(name),
         };
+        let declared = manifest.map_or_else(Vec::new, |manifest| {
+            manifest
+                .permissions
+                .into_iter()
+                .map(|permission| permission.name)
+                .collect()
+        });
         if !declared.contains(&permission) {
             return streams.fail(ExitCode::Usage, &not_declared(name, &permission, &declared));
         }
