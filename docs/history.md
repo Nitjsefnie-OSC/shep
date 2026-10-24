@@ -639,7 +639,11 @@ write, and the dog's own sentence is what the operator reads: `shep set` exits
 `RequestError::Rpc` it reports a shepherd's own refusal with. A dog that
 declared nothing is never asked, and a dog in the flock with no live channel
 is not asked either, because its settings are what an operator edits before
-`shep enable`. `shep adopt` refuses a manifest declaring `validate` without
+`shep enable`. What shep cannot read is never an acceptance: an answer with no
+verdict in it, and a manifest or `shep.toml` that could not be read, both stop
+the write and say so, because a dog that declared `validate` and was not asked
+is a check the operator believes is running. `shep adopt` refuses a manifest
+declaring `validate` without
 `channel`: the check could never run. The ask is client-side, in
 `dog_settings::ask_dog`, and both doors use it, `settings_write::flow::run`
 and `lookout::source::ClientFlock::send`. No wire change: the ask is
