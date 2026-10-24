@@ -246,7 +246,10 @@ fn a_manifest_carrying_a_placeholder_or_a_line_break_is_listed_as_text() {
     assert_eq!(listed.lines().collect::<Vec<_>>(), expected, "{listed}");
 
     let dog_help = String::from_utf8(run(home.path(), &["otel", "--help"]).stdout).unwrap();
-    assert!(dog_help.contains("spans all-args and more[2J"), "{dog_help}");
+    assert!(
+        dog_help.contains("spans all-args and more[2J"),
+        "{dog_help}"
+    );
     assert!(dog_help.contains("status  show options"), "{dog_help}");
     assert!(!marker.exists(), "neither help ran the dog");
 }
