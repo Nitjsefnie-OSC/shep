@@ -63,6 +63,21 @@ impl DogSource {
         }
     }
 
+    /// This source with `grants` in place of the ones it carried. A kind this
+    /// build has not been taught carries none and comes back as it was.
+    #[must_use]
+    pub fn with_grants(self, grants: Option<Grants>) -> Self {
+        match self {
+            DogSource::BuiltIn { .. } => DogSource::BuiltIn { grants },
+            DogSource::Adopted { path, channel, .. } => DogSource::Adopted {
+                path,
+                channel,
+                grants,
+            },
+            DogSource::Unrecognized => DogSource::Unrecognized,
+        }
+    }
+
     /// The kind's one-word label, `built-in`, `adopted` or `unrecognized`.
     ///
     /// Never the adopted path: this is what a SOURCE column shows, and the
@@ -103,6 +118,35 @@ mod tests {
         let wire = r#"{"kind":"adopted","path":"/usr/local/bin/shep-otel"}"#;
         assert_eq!(serde_json::to_string(&adopted).unwrap(), wire);
         assert_eq!(serde_json::from_str::<DogSource>(wire).unwrap(), adopted);
+    }
+
+    #[test]
+    fn with_grants_swaps_the_grants_and_keeps_the_rest() {
+        let granted = Grants::default();
+        let adopted = DogSource::Adopted {
+            path: "/usr/local/bin/shep-otel".to_string(),
+            channel: true,
+            grants: None,
+        };
+
+        assert_eq!(
+            adopted.with_grants(Some(granted.clone())),
+            DogSource::Adopted {
+                path: "/usr/local/bin/shep-otel".to_string(),
+                channel: true,
+                grants: Some(granted.clone()),
+            }
+        );
+        assert_eq!(
+            DogSource::BuiltIn { grants: None }.with_grants(Some(granted.clone())),
+            DogSource::BuiltIn {
+                grants: Some(granted)
+            }
+        );
+        assert_eq!(
+            DogSource::Unrecognized.with_grants(None),
+            DogSource::Unrecognized
+        );
     }
 
     /// The row above is also the shape every peer before `channel` wrote,

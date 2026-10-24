@@ -110,3 +110,14 @@ fn a_misspelt_name_in_an_inline_table_is_refused_too() {
         Err(ShepTomlError::BadGrants { .. })
     ));
 }
+
+#[test]
+fn a_key_other_than_granted_is_refused_as_the_boot_refuses_it() {
+    let (_dir, doc) =
+        doc_of("[daemon.dog_grants.otel]\ngranted = [\"flock.read\"]\nnote = \"x\"\n");
+
+    let err = doc.granted("otel").unwrap_err();
+
+    assert!(matches!(err, ShepTomlError::BadGrants { .. }), "{err:?}");
+    assert!(err.to_string().contains("`note`"), "{err}");
+}

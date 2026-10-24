@@ -16,7 +16,7 @@ use shep_core::protocol::{
 
 use crate::bus::TopicFilter;
 use crate::dogs::DogSpec;
-use crate::supervisor::{BatchPolicy, ConnId, SheepDogRead};
+use crate::supervisor::{BatchPolicy, ConnId, SheepDogRead, SupervisorError};
 
 use super::batch::{duplicate_name, persists, staged_plan};
 use super::context::{Outcome, RpcContext, budget};
@@ -25,7 +25,7 @@ use super::enrichment::{
     dog_staleness, handover_refusal, with_dog_contact, with_lambs, with_live_stats,
 };
 use super::error::{invalid_config, no_sheep, rpc_error};
-use super::gate::check;
+use super::gate::{check, pin_grants};
 use super::selector_verbs::{not_found, selector_call, selector_of, signal_request, trigger};
 use super::walk::{reload_request, restart_request};
 
@@ -51,15 +51,17 @@ pub(crate) async fn dispatch(
 ) -> Outcome {
     let id = envelope.id;
     let work = async {
-        if let Some(dog) = dog
-            && let Err(err) = check(ctx, dog, &envelope.body).await
-        {
-            return Outcome::Reply(Reply {
-                id,
-                result: Err(err),
-            });
+        let mut body = envelope.body;
+        if let Some(dog) = dog {
+            if let Err(err) = check(ctx, dog, &body).await {
+                return Outcome::Reply(Reply {
+                    id,
+                    result: Err(err),
+                });
+            }
+            body = pin_grants(ctx, body);
         }
-        run(id, conn, envelope.body, ctx).await
+        run(id, conn, body, ctx).await
     };
     with_deadline(id, budget(envelope.deadline_ms), work).await
 }
@@ -470,8 +472,15 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                             .await;
                             reply(Ok(Response::DogStarted(info)))
                         }
+                        // A spawn that fails still registers the dog, as
+                        // `Errored`, and a restart or the restart policy
+                        // brings it up: its grants stay recorded, or its
+                        // link would find none and run unchecked. Anything
+                        // else registered nothing.
                         Err(err) => {
-                            ctx.known_dogs.restore(&spec.name, held);
+                            if !matches!(err, SupervisorError::SpawnFailed(_)) {
+                                ctx.known_dogs.restore(&spec.name, held);
+                            }
                             reply(Err(rpc_error(&err)))
                         }
                     }

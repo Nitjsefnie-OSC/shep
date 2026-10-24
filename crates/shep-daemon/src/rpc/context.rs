@@ -87,6 +87,12 @@ impl KnownDogs {
         };
     }
 
+    /// What is recorded for `name`: `None` for a name never seen, and
+    /// otherwise its grants, themselves `None` when it is undeclared.
+    pub(crate) fn recorded(&self, name: &str) -> Option<Option<Grants>> {
+        self.lock().get(name).cloned()
+    }
+
     /// What `name` was granted, or `None` when it is undeclared or unknown.
     pub(crate) fn grants(&self, name: &str) -> Option<Grants> {
         self.lock().get(name).cloned().flatten()

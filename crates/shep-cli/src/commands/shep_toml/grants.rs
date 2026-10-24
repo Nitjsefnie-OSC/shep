@@ -16,8 +16,9 @@ impl ShepToml {
     /// a grant that matches nothing.
     ///
     /// # Errors
-    /// [`ShepTomlError::BadGrants`] when the entry is not a table holding a
-    /// `granted` array of strings, or names a permission shep cannot read.
+    /// [`ShepTomlError::BadGrants`] when the entry is not a table holding
+    /// only a `granted` array of strings, or names a permission shep cannot
+    /// read.
     pub fn granted(&self, name: &str) -> Result<Option<Grants>, ShepTomlError> {
         // Table-like, not `as_table`: `dog_grants = { otel = { granted = [] } }`
         // is the same TOML as the headed form and the boot reads both, so a
@@ -38,9 +39,17 @@ impl ShepToml {
             dog: name.to_string(),
             reason,
         };
-        let names = entry
+        let entry = entry
             .as_table_like()
-            .and_then(|table| table.get("granted"))
+            .ok_or_else(|| bad("must be a table holding `granted`".to_string()))?;
+        // The boot's `DogGrantsSection` denies unknown keys, so a stray one
+        // is refused here, where the operator is looking, and not at the next
+        // boot.
+        if let Some((key, _)) = entry.iter().find(|(key, _)| *key != "granted") {
+            return Err(bad(format!("`{key}` is not a key shep reads here")));
+        }
+        let names = entry
+            .get("granted")
             .and_then(Item::as_array)
             .and_then(|names| names.iter().map(|v| v.as_str()).collect::<Option<Vec<_>>>())
             .ok_or_else(|| bad("`granted` must be a list of permission names".to_string()))?;
