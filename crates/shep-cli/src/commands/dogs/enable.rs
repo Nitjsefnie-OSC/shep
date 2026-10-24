@@ -13,6 +13,7 @@ use crate::exit::ExitCode;
 use crate::output::{DogActionStatus, Streams};
 
 use super::depends::warn_of_unmet_depends;
+use super::grants::warn_if_unenforced;
 use super::vet::{VERSION_BUDGET, read_manifest};
 use super::{
     NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, emit_dog_action, fail_config,
@@ -154,7 +155,7 @@ pub(crate) fn join_with_and(items: &[String]) -> String {
 /// stale socket file and a daemon that was never started are not
 /// distinguished, so a provisioning script can configure a host before
 /// starting anything.
-async fn enable_after_config(
+pub(super) async fn enable_after_config(
     streams: &mut Streams<'_>,
     name: &str,
     source: &DogSource,
@@ -176,13 +177,16 @@ async fn enable_after_config(
         source: source.clone(),
     };
     match client.request(request).await {
-        Ok(Response::DogStarted(info)) => emit_dog_action(
-            streams,
-            "enable",
-            name,
-            source.clone(),
-            DogActionStatus::Acted(info.status.into()),
-        ),
+        Ok(Response::DogStarted(info)) => {
+            warn_if_unenforced(streams, name, source, client.daemon().protocol);
+            emit_dog_action(
+                streams,
+                "enable",
+                name,
+                source.clone(),
+                DogActionStatus::Acted(info.status.into()),
+            )
+        }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
     }

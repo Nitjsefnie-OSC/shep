@@ -31,6 +31,10 @@ mod tests;
 #[cfg(doc)]
 use crate::protocol::Request;
 
+/// The first protocol version whose shepherd refuses a dog's request outside
+/// its grants. An older shepherd records grants and ignores them.
+pub const ENFORCED_SINCE: u32 = 12;
+
 /// One permission, as a request needs it and a grant names it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]

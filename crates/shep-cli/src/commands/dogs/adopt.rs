@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use shep_client::Client;
 use shep_core::paths::{ShepPaths, user_home};
+use shep_core::permissions::Grants;
 use shep_core::protocol::{DogSource, Request, Response};
 
 use crate::cli::AdoptArgs;
@@ -18,6 +19,7 @@ use crate::exit::ExitCode;
 use crate::output::{DogActionStatus, Streams};
 
 use super::depends::warn_of_unmet_depends;
+use super::grants::warn_if_unenforced;
 use super::vet::{
     DogSchema, fail_adopt, report_channel_ask, report_dog_version, vet_binary, warn_group_writable,
     warn_unreadable_schema,
@@ -64,11 +66,11 @@ pub async fn adopt(streams: &mut Streams<'_>, paths: &ShepPaths, args: &AdoptArg
     if vetted.schema == DogSchema::Unreadable {
         warn_unreadable_schema(streams, &name);
     }
-    let adopted = match ShepToml::try_edit(&paths.daemon_config, |cfg| {
+    let (adopted, grants) = match ShepToml::try_edit(&paths.daemon_config, |cfg| {
         cfg.adopt_dog(&name, &path, channel)?;
-        Ok(cfg.adopted_dog_names())
+        Ok((cfg.adopted_dog_names(), cfg.granted(&name)))
     }) {
-        Ok(adopted) => adopted,
+        Ok(recorded) => recorded,
         Err(err) => return fail_config(streams, &err),
     };
     // The registration is in, so the defaults half is the last config write
@@ -111,7 +113,7 @@ pub async fn adopt(streams: &mut Streams<'_>, paths: &ShepPaths, args: &AdoptArg
         Ok(client) => client,
         Err(code) => return code,
     };
-    adopt_after_config(streams, &name, &path, channel, client.as_ref()).await
+    adopt_after_config(streams, &name, &path, channel, grants, client.as_ref()).await
 }
 
 /// Resolves `raw`, `shep adopt`'s own path argument, before it reaches
@@ -325,16 +327,18 @@ fn fail_dogs_config(streams: &mut Streams<'_>, err: &DogMigrationError) -> ExitC
 }
 
 /// `adopt`'s daemon half; see enable_after_config for the split and for
-/// what `client: None` means. `channel` is the binary's own ask.
+/// what `client: None` means. `channel` is the binary's own ask and `grants`
+/// what `shep.toml` records for the dog.
 async fn adopt_after_config(
     streams: &mut Streams<'_>,
     name: &str,
     path: &Path,
     channel: bool,
+    grants: Option<Grants>,
     client: Option<&Client>,
 ) -> ExitCode {
     let source = DogSource::Adopted {
-        grants: None,
+        grants,
         path: path.display().to_string(),
         channel,
     };
@@ -346,13 +350,16 @@ async fn adopt_after_config(
         source: source.clone(),
     };
     match client.request(request).await {
-        Ok(Response::DogStarted(info)) => emit_dog_action(
-            streams,
-            "adopt",
-            name,
-            source,
-            DogActionStatus::Acted(info.status.into()),
-        ),
+        Ok(Response::DogStarted(info)) => {
+            warn_if_unenforced(streams, name, &source, client.daemon().protocol);
+            emit_dog_action(
+                streams,
+                "adopt",
+                name,
+                source,
+                DogActionStatus::Acted(info.status.into()),
+            )
+        }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
     }
@@ -402,6 +409,7 @@ mod tests {
                 "otel",
                 &binary,
                 channel,
+                None,
                 Some(&client),
             )
             .await;
@@ -493,7 +501,7 @@ mod tests {
             let mut streams = streams(&mut out, &mut err);
             streams.fmt = Format::Json;
 
-            let code = adopt_after_config(&mut streams, "otel", &binary, false, client).await;
+            let code = adopt_after_config(&mut streams, "otel", &binary, false, None, client).await;
 
             assert_eq!(code, ExitCode::Success);
             let json: serde_json::Value = serde_json::from_slice(&out).unwrap();

@@ -31,6 +31,7 @@ mod barks;
 mod depends;
 mod disable;
 mod enable;
+mod grants;
 mod remove;
 mod vet;
 
@@ -122,14 +123,16 @@ pub(crate) fn fail_config(streams: &mut Streams<'_>, err: &ShepTomlError) -> Exi
 /// dog, an argv branch of this binary. `shep.toml` is the only place either
 /// verb can learn it.
 fn dog_source(cfg: &ShepToml, name: &str) -> DogSource {
-    adopted_source(cfg, name).unwrap_or(DogSource::BuiltIn { grants: None })
+    adopted_source(cfg, name).unwrap_or_else(|| DogSource::BuiltIn {
+        grants: cfg.granted(name),
+    })
 }
 
-/// [`dog_source`] for an adopted `name`, carrying its recorded channel ask,
-/// and `None` for any other name.
+/// [`dog_source`] for an adopted `name`, carrying its recorded channel ask
+/// and grants, and `None` for any other name.
 fn adopted_source(cfg: &ShepToml, name: &str) -> Option<DogSource> {
     cfg.adopted_dog_path(name).map(|path| DogSource::Adopted {
-        grants: None,
+        grants: cfg.granted(name),
         path: path.display().to_string(),
         channel: cfg.asked_for_channel(name),
     })

@@ -901,5 +901,7 @@ impl core::error::Error for ShepTomlError {
     }
 }
 
+mod grants;
+
 #[cfg(all(test, unix))]
 mod tests;

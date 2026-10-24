@@ -272,15 +272,21 @@ pub fn boot_options(
     }
 }
 
-/// The dog `name` is: adopted from the path `shep.toml` records, or built in.
+/// The dog `name` is: adopted from the path `shep.toml` records, or built in,
+/// with the grants `shep.toml` records for it.
 fn dog_spec(config: &DaemonConfig, name: &str) -> DogSpec {
+    let grants = config
+        .daemon
+        .dog_grants
+        .get(name)
+        .map(|section| section.granted.clone());
     let source = match config.daemon.adopted_dogs.get(name) {
         Some(path) => DogSource::Adopted {
-            grants: None,
+            grants,
             path: path.display().to_string(),
             channel: config.daemon.channel_dogs.iter().any(|dog| dog == name),
         },
-        None => DogSource::BuiltIn { grants: None },
+        None => DogSource::BuiltIn { grants },
     };
     DogSpec {
         name: name.to_string(),
