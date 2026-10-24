@@ -91,6 +91,7 @@ async fn unset_sheep(
     };
     let plan = match &path {
         ConfigPath::Field { name: field } => plan_field(name, field, &config, &overridden),
+        ConfigPath::Env => Err(WriteRefusal::Refused(address::ENV_NOT_WRITTEN.to_string())),
         ConfigPath::Dog { dog, keys } => plan_dog_table(name, dog, keys, &config),
     };
     match plan {

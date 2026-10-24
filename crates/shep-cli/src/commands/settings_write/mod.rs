@@ -332,6 +332,9 @@ async fn set_sheep(
             schema: None,
             touched: BTreeSet::new(),
         },
+        ConfigPath::Env => {
+            return CopyRefusal::Refused(address::ENV_NOT_WRITTEN.to_string()).report(streams);
+        }
         ConfigPath::Dog { dog, keys } => {
             let plan = match plan_dog_table(name, dog, keys, &config, &ask.value) {
                 Ok(plan) => plan,
