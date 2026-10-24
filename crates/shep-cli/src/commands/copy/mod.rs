@@ -6,7 +6,7 @@
 //! the request the plan turns into: [`Request::SetSheepField`] for a field,
 //! [`Request::SetSheepDogSettings`] for a dog's table, so everything those
 //! refuse this refuses, with the same reason. `env` is the exception: a client
-//! is never sent env values, so [`env`] plans and writes it through
+//! is never sent env values, so [`mod@env`] plans and writes it through
 //! [`Request::CopySheepEnv`], and the shepherd does the merge.
 //!
 //! The order is resolve, read, plan, print, ask, write. Nothing is sent until
@@ -324,7 +324,7 @@ pub(crate) async fn flock_names(
 /// One sheep's config as JSON, which is the shape a plan reads.
 ///
 /// `env` is emptied by the shepherd: the values of a copy's env never reach
-/// this config, and [`env`] asks the shepherd to do that copy.
+/// this config, and [`mod@env`] asks the shepherd to do that copy.
 ///
 /// `pub(crate)`: `shep get` reads the same answer for the sheep half of an
 /// address.
