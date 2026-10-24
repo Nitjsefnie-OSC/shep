@@ -39,9 +39,13 @@ mod forms;
 mod items;
 mod numbers;
 mod patterns;
+pub(crate) mod table;
+#[cfg(test)]
+mod table_tests;
 
 pub use forms::bullets;
 pub use items::item_refusal;
+pub(crate) use table::table_refusal;
 
 use shep_core::values::{MemSize, UpDuration};
 
