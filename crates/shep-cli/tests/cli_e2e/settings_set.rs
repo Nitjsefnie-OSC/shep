@@ -372,3 +372,57 @@ fn shep_set_creates_a_dogs_section_when_it_has_none() {
 
     graceful_kill(home);
 }
+
+/// A `dogs.toml` section for a name this shepherd knows no dog by is refused
+/// before anything is sent, which is the daemon's own guard in a sentence that
+/// names the remedy.
+#[test]
+fn shep_set_refuses_a_section_of_a_dog_nothing_knows() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    let script = write_test_script(&dir);
+    let flockfile = write_flockfile(
+        &dir,
+        &format!("[[app]]\nname = \"api\"\nscript = '{}'\n", script.display()),
+    );
+    let stale = "\
+# left behind by a dog that was removed
+[ghost]
+timeout = 30
+";
+    std::fs::write(home.join("dogs.toml"), stale).unwrap();
+
+    let mut guard = DaemonGuard::default();
+    let boot = shep(home).arg("start").arg(&flockfile).output().unwrap();
+    guard.adopt_home(home);
+    assert_success(&boot);
+    poll_flock(home, |info| info["status"] == "online");
+
+    let refused = shep(home)
+        .arg("set")
+        .arg("ghost.timeout")
+        .arg("5")
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(3), "{refused:?}");
+    let text = String::from_utf8_lossy(&refused.stderr);
+    assert!(text.contains("nothing was written"), "{text}");
+    assert!(text.contains("`[ghost]` section"), "{text}");
+    assert!(
+        text.contains("`shep adopt` or `shep enable`"),
+        "{text}: the remedy is the daemon's own"
+    );
+    assert!(
+        !text.contains("shep kv set"),
+        "{text}: this name is a dog's, not a key/value key"
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(home.join("dogs.toml")).unwrap(),
+        stale,
+        "a refusal writes nothing"
+    );
+
+    graceful_kill(home);
+}

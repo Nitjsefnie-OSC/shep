@@ -41,7 +41,12 @@ pub(super) fn plan_dog_table(
     // one, which is the same rule the `dogs.toml` half follows through
     // [`set_toml`]: the write lands at the key named, and a key that holds a
     // table holds it until an operator names a table to put there.
-    if !value.is_object() && walk(&before, keys).is_some_and(Json::is_object) {
+    //
+    // A whole table is not this refusal. `dogs.kelpie` with nothing under it is
+    // the sheep holding no table for that dog at all, and `before` is the empty
+    // table this built to write into. The sentence an operator needs there is
+    // the one below, that a whole dog table takes a value that is one.
+    if !keys.is_empty() && !value.is_object() && walk(&before, keys).is_some_and(Json::is_object) {
         let at = if keys.is_empty() {
             format!("{sheep}.dogs.{dog}")
         } else {
@@ -62,7 +67,7 @@ pub(super) fn plan_dog_table(
     })?;
     let Some(table) = after.as_object().cloned() else {
         return Err(WriteRefusal::Refused(format!(
-            "`{sheep}.dogs.{dog}` names a whole table: the value has to be one, as \
+            "`{sheep}.dogs.{dog}` names a whole dog table: the value has to be one, as \
              `{{ keep = 1 }}`"
         )));
     };
@@ -95,12 +100,18 @@ pub(super) fn plan_dog_table(
 /// `keys` empty is the whole section, which is the one write that replaces a
 /// document rather than editing one, and the one that loses the comments in it.
 ///
+/// `name` is the dog the address named, so a refusal reads as the address the
+/// operator typed rather than as a fragment of the section this walked.
+///
 /// # Errors
 /// [`WriteRefusal::Refused`] when the write would have to go through a value
-/// that is not a table, or when the whole section is named and the value is
-/// not one.
+/// that is not a table, when it would erase a table with a value that is not
+/// one, when it would replace an array of tables, or when the value has no
+/// TOML to write. [`WriteRefusal::Usage`] when the whole section is named and
+/// the value is not a table.
 pub(super) fn plan_section(
     doc: DocumentMut,
+    name: &str,
     keys: &[String],
     value: &Json,
 ) -> Result<Plan, WriteRefusal> {
@@ -114,15 +125,9 @@ pub(super) fn plan_section(
                     .to_string(),
             ));
         };
-        doc = document_of(map);
+        doc = document_of(map).map_err(|held| held.refusal(name, keys))?;
     } else {
-        set_toml(doc.as_table_mut(), keys, "", value).map_err(|held| {
-            WriteRefusal::Refused(format!(
-                "`{held}` holds a value that is not a table, and `shep set` cannot write `{}` \
-                 through it",
-                keys.join(".")
-            ))
-        })?;
+        set_toml(doc.as_table_mut(), keys, "", value).map_err(|held| held.refusal(name, keys))?;
     }
     let toml = doc.to_string();
     // The table this document renders is the table the shepherd parses back out

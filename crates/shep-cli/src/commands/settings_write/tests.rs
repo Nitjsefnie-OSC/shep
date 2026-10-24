@@ -66,11 +66,12 @@ allowed_domains = [\"github.com\"]
 timeout = 30
 ";
 
-/// The plan for one key inside [`SECTION`].
+/// The plan for one key inside [`SECTION`], aimed at the dog `kelpie`.
 fn section_plan(keys: &[&str], value: Json) -> Result<Plan, WriteRefusal> {
     let doc = SECTION.parse::<toml_edit::DocumentMut>().unwrap();
     plan_section(
         doc,
+        "kelpie",
         &keys.iter().map(|key| key.to_string()).collect::<Vec<_>>(),
         &value,
     )
@@ -244,13 +245,31 @@ fn a_write_through_a_value_that_is_not_a_table_is_refused() {
         "{error}"
     );
 
-    // The whole `dogs.kelpie` map named, and a value that is not one.
+    // The whole `dogs.kelpie` map named, and a value that is not one. The
+    // sheep holding no table for that dog at all is the same refusal: a whole
+    // dog table takes a value that is one, and nothing here says a table that
+    // is not there holds one.
     let error = plan_dog_table("api", "kelpie", &[], &config(), &json!("ff"))
         .expect_err("a whole table takes a whole table");
+    assert_eq!(error.code(), ExitCode::InvalidConfig);
     assert!(
         error
             .to_string()
-            .contains("`api.dogs.kelpie` holds a table"),
+            .contains("`api.dogs.kelpie` names a whole dog table"),
+        "{error}"
+    );
+    assert!(
+        !error.to_string().contains("holds a table"),
+        "{error}: a table the sheep does not hold is not a table it holds"
+    );
+
+    let missing = json!({"dogs": {}});
+    let error = plan_dog_table("api", "kelpie", &[], &missing, &json!("ff"))
+        .expect_err("no table for the dog is still a whole table");
+    assert!(
+        error
+            .to_string()
+            .contains("`api.dogs.kelpie` names a whole dog table"),
         "{error}"
     );
 }
@@ -348,7 +367,7 @@ fn a_write_through_a_sections_scalar_is_refused() {
     assert!(
         error
             .to_string()
-            .contains("`repo` holds a value that is not a table"),
+            .contains("`kelpie.repo` holds a value that is not a table"),
         "{error}"
     );
 }
@@ -613,4 +632,201 @@ fn a_dog_section_that_does_not_parse_is_named_as_the_file() {
     );
     assert!(text.contains("nothing was written"), "{text}");
     assert!(text.contains("shep get kelpie"), "{text}");
+}
+
+/// A section that spells a table inline, which is the form a hand-written
+/// `dogs.toml` often uses and the one `set_toml` used to refuse walking.
+const INLINE_SECTION: &str = "\
+repo = \"/srv/project\"
+worker = { timeout = 30, allowed_domains = [\"github.com\"] }
+fetch = { git = { merging = \"ff\" } }
+";
+
+/// The plan for one key inside [`INLINE_SECTION`].
+fn inline_plan(keys: &[&str], value: Json) -> Result<Plan, WriteRefusal> {
+    let doc = INLINE_SECTION.parse::<toml_edit::DocumentMut>().unwrap();
+    plan_section(
+        doc,
+        "kelpie",
+        &keys.iter().map(|key| key.to_string()).collect::<Vec<_>>(),
+        &value,
+    )
+}
+
+/// A key under an inline table is written, and the parent stays an inline
+/// table: the form the section spells a table in is the form it keeps.
+#[test]
+fn a_key_under_an_inline_table_is_written_inline() {
+    let plan = inline_plan(&["worker", "timeout"], json!(45)).unwrap();
+    let Write::DogSection { toml } = &plan.write else {
+        unreachable!()
+    };
+    assert!(toml.contains("worker = { timeout = 45"), "{toml}");
+    assert!(
+        !toml.contains("[worker]"),
+        "{toml}: an inline table does not become a header"
+    );
+    assert_eq!(plan.changes.len(), 1);
+    assert_eq!(plan.changes[0].key, "timeout");
+    assert_eq!(plan.changes[0].old, Some(json!(30)));
+    assert_eq!(plan.changes[0].new, Some(json!(45)));
+
+    // A key the inline table does not hold yet lands inside it rather than
+    // beside it.
+    let plan = inline_plan(&["worker", "retries"], json!(3)).unwrap();
+    let Write::DogSection { toml } = &plan.write else {
+        unreachable!()
+    };
+    assert!(toml.contains("worker = {"), "{toml}");
+    assert!(toml.contains("retries = 3"), "{toml}");
+    assert_eq!(plan.changes[0].kind, ChangeKind::Added);
+}
+
+/// Two levels down, where the parent inline table holds an inline table.
+#[test]
+fn a_key_under_a_nested_inline_table_is_written() {
+    let plan = inline_plan(&["fetch", "git", "merging"], json!("rebase")).unwrap();
+    let Write::DogSection { toml } = &plan.write else {
+        unreachable!()
+    };
+    assert!(
+        toml.contains("fetch = { git = { merging = \"rebase\" } }"),
+        "{toml}"
+    );
+    assert_eq!(plan.changes[0].old, Some(json!("ff")));
+
+    // The scalar in the way is still a refusal, and it names the scalar.
+    let error =
+        inline_plan(&["worker", "timeout", "deep"], json!(1)).expect_err("an integer holds no key");
+    assert!(
+        error
+            .to_string()
+            .contains("`kelpie.worker.timeout` holds a value that is not a table"),
+        "{error}"
+    );
+}
+
+/// A TOML date, time or datetime reads as the text it spells, which is what
+/// shep's JSON plane carries one as everywhere else, and never as a null.
+#[test]
+fn a_toml_datetime_is_the_text_it_spells() {
+    assert_eq!(
+        value_of("1979-05-27T07:32:00Z"),
+        json!("1979-05-27T07:32:00Z")
+    );
+    assert_eq!(value_of("1979-05-27"), json!("1979-05-27"));
+    assert_eq!(value_of("07:32:00"), json!("07:32:00"));
+
+    let section = "since = 1979-05-27T07:32:00Z\nkeep = 1\n";
+    let plan = plan_section(
+        section.parse::<toml_edit::DocumentMut>().unwrap(),
+        "kelpie",
+        &["keep".to_string()],
+        &json!(2),
+    )
+    .unwrap();
+    assert_eq!(plan.table["since"], json!("1979-05-27T07:32:00Z"));
+
+    // A whole-section write keeps the datetime the section already held, which
+    // a null would have dropped on the way back out.
+    let plan = plan_section(
+        section.parse::<toml_edit::DocumentMut>().unwrap(),
+        "kelpie",
+        &[],
+        &json!({ "since": "1979-05-27T07:32:00Z", "keep": 1 }),
+    )
+    .unwrap();
+    let Write::DogSection { toml } = &plan.write else {
+        unreachable!()
+    };
+    assert!(toml.contains("since = \"1979-05-27T07:32:00Z\""), "{toml}");
+    assert!(!toml.contains("null"), "{toml}");
+}
+
+/// A leaf that holds a table is refused as a table, which is the sentence the
+/// operator can act on, and not as a value that is not one.
+#[test]
+fn a_leaf_table_is_refused_as_the_table_it_is() {
+    let error = section_plan(&["worker"], json!(30)).expect_err("a table holds a table");
+    assert_eq!(error.code(), ExitCode::InvalidConfig);
+    let text = error.to_string();
+    assert!(
+        text.contains("`kelpie.worker` holds a table"),
+        "{text}: the refusal names the address, not a fragment of the section"
+    );
+    assert!(
+        text.contains("does not replace a table with a value that is not one"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("holds a value that is not a table"),
+        "{text}: `[worker]` is a table"
+    );
+}
+
+/// An array of tables is its own shape, and `shep set` writes one table.
+#[test]
+fn an_array_of_tables_is_not_replaced_by_one_table() {
+    let section = "[[sinks]]\nurl = \"https://a\"\n[[sinks]]\nurl = \"https://b\"\n";
+    let error = plan_section(
+        section.parse::<toml_edit::DocumentMut>().unwrap(),
+        "kelpie",
+        &["sinks".to_string()],
+        &json!({ "url": "https://c" }),
+    )
+    .expect_err("an array of tables is not one table");
+    assert_eq!(error.code(), ExitCode::InvalidConfig);
+    assert!(
+        error
+            .to_string()
+            .contains("`kelpie.sinks` is an array of tables"),
+        "{error}"
+    );
+}
+
+/// TOML has no null, so a null in a value is refused rather than dropped,
+/// which would be a smaller write than the one the operator asked for.
+#[test]
+fn a_null_is_refused_rather_than_dropped() {
+    let error = section_plan(&["limits", "keep"], json!(null)).expect_err("TOML has no null");
+    assert_eq!(error.code(), ExitCode::InvalidConfig);
+    assert!(
+        error
+            .to_string()
+            .contains("`kelpie.limits.keep` has no TOML to write"),
+        "{error}"
+    );
+
+    let error = section_plan(&[], json!({ "repo": null })).expect_err("nor in a whole section");
+    assert!(
+        error
+            .to_string()
+            .contains("`kelpie.repo` has no TOML to write"),
+        "{error}"
+    );
+
+    // A null inside a table value is named from the address, not from the
+    // value: `{ keep = null }` written at `worker` sits at `worker.keep`.
+    let error = section_plan(&["worker"], json!({ "keep": null }))
+        .expect_err("a null inside a table is still a null");
+    assert!(
+        error
+            .to_string()
+            .contains("`kelpie.worker.keep` has no TOML to write"),
+        "{error}"
+    );
+}
+
+/// The sentence for a section whose name this shepherd knows no dog by, which
+/// is the daemon's own remedy in the CLI's own words.
+#[test]
+fn a_section_of_a_dog_nothing_knows_names_the_dog() {
+    let text = no_known_dog("ghost");
+    assert!(text.starts_with("nothing was written:"), "{text}");
+    assert!(text.contains("`[ghost]` section"), "{text}");
+    assert!(text.contains("`shep adopt` or `shep enable`"), "{text}");
+    assert!(
+        !text.contains("shep kv set"),
+        "{text}: this name is not a key/value key"
+    );
 }

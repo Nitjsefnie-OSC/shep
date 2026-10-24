@@ -65,6 +65,13 @@ fn value_json(value: &TomlValue) -> Json {
                 .collect(),
         );
     }
+    if let Some(stamp) = value.as_datetime() {
+        // shep's JSON plane has no datetime type, and [`shep_core::config::DogTable`]'s own
+        // deserializer already rewrites a TOML date, time or datetime to its
+        // plain string at any depth. Reading one as `null` would put a null in
+        // the change list and drop the key from a table rebuilt whole.
+        return Json::String(stamp.to_string());
+    }
     Json::Null
 }
 
@@ -96,6 +103,33 @@ pub(super) fn toml_value(value: &Json) -> Option<TomlValue> {
         }
         Json::Object(map) => TomlValue::InlineTable(inline_table(map)),
     })
+}
+
+/// The dotted path of the first `null` leaf under `map`, `None` when it holds
+/// none.
+///
+/// TOML has no null, so a JSON null has no cell to write at. A renderer that
+/// skipped one would silently drop the key it sat at, which is a smaller write
+/// than the operator asked for.
+pub(super) fn null_leaf(map: &Map<String, Json>) -> Option<String> {
+    map.iter()
+        .find_map(|(key, value)| leaf(key.clone(), value))
+        .map(|path| path.join("."))
+}
+
+/// [`null_leaf`] walking `value`, with the path it has reached so far.
+fn leaf(path: String, value: &Json) -> Option<Vec<String>> {
+    match value {
+        Json::Null => Some(vec![path]),
+        Json::Object(map) => map
+            .iter()
+            .find_map(|(key, nested)| leaf(format!("{path}.{key}"), nested)),
+        Json::Array(list) => list
+            .iter()
+            .enumerate()
+            .find_map(|(index, nested)| leaf(format!("{path}[{index}]"), nested)),
+        _ => None,
+    }
 }
 
 /// `map` as a TOML inline table.

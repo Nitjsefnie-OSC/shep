@@ -291,6 +291,12 @@ async fn set_sheep(
 /// A dog the flock runs with no section yet is the one case with nothing to
 /// read, and the write creates it: the operator named a key, and a section
 /// that does not exist yet is no reason to refuse it.
+///
+/// A section is not what makes a dog known. The candidate has to be a name the
+/// shepherd will take a `Request::SetDogConfig` for, which is the same set the
+/// daemon guards that request on, so a section left behind by a dog that is no
+/// longer adopted or enabled is refused here rather than sent to be refused
+/// there with a sentence that names neither.
 async fn set_dog(
     client: &Client,
     streams: &mut Streams<'_>,
@@ -298,16 +304,25 @@ async fn set_dog(
     ask: &Ask<'_>,
 ) -> ExitCode {
     let mut named: Option<String> = None;
+    let mut sectioned: Option<String> = None;
     let known = known_dogs(ask.paths);
     for name in settings_read::dog_candidates(segments) {
         let section = match settings_read::read_dog_section(client, streams, &name).await {
             Ok(section) => section,
             Err(code) => return code,
         };
-        if named.is_none() && (ask.flock.dogs.contains(&name) || known.contains(&name)) {
+        let holds = ask.flock.dogs.contains(&name) || known.contains(&name);
+        if holds && named.is_none() {
             named = Some(name.clone());
         }
         if section.trim().is_empty() {
+            continue;
+        }
+        sectioned = Some(name.clone());
+        if !holds {
+            // A shorter candidate may still be a dog this shepherd knows: a dog
+            // adopted under the dotted name `kelpie.worker` is known while
+            // `kelpie` is not.
             continue;
         }
         let Ok(doc) = section.parse::<DocumentMut>() else {
@@ -316,7 +331,7 @@ async fn set_dog(
         let depth = name.split('.').count();
         let rest = &segments[depth..];
         let keys = settings_read::dog_steps(doc.as_table(), rest);
-        return match plan_section(doc, &keys, &ask.value) {
+        return match plan_section(doc, &name, &keys, &ask.value) {
             Ok(plan) => {
                 let plan = Plan {
                     schema: dog_schema(&name, ask.paths),
@@ -337,11 +352,14 @@ async fn set_dog(
         };
     }
     let Some(dog) = named else {
-        return WriteRefusal::Unknown(no_such_name(segments)).report(streams);
+        return match sectioned {
+            Some(name) => WriteRefusal::Unknown(no_known_dog(&name)).report(streams),
+            None => WriteRefusal::Unknown(no_such_name(segments)).report(streams),
+        };
     };
     let depth = dog.split('.').count();
     let rest = &segments[depth..];
-    match plan_section(DocumentMut::new(), rest, &ask.value) {
+    match plan_section(DocumentMut::new(), &dog, rest, &ask.value) {
         Ok(plan) => {
             let plan = Plan {
                 schema: dog_schema(&dog, ask.paths),
@@ -556,6 +574,21 @@ pub(super) fn no_such_name(segments: &[String]) -> String {
         "no sheep or dog named `{}`: `shep flock` lists the flock and `shep dogs` lists the dogs. \
          The key/value store `shep set` used to write lives at `shep kv set`",
         segments.join(".")
+    )
+}
+
+/// The sentence for a `dogs.toml` section whose name this shepherd knows no dog
+/// by.
+///
+/// `shep disable` and a hand edit both leave a section behind, and the daemon
+/// guards [`Request::SetDogConfig`] on its own known set for the same reason
+/// this refusal exists: writing the section of a dog nothing runs configures
+/// nothing. The remedy is the daemon's own, so the sentence is too.
+pub(super) fn no_known_dog(name: &str) -> String {
+    format!(
+        "nothing was written: `dogs.toml` has a `[{name}]` section, but no dog this shepherd knows \
+         is named `{name}`. `shep adopt` or `shep enable` makes one known, and `shep dogs` lists \
+         what is"
     )
 }
 
