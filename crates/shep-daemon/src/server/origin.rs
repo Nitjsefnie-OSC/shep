@@ -67,7 +67,6 @@ impl Origin {
     pub(super) fn bound_dog(&self) -> Option<&str> {
         match self {
             Self::Socket => None,
-            #[cfg(unix)]
             Self::Dog { name, .. } => Some(name),
         }
     }
