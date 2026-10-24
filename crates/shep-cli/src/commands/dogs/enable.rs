@@ -78,7 +78,11 @@ fn enable_granting(
     grants: Option<&Grants>,
 ) -> Result<DogSource, EnableRefusal> {
     ShepToml::try_edit(path, |cfg| {
-        if let Some(grants) = grants {
+        // `grants` answers a question asked against a read taken before this
+        // write. A grant another shep wrote since stands.
+        if let Some(grants) = grants
+            && cfg.granted(name)?.is_none()
+        {
             cfg.set_granted(name, grants)?;
         }
         let source = dog_source(cfg, name, cfg.granted(name)?);
@@ -142,7 +146,8 @@ pub(super) async fn enable_asking(
 /// one an operator declined at `shep adopt`, or hand-wrote into
 /// `[daemon.adopted_dogs]`. A built-in dog has no manifest to show yet, and a
 /// name that is no dog is left for [`enable_in_config`] to refuse. A config
-/// that cannot be read is left for it to report too.
+/// that cannot be read is reported here: carrying on would enable the dog
+/// without the question.
 ///
 /// `Ok` holds the grants to record with the enable; `Ok(None)` is nothing to
 /// record, either because no question was due or because the dog is
@@ -158,9 +163,8 @@ fn ask_before_first_enable(
     yes: bool,
     input: &mut Input,
 ) -> Result<Option<Grants>, ExitCode> {
-    let Ok(cfg) = ShepToml::read_only(&paths.daemon_config) else {
-        return Ok(None);
-    };
+    let cfg =
+        ShepToml::read_only(&paths.daemon_config).map_err(|err| fail_config(streams, &err))?;
     let Some(binary) = cfg.adopted_dog_path(name) else {
         return Ok(None);
     };

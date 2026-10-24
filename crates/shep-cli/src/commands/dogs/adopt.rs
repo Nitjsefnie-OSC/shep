@@ -92,7 +92,12 @@ pub(super) async fn adopt_asking(
     };
     let (adopted, grants) = match ShepToml::try_edit(&paths.daemon_config, |cfg| {
         cfg.adopt_dog(&name, &path, channel)?;
+        // The answer was asked against a read taken before the question. A
+        // grant another shep wrote since was decided by someone with the
+        // same say, and stands.
+        let decided_meanwhile = cfg.granted(&name)?.is_some();
         match &verdict {
+            Some(_) if decided_meanwhile => {}
             Some(Verdict::Grant(Some(grants))) => cfg.set_granted(&name, grants)?,
             // `adopt_dog` enables; a no leaves the dog adopted and off.
             Some(Verdict::Declined) => cfg.disable_dog(&name),

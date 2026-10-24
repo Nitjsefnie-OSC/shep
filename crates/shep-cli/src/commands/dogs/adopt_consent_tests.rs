@@ -2,9 +2,11 @@
 //! operator has answered, through the verbs themselves with real `/bin/sh`
 //! dogs and a canned answer in place of a terminal.
 
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 use shep_core::paths::ShepPaths;
+use shep_core::permissions::Grants;
 
 use super::adopt::adopt_asking;
 use super::consent::Input;
@@ -238,4 +240,97 @@ async fn enabling_a_dog_that_was_already_granted_does_not_ask() {
     assert_eq!(code, ExitCode::Success);
     assert!(!err.contains("[y/N]"), "{err}");
     assert!(recorded(&paths).1);
+}
+
+/// A reader that, as the operator is asked, has another shep write `otel`'s
+/// grants into `shep.toml`, then types `answer`.
+struct GrantedWhileAsking {
+    config: PathBuf,
+    answer: &'static [u8],
+    asked: bool,
+}
+
+impl std::io::Read for GrantedWhileAsking {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let line = self.fill_buf()?.to_vec();
+        let len = line.len().min(buf.len());
+        buf[..len].copy_from_slice(&line[..len]);
+        self.consume(len);
+        Ok(len)
+    }
+}
+
+impl BufRead for GrantedWhileAsking {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        if !self.asked {
+            self.asked = true;
+            ShepToml::edit(&self.config, |doc| {
+                doc.set_granted("otel", &Grants::from_names(["logs.read".to_string()]))
+                    .unwrap();
+            })
+            .unwrap();
+            return Ok(self.answer);
+        }
+        Ok(b"")
+    }
+
+    fn consume(&mut self, _len: usize) {
+        // One answer, taken whole.
+        self.asked = true;
+    }
+}
+
+fn granted_while_asking(paths: &ShepPaths, answer: &'static [u8]) -> Input {
+    Input {
+        is_terminal: true,
+        reader: Box::new(GrantedWhileAsking {
+            config: paths.daemon_config.clone(),
+            answer,
+            asked: false,
+        }),
+    }
+}
+
+/// The grants another shep wrote while the question was open were decided by
+/// someone else after the read that chose to ask: they stand.
+#[tokio::test]
+async fn a_grant_written_while_adopt_is_asking_is_not_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    let binary = write_dog(dir.path(), DECLARES_TWO);
+
+    adopt_otel(&paths, &binary, false, granted_while_asking(&paths, b"y\n")).await;
+
+    assert_eq!(recorded(&paths).0, Some(vec!["logs.read".to_string()]));
+}
+
+#[tokio::test]
+async fn a_grant_written_while_enable_is_asking_is_not_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    let binary = write_dog(dir.path(), DECLARES_TWO);
+    adopt_otel(&paths, &binary, false, typing(Some("n\n"))).await;
+
+    enable_otel(&paths, false, granted_while_asking(&paths, b"y\n")).await;
+
+    assert_eq!(
+        recorded(&paths),
+        (Some(vec!["logs.read".to_string()]), true)
+    );
+}
+
+/// A no that lands after another shep granted the dog must not switch off a
+/// dog that now holds grants.
+#[tokio::test]
+async fn a_no_after_a_concurrent_grant_does_not_disable_the_dog() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    let binary = write_dog(dir.path(), DECLARES_TWO);
+
+    adopt_otel(&paths, &binary, false, granted_while_asking(&paths, b"n\n")).await;
+
+    assert_eq!(
+        recorded(&paths),
+        (Some(vec!["logs.read".to_string()]), true)
+    );
 }
