@@ -650,3 +650,28 @@ fn dog_descriptions_line_up_by_display_width_and_not_byte_length() {
         "every description starts in the same column: {help}"
     );
 }
+/// A `shep.toml` written by hand can name a dog `help`, and clap's own
+/// `help` subcommand wins that token every time: `shep help` prints shep's
+/// help and the dog is never reached. Listing it promises a command that
+/// cannot run, which is what `adopted_verbs` says its filter prevents.
+#[test]
+fn a_dog_named_help_is_left_out_of_the_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join(".shep");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("shep.toml"),
+        "[daemon.adopted_dogs]\nhelp = \"/bin/true\"\n",
+    )
+    .unwrap();
+    let paths = resolve_paths(&GlobalArgs {
+        host: None,
+        home: Some(home),
+        format: Format::Table,
+        quiet: false,
+        style: None,
+    })
+    .unwrap();
+
+    assert_eq!(adopted_verbs(&paths), Vec::<AdoptedVerb>::new());
+}

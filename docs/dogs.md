@@ -476,9 +476,9 @@ on `$PATH` (which is where `cargo install`/`go install` put it).
 every later boot or every `enable`. It refuses a path that does not
 exist, is not a file, has no execute bit for anyone, or is world-writable
 (the binary itself or its containing directory); it also refuses a name
-that already belongs to a built-in verb or alias, since a dog by that
-name could never be reached. It warns rather than refuses on a merely
-group-writable path. Passing all of that, it actually spawns the binary
+that already belongs to a built-in verb or alias, `help` included, since a
+dog by that name could never be reached. It warns rather than refuses on a
+merely group-writable path. Passing all of that, it actually spawns the binary
 and kills it immediately, because the only honest way to know whether this
 kernel can exec a file is to ask this kernel. The `--version` probe below
 is that spawn, so the exec proof and the version answer cost one child

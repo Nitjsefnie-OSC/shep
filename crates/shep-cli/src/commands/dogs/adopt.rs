@@ -252,10 +252,15 @@ fn default_dog_name(path: &Path) -> String {
 /// <name>` dispatches to the built-in verb first.
 ///
 /// Read off the real `clap::Command` tree rather than a hand-copied list, so
-/// a verb added later is refused automatically.
+/// a verb added later is refused automatically. The tree is built first
+/// because clap generates its `help` subcommand at build time: an unbuilt
+/// `Cli::command()` holds no `help`, and `shep help` prints shep's own help
+/// rather than reaching a dog.
 pub(crate) fn collides_with_a_verb(name: &str) -> bool {
     use clap::CommandFactory as _;
-    crate::cli::Cli::command()
+    let mut command = crate::cli::Cli::command();
+    command.build();
+    command
         .get_subcommands()
         .any(|sub| sub.get_name() == name || sub.get_all_aliases().any(|alias| alias == name))
 }
@@ -746,6 +751,13 @@ mod tests {
     fn collides_with_a_verb_covers_names_and_visible_aliases() {
         assert!(collides_with_a_verb("stop"), "a real verb must collide");
         assert!(collides_with_a_verb("ls"), "flock's own alias must collide");
+        // clap generates the `help` subcommand when it builds a command, so
+        // it is missing until `Cli::command()` is built. `shep help` prints
+        // shep's own help and never reaches a dog.
+        assert!(
+            collides_with_a_verb("help"),
+            "clap's generated help subcommand is a name a dog can never take"
+        );
         assert!(
             !collides_with_a_verb("watchdog"),
             "an arbitrary name must not collide"
