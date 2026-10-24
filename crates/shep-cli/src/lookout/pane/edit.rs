@@ -11,8 +11,8 @@ use serde_json::Value;
 use super::super::edits::{EditKey, Edits};
 use super::super::field::{Field, FieldKind};
 use super::super::textbox::{TextBox, TextEdit};
-use super::super::validation::{self, Refusal};
 use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
+use crate::dog_settings::{self as validation, Refusal};
 
 // Link-only (IR-32): the env editor this one is never open beside, and
 // the group a structural field carries.
@@ -399,7 +399,7 @@ impl ConfigPane {
     /// here, on the way in, so every entry in the set is one the pane is
     /// willing to send.
     ///
-    /// The check is [`super::super::validation::refusal`], which reads the
+    /// The check is [`crate::dog_settings::refusal`], which reads the
     /// grammar off the field rather than off the key: shep's own two string
     /// types go through their `FromStr`, a dog's own `pattern` through the
     /// regex it published, an integer through its schema's `minimum`,

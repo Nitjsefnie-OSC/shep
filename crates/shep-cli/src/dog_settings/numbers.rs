@@ -9,8 +9,8 @@
 
 use serde_json::{Number, Value};
 
-use super::super::field::Bounds;
 use super::{Refusal, enum_refusal, not_a_number, not_a_whole_number, takes_no_value};
+use crate::lookout::field::Bounds;
 
 /// [`super::refusal`] for a [`crate::lookout::field::FieldKind::Integer`] field: the empty
 /// range, the parse, then the schema's own floor and ceiling, then its `enum`.

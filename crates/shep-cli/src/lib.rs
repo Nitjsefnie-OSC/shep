@@ -17,6 +17,7 @@ mod config;
 mod dispatch;
 mod dog;
 mod dog_index;
+mod dog_settings;
 mod entry;
 mod exit;
 mod fetch;

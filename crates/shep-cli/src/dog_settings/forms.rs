@@ -16,7 +16,7 @@
 //! [`super::refusal`] is the gate that names the same table in the sentence
 //! it hands the status bar.
 
-use super::super::field::{Field, FieldKind, ValueKind};
+use crate::lookout::field::{Field, FieldKind, ValueKind};
 
 /// One line of the table: what to print, and the strings that prove it.
 ///

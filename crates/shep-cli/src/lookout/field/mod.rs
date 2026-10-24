@@ -158,7 +158,7 @@ pub struct Field {
     pub example: Option<String>,
     /// `init.accepts`, the forms this field takes, in the operator's
     /// words. Empty when the field carries none, in which case
-    /// [`super::validation::bullets`] falls back to the type table.
+    /// [`crate::dog_settings::bullets`] falls back to the type table.
     pub accepts: Vec<String>,
     /// `init.refuses`, the forms it turns down. Empty is the common case.
     pub refuses: Vec<String>,
@@ -167,7 +167,7 @@ pub struct Field {
     pub neighbours: Vec<Neighbour>,
     /// What the schema says the value must satisfy, beyond its type.
     /// Checked on the keystroke that applies an edit, by
-    /// [`super::validation::refusal`].
+    /// [`crate::dog_settings::refusal`].
     pub bounds: Bounds,
 }
 

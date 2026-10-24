@@ -11,11 +11,11 @@ use ratatui::text::{Line, Span};
 use super::super::super::field::Field;
 use super::super::super::pane::{ConfigPane, EntryBody, PaneRow};
 use super::super::super::theme::Palette;
-use super::super::super::validation;
 use super::chrome::hairline_line;
 use super::entry_row::ENTRY_LABEL;
 use super::field_row::{TABLE_LABEL, impact_tag, type_label};
 use super::layout::{BLURB_WRAP, PANEL_MAX, clipped, mask_secret, wrap};
+use crate::dog_settings as validation;
 use crate::vocabulary::Role;
 
 /// A row of `prefix` (already at its own fixed width) followed by `text`,
@@ -48,7 +48,7 @@ pub(super) fn bounded_row(
 /// than disappearing since `now` is never empty, the impact tag is omitted
 /// for a dog (whose own binary decides what a change costs, not this
 /// pane), and `VALIDATION`/`NEIGHBOURS` are each omitted on their own when
-/// [`validation::bullets`] or [`Field::neighbours`] has nothing to say.
+/// [`crate::dog_settings::bullets`] or [`Field::neighbours`] has nothing to say.
 pub(in crate::lookout::view) fn panel_for_field(
     field: &Field,
     pane: &ConfigPane,

@@ -8,10 +8,10 @@
 
 use serde_json::Value;
 
-use super::super::field::{Bounds, ListItem};
 use super::numbers::{integer_of, range_refusal};
 use super::patterns::pattern_refusal;
 use super::{Refusal, enum_refusal, shown_value};
+use crate::lookout::field::{Bounds, ListItem};
 
 /// Why one typed element of a list field was not filed, in the operator's
 /// words.
@@ -33,7 +33,7 @@ use super::{Refusal, enum_refusal, shown_value};
 /// reason.
 ///
 /// The empty buffer never reaches here: it is nothing to write, which is
-/// [`super::super::pane::ListPane::apply_typing`]'s own case.
+/// [`crate::lookout::pane::ListPane::apply_typing`]'s own case.
 #[must_use]
 pub fn item_refusal(
     key: &str,
@@ -274,7 +274,7 @@ mod tests {
     }
 
     /// A dog that ships a broken regex in its item schema has a bug in its
-    /// schema, and the list editor fails open on it for [`super::super::refusal`]'s
+    /// schema, and the list editor fails open on it for [`super::refusal`]'s
     /// reason: refusing every element would lock an operator out of a
     /// setting over somebody else's typo.
     #[test]

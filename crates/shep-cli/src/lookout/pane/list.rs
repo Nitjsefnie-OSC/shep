@@ -16,9 +16,9 @@ use serde_json::Value;
 use super::super::edits::EditKey;
 use super::super::field::{Bounds, Field, FieldKind, ListItem};
 use super::super::textbox::{TextBox, TextEdit};
-use super::super::validation::{Refusal, item_refusal};
 use super::super::viewport::Viewport;
 use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
+use crate::dog_settings::{Refusal, item_refusal};
 
 /// One row of the list sub-screen.
 ///
