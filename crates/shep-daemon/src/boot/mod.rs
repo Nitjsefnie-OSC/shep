@@ -43,7 +43,7 @@ use tokio::sync::{mpsc, watch};
 use shep_core::paths::ShepPaths;
 
 #[cfg(unix)]
-use self::handover::{HandoverSeam, apps_for_the_roll, rehydrate, successor_handover};
+use self::handover::{HandoverSeam, Rehydrated, apps_for_the_roll, rehydrate, successor_handover};
 use self::pidfile::PidfileLock;
 use self::signals::install_signals;
 use self::socket::{DaemonReady, bind_socket, socket_path, write_ready};
@@ -214,8 +214,14 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
     #[cfg(unix)]
     let (mut pidfile_lock, listener, inherited) = match successor_handover()? {
         Some(carried) => {
-            let (lock, listener, flock) = rehydrate(carried, &paths)?;
-            (lock, listener, Some(flock))
+            let Rehydrated {
+                lock,
+                listener,
+                flock,
+                counters,
+                reloads,
+            } = rehydrate(carried)?;
+            (lock, listener, Some((flock, counters, reloads)))
         }
         None => (
             PidfileLock::acquire(&paths)?,
