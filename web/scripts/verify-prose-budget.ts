@@ -106,7 +106,12 @@ export const BUDGETS: Record<string, number> = {
   // and this one's help-and-completion copy are both on the page, which
   // measures 4942 with neither side's prose cut. Neither is trimmable for
   // the other's sake.
-  "writing-a-dog": 4950,
+  //
+  // Raised on #1098 for the dog's say in a write to its own settings: the
+  // `validate` manifest field, the `shep.validate` ask, and what a refusal
+  // prints. Surface a dog author and an operator both have to be able to
+  // read, not prose to trim back out to fit.
+  "writing-a-dog": 5180,
   // Raised from 3380 on 2026-10-24 for "Dropping one override": `shep unset`
   // is a new verb that undoes `shep set`, and the page's only other way to
   // put a setting back was a whole-file `--reset`, so the section is new
@@ -148,7 +153,12 @@ export const BUDGETS: Record<string, number> = {
   // kind that now edits, say a whole number typed into one is filed as a
   // float, and say a list of numbers is still read-only, which the old text
   // left implied by silence.
-  "lookout-config": 3920,
+  //
+  // Raised on #1098 for the dog's say in a write to its own settings: the
+  // `validate` manifest field, the `shep.validate` ask, and what a refusal
+  // prints. Surface a dog author and an operator both have to be able to
+  // read, not prose to trim back out to fit.
+  "lookout-config": 3970,
   // Raised from 2930 on 2026-09-14 for the host line, which `shep flock`
   // began printing on a one-shot listing and not only under `--follow`. It
   // shows above every table on this page, so four transcripts gained a line
@@ -195,7 +205,12 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 3990 on 2026-10-24 for the `shep adopt` defaults sentence:
   // the section an adopted dog arrives with is where an operator edits that
   // dog's settings (#356).
-  dogs: 4030,
+  //
+  // Raised on #1098 for the dog's say in a write to its own settings: the
+  // `validate` manifest field, the `shep.validate` ask, and what a refusal
+  // prints. Surface a dog author and an operator both have to be able to
+  // read, not prose to trim back out to fit.
+  dogs: 4090,
   // Raised from 2770 for the "Over --host" section: a lookout over a host
   // leaves panes blank that an operator would otherwise read as broken, so
   // the table naming them is required content.
@@ -251,7 +266,12 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 2165 for "Handlers may run at the same time": an app author
   // who does not echo `id` has to be told the Rust library can answer
   // actions out of the order it was asked. Required content for #1071.
-  "shepherd-channel": 2220,
+  //
+  // Raised on #1098 for the dog's say in a write to its own settings: the
+  // `validate` manifest field, the `shep.validate` ask, and what a refusal
+  // prints. Surface a dog author and an operator both have to be able to
+  // read, not prose to trim back out to fit.
+  "shepherd-channel": 2280,
   "from-pm2": 1720,
   "boot-order": 1670,
   "talking-to-a-sheep": 1620,
