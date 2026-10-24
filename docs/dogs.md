@@ -899,6 +899,43 @@ dogs that are fine. What catches it is the dog's own CI building against
 a current `shep-core`, which is where both published dogs' breakage was
 already visible and unread.
 
+## Answering `--shep-manifest`
+
+One flag describes the dog whole: `--shep-manifest`, answered on stdout with
+one JSON object, manifest v1. Nothing in shep reads it yet; a dog can start
+declaring now. `--version` and `--schema` stay as they are, for a dog built
+against an older shep and for an older shep adopting this one.
+
+| Field | Meaning |
+| --- | --- |
+| `manifest` | The version, `1`. |
+| `name`, `version`, `protocol` | Who the dog is, and the wire protocol it speaks. |
+| `channel` | Whether it asks for the shepherd channel. |
+| `settings` | The JSON Schema `--schema` answers, byte for byte. |
+| `defaults` | TOML text for the dog's own section. |
+| `permissions` | Each with `name`, `required` and `reason`. |
+| `verb` | `description`, and `subcommands` each with `name` and `about`. |
+| `depends` | `dogs`, each with `name` and a version range `version`; `shep`, the oldest shep supported. |
+| `validate` | Whether the dog validates a proposed settings table over its channel. |
+
+`manifest`, `name`, `version` and `protocol` are required; the rest default
+to nothing declared. A reader ignores a field it does not know, so a later
+manifest reads on an older shep. Output that is not a manifest, or a
+non-zero exit, means the dog has none.
+
+`Probe` builds it from what the dog already gives it. `permission`, `verb`,
+`depends_on_dog`, `depends_on_shep`, `defaults` and `validate` add what it
+declares:
+
+```rust
+use shep_client::dogs::{Permission, Probe};
+
+Probe::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    .ask_for_channel()
+    .permission(Permission::new("flock.read", true, "lists the flock"))
+    .answer::<MyDogConfig>();
+```
+
 ## Answering `--schema`
 
 `shep adopt` asks a second question straight after the first: `--schema`,

@@ -5,6 +5,8 @@
 //! (the answerer), so the two agree by construction rather than by copying
 //! a doc snippet.
 
+pub mod manifest;
+
 /// The flag a candidate is spawned with when shep asks for its version; the
 /// contract `docs/dogs.md` publishes. Read by `shep-cli`'s `adopt`, answered
 /// by `shep_client::dogs::probe`.
@@ -14,6 +16,12 @@ pub const VERSION_FLAG: &str = "--version";
 /// schema. Asked by `shep-cli`'s `adopt` on the same terms as
 /// [`VERSION_FLAG`]: a dog that answers nothing is refused nothing.
 pub const SCHEMA_FLAG: &str = "--schema";
+
+/// The flag a candidate is spawned with when shep asks it to describe itself
+/// whole: one JSON [`manifest::Manifest`] on stdout. A dog that exits
+/// non-zero, prints nothing or prints something that is not a manifest has
+/// none, and is asked [`VERSION_FLAG`] and [`SCHEMA_FLAG`] instead.
+pub const MANIFEST_FLAG: &str = "--shep-manifest";
 
 /// The key a `--version` answer states its protocol under.
 ///
