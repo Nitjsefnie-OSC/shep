@@ -38,10 +38,8 @@ fn missing_directory(path: &Path) -> Option<&'static str> {
 #[must_use]
 pub(crate) fn cwd_advisory(cwd: &Path) -> Option<String> {
     #[cfg(windows)]
-    {
-        if let Some(reason) = windows_name_advisory(cwd) {
-            return Some(format!("{} {reason}", cwd.display()));
-        }
+    if let Some(advisory) = windows_advisory(cwd) {
+        return Some(advisory);
     }
     let reason = missing_directory(cwd)?;
     Some(format!("{} {reason}", cwd.display()))
@@ -58,10 +56,8 @@ pub(crate) fn cwd_advisory(cwd: &Path) -> Option<String> {
 #[must_use]
 pub(crate) fn log_path_advisory(path: &Path) -> Option<String> {
     #[cfg(windows)]
-    {
-        if let Some(reason) = windows_name_advisory(path) {
-            return Some(format!("{} {reason}", path.display()));
-        }
+    if let Some(advisory) = windows_advisory(path) {
+        return Some(advisory);
     }
     if matches!(std::fs::metadata(path), Ok(meta) if meta.is_dir()) {
         return Some(format!("{} is a directory, not a log file", path.display()));
@@ -69,6 +65,18 @@ pub(crate) fn log_path_advisory(path: &Path) -> Option<String> {
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty())?;
     let reason = missing_directory(parent)?;
     Some(format!("{} {reason}", parent.display()))
+}
+
+/// The Windows-only opening [`cwd_advisory`] and [`log_path_advisory`]
+/// share: ask [`windows_name_advisory`] for a reason and, when there is
+/// one, prefix it with the path. Gathering the two statements here leaves
+/// each caller a single `#[cfg(windows)]` statement instead of its own
+/// block, so the shared shape is visible in the one place it is compiled.
+#[cfg(windows)]
+#[must_use]
+fn windows_advisory(path: &Path) -> Option<String> {
+    let reason = windows_name_advisory(path)?;
+    Some(format!("{} {reason}", path.display()))
 }
 
 /// Windows path restrictions no unix filesystem enforces, so nothing in
