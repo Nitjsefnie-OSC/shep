@@ -153,11 +153,10 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       <code>$SHEP_HOME</code>, which is how it finds that socket in the first
       place, and <code>$SHEP_DOG_NAME</code>, which is the name to put in
       that request. No <code>[&lt;name&gt;]</code> value rides along
-      beside them. On unix the shepherd also hands you a connection that is
-      already open, as descriptor 4 named in <code>$SHEP_DOG_FD</code>: speak
-      the same protocol on it, and fall back to the socket if it is absent
-      or closes. A <code>dog_name</code> sent on it is ignored.
-      <code>DogRuntime</code> does all of this.
+      beside them. On unix it also hands you a connection already
+      open, as descriptor 4 named in <code>$SHEP_DOG_FD</code>, which works
+      before the socket does. Use it first and fall back to the socket.
+      <code>DogRuntime</code> does.
     </p>
     <p>
       Put that name in the <code>Hello</code> too, as{" "}
