@@ -5,6 +5,8 @@
 use serde_json::{Map, Value as Json};
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, Value as TomlValue};
 
+use super::{WriteRefusal, not_a_number};
+
 /// `raw` as the value the shepherd receives: the TOML it parses as, or the
 /// text itself when it parses as nothing.
 ///
@@ -12,14 +14,21 @@ use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, Value as TomlValue
 /// value half of one line is what an operator has to type for a value to be
 /// anything but a string, which is the rule kelpie's own `set` had before shep
 /// took the verb over.
-pub(super) fn value_of(raw: &str) -> Json {
+///
+/// # Errors
+/// [`WriteRefusal::Usage`] when the value puts a `nan` or an `inf` anywhere in
+/// itself, which [`non_finite`] explains.
+pub(super) fn value_of(raw: &str) -> Result<Json, WriteRefusal> {
     let line = format!("value = {raw}");
     if let Ok(doc) = line.parse::<DocumentMut>()
         && let Some(value) = doc.get("value").and_then(Item::as_value)
     {
-        return value_json(value);
+        if let Some(path) = non_finite(value) {
+            return Err(WriteRefusal::Usage(not_a_number(&path)));
+        }
+        return Ok(value_json(value));
     }
-    Json::String(raw.to_string())
+    Ok(Json::String(raw.to_string()))
 }
 
 /// One `toml_edit` item as the JSON the shepherd's requests carry.
@@ -49,6 +58,13 @@ fn value_json(value: &TomlValue) -> Json {
         return Json::from(integer);
     }
     if let Some(float) = value.as_float() {
+        if !float.is_finite() {
+            // A value read out of a section, not one an operator is writing:
+            // `dogs.toml` can hold `nan`, and the change list has to say what
+            // is there rather than print a null for it. Writing one is refused
+            // at [`value_of`].
+            return Json::String(spelling(float).to_string());
+        }
         return Json::from(float);
     }
     if let Some(text) = value.as_str() {
@@ -73,6 +89,56 @@ fn value_json(value: &TomlValue) -> Json {
         return Json::String(stamp.to_string());
     }
     Json::Null
+}
+
+/// `float` as the text TOML spells a non-finite number with.
+///
+/// Rust's own rendering is `NaN`, which is not a word TOML has: a change list
+/// that printed it would name a value the file does not hold.
+fn spelling(float: f64) -> &'static str {
+    if float.is_nan() {
+        "nan"
+    } else if float.is_sign_negative() {
+        "-inf"
+    } else {
+        "inf"
+    }
+}
+
+/// The dotted path of the first `nan` or `inf` under `value`, `None` when it
+/// holds none.
+///
+/// TOML spells `nan`, `inf` and `-inf`, and the JSON the shepherd's requests
+/// carry have no cell: `serde_json` renders a non-finite number as `null`. A
+/// value that parses as TOML's `nan` would arrive at the flock as a write of
+/// nothing, printing `null` as the new value and clearing the key it aimed at
+/// wherever the daemon takes a null.
+fn non_finite(value: &TomlValue) -> Option<String> {
+    under("", value).map(|path| path.join("."))
+}
+
+/// [`non_finite`] walking `value`, with the path it has reached so far.
+fn under(path: &str, value: &TomlValue) -> Option<Vec<String>> {
+    if let Some(float) = value.as_float() {
+        return (!float.is_finite()).then(|| vec![path.to_string()]);
+    }
+    if let Some(array) = value.as_array() {
+        return array
+            .iter()
+            .enumerate()
+            .find_map(|(index, nested)| under(&format!("{path}[{index}]"), nested));
+    }
+    if let Some(inline) = value.as_inline_table() {
+        return inline.iter().find_map(|(key, nested)| {
+            let step = if path.is_empty() {
+                key.to_string()
+            } else {
+                format!("{path}.{key}")
+            };
+            under(&step, nested)
+        });
+    }
+    None
 }
 
 /// Every key a `toml_edit` table holds, as the JSON map a dog table request

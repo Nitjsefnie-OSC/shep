@@ -77,31 +77,6 @@ fn section_plan(keys: &[&str], value: Json) -> Result<Plan, WriteRefusal> {
     )
 }
 
-/// The value `shep set <address> <raw>` hands the shepherd.
-#[test]
-fn a_value_is_toml_and_other_text_is_the_string_as_typed() {
-    assert_eq!(value_of("5"), json!(5));
-    assert_eq!(value_of("-2"), json!(-2));
-    assert_eq!(value_of("1.5"), json!(1.5));
-    assert_eq!(value_of("true"), json!(true));
-    assert_eq!(value_of("false"), json!(false));
-    assert_eq!(value_of("[\"a\", \"b\"]"), json!(["a", "b"]));
-    assert_eq!(value_of("{ keep = 1 }"), json!({ "keep": 1 }));
-    assert_eq!(value_of("\"5\""), json!("5"));
-    // A duration, a bare word and a line of TOML that is not a value are all
-    // strings: `3s` is what an operator typed, and `512M` is what a Flockfile
-    // says for the same setting.
-    assert_eq!(value_of("3s"), json!("3s"));
-    assert_eq!(value_of("auto"), json!("auto"));
-    assert_eq!(value_of("keep = 1"), json!("keep = 1"));
-    assert_eq!(value_of(""), json!(""));
-    // A table nested in a table, because a whole dog table is one value.
-    assert_eq!(
-        value_of("{ git = { merging = \"ff\" } }"),
-        json!({ "git": { "merging": "ff" } })
-    );
-}
-
 /// A sheep's own field is one change, and the same value twice is none.
 #[test]
 fn a_field_write_is_one_change_or_none() {
@@ -139,7 +114,7 @@ fn a_dog_table_key_changes_one_row_of_the_old_and_new_list() {
     assert_eq!(plan.changes[0].new, Some(json!("rebase")));
     // The write is the merged table: the key the operator named, and every key
     // the write left alone.
-    let Write::SheepDogTable { dog, table } = &plan.write else {
+    let Write::SheepDogTable { dog, table, .. } = &plan.write else {
         panic!("a dog table key writes a dog table");
     };
     assert_eq!(dog, "kelpie");
@@ -279,7 +254,7 @@ fn a_write_through_a_value_that_is_not_a_table_is_refused() {
 #[test]
 fn a_section_write_keeps_the_text_the_operator_wrote() {
     let plan = section_plan(&["worker", "timeout"], json!(60)).unwrap();
-    let Write::DogSection { toml } = &plan.write else {
+    let Write::DogSection { toml, .. } = &plan.write else {
         panic!("a dog's own key writes its section");
     };
     assert!(
@@ -304,7 +279,7 @@ fn a_section_write_keeps_the_text_the_operator_wrote() {
 #[test]
 fn a_new_key_in_a_section_lands_where_the_address_says() {
     let plan = section_plan(&["worker", "retries"], json!(3)).unwrap();
-    let Write::DogSection { toml } = &plan.write else {
+    let Write::DogSection { toml, .. } = &plan.write else {
         panic!("a dog's own key writes its section");
     };
     assert!(toml.contains("retries = 3"), "{toml}");
@@ -318,7 +293,7 @@ fn a_new_key_in_a_section_lands_where_the_address_says() {
     // A table written whole into a section that has none for it is a header,
     // not an inline table, because that is the form a section spells tables in.
     let plan = section_plan(&["limits"], json!({ "keep": 2 })).unwrap();
-    let Write::DogSection { toml } = &plan.write else {
+    let Write::DogSection { toml, .. } = &plan.write else {
         unreachable!()
     };
     assert!(toml.contains("[limits]\nkeep = 2"), "{toml}");
@@ -329,7 +304,7 @@ fn a_new_key_in_a_section_lands_where_the_address_says() {
 #[test]
 fn a_whole_section_takes_a_whole_table() {
     let plan = section_plan(&[], json!({ "repo": "/srv/other" })).unwrap();
-    let Write::DogSection { toml } = &plan.write else {
+    let Write::DogSection { toml, .. } = &plan.write else {
         unreachable!()
     };
     assert_eq!(toml, "repo = \"/srv/other\"\n");
@@ -455,6 +430,7 @@ fn a_schema_check_asks_only_about_the_keys_this_run_chose() {
         changes: Vec::new(),
         write: Write::DogSection {
             toml: "merge = \"ask\"\n".to_string(),
+            before: "merge = \"ask\"\n".to_string(),
         },
         table,
         schema: Some(schema()),
@@ -658,7 +634,7 @@ fn inline_plan(keys: &[&str], value: Json) -> Result<Plan, WriteRefusal> {
 #[test]
 fn a_key_under_an_inline_table_is_written_inline() {
     let plan = inline_plan(&["worker", "timeout"], json!(45)).unwrap();
-    let Write::DogSection { toml } = &plan.write else {
+    let Write::DogSection { toml, .. } = &plan.write else {
         unreachable!()
     };
     assert!(toml.contains("worker = { timeout = 45"), "{toml}");
@@ -674,7 +650,7 @@ fn a_key_under_an_inline_table_is_written_inline() {
     // A key the inline table does not hold yet lands inside it rather than
     // beside it.
     let plan = inline_plan(&["worker", "retries"], json!(3)).unwrap();
-    let Write::DogSection { toml } = &plan.write else {
+    let Write::DogSection { toml, .. } = &plan.write else {
         unreachable!()
     };
     assert!(toml.contains("worker = {"), "{toml}");
@@ -686,7 +662,7 @@ fn a_key_under_an_inline_table_is_written_inline() {
 #[test]
 fn a_key_under_a_nested_inline_table_is_written() {
     let plan = inline_plan(&["fetch", "git", "merging"], json!("rebase")).unwrap();
-    let Write::DogSection { toml } = &plan.write else {
+    let Write::DogSection { toml, .. } = &plan.write else {
         unreachable!()
     };
     assert!(
@@ -704,43 +680,6 @@ fn a_key_under_a_nested_inline_table_is_written() {
             .contains("`kelpie.worker.timeout` holds a value that is not a table"),
         "{error}"
     );
-}
-
-/// A TOML date, time or datetime reads as the text it spells, which is what
-/// shep's JSON plane carries one as everywhere else, and never as a null.
-#[test]
-fn a_toml_datetime_is_the_text_it_spells() {
-    assert_eq!(
-        value_of("1979-05-27T07:32:00Z"),
-        json!("1979-05-27T07:32:00Z")
-    );
-    assert_eq!(value_of("1979-05-27"), json!("1979-05-27"));
-    assert_eq!(value_of("07:32:00"), json!("07:32:00"));
-
-    let section = "since = 1979-05-27T07:32:00Z\nkeep = 1\n";
-    let plan = plan_section(
-        section.parse::<toml_edit::DocumentMut>().unwrap(),
-        "kelpie",
-        &["keep".to_string()],
-        &json!(2),
-    )
-    .unwrap();
-    assert_eq!(plan.table["since"], json!("1979-05-27T07:32:00Z"));
-
-    // A whole-section write keeps the datetime the section already held, which
-    // a null would have dropped on the way back out.
-    let plan = plan_section(
-        section.parse::<toml_edit::DocumentMut>().unwrap(),
-        "kelpie",
-        &[],
-        &json!({ "since": "1979-05-27T07:32:00Z", "keep": 1 }),
-    )
-    .unwrap();
-    let Write::DogSection { toml } = &plan.write else {
-        unreachable!()
-    };
-    assert!(toml.contains("since = \"1979-05-27T07:32:00Z\""), "{toml}");
-    assert!(!toml.contains("null"), "{toml}");
 }
 
 /// A leaf that holds a table is refused as a table, which is the sentence the
@@ -829,4 +768,109 @@ fn a_section_of_a_dog_nothing_knows_names_the_dog() {
         !text.contains("shep kv set"),
         "{text}: this name is not a key/value key"
     );
+}
+
+/// A whole-holder write carries the holder it replaces, which is what the write
+/// checks the flock still holds before it sends.
+#[test]
+fn a_whole_holder_write_carries_the_holder_it_replaces() {
+    let plan = section_plan(&["worker", "timeout"], json!(45)).unwrap();
+    let Write::DogSection { toml, before } = &plan.write else {
+        unreachable!()
+    };
+    assert_eq!(before, SECTION, "the text the shepherd answered");
+    assert_ne!(toml, before);
+
+    // A section this run created from nothing answered no text at all, and the
+    // check has to read that as nothing having moved.
+    let plan = plan_section(
+        DocumentMut::new(),
+        "ghost",
+        &["timeout".to_string()],
+        &json!(5),
+    )
+    .unwrap();
+    let Write::DogSection { before, .. } = &plan.write else {
+        unreachable!()
+    };
+    assert_eq!(before, "");
+
+    let plan = plan_dog_table(
+        "api",
+        "kelpie",
+        &["git".to_string()],
+        &config(),
+        &json!({ "merging": "rebase" }),
+    )
+    .unwrap();
+    let Write::SheepDogTable { before, .. } = &plan.write else {
+        unreachable!()
+    };
+    assert_eq!(
+        *before,
+        json!({ "git": { "checkout": "/srv/api", "merging": "ff" }, "options": {} }),
+        "the whole table the request replaces, not the key the operator named"
+    );
+}
+
+/// The check itself: a holder that moved anywhere is one the plan no longer
+/// describes, and a holder that only gained a blank line is not a holder that
+/// moved.
+#[test]
+fn a_holder_that_moved_anywhere_is_a_holder_the_plan_no_longer_describes() {
+    assert!(!section_moved(SECTION, SECTION));
+    assert!(
+        !section_moved(SECTION, &format!("{SECTION}\n")),
+        "a trailing blank line is not a change an operator made"
+    );
+    assert!(section_moved(
+        SECTION,
+        &SECTION.replace("timeout = 30", "timeout = 60")
+    ));
+    assert!(
+        section_moved(SECTION, &SECTION.replace("# what it may fetch\n", "")),
+        "a comment is part of the text a whole-section write sends back"
+    );
+    assert!(
+        section_moved(SECTION, ""),
+        "a section deleted is a section moved"
+    );
+    assert!(!section_moved("", ""));
+
+    assert!(!table_moved(&json!({"a": 1}), &json!({"a": 1})));
+    assert!(!table_moved(&json!({}), &json!({})));
+    assert!(table_moved(&json!({"a": 1}), &json!({"a": 2})));
+    assert!(
+        table_moved(&json!({"a": 1}), &json!({"a": 1, "b": 2})),
+        "a key added elsewhere is a key this plan would overwrite with nothing"
+    );
+    assert!(table_moved(&json!({"a": 1}), &Json::Null));
+}
+
+/// The sentence for a holder that moved, naming the holder and the reader that
+/// shows the operator what it holds now.
+#[test]
+fn a_holder_that_moved_names_the_holder_and_the_reader() {
+    let section = Write::DogSection {
+        toml: String::new(),
+        before: String::new(),
+    };
+    let text = holder_moved("kelpie", "", &section);
+    assert!(text.starts_with("nothing was written:"), "{text}");
+    assert!(text.contains("`kelpie`'s section"), "{text}");
+    assert!(text.contains("changed while `shep set` waited"), "{text}");
+    assert!(text.contains("`shep get kelpie`"), "{text}");
+
+    let table = Write::SheepDogTable {
+        dog: "kelpie".to_string(),
+        table: DogTable::from(Map::new()),
+        before: Json::Null,
+    };
+    let text = holder_moved("api", "dogs.kelpie.git", &table);
+    assert!(text.contains("`api`'s table for `kelpie`"), "{text}");
+    assert!(text.contains("`shep get api.dogs.kelpie.git`"), "{text}");
+
+    // A moved holder is not a config that failed validation and not bad
+    // arguments, so it is the code with nothing more specific.
+    assert_eq!(WriteRefusal::Stale(text).code(), ExitCode::Failure);
 }

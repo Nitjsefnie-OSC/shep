@@ -382,7 +382,8 @@ pub enum Commands {
     /// sheep's own field, a dog's table on that sheep, and the dog's own
     /// section of `dogs.toml`. The value is TOML, and text that is not TOML is
     /// the string as typed: `5` is a number, `true` is a toggle and `3s` stays
-    /// `3s`.
+    /// `3s`. TOML's `nan` and `inf` are refused, because the JSON the flock
+    /// carries has no cell for them.
     ///
     /// A write that carries a dog's table is checked against the schema that
     /// dog published, and a value it turns down is refused with the key path it
@@ -393,7 +394,9 @@ pub enum Commands {
     /// naming every key the write touches with its old and new value. Under
     /// `--format json` that list prints on stderr, so stdout stays the one
     /// envelope the run writes after the answer. `--yes` skips the question and
-    /// `--dry-run` prints the list and writes nothing.
+    /// `--dry-run` prints the list and writes nothing. A write that replaces a
+    /// whole section or a whole dog table re-reads it after your answer, and is
+    /// refused if it changed while you were answering.
     ///
     /// The key/value store this verb used to write lives at `shep kv set`.
     Set(SetArgs),

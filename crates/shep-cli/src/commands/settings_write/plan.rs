@@ -84,6 +84,7 @@ pub(super) fn plan_dog_table(
         write: Write::SheepDogTable {
             dog: dog.to_string(),
             table: DogTable::from(table.clone()),
+            before,
         },
         table,
         schema: None,
@@ -116,6 +117,10 @@ pub(super) fn plan_section(
     value: &Json,
 ) -> Result<Plan, WriteRefusal> {
     let mut doc = doc;
+    // The text the shepherd answered, kept so the write can check the section
+    // still answers it. `toml_edit` renders a parsed document back to the text
+    // it parsed from, comment for comment.
+    let answered = doc.to_string();
     let before = table_json(doc.as_table());
     if keys.is_empty() {
         let Json::Object(map) = value else {
@@ -145,7 +150,10 @@ pub(super) fn plan_section(
     name_the_path(&mut changes, keys);
     Ok(Plan {
         changes,
-        write: Write::DogSection { toml },
+        write: Write::DogSection {
+            toml,
+            before: answered,
+        },
         table: after,
         schema: None,
         touched: touched_paths(keys, value),

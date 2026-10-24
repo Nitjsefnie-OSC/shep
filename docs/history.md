@@ -595,7 +595,12 @@ table is checked against the schema that dog published, through the same door
 lookout's config pane files a keystroke through, and only for the keys this run
 chose: a value the operator wrote into the file by hand rides along untouched.
 A dog that publishes nothing is asked nothing. A dog the flock has never been
-given a section for gets one. `--dry-run` writes nothing, `--yes` skips the
+given a section for gets one. A write that replaces a whole section or a whole
+dog table re-reads that holder after the answer and is refused if it moved in
+the meantime, because what it sends carries every key it read rather than only
+the one named. TOML's `nan` and `inf` are refused as values: the JSON the
+shepherd carries has no cell for one, and a write built from it reaches the
+flock as a null. `--dry-run` writes nothing, `--yes` skips the
 question, and `--format json` carries the change list, `written` and `pending`
 in the one envelope. `shep set` stopped being the key/value store's hidden
 spelling at the same time: `shep kv set` is that store's verb, and a name no

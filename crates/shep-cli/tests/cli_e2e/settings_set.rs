@@ -426,3 +426,99 @@ timeout = 30
 
     graceful_kill(home);
 }
+
+/// TOML's `nan`, `inf` and `-inf` have no cell in the JSON the shepherd's
+/// requests carry, and `serde_json` renders one as a null. The value is refused
+/// before anything is sent, rather than arriving as a write of nothing.
+#[test]
+fn shep_set_refuses_a_value_that_is_not_a_number() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    let script = write_test_script(&dir);
+    let flockfile = write_flockfile(
+        &dir,
+        &format!(
+            "[[app]]\nname = \"api\"\nscript = '{}'\nmax_memory = \"1G\"\n",
+            script.display()
+        ),
+    );
+
+    let mut guard = DaemonGuard::default();
+    let boot = shep(home).arg("start").arg(&flockfile).output().unwrap();
+    guard.adopt_home(home);
+    assert_success(&boot);
+    poll_flock(home, |info| info["status"] == "online");
+
+    // `-inf` is not in the list a live flock is driven with: clap reads an
+    // argument that starts with a dash as a flag, which is the verb's argument
+    // grammar rather than the value's. `commands::settings_write::tests` is
+    // where the value grammar is pinned.
+    for raw in ["nan", "inf", "{ git = { merging = -inf } }", "[1, inf]"] {
+        let refused = shep(home)
+            .arg("set")
+            .arg("api.max_memory")
+            .arg(raw)
+            .arg("--yes")
+            .output()
+            .unwrap();
+        assert_eq!(refused.status.code(), Some(2), "{raw}: {refused:?}");
+        let text = String::from_utf8_lossy(&refused.stderr);
+        assert!(text.contains("no place in the JSON"), "{text}");
+        assert!(
+            text.contains("null"),
+            "{text}: the write it would have been"
+        );
+    }
+
+    let read = shep(home)
+        .arg("get")
+        .arg("api.max_memory")
+        .output()
+        .unwrap();
+    assert_success(&read);
+    assert_eq!(
+        String::from_utf8_lossy(&read.stdout),
+        "max_memory = \"1G\"\n",
+        "a refused value writes nothing"
+    );
+
+    graceful_kill(home);
+}
+
+/// A whole-section write re-reads the section before it sends, to catch a holder
+/// that moved while the operator was answering. The re-read must not read the
+/// blank line a section ends with as a change.
+#[test]
+fn shep_set_writes_a_section_that_ends_in_a_blank_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    let script = write_test_script(&dir);
+    let flockfile = write_flockfile(
+        &dir,
+        &format!("[[app]]\nname = \"api\"\nscript = '{}'\n", script.display()),
+    );
+    std::fs::write(home.join("dogs.toml"), "[bark]\npoll = \"30s\"\n\n").unwrap();
+
+    let mut guard = DaemonGuard::default();
+    let boot = shep(home).arg("start").arg(&flockfile).output().unwrap();
+    guard.adopt_home(home);
+    assert_success(&boot);
+    poll_flock(home, |info| info["status"] == "online");
+
+    let written = shep(home)
+        .arg("set")
+        .arg("bark.history_bytes")
+        .arg("2097152")
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert_success(&written);
+    let text = String::from_utf8_lossy(&written.stdout);
+    assert!(text.contains("wrote 1 change onto `bark`"), "{text}");
+
+    let file = std::fs::read_to_string(home.join("dogs.toml")).unwrap();
+    assert!(file.contains("poll = \"30s\""), "{file}");
+    assert!(file.contains("history_bytes = 2097152"), "{file}");
+
+    graceful_kill(home);
+}

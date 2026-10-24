@@ -79,6 +79,8 @@ pub(crate) enum WriteRefusal {
     Refused(String),
     /// The dog's own schema turned the value down.
     Invalid(String),
+    /// The holder moved between the read the plan was built from and the write.
+    Stale(String),
 }
 
 impl WriteRefusal {
@@ -88,7 +90,8 @@ impl WriteRefusal {
             Self::Usage(message)
             | Self::Unknown(message)
             | Self::Refused(message)
-            | Self::Invalid(message) => message,
+            | Self::Invalid(message)
+            | Self::Stale(message) => message,
         }
     }
 
@@ -97,11 +100,16 @@ impl WriteRefusal {
     /// [`ExitCode::InvalidConfig`] for a refused key and for a schema refusal
     /// is the code the shepherd's own refusal of the same write carries, so
     /// `set` and the request it stands in for exit alike.
+    ///
+    /// A holder that moved is [`ExitCode::Failure`]: nothing about the config is
+    /// invalid and nothing about the command line is wrong, only that the two
+    /// are no longer the pair this plan described.
     const fn code(&self) -> ExitCode {
         match self {
             Self::Usage(_) => ExitCode::Usage,
             Self::Unknown(_) => ExitCode::NotFound,
             Self::Refused(_) | Self::Invalid(_) => ExitCode::InvalidConfig,
+            Self::Stale(_) => ExitCode::Failure,
         }
     }
 
@@ -146,12 +154,18 @@ pub(super) enum Write {
         dog: String,
         /// The table the sheep holds afterwards.
         table: DogTable,
+        /// The table the sheep held when this plan was built, which is what
+        /// [`holder_unchanged`] checks the sheep still holds.
+        before: Json,
     },
     /// One dog's whole section, through [`Request::SetDogConfig`].
     DogSection {
         /// The section text, edited in place from the text the shepherd
         /// answered.
         toml: String,
+        /// The text the shepherd answered, which is what [`holder_unchanged`]
+        /// checks it still answers.
+        before: String,
     },
 }
 
@@ -201,7 +215,10 @@ pub(crate) async fn set(
     paths: &ShepPaths,
     args: &SetArgs,
 ) -> ExitCode {
-    let value = value_of(&args.value);
+    let value = match value_of(&args.value) {
+        Ok(value) => value,
+        Err(refusal) => return refusal.report(streams),
+    };
     let flock = match copy::flock_names(client, streams).await {
         Ok(names) => names,
         Err(code) => return code,
@@ -451,6 +468,18 @@ async fn run(
         return finish(streams, &report);
     }
 
+    // The answer was given, and the holder may have moved while it was being
+    // given. A whole-section or whole-table write carries every key it read, so
+    // a stale plan overwrites what someone else wrote in the meantime.
+    match holder_unchanged(client, streams, name, &plan.write).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return WriteRefusal::Stale(holder_moved(name, &report.path, &plan.write))
+                .report(streams);
+        }
+        Err(code) => return code,
+    }
+
     let pending = match send(client, streams, name, &plan.write).await {
         Ok(pending) => pending,
         Err(code) => return code,
@@ -537,12 +566,12 @@ async fn send(
             key: key.clone(),
             value: value.clone(),
         },
-        Write::SheepDogTable { dog, table } => Request::SetSheepDogSettings {
+        Write::SheepDogTable { dog, table, .. } => Request::SetSheepDogSettings {
             name: name.to_string(),
             dog: dog.clone(),
             table: Some(table.clone()),
         },
-        Write::DogSection { toml } => Request::SetDogConfig {
+        Write::DogSection { toml, .. } => Request::SetDogConfig {
             name: name.to_string(),
             toml: DogSectionToml::from(toml.clone()),
         },
@@ -566,6 +595,107 @@ async fn send(
         Ok(_other) => Err(unexpected_response(streams)),
         Err(err) => Err(client_error(streams, &err)),
     }
+}
+
+/// The check that the holder still holds what the plan was built from.
+///
+/// [`Request::SetDogConfig`] replaces a whole section and
+/// [`Request::SetSheepDogSettings`] replaces a whole table, so what this sends
+/// carries every key it read, not only the one the operator named. Between the
+/// read and the answer the lookout config pane can file a write of its own on a
+/// different key of the same holder, and the text read before the question would
+/// overwrite it with no warning. A sheep's own field is the one write of one key
+/// rather than of a whole holder, so it has nothing to re-read.
+///
+/// The comparison is on the whole holder rather than on the key the operator
+/// named: a holder that moved anywhere is one this plan no longer describes, and
+/// re-planning against it here would write a change the operator never saw the
+/// old value of.
+///
+/// # Errors
+/// The [`ExitCode`] already reported to `streams`.
+async fn holder_unchanged(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    name: &str,
+    write: &Write,
+) -> Result<bool, ExitCode> {
+    Ok(match write {
+        Write::SheepField { .. } => true,
+        Write::DogSection { before, .. } => {
+            match settings_read::read_dog_section(client, streams, name).await {
+                Ok(now) => !section_moved(before, &now),
+                Err(code) => return Err(code),
+            }
+        }
+        Write::SheepDogTable { dog, before, .. } => {
+            let config = match copy::read_config(client, streams, name).await {
+                Ok(config) => config,
+                Err(code) => return Err(code),
+            };
+            let now = address::dog_table(&config, dog)
+                .and_then(Json::as_object)
+                .cloned()
+                .unwrap_or_default();
+            !table_moved(before, &Json::Object(now))
+        }
+    })
+}
+
+/// `true` when a dog's section is no longer the text this plan was built from.
+///
+/// The compare ignores the blank line a section may or may not end with: the
+/// text is what the shepherd answered both times, and a difference in nothing
+/// but trailing whitespace is not a change an operator made.
+fn section_moved(before: &str, now: &str) -> bool {
+    before.trim() != now.trim()
+}
+
+/// `true` when a sheep's table for a dog is no longer the table this plan was
+/// built from.
+fn table_moved(before: &Json, now: &Json) -> bool {
+    before != now
+}
+
+/// The sentence for a holder that moved between the read and the write.
+///
+/// The remedy is to read again, because the change list the operator answered
+/// describes the holder this run read, and nothing here can show them the old
+/// value of a key that moved in between.
+pub(super) fn holder_moved(name: &str, path: &str, write: &Write) -> String {
+    let address = if path.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name}.{path}")
+    };
+    let head = match write {
+        Write::DogSection { .. } => format!("`{name}`'s section"),
+        Write::SheepDogTable { dog, .. } => format!("`{name}`'s table for `{dog}`"),
+        // A sheep's own field is one key and no whole holder, so this sentence
+        // is never built for one.
+        Write::SheepField { .. } => format!("`{name}`'s field"),
+    };
+    format!(
+        "nothing was written: {head} changed while `shep set` waited for the answer. `shep get \
+         {address}` reads what it holds now, and `shep set` again plans against that"
+    )
+}
+
+/// The sentence for a value that parses as TOML and has no place in the JSON the
+/// shepherd carries.
+///
+/// `path` is where inside the value it sits, empty for the value itself.
+pub(super) fn not_a_number(path: &str) -> String {
+    let under = if path.is_empty() {
+        String::new()
+    } else {
+        format!(" under `{path}`")
+    };
+    format!(
+        "not a value `shep set` writes: TOML's `nan` and `inf`{under} have no place in the JSON \
+         the shepherd carries, and the flock would be sent a null. Quote the text (`\"nan\"`) to \
+         write it as a string"
+    )
 }
 /// The sentence for a name no sheep is and no dog has a section for, which is
 /// where the key/value store `shep set` used to write went.
@@ -670,3 +800,5 @@ fn finish(streams: &mut Streams<'_>, report: &SetReport) -> ExitCode {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod value_tests;
