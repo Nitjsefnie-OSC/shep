@@ -19,6 +19,7 @@ mod flock;
 mod help;
 mod hosts;
 mod import;
+mod kv;
 mod logs;
 mod sheep;
 mod store;
@@ -35,6 +36,7 @@ pub use dogs::{AdoptArgs, DisableArgs, DogArgs, DogsArgs, EnableArgs};
 pub use flock::{FlockArgs, FoldArgs, LookoutArgs};
 pub use hosts::{HostArgs, HostCommand};
 pub use import::{ImportArgs, ImportCommand, ImportEnvArgs, ImportPm2Args};
+pub use kv::{KvArgs, KvCommand, KvGetArgs, KvSetArgs, KvUnsetArgs};
 pub use logs::{BarksArgs, BleatsArgs, FlushArgs, ReopenArgs};
 // Two defaults whose only caller outside their own module is a test
 // elsewhere in the crate: lib.rs builds a `FlockArgs` by hand, and
@@ -48,7 +50,7 @@ pub use sheep::{
     CopyArgs, ResetMode, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StockArgs, TriggerArgs,
     WhisperArgs,
 };
-pub use store::{KvGetArgs, KvSetArgs, KvUnsetArgs, SecretArgs, SecretCommand};
+pub use store::{SecretArgs, SecretCommand};
 pub use system::{
     CompletionArgs, DaemonArgs, DaemonCmd, DevArgs, DialStdioArgs, InitArgs, RuntimeArgs,
     StartupArgs, StyleArgs,

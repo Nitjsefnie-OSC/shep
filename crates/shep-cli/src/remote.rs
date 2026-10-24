@@ -64,6 +64,7 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         | Commands::Reopen(_)
         | Commands::Flush(_)
         | Commands::Barks(_)
+        | Commands::Kv(_)
         | Commands::Set(_)
         | Commands::Get(_)
         | Commands::Unset(_)
@@ -232,6 +233,7 @@ mod tests {
         &["reopen"],
         &["flush", "web"],
         &["barks"],
+        &["kv", "get", "k"],
         &["set", "k", "v"],
         &["get", "k"],
         &["unset", "k"],

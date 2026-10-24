@@ -196,7 +196,7 @@ where
 /// Whether this lookout may act, from `--read-only` or from the KV store.
 ///
 /// Control is on by default. `--read-only` closes it outright; short of
-/// that, `shep set lookout.allow_control false` closes it too. The store is
+/// that, `shep kv set lookout.allow_control false` closes it too. The store is
 /// `$SHEP_HOME/kv.json` rather than a `shep.toml` section, since this gate is
 /// the operator's own, and unreadable it leaves control on: the gate stops
 /// an accident, not an attacker.
