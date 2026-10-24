@@ -1,17 +1,16 @@
 use super::*;
 use futures_util::StreamExt;
 use shep_core::protocol::{
-    BusEvent, Envelope, HelloAck, ProcessInfo, Request, Response, RpcErrorCode, codec, decode_frame,
+    BusEvent, Envelope, HelloAck, ProcessInfo, Request, Response, RpcErrorCode, decode_frame,
 };
 use shep_core::transport::Listener;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tokio_util::codec::Framed;
 
 /// Depth of a [`FakeDaemon`]'s script channel and of
 /// [`fake_client_capturing_envelopes`]'s capture channel: generous and
@@ -76,7 +75,7 @@ pub struct FakeDaemon {
     pub(super) armed_describe: Arc<Mutex<Option<Vec<ProcessInfo>>>>,
     pub(super) armed_reply_then_event: Arc<Mutex<Option<(Response, BusEvent)>>>,
     pub(super) armed_shutdown_then_unlink: Arc<Mutex<Option<Duration>>>,
-    pub(super) armed_shutdown_never_unlink: Arc<Mutex<Option<()>>>,
+    pub(super) armed_shutdown_never_unlink: Arc<AtomicBool>,
     pub(super) list_flock_count: Arc<AtomicU64>,
     pub(super) task: JoinHandle<()>,
 }
@@ -89,9 +88,10 @@ pub struct FakeDaemon {
 /// then an armed error, event or shutdown script, then `Subscribe`, then
 /// `ListFlock`/`Describe`, falling back to `Response::Pong`.
 ///
-/// One `Arc<Mutex<..>>` slot per independently armed behavior, cloned from
-/// [`FakeDaemon`]'s own fields. Eleven parameters: bundling them into a
-/// struct would move the coupling around, not reduce it, for this
+/// One `Arc` slot per independently armed behavior, cloned from
+/// [`FakeDaemon`]'s own fields: a `Mutex` for each armed payload, an
+/// `AtomicBool` for the one armed flag. Eleven parameters: bundling them
+/// into a struct would move the coupling around, not reduce it, for this
 /// private, one-caller function.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn serve_scripted(
@@ -104,12 +104,10 @@ pub(super) async fn serve_scripted(
     armed_describe: Arc<Mutex<Option<Vec<ProcessInfo>>>>,
     armed_reply_then_event: Arc<Mutex<Option<(Response, BusEvent)>>>,
     armed_shutdown_then_unlink: Arc<Mutex<Option<Duration>>>,
-    armed_shutdown_never_unlink: Arc<Mutex<Option<()>>>,
+    armed_shutdown_never_unlink: Arc<AtomicBool>,
     list_flock_count: Arc<AtomicU64>,
 ) {
-    let stream = listener.accept().await.unwrap();
-    let mut frames = Framed::new(stream, codec());
-    let _hello = handshake(&mut frames, ack).await;
+    let mut frames = accept_handshaked(&mut listener, ack).await;
 
     let mut armed_err: Option<(RpcErrorCode, String)> = None;
     let mut armed_event_then_reply = false;
@@ -171,7 +169,7 @@ pub(super) async fn serve_scripted(
                         let shutdown_then_unlink =
                             armed_shutdown_then_unlink.lock().unwrap().take();
                         let shutdown_never_unlink =
-                            armed_shutdown_never_unlink.lock().unwrap().take();
+                            armed_shutdown_never_unlink.swap(false, Ordering::SeqCst);
                         if let Some((reply, event)) = reply_then_event {
                             write_reply(&mut frames, envelope.id, reply).await;
                             write_event(&mut frames, event).await;
@@ -189,7 +187,7 @@ pub(super) async fn serve_scripted(
                             // before a deferred unlink would get a turn.
                             tokio::time::sleep(after).await;
                             let _ = std::fs::remove_file(&socket_path);
-                        } else if shutdown_never_unlink.is_some() {
+                        } else if shutdown_never_unlink {
                             write_reply(&mut frames, envelope.id, Response::ShuttingDown).await;
                             // Never unlinks: the branch a kill-teardown
                             // timeout exists to observe.
@@ -286,7 +284,8 @@ impl FakeDaemon {
     ///
     /// Synchronous, like [`Self::reply_to_list`].
     pub fn reply_shutting_down_and_never_unlink(&self) {
-        *self.armed_shutdown_never_unlink.lock().unwrap() = Some(());
+        self.armed_shutdown_never_unlink
+            .store(true, Ordering::SeqCst);
     }
 
     /// Queues `event` for this connection's subscriber.

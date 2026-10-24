@@ -44,9 +44,7 @@ pub async fn serve_one_request(
 ) -> JoinHandle<Envelope> {
     let mut listener = bind(path);
     tokio::spawn(async move {
-        let stream = listener.accept().await.unwrap();
-        let mut frames = Framed::new(stream, codec());
-        let _hello = handshake(&mut frames, ack).await;
+        let mut frames = accept_handshaked(&mut listener, ack).await;
         let envelope = read_envelope(&mut frames).await;
         write_reply(&mut frames, envelope.id, response).await;
         envelope
@@ -73,11 +71,9 @@ pub fn fake_daemon_wedged_after_handshake(
     let handshook = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&handshook);
     let handle = tokio::spawn(async move {
-        let stream = listener.accept().await.unwrap();
-        let mut frames = Framed::new(stream, codec());
-        let _hello = handshake(&mut frames, ack).await;
+        let _frames = accept_handshaked(&mut listener, ack).await;
         flag.store(true, Ordering::SeqCst);
-        // Holds `frames` open: dropping it would close the connection, and a
+        // Holds `_frames` open: dropping it would close the connection, and a
         // closed connection is a different answer from no answer at all.
         std::future::pending::<()>().await;
     });

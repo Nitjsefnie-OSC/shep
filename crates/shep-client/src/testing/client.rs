@@ -6,7 +6,7 @@ use shep_core::protocol::{
 };
 use std::collections::VecDeque;
 use std::path::Path;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -57,7 +57,7 @@ pub fn fake_daemon_scripted_on(path: &Path, ack: HelloAck) -> FakeDaemon {
     let armed_describe = Arc::new(Mutex::new(None));
     let armed_reply_then_event = Arc::new(Mutex::new(None));
     let armed_shutdown_then_unlink = Arc::new(Mutex::new(None));
-    let armed_shutdown_never_unlink = Arc::new(Mutex::new(None));
+    let armed_shutdown_never_unlink = Arc::new(AtomicBool::new(false));
     let list_flock_count = Arc::new(AtomicU64::new(0));
     let task = tokio::spawn(serve_scripted(
         listener,
@@ -155,9 +155,7 @@ pub async fn fake_client_answering(
     let mut listener = bind(path);
     let (tx, rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
-        let stream = listener.accept().await.unwrap();
-        let mut frames = Framed::new(stream, codec());
-        let _hello = handshake(&mut frames, sample_ack()).await;
+        let mut frames = accept_handshaked(&mut listener, sample_ack()).await;
         while let Some(Ok(frame)) = frames.next().await {
             let Ok(envelope) = decode_frame::<Envelope>(&frame) else {
                 break;
@@ -188,9 +186,7 @@ pub async fn fake_client_answering_refusals(
     let mut listener = bind(path);
     let (tx, rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
-        let stream = listener.accept().await.unwrap();
-        let mut frames = Framed::new(stream, codec());
-        let _hello = handshake(&mut frames, sample_ack()).await;
+        let mut frames = accept_handshaked(&mut listener, sample_ack()).await;
         while let Some(Ok(frame)) = frames.next().await {
             let Ok(envelope) = decode_frame::<Envelope>(&frame) else {
                 break;
@@ -221,9 +217,7 @@ pub async fn fake_client_capturing_envelopes(path: &Path) -> (Client, mpsc::Rece
     let mut listener = bind(path);
     let (tx, rx) = mpsc::channel(SCRIPT_CHANNEL_CAPACITY);
     tokio::spawn(async move {
-        let stream = listener.accept().await.unwrap();
-        let mut frames = Framed::new(stream, codec());
-        let _hello = handshake(&mut frames, sample_ack()).await;
+        let mut frames = accept_handshaked(&mut listener, sample_ack()).await;
         loop {
             let envelope = read_envelope(&mut frames).await;
             let id = envelope.id;
@@ -296,10 +290,8 @@ pub async fn fake_client_event_then_reply(path: &Path) -> (Client, FakeDaemon) {
 pub async fn fake_client_that_closes_after_handshake(path: &Path) -> (Client, JoinHandle<()>) {
     let mut listener = bind(path);
     let task = tokio::spawn(async move {
-        let stream = listener.accept().await.unwrap();
-        let mut frames = Framed::new(stream, codec());
-        let _hello = handshake(&mut frames, sample_ack()).await;
-        // Dropping `frames` here closes the connection from this side.
+        let _frames = accept_handshaked(&mut listener, sample_ack()).await;
+        // Dropping `_frames` here closes the connection from this side.
     });
     let client = Client::connect(path).await.unwrap();
     (client, task)
@@ -314,9 +306,7 @@ pub async fn fake_client_that_closes_after_handshake(path: &Path) -> (Client, Jo
 pub async fn fake_client_that_dies_mid_request(path: &Path) -> (Client, JoinHandle<()>) {
     let mut listener = bind(path);
     let task = tokio::spawn(async move {
-        let stream = listener.accept().await.unwrap();
-        let mut frames = Framed::new(stream, codec());
-        let _hello = handshake(&mut frames, sample_ack()).await;
+        let mut frames = accept_handshaked(&mut listener, sample_ack()).await;
         let _envelope = read_envelope(&mut frames).await;
         // Dropping `frames` here, after reading, closes the connection
         // only once the actor has recorded the request as pending.
@@ -336,9 +326,7 @@ pub async fn fake_client_that_dies_mid_request(path: &Path) -> (Client, JoinHand
 pub async fn fake_client_that_never_replies(path: &Path) -> (Client, JoinHandle<()>) {
     let mut listener = bind(path);
     let task = tokio::spawn(async move {
-        let stream = listener.accept().await.unwrap();
-        let mut frames = Framed::new(stream, codec());
-        let _hello = handshake(&mut frames, sample_ack()).await;
+        let _frames = accept_handshaked(&mut listener, sample_ack()).await;
         core::future::pending::<()>().await;
     });
     let client = Client::connect(path).await.unwrap();
@@ -361,9 +349,7 @@ pub async fn fake_client_needing_budget(
 ) -> (Client, JoinHandle<()>) {
     let mut listener = bind(path);
     let task = tokio::spawn(async move {
-        let stream = listener.accept().await.unwrap();
-        let mut frames = Framed::new(stream, codec());
-        let _hello = handshake(&mut frames, sample_ack()).await;
+        let mut frames = accept_handshaked(&mut listener, sample_ack()).await;
         loop {
             let envelope = read_envelope(&mut frames).await;
             let budget = Duration::from_millis(envelope.deadline_ms.unwrap_or(u64::MAX));
