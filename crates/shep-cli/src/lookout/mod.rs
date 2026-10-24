@@ -37,7 +37,6 @@ mod testing;
 pub mod textbox;
 pub mod theme;
 mod ui_event_loop;
-pub mod validation;
 pub mod view;
 pub mod viewport;
 mod wiring;

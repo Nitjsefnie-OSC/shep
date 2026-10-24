@@ -13,4 +13,6 @@ mod pane_text_key;
 mod paste;
 mod restore_default;
 #[cfg(test)]
+mod table_gate;
+#[cfg(test)]
 mod union_edit;

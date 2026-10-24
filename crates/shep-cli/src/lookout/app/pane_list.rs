@@ -2,7 +2,7 @@
 //! environment.
 
 use super::*;
-use crate::lookout::validation::Refusal;
+use crate::dog_settings::Refusal;
 
 impl App {
     /// One `Request::SetSheepEnv` reply.

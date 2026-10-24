@@ -1,5 +1,8 @@
 use super::super::*;
 
+use crate::dog_settings::touched_refusal;
+use crate::lookout::pane::toml_table;
+
 impl App {
     /// Everything the open pane has filed, as the requests that carry it,
     /// leaving the pane holding nothing.
@@ -33,29 +36,49 @@ impl App {
         }
         let mut ticket = self.next_write_ticket;
         let sent = match pane.target().clone() {
-            PaneTarget::Dog { name, .. } => match pane.edited_section_with(&edits) {
-                SectionWrite::Written(toml) => {
-                    let section = vec![Sent::SetDogSection {
-                        name,
-                        ticket,
-                        toml,
-                        authority,
-                    }];
-                    ticket += 1;
-                    section
+            PaneTarget::Dog { name, .. } => {
+                let schema = pane.schema().cloned();
+                match pane.edited_section_with(&edits) {
+                    SectionWrite::Written(toml) => {
+                        // The gate is the one `shep set` uses, asked about
+                        // the keys this close changed. A value the pane filed
+                        // already passed the same rules on the keystroke that
+                        // filed it. A value the operator wrote into
+                        // `dogs.toml` by hand is the shepherd's own: the pane
+                        // never read it and does not speak for it, so it rides
+                        // out as it came.
+                        if let Some(refused) = schema.as_ref().and_then(|schema| {
+                            touched_refusal(
+                                schema,
+                                &toml_table(toml.as_str()),
+                                &pane.touched_paths(&edits),
+                            )
+                        }) {
+                            self.notice = Some(Notice::grave(format!("{name}: {}", refused.text)));
+                            return Vec::new();
+                        }
+                        let section = vec![Sent::SetDogSection {
+                            name,
+                            ticket,
+                            toml,
+                            authority,
+                        }];
+                        ticket += 1;
+                        section
+                    }
+                    // The section already says what every filed edit asked for, so
+                    // the close is finished and has nothing to send. Not a
+                    // refusal, and nothing to report: the edit reached this arm
+                    // through a re-read that landed it under the operator's hand.
+                    SectionWrite::Nothing => Vec::new(),
+                    SectionWrite::Refused => {
+                        self.notice = Some(Notice::grave(format!(
+                            "{name}: its section in dogs.toml does not parse, or is not shaped for the edit"
+                        )));
+                        return Vec::new();
+                    }
                 }
-                // The section already says what every filed edit asked for, so
-                // the close is finished and has nothing to send. Not a
-                // refusal, and nothing to report: the edit reached this arm
-                // through a re-read that landed it under the operator's hand.
-                SectionWrite::Nothing => Vec::new(),
-                SectionWrite::Refused => {
-                    self.notice = Some(Notice::grave(format!(
-                        "{name}: its section in dogs.toml does not parse, or is not shaped for the edit"
-                    )));
-                    return Vec::new();
-                }
-            },
+            }
             PaneTarget::Sheep { name } => {
                 let writes = edits.into_writes();
                 let mut requests = Vec::with_capacity(writes.len());
@@ -90,7 +113,16 @@ impl App {
             // One write for the whole table, since the request replaces
             // it: every key no edit touched rides along unchanged.
             PaneTarget::SheepDog { sheep, dog, .. } => {
+                let schema = pane.schema().cloned();
                 let table = pane.edited_table_with(&edits);
+                let touched = pane.touched_paths(&edits);
+                if let Some(refused) = schema
+                    .as_ref()
+                    .and_then(|schema| touched_refusal(schema, &table, &touched))
+                {
+                    self.notice = Some(Notice::grave(format!("{sheep}.{dog}: {}", refused.text)));
+                    return Vec::new();
+                }
                 let write = vec![Sent::SetSheepDogTable {
                     name: sheep,
                     dog,

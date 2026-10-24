@@ -8,10 +8,10 @@
 
 use serde_json::Value;
 
-use super::super::field::{Bounds, ListItem};
 use super::numbers::{integer_of, range_refusal};
 use super::patterns::pattern_refusal;
-use super::{Refusal, enum_refusal, shown_value};
+use super::{Refusal, enum_refusal, shown_value, takes_one_of};
+use crate::lookout::field::{Bounds, ListItem};
 
 /// Why one typed element of a list field was not filed, in the operator's
 /// words.
@@ -24,6 +24,14 @@ use super::{Refusal, enum_refusal, shown_value};
 /// shep is not the authority on a dog's config beyond what that dog
 /// published.
 ///
+/// A [`ListItem::Choice`] element is held to the names the item itself carries,
+/// through [`takes_one_of`] rather than through the `enum` arm: a closed set
+/// spelled as a `oneOf` of `const`s publishes no `enum`, so `bounds.choices`
+/// holds nothing. The pane never reaches this arm: a choice list is toggled as
+/// a checklist, and one the pane types as text reaches it as `ListItem::Text`
+/// ([`crate::lookout::pane::ConfigPane::sub_screen_item`]). The table door
+/// does, where an element is whatever the file held.
+///
 /// `secret` decides what the sentence may print, resolved here rather than
 /// per rule so a rule added later cannot echo a credential by forgetting to
 /// ask. A list the schema marks secret is rare rather than impossible: a
@@ -33,7 +41,7 @@ use super::{Refusal, enum_refusal, shown_value};
 /// reason.
 ///
 /// The empty buffer never reaches here: it is nothing to write, which is
-/// [`super::super::pane::ListPane::apply_typing`]'s own case.
+/// [`crate::lookout::pane::ListPane::apply_typing`]'s own case.
 #[must_use]
 pub fn item_refusal(
     key: &str,
@@ -53,9 +61,16 @@ pub fn item_refusal(
             }
             Err(refused) => return Some(refused),
         },
-        // A choice list never reaches here: its elements are toggled, not
-        // typed. Read as text, it would still hold an element to its set.
-        ListItem::Text | ListItem::Choice(_) => {
+        // A closed set is chosen from, not typed, so it is the whole rule on
+        // the element: the same reason a scalar [`crate::lookout::field::FieldKind::Choice`]
+        // never reaches [`super::refusal`]'s grammar arms.
+        ListItem::Choice(names) => {
+            if !names.iter().any(|name| name == typed) {
+                return Some(takes_one_of(key, shown, names));
+            }
+            Value::String(typed.to_owned())
+        }
+        ListItem::Text => {
             if let Some(refused) = min_length_refusal(key, bounds, typed, shown) {
                 return Some(refused);
             }
@@ -274,7 +289,7 @@ mod tests {
     }
 
     /// A dog that ships a broken regex in its item schema has a bug in its
-    /// schema, and the list editor fails open on it for [`super::super::refusal`]'s
+    /// schema, and the list editor fails open on it for [`super::refusal`]'s
     /// reason: refusing every element would lock an operator out of a
     /// setting over somebody else's typo.
     #[test]
@@ -355,4 +370,53 @@ mod tests {
                 .contains("Europe"),
         );
     }
+}
+
+/// A closed set spelled as a `oneOf` of `const`s publishes no `enum`, so
+/// `bounds.choices` holds nothing and the `enum` arm has nothing to check
+/// against. The names live in the item itself, and this is the door that
+/// has to read them: the pane toggles a choice list or types it as
+/// `ListItem::Text`, and only the table door hands an element to this arm.
+#[test]
+fn a_choice_element_is_held_to_the_names_the_item_carries() {
+    let names = vec!["ask".to_owned(), "auto".to_owned()];
+    let bounds = Bounds::default();
+    for typed in ["ask", "auto"] {
+        assert_eq!(
+            item_refusal(
+                "modes",
+                &ListItem::Choice(names.clone()),
+                &bounds,
+                typed,
+                false
+            ),
+            None,
+            "{typed} is one of the names"
+        );
+    }
+    let refused = item_refusal(
+        "modes",
+        &ListItem::Choice(names.clone()),
+        &bounds,
+        "never",
+        false,
+    )
+    .expect("never is not one of the names");
+    assert_eq!(
+        refused.text,
+        "modes is \"never\"; modes takes one of ask, auto"
+    );
+
+    let refused = item_refusal(
+        "modes",
+        &ListItem::Choice(names),
+        &bounds,
+        "tok_HUNTER2",
+        true,
+    )
+    .expect("a credential is not one of the names");
+    assert_eq!(
+        refused.text,
+        "modes is \"<set>\"; modes takes one of ask, auto"
+    );
 }

@@ -5,7 +5,7 @@
 //! member set, and a helper that drifts between two copies is a test that
 //! passes for the wrong reason.
 
-use super::super::field::{Bounds, Field, FieldKind};
+use crate::lookout::field::{Bounds, Field, FieldKind};
 
 /// A `Field` built by hand, [`FieldKind::Text`] and every other member
 /// empty, so a test only sets the one thing it means to check.

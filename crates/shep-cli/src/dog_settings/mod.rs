@@ -1,24 +1,39 @@
-//! What a field accepts, in the operator's words.
+//! The one gate over a dog's settings: what a field accepts, in the
+//! operator's words, and whether a whole table is made of values the dog's
+//! schema takes.
 //!
-//! Two sources, and the per-field one wins outright rather than merging:
-//! a field writing its own `accepts` gets those and none from the table.
-//! One rule beats merge semantics nobody can predict. The table itself is
-//! [`forms`], and the per-field lists are backed one crate down, where
-//! shep-core hands `normalize` a value for every refusal it makes, and
-//! names the enforcer for the few decided at spawn.
+//! This module is outside `lookout` on purpose. The check used to live in
+//! the pane that ran it, and `shep set` needs the same check: a value read
+//! from a terminal has to be refused for the same reason lookout refuses
+//! it, or the two disagree in front of the operator. Both now call here.
 //!
-//! [`refusal`] is the other half, and it is here rather than in the pane so
-//! that the sentence an operator reads and the check that stops the write
-//! are built from one table. A dog's section is written by the shepherd
-//! without being read, so there is no second gate behind this one.
-//! [`item_refusal`] is the same gate for one element of a list field,
-//! against the bounds its item schema published.
+//! Two doors, one set of rules. [`refusal`] answers one typed buffer against
+//! one field, which is what a keystroke in a pane needs. [`table::table_refusal`]
+//! answers a whole proposed table against the schema that describes it,
+//! which is what a write that carries a table needs. [`touched_refusal`] is
+//! the same walk over only the keys a caller chose, which is what a pane that
+//! writes a table it only partly chose needs. Each arm of each door
+//! reads the same bounds, the same grammars and the same sentences, so a
+//! value cannot pass one and fail the other.
 //!
-//! The arms of that gate live one level down, each with the tests for what it
+//! Two sources for what a field accepts, and the per-field one wins outright
+//! rather than merging: a field writing its own `accepts` gets those and
+//! none from the table. One rule beats merge semantics nobody can predict.
+//! The table itself is [`forms`], and the per-field lists are backed one
+//! crate down, where shep-core hands `normalize` a value for every refusal
+//! it makes, and names the enforcer for the few decided at spawn.
+//!
+//! [`refusal`] is built here rather than in the pane so that the sentence an
+//! operator reads and the check that stops the write come from one table. A
+//! dog's section is written by the shepherd without being read, so there is
+//! no second gate behind this one. [`item_refusal`] is the same gate for one
+//! element of a list field, against the bounds its item schema published.
+//!
+//! The arms of the gate live one level down, each with the tests for what it
 //! checks: [`numbers`] for the whole-number and decimal parse and bounds,
 //! [`items`] for one element of a list field, [`patterns`] for a dog's own
-//! grammar. What is here is the door itself, the sentence, and the rule about
-//! what a sentence may print.
+//! grammar, [`table`] for a value already shaped as JSON. What is here is the
+//! door itself, the sentence, and the rule about what a sentence may print.
 
 #[cfg(test)]
 mod fixtures;
@@ -26,15 +41,19 @@ mod forms;
 mod items;
 mod numbers;
 mod patterns;
+pub(crate) mod table;
+#[cfg(test)]
+mod table_tests;
 
 pub use forms::bullets;
 pub use items::item_refusal;
+pub(crate) use table::touched_refusal;
 
 use shep_core::values::{MemSize, UpDuration};
 
 use serde_json::Value;
 
-use super::field::{Bounds, Field, FieldKind, ValueKind};
+use crate::lookout::field::{Bounds, Field, FieldKind, ValueKind};
 use forms::{DURATION_FORMS, Form, MEMORY_FORMS};
 use numbers::{integer_refusal, number_refusal};
 use patterns::pattern_refusal;
@@ -52,11 +71,11 @@ pub const REDACTED: &str = "<set>";
 /// added later cannot echo a secret by forgetting to ask. The rule is one
 /// line and the reason it is a function is that it has three callers.
 ///
-/// `pub(super)`: `ConfigPane::apply_typing` builds one refusal of its own
-/// through [`not_a_whole_number`], and has to resolve the value the same
-/// way.
+/// `pub(crate)`: `ConfigPane::apply_typing` builds one refusal of its own
+/// through [`not_a_whole_number`], and [`table`] answers a value that is
+/// already JSON, so both have to resolve what may be printed the same way.
 #[must_use]
-pub(super) fn shown_value(secret: bool, typed: &str) -> &str {
+pub(crate) fn shown_value(secret: bool, typed: &str) -> &str {
     if secret { REDACTED } else { typed }
 }
 
@@ -160,12 +179,12 @@ pub fn refusal(field: &Field, typed: &str) -> Option<Refusal> {
 /// number". The table's own text still draws the panel, where "a whole
 /// number" is the whole answer and reads correctly.
 ///
-/// `pub(super)`: `ConfigPane::apply_typing`'s own integer arm answers with
-/// this, so the one sentence has one spelling.
+/// `pub(crate)`: `ConfigPane::apply_typing`'s own integer arm and [`table`]
+/// answer with this, so the one sentence has one spelling.
 ///
 /// `shown` is what may be printed: [`REDACTED`] rather than the value when
 /// the field is a credential. Callers pass what [`refusal`] resolved.
-pub(super) fn not_a_whole_number(key: &str, shown: &str) -> Refusal {
+pub(crate) fn not_a_whole_number(key: &str, shown: &str) -> Refusal {
     Refusal {
         text: format!("{key} is \"{shown}\", which is not a whole number shep accepts"),
     }
@@ -179,12 +198,12 @@ pub(super) fn not_a_whole_number(key: &str, shown: &str) -> Refusal {
 /// not a number". The table's own text still draws the panel, where "a number"
 /// is the whole answer and reads correctly.
 ///
-/// `pub(super)`: `ConfigPane::apply_typing`'s own number arm answers with
-/// this, so the one sentence has one spelling.
+/// `pub(crate)`: `ConfigPane::apply_typing`'s own number arm and [`table`]
+/// answer with this, so the one sentence has one spelling.
 ///
 /// `shown` is what may be printed: [`REDACTED`] rather than the value when the
 /// field is a credential. Callers pass what [`refusal`] resolved.
-pub(super) fn not_a_number(key: &str, shown: &str) -> Refusal {
+pub(crate) fn not_a_number(key: &str, shown: &str) -> Refusal {
     Refusal {
         text: format!("{key} is \"{shown}\", which is not a number shep accepts"),
     }
@@ -199,12 +218,52 @@ pub(super) fn not_a_number(key: &str, shown: &str) -> Refusal {
 /// number arms answer with this one sentence, so an integer's empty range and a
 /// decimal's read the same to the operator.
 ///
-/// `pub(super)`: [`numbers`] builds it twice, for the pair
+/// [`numbers`] builds it twice, for the pair
 /// [`crate::lookout::field::Bounds`] normalises for an integer and the pair it
 /// keeps as written for a decimal.
-pub(super) fn takes_no_value(key: &str) -> Refusal {
+fn takes_no_value(key: &str) -> Refusal {
     Refusal {
         text: format!("{key} takes no value: its schema asks for a range with nothing in it"),
+    }
+}
+
+/// The refusal for an arm of a tagged union that holds no value for a field
+/// the arm's own `required` list names.
+///
+/// `field` and `tag` are those two keys as the caller's door names them: bare
+/// for a pane's rows (`path`, `kind`), dotted to the union for the table walk
+/// (`retro.path`, `retro.kind`). `arm` is the tag the table named.
+///
+/// `pub(crate)`: [`table`] answers a proposed table with it and
+/// `ConfigPane::incomplete_union` answers the pane's filed edits with it, so
+/// the two doors say one sentence for one rule.
+pub(crate) fn required_field(field: &str, tag: &str, arm: &str) -> Refusal {
+    Refusal {
+        text: format!("{field} is required when {tag} is {arm}; give it a value"),
+    }
+}
+
+/// The refusal for a value a closed set does not name, where the set is the
+/// one the field's own kind holds rather than the one `bounds.choices` holds.
+///
+/// Not [`enum_refusal`]: a closed set can come from a `oneOf` of `const`s,
+/// where `bounds.choices` holds nothing and [`enum_refusal`] fails open on it.
+/// [`table`]'s scalar arm and [`items`]'s choice-item arm answer with this one
+/// so a set is enforced whichever way the schema spelled it.
+///
+/// The refusal lists the set because it is the one rule an operator can
+/// satisfy by copying from it.
+///
+/// `shown` is what may be printed, which [`shown_value`] has already resolved.
+///
+/// `pub(crate)`: [`table`] and [`items`] build their closed-set refusals with
+/// it, and neither can reach [`enum_refusal`], which is private to this module.
+pub(crate) fn takes_one_of(key: &str, shown: &str, names: &[String]) -> Refusal {
+    Refusal {
+        text: format!(
+            "{key} is \"{shown}\"; {key} takes one of {}",
+            names.join(", ")
+        ),
     }
 }
 
@@ -224,13 +283,11 @@ pub(super) fn takes_no_value(key: &str) -> Refusal {
 /// the numbers, and comparing a typed `"1"` against a published `1` is a
 /// comparison of strings.
 ///
-/// `pub(super)`: [`items`] and [`numbers`] both build their `enum` arm with it.
-pub(super) fn enum_refusal(
-    key: &str,
-    bounds: &Bounds,
-    value: &Value,
-    shown: &str,
-) -> Option<Refusal> {
+/// [`items`] and [`numbers`] each build their `enum` arm with it, from the set
+/// `bounds.choices` holds. A closed set spelled as a `oneOf` of `const`s lands
+/// in the kind instead, and [`table`] and [`items`] answer for it through
+/// [`takes_one_of`].
+fn enum_refusal(key: &str, bounds: &Bounds, value: &Value, shown: &str) -> Option<Refusal> {
     if bounds.choices.is_empty()
         || bounds
             .choices
