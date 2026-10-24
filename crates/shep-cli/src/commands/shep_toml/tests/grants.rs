@@ -82,3 +82,31 @@ fn another_dogs_bad_entry_does_not_refuse_this_dog() {
 
     assert_eq!(doc.granted("otel").unwrap(), None);
 }
+
+#[test]
+fn inline_tables_read_the_same_as_headed_ones() {
+    for src in [
+        "[daemon]\ndog_grants = { otel = { granted = [] } }\n",
+        "[daemon.dog_grants]\notel = { granted = [] }\n",
+        "daemon = { dog_grants = { otel = { granted = [] } } }\n",
+        "[daemon.dog_grants.otel]\ngranted = []\n",
+    ] {
+        let (_dir, doc) = doc_of(src);
+
+        assert_eq!(
+            doc.granted("otel").unwrap(),
+            Some(Grants::default()),
+            "{src}"
+        );
+    }
+}
+
+#[test]
+fn a_misspelt_name_in_an_inline_table_is_refused_too() {
+    let (_dir, doc) = doc_of("[daemon]\ndog_grants = { otel = { granted = [\"flock.reed\"] } }\n");
+
+    assert!(matches!(
+        doc.granted("otel"),
+        Err(ShepTomlError::BadGrants { .. })
+    ));
+}

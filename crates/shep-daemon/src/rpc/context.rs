@@ -68,8 +68,23 @@ impl KnownDogs {
 
     /// Records that `name` is a dog this shepherd knows about, with the
     /// `grants` it now holds. `None` leaves it undeclared.
+    #[cfg(test)]
     pub(crate) fn insert(&self, name: &str, grants: Option<Grants>) {
         self.lock().insert(name.to_owned(), grants);
+    }
+
+    /// Records `grants` for `name` and hands back what it held before, for
+    /// [`Self::restore`] when the start it was recorded ahead of is refused.
+    pub(crate) fn replace(&self, name: &str, grants: Option<Grants>) -> Held {
+        Held(self.lock().insert(name.to_owned(), grants))
+    }
+
+    /// Puts `name` back as [`Self::replace`] found it.
+    pub(crate) fn restore(&self, name: &str, held: Held) {
+        match held.0 {
+            Some(grants) => self.lock().insert(name.to_owned(), grants),
+            None => self.lock().remove(name),
+        };
     }
 
     /// What `name` was granted, or `None` when it is undeclared or unknown.
@@ -84,6 +99,11 @@ impl KnownDogs {
         self.dogs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
+
+/// What [`KnownDogs`] held for a name before [`KnownDogs::replace`]: nothing
+/// at all, or an entry that was undeclared or granted.
+#[derive(Debug)]
+pub(crate) struct Held(Option<Option<Grants>>);
 
 /// Everything a request handler may touch; one clone per connection.
 ///

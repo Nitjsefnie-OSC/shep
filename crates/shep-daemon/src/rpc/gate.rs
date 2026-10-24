@@ -89,6 +89,29 @@ pub(super) async fn check(ctx: &RpcContext, dog: &str, request: &Request) -> Res
     }
 }
 
+/// Whether the dog `dog` may hold the subscription `topics`, for a successor
+/// re-arming one a predecessor carried over.
+///
+/// The same per-topic check a fresh `Subscribe` meets, against the grants this
+/// shepherd read, which may be narrower than the ones the dog subscribed under.
+///
+/// # Errors
+/// [`RpcErrorCode::Forbidden`] naming the first topic outside the grants.
+pub(crate) async fn check_carried(
+    ctx: &RpcContext,
+    dog: &str,
+    topics: &[String],
+) -> Result<(), RpcError> {
+    check(
+        ctx,
+        dog,
+        &Request::Subscribe {
+            topics: topics.to_vec(),
+        },
+    )
+    .await
+}
+
 /// `Ok` when `grants` holds `permission`, and its name otherwise.
 fn require(grants: &Grants, permission: &Permission) -> Result<(), String> {
     if grants.allows(permission) {

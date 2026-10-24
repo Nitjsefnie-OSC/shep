@@ -5,7 +5,7 @@ use super::peer_auth::{check_peer, daemon_uid, peer_pid};
 use super::server_lifecycle::{CONN_QUEUE, HANDSHAKE_TIMEOUT_MS};
 use super::tracked_codec::TrackedCodec;
 use crate::bus::{TopicFilter, spawn_forwarder};
-use crate::rpc::{Outcome, RpcContext, dispatch};
+use crate::rpc::{Outcome, RpcContext, check_carried, dispatch};
 use crate::supervisor::ConnId;
 use bytes::{Bytes, BytesMut};
 use core::time::Duration;
@@ -190,6 +190,17 @@ async fn resume(
         ctx.dog_refusals.handshook(dog);
     }
     if topics.is_empty() {
+        return Ok(None);
+    }
+    // The grants this shepherd read may be narrower than the ones the dog
+    // subscribed under, and the stream would otherwise outlive the narrowing.
+    // Refused whole, as a fresh `Subscribe` is, and recorded as empty so the
+    // next handover does not carry it on.
+    if let Some(dog) = origin.bound_dog()
+        && let Err(refusal) = check_carried(ctx, dog, topics).await
+    {
+        tracing::warn!(%dog, reason = %refusal.message, "a carried dog subscription is outside its grants");
+        origin.subscribed(&[]).await;
         return Ok(None);
     }
     let filter = match TopicFilter::new(topics) {

@@ -188,6 +188,7 @@ mod disabled_wildcards;
 mod dog_at_rest;
 mod dog_delete;
 mod dog_disable;
+mod dog_enable_grants;
 mod dog_env;
 mod dog_fields;
 mod dog_lifecycle;

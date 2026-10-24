@@ -2,6 +2,7 @@
 //! dog may ask of the shepherd.
 
 use shep_core::permissions::Grants;
+use toml_edit::Item;
 
 use super::{ShepToml, ShepTomlError};
 
@@ -18,10 +19,16 @@ impl ShepToml {
     /// [`ShepTomlError::BadGrants`] when the entry is not a table holding a
     /// `granted` array of strings, or names a permission shep cannot read.
     pub fn granted(&self, name: &str) -> Result<Option<Grants>, ShepTomlError> {
+        // Table-like, not `as_table`: `dog_grants = { otel = { granted = [] } }`
+        // is the same TOML as the headed form and the boot reads both, so a
+        // reader that saw only headed tables would send a dog granted nothing
+        // as undeclared, with full access.
         let Some(entry) = self
-            .table("daemon")
+            .doc
+            .get("daemon")
+            .and_then(Item::as_table_like)
             .and_then(|daemon| daemon.get("dog_grants"))
-            .and_then(|grants| grants.as_table())
+            .and_then(Item::as_table_like)
             .and_then(|grants| grants.get(name))
         else {
             return Ok(None);
@@ -32,9 +39,9 @@ impl ShepToml {
             reason,
         };
         let names = entry
-            .as_table()
+            .as_table_like()
             .and_then(|table| table.get("granted"))
-            .and_then(|granted| granted.as_array())
+            .and_then(Item::as_array)
             .and_then(|names| names.iter().map(|v| v.as_str()).collect::<Option<Vec<_>>>())
             .ok_or_else(|| bad("`granted` must be a list of permission names".to_string()))?;
         Grants::parse(names)

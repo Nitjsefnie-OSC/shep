@@ -428,26 +428,34 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                     // reading the dog's log during an upgrade is usually
                     // asking which file the spawn resolved to.
                     let script = app.config().script.clone();
+                    // Recorded before the start is queued, not after it
+                    // answers. The supervisor starts the dog whether or not
+                    // this dispatch outlives its deadline, and a dog with no
+                    // entry is undeclared, with full access, so a link served
+                    // in that gap would go unchecked. The refusals below put
+                    // back what the name held.
+                    let held = ctx.known_dogs.replace(&spec.name, grants);
                     match ctx.supervisor.start_dog(app, spec.source).await {
                         // `start_dog` is idempotent by name for anything
                         // not at rest, so what comes back is whatever
                         // already holds it. An unmarked entry means a sheep
                         // holds it: nothing was spawned, so the refusal has
-                        // nothing to undo.
-                        Ok(info) if info.dog.is_none() => reply(Err(invalid_config(format!(
-                            "a sheep is already registered as `{}`; rename it or give the dog another name",
-                            spec.name
-                        )))),
+                        // nothing to undo, and that is not a dog to
+                        // remember.
+                        Ok(info) if info.dog.is_none() => {
+                            ctx.known_dogs.restore(&spec.name, held);
+                            reply(Err(invalid_config(format!(
+                                "a sheep is already registered as `{}`; rename it or give the dog another name",
+                                spec.name
+                            ))))
+                        }
                         Ok(info) => {
                             // The one place this daemon learns of a dog it
                             // was not told about at boot. `shep adopt` and
                             // `shep enable` both arrive here, and both have
                             // just written the name into `shep.toml`, which
-                            // this crate does not read. Recorded on the
-                            // success arm only: the refusal above is a
-                            // sheep holding the name, and that is not a dog
-                            // to remember.
-                            ctx.known_dogs.insert(&info.name, grants);
+                            // this crate does not read.
+                            //
                             // Wording is about the binary this shepherd
                             // resolved, not about a spawn having happened:
                             // `start_dog` is idempotent by name for a dog that
@@ -462,7 +470,10 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                             .await;
                             reply(Ok(Response::DogStarted(info)))
                         }
-                        Err(err) => reply(Err(rpc_error(&err))),
+                        Err(err) => {
+                            ctx.known_dogs.restore(&spec.name, held);
+                            reply(Err(rpc_error(&err)))
+                        }
                     }
                 }
             }
