@@ -17,6 +17,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::cli::DaemonArgs;
 use crate::commands::dog_migration::{self, DogMigrationError};
+use crate::commands::dogs::{upgrade_grants, upgrade_notice};
 use crate::exit::ExitCode;
 
 /// Everything [`run_daemon`] can fail with.
@@ -155,6 +156,15 @@ pub async fn boot_supervisor(
             "shep: moved dog config out of shep.toml and into dogs.toml: {}",
             moved.join(", ")
         );
+    }
+    // Before the config load, for the same reason: the boot reads each dog's
+    // grants from the file, so a list this writes is the one it enforces. A
+    // refusal here is not a boot failure. The dogs keep the grants they hold,
+    // and `shep enable` looks again.
+    match upgrade_grants(&paths) {
+        Ok(changed) if changed.is_empty() => {}
+        Ok(changed) => eprintln!("shep: {}", upgrade_notice(&changed)),
+        Err(err) => eprintln!("shep: could not update the grants recorded for dogs: {err}"),
     }
     let env = |key: &str| std::env::var(key).ok();
     let file_source = read_daemon_config_source(&paths)?;
