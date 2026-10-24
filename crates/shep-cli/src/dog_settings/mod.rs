@@ -243,8 +243,11 @@ fn takes_no_value(key: &str) -> Refusal {
 /// the numbers, and comparing a typed `"1"` against a published `1` is a
 /// comparison of strings.
 ///
-/// [`items`] and [`numbers`] each build their `enum` arm with it, and so
-/// does [`table`]'s arm for a closed set the pane drew as a cycle widget.
+/// [`items`] and [`numbers`] each build their `enum` arm with it. [`table`]'s
+/// arm for a closed set the pane drew as a cycle widget does not: a
+/// [`crate::lookout::field::FieldKind::Choice`] can come from a `oneOf` of
+/// `const`s, where `bounds.choices` holds nothing, and this door would fail
+/// open on the set the schema really published.
 fn enum_refusal(key: &str, bounds: &Bounds, value: &Value, shown: &str) -> Option<Refusal> {
     if bounds.choices.is_empty()
         || bounds
