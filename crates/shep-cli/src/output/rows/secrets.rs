@@ -1,4 +1,4 @@
-//! Rows for `shep get`/`shep set`'s KV store, `shep secret`'s slots, and
+//! Rows for `shep kv`'s store, `shep secret`'s slots, and
 //! `shep dog available`'s listing.
 
 use serde::Serialize;
@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::dog_index::AvailableDog;
 use crate::output::Render;
 
-/// One row of `shep get`'s whole-store listing.
+/// One row of `shep kv get`'s whole-store listing.
 ///
 /// A named-field struct rather than a `(String, String)`: a tuple serializes
 /// to a JSON array, and a consumer should read `key`/`value` by name.
@@ -19,8 +19,8 @@ pub struct KvEntry {
     pub value: String,
 }
 
-/// `shep get`'s whole-store listing (bare `shep get`), or one key's own entry
-/// (`shep get <key>`).
+/// `shep kv get`'s whole-store listing (bare `shep kv get`), or one key's own
+/// entry (`shep kv get <key>`).
 ///
 /// `transparent`, so the JSON is a plain array of [`KvEntry`] objects rather
 /// than the map a consumer would have to special-case. Never from a
@@ -350,13 +350,13 @@ impl Render for AvailableDogRows {
     const PRIORITIES: &'static [u8] = &[0, 0, 6, 7];
 }
 
-/// `shep unset`'s own report: how many keys the store lost.
+/// `shep kv unset`'s own report: how many keys the store lost.
 ///
 /// A count rather than the keys: `shep_core::kv::clear` never materializes
 /// the set it empties, so a single key and `--all` share one shape.
 #[derive(Debug, Serialize)]
 pub struct KvUnsetRow {
-    /// How many keys were removed: always `1` for a single-key `unset`, which
+    /// How many keys were removed: always `1` for a single-key `kv unset`, which
     /// exits [`crate::exit::ExitCode::NotFound`] when the key was absent, and
     /// `shep_core::kv::clear`'s own count for `--all`.
     pub removed: u32,

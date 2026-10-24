@@ -9,9 +9,9 @@
 use super::{
     AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DialStdioArgs,
     DisableArgs, DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, HostArgs,
-    ImportArgs, InitArgs, KvGetArgs, KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs,
-    SecretArgs, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs,
-    TriggerArgs, WhisperArgs,
+    ImportArgs, InitArgs, KvArgs, KvGetArgs, KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs,
+    RuntimeArgs, SecretArgs, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StartupArgs,
+    StockArgs, StyleArgs, TriggerArgs, WhisperArgs,
 };
 
 /// Every verb the binary understands.
@@ -366,24 +366,40 @@ pub enum Commands {
     /// Same precedent as `shep flush --daemon`, which also works on files
     /// rather than through the socket.
     Barks(BarksArgs),
-    /// Store a value in the shepherd's key/value store.
+    /// Read and write the key/value store: `shep kv get`, `shep kv set`, `shep kv unset`.
     ///
     /// Reads and writes `$SHEP_HOME/kv.json` directly and never connects to the
-    /// shepherd — the store is for ad-hoc notes and dog settings, and it has to
+    /// shepherd: the store is for ad-hoc notes and dog settings, and it has to
     /// work while nothing is running, exactly as `shep enable` does.
     ///
     /// Keys are flat: letters, digits, `.`, `_` and `-`, up to 128 bytes, not
-    /// starting with a dot. A dot is part of the name — `bark.cooldown` is one
+    /// starting with a dot. A dot is part of the name. `bark.cooldown` is one
     /// key, not a path into anything.
+    Kv(KvArgs),
+    /// Store a value in the key/value store, as `shep kv set`.
+    ///
+    /// `shep set` is the store's old spelling. It still works, writes the same
+    /// store with the same exit codes, and prints a notice on stderr naming
+    /// `shep kv set`. Under `--format json` it prints no notice: that format is
+    /// one object per invocation.
+    #[command(hide = true)]
     Set(KvSetArgs),
-    /// Read one value from the store, or list the whole store with no key.
+    /// Read one value from the store, or list the whole store with no key, as
+    /// `shep kv get`.
+    ///
+    /// `shep get` is the store's old spelling, and prints the same notice.
+    #[command(hide = true)]
     Get(KvGetArgs),
-    /// Remove one key from the store, or every key with --all.
+    /// Remove one key from the store, or every key with --all, as
+    /// `shep kv unset`.
+    ///
+    /// `shep unset` is the store's old spelling, and prints the same notice.
+    #[command(hide = true)]
     Unset(KvUnsetArgs),
     /// Store the values a Flockfile refers to and never carries.
     ///
     /// Reads and writes `$SHEP_HOME/secrets.json` directly and never
-    /// connects to the shepherd, exactly as `shep set` does: filling the
+    /// connects to the shepherd, exactly as `shep kv set` does: filling the
     /// store before the first `shep start` is the ordinary first run.
     ///
     /// A key holds one value per environment, so production and staging
@@ -643,7 +659,16 @@ mod tests {
         let lookout = cmd.find_subcommand("lookout").unwrap();
         assert_eq!(lookout.get_visible_aliases().collect::<Vec<_>>(), ["dash"]);
 
-        for hidden in ["thatlldo", "daemon", "dog", "rehome", "dial-stdio"] {
+        for hidden in [
+            "thatlldo",
+            "daemon",
+            "dog",
+            "rehome",
+            "dial-stdio",
+            "set",
+            "get",
+            "unset",
+        ] {
             assert!(
                 cmd.find_subcommand(hidden).unwrap().is_hide_set(),
                 "{hidden} must stay hidden from --help"
@@ -664,6 +689,7 @@ mod tests {
             "enable",
             "disable",
             "adopt",
+            "kv",
             "ping",
             "kill",
             "save",

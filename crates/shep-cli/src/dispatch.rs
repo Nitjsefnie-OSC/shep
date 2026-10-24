@@ -508,9 +508,19 @@ pub(crate) async fn run(
         Commands::Barks(ref args) => dogs::barks(&mut streams, &paths, args),
         // Reads and writes `kv.json` directly and never connects to the
         // shepherd.
-        Commands::Set(ref args) => kv::set(&mut streams, &paths, args),
-        Commands::Get(ref args) => kv::get(&mut streams, &paths, args),
-        Commands::Unset(ref args) => kv::unset(&mut streams, &paths, args),
+        Commands::Kv(ref args) => match &args.command {
+            cli::KvCommand::Get(args) => kv::get(&mut streams, &paths, args, kv::KvVia::Kv),
+            cli::KvCommand::Set(args) => kv::set(&mut streams, &paths, args, kv::KvVia::Kv),
+            cli::KvCommand::Unset(args) => kv::unset(&mut streams, &paths, args, kv::KvVia::Kv),
+        },
+        // The store's old spellings, hidden from `--help` and kept for the
+        // scripts written against them: same store, same envelope, plus a
+        // notice on stderr naming the verb they moved to.
+        Commands::Set(ref args) => kv::set(&mut streams, &paths, args, kv::KvVia::Alias("set")),
+        Commands::Get(ref args) => kv::get(&mut streams, &paths, args, kv::KvVia::Alias("get")),
+        Commands::Unset(ref args) => {
+            kv::unset(&mut streams, &paths, args, kv::KvVia::Alias("unset"))
+        }
         // Same rule, same file-first reason: `shep secret set` before a
         // first `shep start` is the ordinary first-run order.
         Commands::Secret(ref args) => secret::secret(&mut streams, &paths, args),

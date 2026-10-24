@@ -794,6 +794,7 @@ fn every_verb_that_changes_the_flock_still_enforces() {
         &["save"],
         &["muster"],
         &["copy", "web", "web2"],
+        &["kv", "set", "key", "value"],
         &["set", "key", "value"],
     ] {
         let command = verb(argv);

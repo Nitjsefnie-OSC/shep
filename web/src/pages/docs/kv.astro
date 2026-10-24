@@ -1,8 +1,10 @@
 ---
 /*
- * The KV store (docs/kv.md, `shep set/get/unset --help`). Terminal output
- * below was run for real against target/release/shep on 2026-08-16: see
- * this page's PR for the transcript.
+ * The KV store (docs/kv.md, `shep kv get/set/unset --help`). Terminal output
+ * below was run for real against target/release/shep on 2026-10-24: see
+ * this page's PR for the transcript. The `shep kv` spellings, and the old
+ * spelling's notice below, were re-run against a built binary when the verbs
+ * moved.
  *
  * Restructured 2026-09-14 per docs/writing-plans/plans/2026-09-14-docs-the-rest.md,
  * Task 3: the three verbs, already this page's lead, moved into
@@ -14,35 +16,40 @@ import Callout from "../../components/docs/Callout.astro";
 import CodeBlock from "../../components/docs/CodeBlock.astro";
 import ShortVersion from "../../components/docs/ShortVersion.astro";
 
-const threeVerbs = `$ shep set bark.cooldown 30s
-$ shep get bark.cooldown
-$ shep get
-$ shep unset bark.cooldown
-$ shep unset --all`;
+const threeVerbs = `$ shep kv set bark.cooldown 30s
+$ shep kv get bark.cooldown
+$ shep kv get
+$ shep kv unset bark.cooldown
+$ shep kv unset --all`;
 
-const realOutput = `$ shep set bark.cooldown 30s
+const realOutput = `$ shep kv set bark.cooldown 30s
 KEY            VALUE
 bark.cooldown  30s
 
-$ shep set feature.flag on
-$ shep get
+$ shep kv set feature.flag on
+$ shep kv get
 KEY            VALUE
 bark.cooldown  30s
 feature.flag   on
 
-$ shep get nope.key
+$ shep kv get nope.key
 error[not_found]: \`nope.key\` is not set
 $ echo $?
 3
 
-$ shep unset bark.cooldown
+$ shep kv unset bark.cooldown
 REMOVED
 1
-$ shep unset --all
+$ shep kv unset --all
 REMOVED
 1
-$ shep get
+$ shep kv get
 KEY  VALUE`;
+
+const oldSpelling = `$ shep get bark.cooldown
+notice[moved]: \`shep get\` moved to \`shep kv get\`; the old spelling still works
+KEY            VALUE
+bark.cooldown  30s`;
 ---
 
 <DocsLayout
@@ -52,13 +59,12 @@ KEY  VALUE`;
     <h1>The KV store</h1>
     <ReferencePills slug="kv" />
     <p class="lede">
-      Three files already configure everything shep runs: a Flockfile
-      configures a sheep, <code>shep.toml</code> configures the shepherd,
-      and <code>dogs.toml</code> configures its dogs. None has a field for
-      "the port the last on-call engineer picked" or a feature flag a
-      provisioning script wants to leave a note about. The KV store is
-      what's left over: a flat, file-locked junk drawer, explicitly not the
-      primary config path.
+      Three files already configure everything shep runs: a Flockfile for a
+      sheep, <code>shep.toml</code> for the shepherd, <code>dogs.toml</code>{" "}
+      for its dogs. None has a field for "the port the last on-call engineer
+      picked" or a feature flag a provisioning script wants to leave a note
+      about. The KV store is what's left over: a flat, file-locked junk
+      drawer, explicitly not the primary config path.
     </p>
 
     <ShortVersion>
@@ -67,32 +73,40 @@ KEY  VALUE`;
 
     <Callout variant="note">
       Reaching for this to configure a <em>sheep</em>? Put it in the
-      Flockfile. Configuring a <em>dog</em>? Put it under{" "}
+      Flockfile. A <em>dog</em>? Put it under{" "}
       <code>[&lt;name&gt;]</code> in <code>dogs.toml</code>. This store is
-      only for what's left after those two.
+      what's left after those two.
     </Callout>
 
     <h2 id="the-three-verbs">The three verbs</h2>
     <p>
-      <code>shep set &lt;key&gt; &lt;value&gt;</code> writes a key, replacing
-      whatever was there. <code>shep get &lt;key&gt;</code> prints one value;{" "}
-      <code>shep get</code> with no key lists everything.{" "}
-      <code>shep unset &lt;key&gt;</code> removes one key;{" "}
-      <code>shep unset --all</code> empties the store: a flag, not a key
-      named <code>all</code>, because nothing stops you having a key called{" "}
-      <code>all</code> and <code>shep unset all</code> would then mean
+      <code>shep kv set &lt;key&gt; &lt;value&gt;</code> writes a key, replacing
+      whatever was there. <code>shep kv get &lt;key&gt;</code> prints one value;{" "}
+      <code>shep kv get</code> with no key lists everything.{" "}
+      <code>shep kv unset &lt;key&gt;</code> removes one key;{" "}
+      <code>shep kv unset --all</code> empties the store: a flag, not a key
+      named <code>all</code>, because <code>shep kv unset all</code> would mean
       something different depending on your own store.
     </p>
+
+    <h2 id="the-old-spelling">The old spelling</h2>
+    <p>
+      <code>shep set</code>, <code>shep get</code> and <code>shep unset</code>{" "}
+      still work, and print where the verb went on stderr. A{" "}
+      <code>--format json</code> run prints no note: that format is one object
+      per invocation. Those three names are being saved for a sheep's or a
+      dog's settings.
+    </p>
+    <CodeBlock label="table form">{oldSpelling}</CodeBlock>
 
     <h2 id="real-output">Real output</h2>
     <p>Run against a fresh <code>$SHEP_HOME</code>, no shepherd listening:</p>
     <CodeBlock>{realOutput}</CodeBlock>
     <p class="fine">
       A key that was never there answers <code>NotFound</code> on both{" "}
-      <code>get</code> and <code>unset</code>, exit code 3 either way: a
-      script can write <code>shep get feature.flag || echo default</code> and
-      trust the exit code rather than parsing output to tell "empty" from
-      "missing."
+      <code>kv get</code> and <code>kv unset</code>, exit 3 either way: a script
+      can write <code>shep kv get feature.flag || echo default</code> and trust
+      the exit code.
     </p>
 
     <h2 id="the-key-grammar">The key grammar</h2>
@@ -100,47 +114,43 @@ KEY  VALUE`;
       A key is <code>[A-Za-z0-9._-]</code>, one to 128 bytes, and can't start
       with a dot. <strong>A dot is part of a name, not a path</strong>:{" "}
       <code>bark.cooldown</code> is one flat key, not a nested object, and{" "}
-      <code>shep get bark</code> won't find it. This is deliberate: a
-      nesting grammar here would be a second config language, with its own
-      quoting rules, for a store that's explicitly not the primary one. The
-      narrow alphabet is
-      also why <code>shep get $key</code> never needs quoting in a script. A
+      <code>shep kv get bark</code> won't find it. A nesting grammar here would
+      be a second config language, with its own quoting rules, for a store
+      that's explicitly not the primary one. The narrow alphabet is
+      also why <code>shep kv get $key</code> never needs quoting in a script. A
       value is a string, capped at 4&nbsp;KiB: the store is read whole on
-      every access, and the cap is what keeps <code>kv.json</code> from
-      quietly becoming a blob store.
+      every access, and the cap keeps <code>kv.json</code> from becoming a blob
+      store.
     </p>
 
     <p>
-      A sheep's own settings are not in this store. <code>shep copy</code>{" "}
-      moves one of them from one sheep onto another, over the socket, because
-      it reads what the running flock holds.
+      A sheep's own settings are not in this store: <code>shep copy</code>{" "}
+      moves one, over the socket, because it reads what the running flock
+      holds.
     </p>
 
     <h2 id="no-shepherd-required">No shepherd required</h2>
     <p>
-      <code>shep set</code>/<code>get</code>/<code>unset</code> never touch
+      <code>shep kv get</code>/<code>set</code>/<code>unset</code> never touch
       the socket: they read and write <code>$SHEP_HOME/kv.json</code>{" "}
       directly, the same way <code>shep enable</code> writes{" "}
-      <code>shep.toml</code> with nothing listening. That's what makes this
-      store usable during provisioning, before any shepherd has ever booted
-      on the machine. A dog reads the same store through{" "}
-      <code>shep_core::kv</code> rather than over the wire: a{" "}
-      <code>0600</code> file inside a <code>0700</code>{" "}
-      <code>$SHEP_HOME</code>, opened by a process running as the same user,
-      already has every property a socket round trip would have bought it.
+      <code>shep.toml</code> with nothing listening. That is what makes it
+      usable during provisioning, before any shepherd has booted. A dog reads
+      it the same way, through <code>shep_core::kv</code>: a{" "}
+      <code>0600</code> file in a <code>0700</code>{" "}
+      <code>$SHEP_HOME</code>, opened by the same user, already has every
+      property a socket round trip would have bought.
     </p>
 
     <h2 id="concurrent-writers-lose-nothing">Concurrent writers lose nothing</h2>
     <p>
-      Two <code>shep set</code> invocations racing (two provisioning
+      Two <code>shep kv set</code> invocations racing (two provisioning
       scripts, or an operator and a dog) are serialized by an exclusive
-      advisory lock on a sibling <code>kv.json.lock</code>. Whichever loses
-      the race simply waits its turn; neither write is silently dropped. The
-      file itself is written through a <code>BTreeMap</code>, so keys are
-      always in sorted order and two writes of the same content produce
-      byte-identical files: safe to keep in a dotfiles repository,{" "}
-      <code>git add</code> and diff like any other small config file. Mode is{" "}
-      <code>0600</code>.
+      advisory lock on a sibling <code>kv.json.lock</code>. The loser waits
+      its turn. The file itself is written through a <code>BTreeMap</code>, so
+      keys stay sorted and two writes of the same content are byte-identical:
+      keep it in a dotfiles repository, <code>git add</code> and diff it like
+      any other small config file. Mode is <code>0600</code>.
     </p>
 </article>
 </DocsLayout>
