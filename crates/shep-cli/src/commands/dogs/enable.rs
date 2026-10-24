@@ -178,7 +178,9 @@ fn ask_before_first_enable(
     // A built-in is this binary, so it declares itself with no probe.
     let manifest = match &binary {
         Some(binary) => read_manifest(binary, &paths.home, name, VERSION_BUDGET)
-            .map_err(|refusal| fail_adopt(streams, binary, &refusal))?,
+            .map_err(|refusal| fail_adopt(streams, binary, &refusal))?
+            .manifest()
+            .cloned(),
         None => crate::dog::builtin_manifest(name),
     };
     let reviewed =
@@ -213,14 +215,16 @@ fn warn_of_unmet_depends_of(
     let DogSource::Adopted { path, .. } = source else {
         return;
     };
-    let Ok(Some(manifest)) = read_manifest(Path::new(path), &paths.home, name, VERSION_BUDGET)
-    else {
+    let Ok(read) = read_manifest(Path::new(path), &paths.home, name, VERSION_BUDGET) else {
+        return;
+    };
+    let Some(manifest) = read.manifest() else {
         return;
     };
     let adopted = ShepToml::read_only(&paths.daemon_config)
         .map(|cfg| cfg.adopted_dog_names())
         .unwrap_or_default();
-    warn_of_unmet_depends(streams, name, &manifest, &adopted);
+    warn_of_unmet_depends(streams, name, manifest, &adopted);
 }
 
 /// Renders [`enable`]'s refusal of a name that names no dog.

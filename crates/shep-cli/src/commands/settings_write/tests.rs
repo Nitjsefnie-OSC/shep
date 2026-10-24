@@ -17,6 +17,7 @@ use super::*;
 use crate::cli::Format;
 use crate::commands::copy::confirm::Answer;
 use crate::commands::copy::plan::ChangeKind;
+use crate::commands::settings_read::Holder;
 use crate::output::Streams;
 
 /// A dog's own section schema, spelled the way a dog's `--schema` answer is

@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use serde_json::Value as Json;
 use shep_core::paths::ShepPaths;
 
-use crate::commands::dogs::{DogSchema, VERSION_BUDGET, ask_schema, read_manifest};
+use crate::commands::dogs::{DogSchema, ManifestRead, VERSION_BUDGET, ask_schema, read_manifest};
 use crate::commands::shep_toml::ShepToml;
 use crate::dog::builtin_schema;
 
@@ -48,7 +48,9 @@ pub(super) fn dog_schema(name: &str, paths: &ShepPaths) -> Option<Json> {
         .ok()
         .and_then(|doc| doc.adopted_dog_path(name));
     let path = adopted?;
-    if let Ok(Some(manifest)) = read_manifest(&path, &paths.home, name, VERSION_BUDGET) {
+    if let Ok(ManifestRead::Read(manifest)) =
+        read_manifest(&path, &paths.home, name, VERSION_BUDGET)
+    {
         return manifest.settings;
     }
     match ask_schema(&path, &paths.home, name, VERSION_BUDGET) {

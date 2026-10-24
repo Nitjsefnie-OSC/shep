@@ -52,7 +52,7 @@ pub async fn lookout(
 
     match link {
         Link::Local(_) => {
-            let shepherd = UnixShepherd::new(&paths.socket);
+            let shepherd = UnixShepherd::new(&paths.socket, paths);
             watch(
                 streams,
                 shepherd,

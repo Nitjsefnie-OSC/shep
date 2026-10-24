@@ -40,6 +40,28 @@ fn main() {
     // ...the dog's own loop, watching \`stop\`.
 }`;
 
+const validateSnippet = `use shep_client::dogs::{Probe, Stop, Verdict, validate_answer};
+
+fn main() {
+    Probe::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+        .ask_for_channel()
+        .validate()
+        .answer::<MyDogConfig>();
+
+    let (stop, request) = Stop::new();
+    let shepherd = shep_channel::serve();
+    shepherd.on_action("shep.validate", |params, _name| {
+        validate_answer(params, |proposed| {
+            match proposed.table().get("checkout").and_then(|v| v.as_str()) {
+                Some("/srv/api") => Verdict::Accept,
+                _ => Verdict::refuse("this checkout belongs to another project"),
+            }
+        })
+    });
+    shepherd.on_shutdown(move || request.request());
+    // ...the dog's own loop, watching \`stop\`.
+}`;
+
 const configSnippet = `use shep_client::dogs::dog_config;
 use shep_client::shep_core::values::{MemSize, UpDuration};
 
@@ -350,6 +372,13 @@ notice[dog_defaults_unreadable]: otel shipped a manifest whose \`defaults\` is n
       anyway. A dependency's version isn't checked yet.
     </p>
     <p>
+      <code>validate</code> says the dog has checks its <code>settings</code>{" "}
+      schema cannot state. They run over the channel, so it needs{" "}
+      <code>channel</code>: <code>shep adopt</code> refuses a manifest declaring
+      one without it. <a href="#being-asked-about-its-settings">Being asked</a>{" "}
+      is below.
+    </p>
+    <p>
       <code>verb</code> is how shep describes <code>shep &lt;name&gt;</code>:
       its <code>description</code> is the line the dog gets in the Dogs group
       of <code>shep --help</code>, and its <code>subcommands</code> are what
@@ -491,6 +520,48 @@ shep-channel: true`}</CodeBlock>
       <code>shutdown</code> message with no signal behind it, so a dog that
       ignores it is killed once <code>kill_timeout</code> runs out.
     </p>
+
+    <h3 id="being-asked-about-its-settings">Being asked about a write to its settings</h3>
+    <p>
+      A schema says what a value looks like, not what it means. A dog holding
+      checks of that kind declares <code>validate</code>, and shep asks it
+      before it writes: a <code>shep.validate</code> action on the dog's
+      channel, carrying the table the write would leave behind.
+    </p>
+    <CodeBlock label="main.rs">{validateSnippet}</CodeBlock>
+    <p>
+      The reply is an ordinary <code>action-reply</code> whose body is one JSON
+      object: <code>accept</code> true, or <code>accept</code> false beside a
+      <code>reason</code> the operator reads. <code>validate_answer</code>{" "}
+      writes that body from the dog's own check. A body shep cannot read is a
+      refusal.
+    </p>
+    <p>
+      The params carry <code>table</code>: the dog's whole table on that sheep,
+      or its own <code>dogs.toml</code> section when there is no sheep. It is
+      the table <em>after</em> the write, so a <code>shep unset</code> is judged
+      on what would be left. Silence refuses: a dog that answers nothing inside
+      its <code>action_timeout</code> has not cleared the write.
+    </p>
+    <p>
+      Two cases ask nobody, and the write lands: a dog the shepherd has no live
+      channel for (not in the flock, stopped, or started before it asked for
+      one), and a dog with no manifest. A dog has no manifest when this machine
+      never adopted it, and when it answers <code>--shep-manifest</code> with
+      nothing at all: a build older than the flag, one whose argument parser
+      rejects an unknown flag, one that ignores the flag and starts its loop.
+      None of those ever declared <code>validate</code>. What shep cannot read
+      is never an acceptance: a cached manifest for this exact binary that
+      neither reads nor answers, and a <code>shep.toml</code> that will not
+      parse, both stop the write and name it.
+    </p>
+    <p>
+      <code>validate</code> without <code>channel</code> is refused at adopt,
+      because the check could never run:
+    </p>
+<CodeBlock>{`error[invalid_config]: this dog's manifest asks to be consulted before a write to
+its settings, and declares no channel to be consulted on; declare \`channel\`
+in the manifest, or drop \`validate\``}</CodeBlock>
 
     <h3 id="restart-and-the-answer">What <code>shep restart &lt;dog&gt;</code> does with the answer</h3>
     <p>

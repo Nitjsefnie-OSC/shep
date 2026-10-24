@@ -981,7 +981,7 @@ manifest.
 | `permissions` | Each with `name`, `required` and `reason`. |
 | `verb` | `description`, and `subcommands` each with `name` and `about`. |
 | `depends` | `dogs`, each with `name` and a version range `version`; `shep`, the oldest shep supported. |
-| `validate` | Whether the dog validates a proposed settings table over its channel. |
+| `validate` | Whether the dog validates a proposed settings table over its channel, through `shep.validate`. Needs `channel`: `shep adopt` refuses a manifest declaring it without. |
 
 `manifest`, `name`, `version` and `protocol` are required; the rest default
 to nothing declared. A reader ignores a field it does not know, so a later

@@ -143,7 +143,7 @@ fn under(path: &str, value: &TomlValue) -> Option<Vec<String>> {
 
 /// Every key a `toml_edit` table holds, as the JSON map a dog table request
 /// carries.
-pub(super) fn table_json(table: &Table) -> Map<String, Json> {
+pub(crate) fn table_json(table: &Table) -> Map<String, Json> {
     table
         .iter()
         .filter_map(|(key, item)| item_json(item).map(|value| (key.to_string(), value)))

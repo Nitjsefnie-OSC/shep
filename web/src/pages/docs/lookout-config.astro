@@ -618,6 +618,12 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       read-only.
     </p>
     <CodeBlock label="jobs's table on api">{sheepDogTable}</CodeBlock>
+    <p>
+      A dog declaring <code>validate</code> is asked before either of these
+      writes lands, on its own channel, and its refusal is one of the writes
+      that cannot land: the pane reports the dog's sentence and the file keeps
+      what it had. A dog that declared nothing is never asked.
+    </p>
 
     <h2 id="the-dog-config-pane">The dog config pane</h2>
     <p>

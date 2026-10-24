@@ -44,10 +44,14 @@ mod patterns;
 pub(crate) mod table;
 #[cfg(test)]
 mod table_tests;
+pub(crate) mod validate;
+#[cfg(test)]
+pub(crate) mod validate_tests;
 
 pub use forms::bullets;
 pub use items::item_refusal;
 pub(crate) use table::touched_refusal;
+pub(crate) use validate::{AskFailure, ask_dog, dog_write};
 
 use shep_core::values::{MemSize, UpDuration};
 
