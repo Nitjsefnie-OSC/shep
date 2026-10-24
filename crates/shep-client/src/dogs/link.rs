@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+#[cfg(unix)]
 use crate::connection::HANDSHAKE_TIMEOUT;
 use crate::{ConnectError, ReconnectingClient};
 

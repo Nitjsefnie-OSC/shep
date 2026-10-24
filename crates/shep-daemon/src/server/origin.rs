@@ -16,6 +16,10 @@ pub(super) enum Origin {
     /// Accepted on the control socket.
     Socket,
     /// The connection a dog was spawned holding.
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only unix hands a dog a connection")
+    )]
     Dog {
         /// The dog's name, from the spec that spawned it.
         name: String,
@@ -49,6 +53,10 @@ impl Origin {
 
     /// Whether the control socket's same-uid check applies. A link needs none:
     /// only the process it was handed to holds the other end.
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only the unix accept path checks the peer")
+    )]
     pub(super) fn checks_peer(&self) -> bool {
         matches!(self, Self::Socket)
     }
