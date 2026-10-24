@@ -26,7 +26,7 @@ fn a_name_outside_the_list_or_with_the_wrong_scope_is_refused() {
     for name in [
         "",
         "flock",
-        "flock.raed",
+        "flock.watch",
         "flock.read:web",
         "secrets.read",
         "secrets.read:",
@@ -39,11 +39,11 @@ fn a_name_outside_the_list_or_with_the_wrong_scope_is_refused() {
 }
 
 #[test]
-fn parsing_grants_names_the_first_typo() {
-    let err = Grants::parse(["flock.read", "flock.raed"]).unwrap_err();
+fn parsing_grants_names_the_first_unknown_permission() {
+    let err = Grants::parse(["flock.read", "flock.watch"]).unwrap_err();
     assert_eq!(
         err.to_string(),
-        "`flock.raed` is not a permission shep knows"
+        "`flock.watch` is not a permission shep knows"
     );
 }
 

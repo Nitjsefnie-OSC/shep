@@ -1,5 +1,5 @@
 //! What a dog may ask of the shepherd: [`Permission`], the [`Grants`] an
-//! operator gave a dog, and [`need`], the table that says which permission
+//! operator gave a dog, and [`need()`], the table that says which permission
 //! each [`Request`] takes.
 //!
 //! Grants keep an honest dog in bounds and make its requests attributable.

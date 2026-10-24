@@ -204,7 +204,7 @@ fn a_ping_needs_nothing() {
 }
 
 #[test]
-fn a_dogs_own_section_and_tables_need_nothing_and_anothers_need_a_group() {
+fn a_dogs_own_section_and_tables_need_nothing_and_another_dogs_need_a_group() {
     let toml = || DogSectionToml::from("x = 1\n".to_string());
     let own = [
         Request::DogConfig {
