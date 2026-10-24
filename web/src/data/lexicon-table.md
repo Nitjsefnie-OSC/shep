@@ -41,7 +41,7 @@ The whole vocabulary, and whether it exists yet.
 | stock | change how many instances of an app run (the stocking rate) | `shep stock <name> <count>` (alias `scale`) | yes |
 | signal | send a signal to one sheep's own process | `shep signal <selector> <signal>` | yes |
 | whisper | write a line to a sheep's stdin | `shep whisper <selector> <line>` (alias `sendline`) | yes |
-| set / get / unset | the flat key-value junk drawer | `shep set`, `shep get`, `shep unset` | yes |
+| kv store | the flat key-value junk drawer | `shep kv get`, `shep kv set`, `shep kv unset` (hidden aliases `shep set`, `shep get`, `shep unset`) | yes |
 | copy | move one setting, or one dog's table for a sheep, from one sheep onto another | `shep copy <from>.<path> <to>.<path>` | yes |
 
 Sheepdogs and sheep were separate ideas from the start, so "dog" never means

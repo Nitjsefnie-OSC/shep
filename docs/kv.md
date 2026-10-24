@@ -1,10 +1,10 @@
 # The kv store — a junk drawer with a lock on it
 
-Three verbs — `shep set`, `shep get`, `shep unset` — for the small stuff
-that has nowhere else to live. This is the practical guide to using them.
-The store gets one line in spec [§5](specs/shep-v1.md#5-configuration) —
-"file-locked JSON; not the primary config path" — and this doc is the rest
-of that sentence.
+Three verbs — `shep kv get`, `shep kv set`, `shep kv unset` — for the small
+stuff that has nowhere else to live. This is the practical guide to using
+them. The store gets one line in spec
+[§5](specs/shep-v1.md#5-configuration) — "file-locked JSON; not the primary
+config path" — and this doc is the rest of that sentence.
 
 ## What this is for, and what it is not
 
@@ -24,22 +24,30 @@ flat, and explicitly not the primary config path.
 ## The three verbs
 
 ```
-shep set bark.cooldown 30s
-shep get bark.cooldown
-shep get
-shep unset bark.cooldown
-shep unset --all
+shep kv set bark.cooldown 30s
+shep kv get bark.cooldown
+shep kv get
+shep kv unset bark.cooldown
+shep kv unset --all
 ```
 
-`shep set <key> <value>` writes a key, replacing whatever was there.
-`shep get <key>` prints one value; `shep get` with no key lists everything.
-`shep unset <key>` removes one key; `shep unset --all` empties the store —
-a flag, not a key named `all`, because nothing stops you having a key
-called `all` and `shep unset all` would then mean something different
-depending on your own store.
+`shep kv set <key> <value>` writes a key, replacing whatever was there.
+`shep kv get <key>` prints one value; `shep kv get` with no key lists
+everything. `shep kv unset <key>` removes one key; `shep kv unset --all`
+empties the store — a flag, not a key named `all`, because nothing stops you
+having a key called `all` and `shep kv unset all` would then mean something
+different depending on your own store.
 
-A key that was never there answers `NotFound` on `get` and on `unset`
-(exit code 3): a script can write `shep get feature.flag || echo default`
+`shep set`, `shep get` and `shep unset` still work as hidden aliases and
+print a note on stderr naming the verb each moved to, in the table format an
+operator reads: under `--format json` they print no note, because that format
+is one object per invocation. They are hidden because
+those three names are being saved for a sheep's or a dog's settings, and a
+script written against them keeps its exit codes, its `--format json`
+envelope, and the `command` key it reads.
+
+A key that was never there answers `NotFound` on `kv get` and on `kv unset`
+(exit code 3): a script can write `shep kv get feature.flag || echo default`
 and trust the exit code rather than parsing output to tell "empty" from
 "missing."
 
@@ -47,11 +55,11 @@ and trust the exit code rather than parsing output to tell "empty" from
 
 A key is `[A-Za-z0-9._-]`, one to 128 bytes, and cannot start with a dot.
 **A dot is part of a name, not a path.** `bark.cooldown` is one flat key;
-there is no nested object behind it, and `shep get bark` will not find it.
+there is no nested object behind it, and `shep kv get bark` will not find it.
 This is a deliberate departure from pm2's own dotted/colon store — a
 nesting grammar here would be a second config language, with its own
 quoting rules, for a store that is explicitly not the primary one. The
-narrow alphabet is also why `shep get $key` never needs quoting in a
+narrow alphabet is also why `shep kv get $key` never needs quoting in a
 script.
 
 ## Values
@@ -71,7 +79,7 @@ config file.
 
 ## No shepherd required
 
-`shep set`/`get`/`unset` never touch the socket — they read and write the
+`shep kv get`/`set`/`unset` never touch the socket — they read and write the
 file directly, the same way `shep enable` writes `shep.toml` with nothing
 listening. That is what makes this store usable during provisioning,
 before any shepherd has ever booted on the machine.
@@ -84,7 +92,7 @@ nothing.
 
 ## Concurrent writers
 
-Two `shep set` invocations racing — two provisioning scripts, or an
+Two `shep kv set` invocations racing — two provisioning scripts, or an
 operator and a dog — are serialized by an exclusive advisory lock on a
 sibling `kv.json.lock`, so neither one's write is silently lost. Whichever
 loses the race simply waits its turn.
