@@ -101,10 +101,11 @@ pub fn fitness(sheep: &[Candidate<'_>]) -> Fitness {
 fn refusal(candidate: &Candidate<'_>) -> Option<RefusedReason> {
     let entry = candidate.entry;
     let config = entry.spec.config();
-    let name = || config.name.clone();
 
     if candidate.pump_unresponsive {
-        return Some(RefusedReason::PumpUnresponsive { sheep: name() });
+        return Some(RefusedReason::PumpUnresponsive {
+            sheep: config.name.clone(),
+        });
     }
     None
 }
