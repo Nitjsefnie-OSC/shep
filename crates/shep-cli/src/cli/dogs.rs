@@ -57,7 +57,7 @@ pub enum DogsCommand {
 /// Arguments to `shep dogs grant` and `shep dogs revoke`.
 #[derive(Debug, clap::Args)]
 pub struct GrantArgs {
-    /// The dog's name, the `[<name>]` config key in `dogs.toml`
+    /// The dog's name, as `shep adopt` registered it
     pub name: String,
     /// The permission, as the dog's manifest spells it: `flock.read`,
     /// `events:process.`, `secrets.read:staging`

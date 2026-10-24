@@ -1097,7 +1097,7 @@ Usage: shep dogs grant [OPTIONS] <NAME> <PERMISSION>
 
 Arguments:
   <NAME>
-          The dog's name, the `[<name>]` config key in `dogs.toml`
+          The dog's name, as `shep adopt` registered it
 
   <PERMISSION>
           The permission, as the dog's manifest spells it: `flock.read`, `events:process.`,
@@ -1165,7 +1165,7 @@ Usage: shep dogs revoke [OPTIONS] <NAME> <PERMISSION>
 
 Arguments:
   <NAME>
-          The dog's name, the `[<name>]` config key in `dogs.toml`
+          The dog's name, as `shep adopt` registered it
 
   <PERMISSION>
           The permission, as the dog's manifest spells it: `flock.read`, `events:process.`,
