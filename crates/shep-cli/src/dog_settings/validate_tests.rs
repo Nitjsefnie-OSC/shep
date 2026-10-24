@@ -4,6 +4,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
+use crate::commands::shep_toml::ShepToml;
 use shep_client::testing::{control_address, fake_client_answering_refusals};
 use shep_client::{Client, RequestError};
 use shep_core::dogs::validate::VALIDATE_ACTION;
@@ -24,13 +25,13 @@ fn home_with(dir: &Path, manifest: Option<&str>) -> ShepPaths {
     std::fs::create_dir_all(&paths.home).unwrap();
     let binary = dir.join("shep-kelpie");
     std::fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::write(
-        &paths.daemon_config,
-        format!(
-            "[daemon]\nenabled_dogs = [\"kelpie\"]\n\n[daemon.adopted_dogs]\nkelpie = \"{}\"\n",
-            binary.display()
-        ),
-    )
+    // Written by the same writer `shep adopt` uses, so the adopted path is
+    // quoted the way TOML quotes a path. A windows runner spells every temp
+    // path with backslashes, and a raw backslash in a TOML basic string is an
+    // escape sequence, not a separator.
+    ShepToml::edit(&paths.daemon_config, |doc| {
+        doc.adopt_dog("kelpie", &binary, true).unwrap();
+    })
     .unwrap();
     if let Some(manifest) = manifest {
         let mut context = ring::digest::Context::new(&ring::digest::SHA256);
@@ -330,4 +331,43 @@ async fn an_ask_the_shepherd_refused_is_not_the_dog_refusing() {
         .expect_err("the ask failed");
 
     assert!(matches!(failure, AskFailure::Transport(_)), "{failure:?}");
+}
+
+/// The manifest lookup survives the separator the platform spells a path with.
+///
+/// A windows runner hands every temp path with backslashes, and a raw backslash
+/// inside a TOML basic string is an escape: `\s` is a syntax error and `\b` is
+/// a backspace. A backslash is a legal file name character on unix, so this
+/// machine can reach the same shape.
+#[tokio::test]
+async fn an_adopted_path_with_a_backslash_in_it_is_still_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("shep\\home");
+    std::fs::create_dir_all(&home).unwrap();
+    let (client, paths, mut envelopes) = asked(
+        &home,
+        Some(validating()),
+        ActionOutcome::Replied {
+            body: r#"{"accept":true}"#.to_string(),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        ShepToml::read_only(&paths.daemon_config)
+            .expect("the fixture's shep.toml parses")
+            .adopted_dog_path("kelpie")
+            .expect("the adopted path reads back"),
+        home.join("shep-kelpie"),
+        "TOML quotes a path: a raw backslash in a basic string is an escape sequence"
+    );
+    assert_eq!(
+        ask_dog(&client, &paths, "kelpie", &table(&[]), None).await,
+        Ok(()),
+        "the cache is keyed off the adopted binary, so the adopted path has to read back"
+    );
+    assert!(
+        envelopes.try_recv().is_ok(),
+        "a dog that declared validate is asked even with a backslash in its path"
+    );
 }

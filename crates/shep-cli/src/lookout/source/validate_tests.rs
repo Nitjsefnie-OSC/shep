@@ -5,6 +5,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
+use crate::commands::shep_toml::ShepToml;
 use serde_json::{Map, Value as Json, json};
 use shep_client::RequestError;
 use shep_client::testing::{control_address, fake_client_answering_refusals};
@@ -26,13 +27,13 @@ fn home_with(dir: &Path, manifest: Option<&str>) -> ShepPaths {
     std::fs::create_dir_all(&paths.home).unwrap();
     let binary = dir.join("shep-kelpie");
     std::fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::write(
-        &paths.daemon_config,
-        format!(
-            "[daemon]\nenabled_dogs = [\"kelpie\"]\n\n[daemon.adopted_dogs]\nkelpie = \"{}\"\n",
-            binary.display()
-        ),
-    )
+    // Written by the same writer `shep adopt` uses, so the adopted path is
+    // quoted the way TOML quotes a path. A windows runner spells every temp
+    // path with backslashes, and a raw backslash in a TOML basic string is an
+    // escape sequence, not a separator.
+    ShepToml::edit(&paths.daemon_config, |doc| {
+        doc.adopt_dog("kelpie", &binary, true).unwrap();
+    })
     .unwrap();
     if let Some(manifest) = manifest {
         let mut context = ring::digest::Context::new(&ring::digest::SHA256);
