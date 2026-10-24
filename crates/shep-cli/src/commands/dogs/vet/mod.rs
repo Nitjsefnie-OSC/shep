@@ -70,6 +70,12 @@ pub enum AdoptRefusal {
         /// [`MIN_SUPPORTED`], the oldest protocol this shep still accepts.
         min: u32,
     },
+    /// The manifest declares `validate: true`, which is this dog being asked
+    /// to approve a write to its own settings, and declares no channel to be
+    /// asked on. Adopting it would record a check shep could never run: every
+    /// ask would find no channel, and a check that never runs is a check an
+    /// operator believes is running.
+    ValidateWithoutChannel,
 }
 
 impl std::fmt::Display for AdoptRefusal {
@@ -96,6 +102,12 @@ impl std::fmt::Display for AdoptRefusal {
                  newer; reinstall the dog without --locked so it builds against the current \
                  shep-core, or run a shep that accepts protocol {dog}"
             ),
+            Self::ValidateWithoutChannel => write!(
+                f,
+                "this dog's manifest asks to be consulted before a write to its settings, and \
+                 declares no channel to be consulted on; declare `channel` in the manifest, or \
+                 drop `validate`"
+            ),
         }
     }
 }
@@ -113,8 +125,10 @@ impl core::error::Error for AdoptRefusal {}
 ///
 /// # Errors
 /// [`AdoptRefusal`] when the path does not resolve, is not a file this
-/// kernel will exec, or answers a protocol this shep cannot speak. Silence
-/// is not an error: unknown protocol, [`DogSchema::Silent`] schema.
+/// kernel will exec, answers a protocol this shep cannot speak, or declares
+/// `validate` without the channel [`AdoptRefusal::ValidateWithoutChannel`]
+/// needs. Silence is not an error: unknown protocol, [`DogSchema::Silent`]
+/// schema.
 pub fn vet_binary(path: &Path, home: &Path, name: &str) -> Result<VettedBinary, AdoptRefusal> {
     vet_binary_within(path, home, name, VERSION_BUDGET)
 }
@@ -171,6 +185,14 @@ pub fn vet_binary_within(
             dog,
             min: MIN_SUPPORTED,
         });
+    }
+    // A dog that asks to be consulted is consulted over its channel, and a
+    // manifest that asks without one promises a check shep can never run.
+    if manifest
+        .as_ref()
+        .is_some_and(|manifest| manifest.validate && !manifest.channel)
+    {
+        return Err(AdoptRefusal::ValidateWithoutChannel);
     }
     // After the protocol refusal: a candidate shep is about to refuse is
     // not run a second time.
@@ -788,3 +810,8 @@ pub fn warn_of_a_dog_a_restart_would_break(
 // `tests/cli_e2e.rs`.
 #[cfg(all(test, unix))]
 mod tests;
+
+/// The same probes, for the one manifest field that is a promise about a
+/// check shep runs: `validate`, which needs the channel to run on.
+#[cfg(all(test, unix))]
+mod validate_tests;
