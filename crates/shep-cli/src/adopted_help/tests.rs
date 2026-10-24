@@ -614,3 +614,39 @@ fn shell_safe_is_the_words_a_shell_takes_as_a_bare_word() {
         assert!(!shell_safe(dangerous), "{dangerous} must not be completed");
     }
 }
+
+/// The Dogs group is a table, and a table is columns. `café` is five bytes
+/// and four columns, `日本語` is nine bytes and six, so padding by byte
+/// length starts one description three columns past another.
+#[test]
+fn dog_descriptions_line_up_by_display_width_and_not_byte_length() {
+    use crate::output::width::text_columns;
+
+    let dir = tempfile::tempdir().unwrap();
+    let paths = a_home_with(
+        dir.path(),
+        [
+            ("otel", DECLARING_BODY),
+            ("café", DECLARING_BODY),
+            ("日本語", DECLARING_BODY),
+        ],
+    );
+
+    let mut command = Cli::command();
+    list_in_help(&mut command, &adopted_verbs(&paths));
+    let help = command.render_long_help().to_string();
+
+    let description = "exports traces to an OTLP collector";
+    let columns: Vec<usize> = help
+        .lines()
+        .filter(|line| line.ends_with(description))
+        .map(|line| text_columns(&line[..line.find(description).unwrap()]))
+        .collect();
+
+    assert_eq!(columns.len(), 3, "{help}");
+    assert_eq!(
+        columns,
+        vec![columns[0]; 3],
+        "every description starts in the same column: {help}"
+    );
+}

@@ -203,15 +203,22 @@ pub(crate) fn list_in_help(command: &mut clap::Command, verbs: &[AdoptedVerb]) {
 /// The lines the dogs get under the group heading: each name in the column
 /// every group's verbs sit in, each description two columns past the longest
 /// name. A dog with no description gets its name and nothing else.
+///
+/// Columns, not bytes: `café` is five bytes and four columns, `日本語` is
+/// nine and six, and this is a table an operator reads.
 fn dog_lines(verbs: &[AdoptedVerb]) -> Vec<String> {
-    let widest = verbs.iter().map(|verb| verb.name.len()).max();
+    let widest = verbs
+        .iter()
+        .map(|verb| crate::output::width::text_columns(&verb.name))
+        .max();
     verbs
         .iter()
         .map(|verb| {
             let mut line = " ".repeat(VERB_COLUMN);
             line.push_str(&verb.name);
             if let Some(description) = &verb.description {
-                let pad = widest.unwrap_or(0) + 2 - verb.name.len();
+                let name_columns = crate::output::width::text_columns(&verb.name);
+                let pad = widest.unwrap_or(0) + 2 - name_columns;
                 line.push_str(&" ".repeat(pad));
                 line.push_str(description);
             }
