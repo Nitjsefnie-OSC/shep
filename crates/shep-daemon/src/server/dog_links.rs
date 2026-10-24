@@ -1,8 +1,11 @@
 //! Serving the connection each dog is spawned holding.
 
+use std::sync::Arc;
+
 use tokio::sync::{mpsc, watch};
 
 use super::conn_protocol::serve_conn;
+use super::link_table::DogLinks;
 use super::origin::Origin;
 use crate::rpc::RpcContext;
 use crate::runner::DogLink;
@@ -13,19 +16,24 @@ use crate::runner::DogLink;
 /// Independent of the control socket's listener: the links arrive at spawn, so
 /// a dog started ahead of the muster restore is served during it. Each link
 /// runs the same handshake and request loop as a socket connection, with the
-/// identity the runner gave it in place of the peer's claim.
+/// identity the runner gave it in place of the peer's claim. One a
+/// predecessor carried across a handover skips the handshake it already did.
+/// Each is entered into `table` while it is served, which is where a handover
+/// finds it.
 pub(crate) async fn serve_dog_links(
     mut links: mpsc::UnboundedReceiver<DogLink>,
     ctx: RpcContext,
+    table: DogLinks,
     mut shutdown: watch::Receiver<bool>,
 ) {
     loop {
         tokio::select! {
             link = links.recv() => {
-                let Some(DogLink { name, pid, stream }) = link else { return };
+                let Some(DogLink { name, pid, stream, resumed }) = link else { return };
                 let ctx = ctx.clone();
+                let lease = Arc::new(table.register(&name, pid, &stream, resumed.clone()));
                 tokio::spawn(async move {
-                    let origin = Origin::Dog { name, pid };
+                    let origin = Origin::Dog { name, pid, lease, resumed };
                     if let Err(err) = serve_conn(stream, ctx, origin).await {
                         tracing::debug!(%err, "dog connection ended");
                     }

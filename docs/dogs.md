@@ -546,8 +546,10 @@ above. A section's key is not one of its values.
 `$SHEP_DOG_FD` names a connection that is already open, as descriptor 4. It
 speaks the same protocol as the socket and is served from the dog's spawn, so it works during the muster
 restore, when the socket does not yet answer. The connection is the dog's
-identity: a `dog_name` sent on it is ignored. Fall back to the socket when the
-variable is absent or the connection closes. A variable that is set but names
+identity: a `dog_name` sent on it is ignored. It survives a shepherd upgrade:
+the same connection keeps working, and a subscription on it is re-armed after
+a `daemon.dropped` notice. Fall back to the socket when the variable is absent
+or the connection closes. A variable that is set but names
 no usable descriptor is a fault, not an absence. A dog started by hand has
 none. `DogRuntime` does all of this.
 

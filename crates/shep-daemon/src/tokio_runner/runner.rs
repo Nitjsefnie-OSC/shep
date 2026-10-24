@@ -465,10 +465,13 @@ impl ProcessRunner for TokioRunner {
     /// Stdin and the shepherd channel are both carried, so `shep whisper`
     /// reaches the same fd 0 and the child's fd 3 is undisturbed. What a blob
     /// named neither of is closed here rather than left dangling, so a
-    /// caller's `is_closed()` says so at once.
+    /// caller's `is_closed()` says so at once. A dog's own connection is
+    /// handed to whatever serves [`ProcessRunner::dog_links`], to be served
+    /// as it was.
     #[cfg(unix)]
     fn adopt(&self, spec: AdoptSpec) -> Result<(Self::Proc, ProcIo), RunnerError> {
         let AdoptSpec {
+            name,
             pid,
             out_file,
             err_file,
@@ -479,6 +482,8 @@ impl ProcessRunner for TokioRunner {
             log_timestamps,
             stdin_pipe,
             channel,
+            dog_link,
+            dog_topics,
             reaper,
         } = spec;
 
@@ -502,6 +507,18 @@ impl ProcessRunner for TokioRunner {
             log_ctl_rx,
             pipes,
         );
+
+        // Served by the same task that served it before the exec, which is
+        // not this runner's to start: it is handed over, and a send that fails
+        // means nothing is serving links, as at a spawn.
+        if let Some(stream) = dog_link {
+            let _ = self.links.send(DogLink {
+                name,
+                pid,
+                stream,
+                resumed: dog_topics,
+            });
+        }
 
         let (from_child_tx, from_child) = mpsc::channel(CHANNEL_CAPACITY);
         let (to_child, to_child_rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -732,6 +749,7 @@ impl ProcessRunner for TokioRunner {
                 name: spec.name.clone(),
                 pid,
                 stream,
+                resumed: None,
             });
         }
 

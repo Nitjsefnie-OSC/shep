@@ -285,14 +285,6 @@ impl PartialEq<BusEvent> for SharedEvent {
 #[derive(Debug)]
 pub struct TopicFilter {
     set: GlobSet,
-    /// Read only by [`Self::patterns`], which only this crate's own tests
-    /// call, so in a crate-private module both are dead in a non-test build.
-    /// `allow` rather than `expect` because the expectation would go
-    /// unfulfilled in the test build, where the tests do call it.
-    #[allow(
-        dead_code,
-        reason = "read by this crate's own tests through `patterns`"
-    )]
     patterns: Vec<String>,
 }
 
@@ -347,7 +339,6 @@ impl TopicFilter {
     // `#[inline]`, not `#[inline(always)]`: not per-frame hot like `matches`.
     #[inline]
     #[must_use]
-    #[allow(dead_code, reason = "called by this crate's own tests")]
     pub fn patterns(&self) -> &[String] {
         &self.patterns
     }
