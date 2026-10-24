@@ -278,6 +278,10 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
     // that opens no dog connections.
     #[cfg(unix)]
     let dog_links = runner.dog_links();
+    // One table, two owners: the server tasks enter every connection they
+    // serve and the SIGHUP task reads them out to carry across the exec.
+    #[cfg(unix)]
+    let dog_link_table = crate::server::DogLinks::default();
     let mut builder = SupervisorBuilder::new(runner, paths.clone(), events.clone())
         .extras(extras)
         .provider_secrets(Arc::clone(&provider_secrets));
@@ -335,6 +339,7 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
             pidfile: pidfile_lock.as_raw_fd(),
         },
         paths: paths.clone(),
+        dog_links: dog_link_table.clone(),
     }));
 
     let registry = FlockRegistry::new();
@@ -411,6 +416,7 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         tokio::spawn(crate::server::serve_dog_links(
             links,
             ctx.clone(),
+            dog_link_table,
             shutdown.subscribe(),
         ));
     }

@@ -21,6 +21,7 @@ use crate::testing::test_paths;
 
 mod compat;
 mod disabled;
+mod dog_link;
 mod old_blob_shape;
 mod old_blob_state;
 mod old_blobs;
@@ -128,7 +129,8 @@ fn debug_redacts_a_carried_sheeps_environment() {
         "CarriedSheep { id: 1, name: \"web\", instance: 0, pid: Some(100), restarts: 0, \
          epoch: 7, status: Online, last_exit: None, credentials: Resolved(None), fds: \
          CarriedFds { out_pipe: Some(11), err_pipe: Some(12), out_log: Some(13), err_log: \
-         Some(14), stdin: Some(15), channel: Some(16) }, pending_delete: Some(false), \
+         Some(14), stdin: Some(15), channel: Some(16), dog_link: None }, dog_topics: None, \
+         pending_delete: Some(false), \
          manual: None, reload: Some(None), ready_failed: Some(false), restart_due: None, \
          dog: None, pending: None, pending_reidentifies: None, disabled: None, app: AppConfig { \
          name: \"web\", script: \"./srv\", env: <1 vars>, .. } }"

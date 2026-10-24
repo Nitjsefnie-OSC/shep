@@ -865,9 +865,14 @@ from spawn through `serve_dog_links`, before and apart from the listener.
 socket when it is not, or when the link is lost. The decision is "A dog gets
 a connection of its own, served from its spawn" in `docs/decisions.md`.
 
+A handover carries the link: its descriptor and the dog's subscription travel
+in the blob, and the successor serves it without a `Hello` and re-arms the
+subscription after a `daemon.dropped` notice (#1088, "A handover carries each
+dog's connection" in `docs/decisions.md`).
+
 What it does not cover: a dog started by hand has no link and still waits for
-the listener, and the link does not cross a handover (the dog reconnects on
-the socket).
+the listener. A frame in flight at the exec, and events published between the
+exec and the re-arm, are lost.
 
 ## Ideas, recorded but not designed
 

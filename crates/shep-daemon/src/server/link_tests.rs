@@ -19,10 +19,7 @@ use tokio_util::codec::Framed;
 async fn linked(ctx: &RpcContext, name: &str, pid: u32) -> Client {
     let (server, client) = shep_core::transport::connected_pair().await.unwrap();
     let ctx = ctx.clone();
-    let origin = Origin::Dog {
-        name: name.to_string(),
-        pid,
-    };
+    let origin = Origin::untracked_dog(name, pid);
     tokio::spawn(async move {
         let _ = serve_conn(server, ctx, origin).await;
     });
@@ -118,10 +115,7 @@ async fn a_link_the_dog_never_wrote_to_is_not_contact() {
     start_dog(&h.ctx, "metrics").await;
     h.ctx.peer_contacts.force_warm();
     let (server, client) = shep_core::transport::connected_pair().await.unwrap();
-    let origin = Origin::Dog {
-        name: "metrics".to_string(),
-        pid: FIRST_SCRIPTED_PID,
-    };
+    let origin = Origin::untracked_dog("metrics", FIRST_SCRIPTED_PID);
     let served = tokio::spawn(serve_conn(server, h.ctx.clone(), origin));
 
     drop(client);

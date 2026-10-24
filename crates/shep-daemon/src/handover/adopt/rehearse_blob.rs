@@ -1,6 +1,6 @@
 use super::super::{Handover, SheepFd};
 use super::adopt_descriptors::{
-    adopt_channel, adopt_fd, adopt_listener, adopt_log, adopt_pipe, adopt_stdin,
+    adopt_channel, adopt_dog_link, adopt_fd, adopt_listener, adopt_log, adopt_pipe, adopt_stdin,
 };
 use crate::sys;
 use std::io;
@@ -73,6 +73,7 @@ pub fn dry_run(blob: &Handover) -> io::Result<()> {
                     SheepFd::ErrLog => adopt_log(Some(dup), name, "stderr").map(drop),
                     SheepFd::Stdin => adopt_stdin(Some(dup), name).map(drop),
                     SheepFd::Channel => adopt_channel(Some(dup), name).map(drop),
+                    SheepFd::DogLink => adopt_dog_link(Some(dup), name).map(drop),
                 },
             )?;
         }
@@ -181,6 +182,7 @@ mod tests {
                         err_log: None,
                         stdin: None,
                         channel: None,
+                        dog_link: None,
                     },
                 ),
                 carried_slot(
@@ -192,6 +194,7 @@ mod tests {
                         err_log: None,
                         stdin: None,
                         channel: None,
+                        dog_link: None,
                     },
                 ),
             ],
@@ -395,6 +398,7 @@ mod tests {
             SheepFd::ErrLog,
             SheepFd::Stdin,
             SheepFd::Channel,
+            SheepFd::DogLink,
         ] {
             let predecessor = Predecessor::new();
             let wrong = std::fs::File::open("/dev/null").unwrap();
@@ -408,6 +412,7 @@ mod tests {
                 SheepFd::ErrLog => fds.err_log = wrong,
                 SheepFd::Stdin => fds.stdin = wrong,
                 SheepFd::Channel => fds.channel = wrong,
+                SheepFd::DogLink => fds.dog_link = wrong,
             }
 
             assert_eq!(
