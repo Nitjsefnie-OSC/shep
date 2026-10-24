@@ -61,7 +61,7 @@ impl From<ShepTomlError> for EnableRefusal {
 #[cfg_attr(windows, allow(clippy::result_large_err))]
 pub(crate) fn enable_in_config(path: &Path, name: &str) -> Result<DogSource, EnableRefusal> {
     ShepToml::try_edit(path, |cfg| {
-        let source = dog_source(cfg, name);
+        let source = dog_source(cfg, name, cfg.granted(name)?);
         if matches!(source, DogSource::BuiltIn { .. }) && !crate::dog::BUILT_IN_DOGS.contains(&name)
         {
             return Err(EnableRefusal::UnknownDog {

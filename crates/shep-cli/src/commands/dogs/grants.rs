@@ -38,7 +38,7 @@ mod tests {
     use shep_core::permissions::{Grants, Permission};
     use shep_core::protocol::{HelloAck, Response};
 
-    use super::super::enable::enable_after_config;
+    use super::super::enable::{EnableRefusal, enable_after_config, enable_in_config};
     use super::*;
     use crate::commands::dogs::test_support::streams;
     use crate::exit::ExitCode;
@@ -77,6 +77,28 @@ mod tests {
         let undeclared = DogSource::BuiltIn { grants: None };
 
         assert_eq!(said(&undeclared, ENFORCED_SINCE - 1), "");
+    }
+
+    /// The typo is caught by `enable`, where the operator is looking, and not
+    /// recorded as a grant that matches nothing until the next boot refuses it.
+    #[test]
+    fn enable_refuses_a_misspelt_grant_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shep.toml");
+        let src = "[daemon.dog_grants.metrics]\ngranted = [\"flock.reed\"]\n";
+        std::fs::write(&path, src).unwrap();
+
+        let refusal = enable_in_config(&path, "metrics");
+
+        let Err(EnableRefusal::Config(err)) = refusal else {
+            panic!("expected a config refusal, got {refusal:?}");
+        };
+        assert!(
+            err.to_string()
+                .contains("`flock.reed` is not a permission shep knows"),
+            "{err}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), src);
     }
 
     /// Through `enable`'s daemon half, so the check runs against the

@@ -29,7 +29,7 @@ use super::{
 /// [`ShepTomlError`] if the read-modify-write underneath the edit failed.
 pub(crate) fn disable_in_config(path: &Path, name: &str) -> Result<DogSource, ShepTomlError> {
     ShepToml::edit(path, |cfg| {
-        let source = dog_source(cfg, name);
+        let source = dog_source(cfg, name, None);
         cfg.disable_dog(name);
         source
     })

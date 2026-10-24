@@ -228,7 +228,7 @@ granted = ["flock.read", "events:process."]
 - No entry means undeclared and full access. `granted = []` grants nothing.
 - A dog always keeps its own `dogs.toml` section, its own sheep settings and the `config.dog.<name>` and `config.sheep.<name>` topics.
 - `Subscribe` is checked per topic against the `events:` prefixes, on the literal head of the pattern before its first glob character.
-- Grants are read at boot and sent with `EnableDog`. A shepherd below protocol 12 records them and enforces nothing; `shep adopt` and `shep enable` say so.
+- Grants are read at boot and sent with `EnableDog`. A name shep cannot read stops the boot, and `shep adopt` and `shep enable` refuse it with `invalid config` before they write or send anything. A shepherd below protocol 12 records them and enforces nothing; `shep adopt` and `shep enable` say so.
 - Grants keep an honest dog in bounds. They are not a sandbox: a dog runs as the operator and could open the control socket like the CLI.
 
 ## When a dog starts

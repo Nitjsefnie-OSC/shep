@@ -39,7 +39,8 @@ import CodeBlock from "../../components/docs/CodeBlock.astro";
 granted = ["flock.read", "events:process."]`}</CodeBlock>
     <p>
       The shepherd reads the list at boot. A name it cannot read stops the
-      boot and names the typo, so a mistake never silently grants nothing.
+      boot, and <code>shep adopt</code> and <code>shep enable</code> refuse
+      it too, so a typo never silently grants nothing.
     </p>
 
     <h2 id="permissions">Permissions</h2>

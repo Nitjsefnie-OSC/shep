@@ -77,7 +77,7 @@ pub(crate) async fn remove_dog(
     let source = match ShepToml::edit(&paths.daemon_config, |cfg| {
         // Read before `rehome_dog` erases it. `None` is legitimate: a name
         // never adopted.
-        let source = adopted_source(cfg, name);
+        let source = adopted_source(cfg, name, None);
         cfg.rehome_dog(name);
         source
     }) {

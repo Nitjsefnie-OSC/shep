@@ -380,9 +380,9 @@ pub(crate) async fn run(
                 {
                     let code = match err {
                         ShepTomlError::Io { .. } => ExitCode::Failure,
-                        ShepTomlError::Parse { .. } | ShepTomlError::WrongShape { .. } => {
-                            ExitCode::InvalidConfig
-                        }
+                        ShepTomlError::Parse { .. }
+                        | ShepTomlError::WrongShape { .. }
+                        | ShepTomlError::BadGrants { .. } => ExitCode::InvalidConfig,
                     };
                     return streams.fail(code, &err.to_string());
                 }

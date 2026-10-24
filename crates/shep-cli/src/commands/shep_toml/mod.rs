@@ -836,6 +836,17 @@ pub enum ShepTomlError {
         /// What TOML found there ([`Item::type_name`]).
         found: &'static str,
     },
+    /// `[daemon.dog_grants.<dog>]` is there but the shepherd could not read
+    /// it at boot: a permission name shep does not know, or a `granted` that
+    /// is not a list of names.
+    BadGrants {
+        /// The file that holds the entry.
+        path: PathBuf,
+        /// The dog the entry is for.
+        dog: String,
+        /// What is wrong with it, worded to follow the dog's name.
+        reason: String,
+    },
 }
 
 /// Manual, not derived: `toml_edit::TomlError` keeps the whole source
@@ -868,6 +879,12 @@ impl std::fmt::Debug for ShepTomlError {
                 .field("expected", expected)
                 .field("found", found)
                 .finish(),
+            Self::BadGrants { path, dog, reason } => f
+                .debug_struct("BadGrants")
+                .field("path", path)
+                .field("dog", dog)
+                .field("reason", reason)
+                .finish(),
         }
     }
 }
@@ -887,6 +904,11 @@ impl std::fmt::Display for ShepTomlError {
                 "{}: [{key}] must be {expected}, found a {found}",
                 path.display()
             ),
+            Self::BadGrants { path, dog, reason } => write!(
+                f,
+                "{}: [daemon.dog_grants.{dog}] granted: {reason}",
+                path.display()
+            ),
         }
     }
 }
@@ -896,7 +918,7 @@ impl core::error::Error for ShepTomlError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Parse { source, .. } => Some(source),
-            Self::WrongShape { .. } => None,
+            Self::WrongShape { .. } | Self::BadGrants { .. } => None,
         }
     }
 }

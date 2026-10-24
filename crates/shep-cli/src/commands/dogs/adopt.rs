@@ -68,7 +68,7 @@ pub async fn adopt(streams: &mut Streams<'_>, paths: &ShepPaths, args: &AdoptArg
     }
     let (adopted, grants) = match ShepToml::try_edit(&paths.daemon_config, |cfg| {
         cfg.adopt_dog(&name, &path, channel)?;
-        Ok((cfg.adopted_dog_names(), cfg.granted(&name)))
+        Ok((cfg.adopted_dog_names(), cfg.granted(&name)?))
     }) {
         Ok(recorded) => recorded,
         Err(err) => return fail_config(streams, &err),
