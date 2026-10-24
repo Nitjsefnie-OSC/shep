@@ -36,6 +36,7 @@ mod enable;
 mod grant;
 mod grants;
 mod remove;
+mod second_look;
 mod upgrade;
 mod vet;
 
@@ -55,6 +56,8 @@ mod enable_builtin_tests;
 mod grant_tests;
 #[cfg(all(test, unix))]
 mod manifest_adoption_tests;
+#[cfg(test)]
+mod second_look_tests;
 #[cfg(all(test, unix))]
 mod upgrade_tests;
 #[cfg(test)]

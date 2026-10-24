@@ -118,7 +118,7 @@ async fn a_built_in_already_decided_is_not_asked_again() {
 }
 
 #[tokio::test]
-async fn a_built_in_already_enabled_before_grants_existed_keeps_full_access_without_a_question() {
+async fn a_built_in_already_enabled_before_grants_existed_is_granted_its_list_marked_not_reviewed() {
     let dir = tempfile::tempdir().unwrap();
     let paths = ShepPaths::resolve(&|_| None, dir.path());
     std::fs::create_dir_all(&paths.home).unwrap();
@@ -131,7 +131,7 @@ async fn a_built_in_already_enabled_before_grants_existed_keeps_full_access_with
     let (code, err) = enable(&paths, "bark", false, typing(None)).await;
 
     assert_eq!(code, ExitCode::Success, "{err}");
-    assert_eq!(recorded(&paths, "bark"), (None, true));
+    assert_eq!(recorded(&paths, "bark"), (Some(declared("bark")), true));
 }
 
 #[test]

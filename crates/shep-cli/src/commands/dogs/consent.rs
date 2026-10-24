@@ -256,7 +256,7 @@ pub(super) fn consent_from(
 }
 
 /// The sentence every prompt carries.
-fn not_confined(name: &str) -> String {
+pub(super) fn not_confined(name: &str) -> String {
     format!(
         "Grants keep {name}'s requests in bounds and do not confine it: it runs as you and \
          can do anything you can."
