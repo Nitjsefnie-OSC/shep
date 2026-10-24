@@ -20,16 +20,25 @@ use shep_core::dogs::validate::{Proposed, Verdict};
 ///
 /// # Examples
 ///
-/// ```no_run
-/// use shep_client::dogs::{Verdict, validate_answer};
+/// ```
+/// use shep_client::dogs::{Proposed, Verdict, validate_answer};
 ///
-/// let body = validate_answer(Some(r#"{"table":{"checkout":"/srv/api"}}"#), |proposed| {
-///     match proposed.table().get("checkout").and_then(|v| v.as_str()) {
+/// fn verdict(proposed: &Proposed) -> Verdict {
+///     match proposed.table().get("checkout").and_then(|value| value.as_str()) {
 ///         Some("/srv/api") => Verdict::Accept,
 ///         _ => Verdict::refuse("this checkout belongs to another project"),
 ///     }
-/// });
-/// assert_eq!(body, r#"{"accept":false,"reason":"this checkout belongs to another project"}"#);
+/// }
+///
+/// // The table the dog clears, and the one it turns down.
+/// assert_eq!(
+///     validate_answer(Some(r#"{"table":{"checkout":"/srv/api"},"sheep":"api"}"#), verdict),
+///     r#"{"accept":true}"#,
+/// );
+/// assert_eq!(
+///     validate_answer(Some(r#"{"table":{"checkout":"/other"}}"#), verdict),
+///     r#"{"accept":false,"reason":"this checkout belongs to another project"}"#,
+/// );
 /// ```
 #[must_use = "the body is what the dog writes back on its channel"]
 pub fn validate_answer(params: Option<&str>, check: impl FnOnce(&Proposed) -> Verdict) -> String {
