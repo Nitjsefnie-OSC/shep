@@ -198,11 +198,16 @@ pub trait Render: Serialize {
     /// Table header -> JSON key, the documented name mapping
     /// (`UPTIME` -> `uptime_ms`, and so on).
     ///
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    fn json_key_for(header: &str) -> &'static str;
+    /// Defaults to the lowercased header, which is every table whose JSON key
+    /// is its header spelled in lowercase: an impl overrides this only for a
+    /// real rename (`EXIT` -> `last_exit`, `WHEN` -> `at_ms`), and those
+    /// still panic on a header outside their own `headers()`.
+    fn json_key_for(header: &str) -> String {
+        header.to_lowercase()
+    }
     /// Serialized fields that legitimately have no column, each with a
-    /// comment giving the reason. Usually empty.
+    /// comment giving the reason. Empty by default: an impl names the
+    /// constant only when it has entries to name, each with its reason.
     ///
     /// This constant is the only thing standing between an unmapped
     /// `Serialize` field and a silently-widened, unreviewed pass of
@@ -210,7 +215,7 @@ pub trait Render: Serialize {
     /// keys matches, never why a field belongs here. Every entry an impl
     /// adds must carry its own inline `//` comment stating that reason
     /// (`"note", // internal only, never shown to a user`).
-    const JSON_ONLY: &'static [&'static str];
+    const JSON_ONLY: &'static [&'static str] = &[];
 
     /// Per-column drop priority for [`table::render_boxed`], parallel to
     /// [`Self::headers`]: index `i` here is the priority of column `i`

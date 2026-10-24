@@ -96,7 +96,7 @@ impl Render for FlockRows {
     /// # Panics
     /// If `header` is not one of `Self::headers()`'s own values.
     #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
+    fn json_key_for(header: &str) -> String {
         match header {
             "ID" => "id",
             "NAME" => "name",
@@ -114,6 +114,7 @@ impl Render for FlockRows {
             "SMIT" => "smit",
             other => panic!("FlockRows::headers() does not include {other:?}"),
         }
+        .to_owned()
     }
 
     const JSON_ONLY: &'static [&'static str] = &[
@@ -203,19 +204,6 @@ impl Render for FlushedRows {
             status_word,
             |header, _cell, index| process_info_paint(header, &self.0[index]),
         )
-    }
-
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "ID" => "id",
-            "NAME" => "name",
-            "OUT_FILE" => "out_file",
-            "ERR_FILE" => "err_file",
-            other => panic!("FlushedRows::headers() does not include {other:?}"),
-        }
     }
 
     const JSON_ONLY: &'static [&'static str] = &[

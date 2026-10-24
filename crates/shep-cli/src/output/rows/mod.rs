@@ -121,17 +121,12 @@ pub(crate) mod tests {
     ) {
         let json = serde_json::to_value(value).unwrap();
         let record = first_record(&json);
-        let keys: BTreeSet<&str> = record
-            .as_object()
-            .unwrap()
-            .keys()
-            .map(String::as_str)
-            .collect();
+        let keys: BTreeSet<String> = record.as_object().unwrap().keys().cloned().collect();
 
-        let covered: BTreeSet<&str> = T::headers()
+        let covered: BTreeSet<String> = T::headers()
             .iter()
             .map(|h| T::json_key_for(h))
-            .chain(T::JSON_ONLY.iter().copied())
+            .chain(T::JSON_ONLY.iter().map(|k| (*k).to_owned()))
             .collect();
 
         assert_eq!(
@@ -159,7 +154,7 @@ pub(crate) mod tests {
                 continue;
             }
             let key = T::json_key_for(header);
-            let expected = match &record[key] {
+            let expected = match &record[&key] {
                 serde_json::Value::String(s) => s.clone(),
                 serde_json::Value::Number(n) => n.to_string(),
                 serde_json::Value::Bool(b) => b.to_string(),
@@ -262,6 +257,17 @@ pub(crate) mod tests {
         assert_priorities_match_headers::<SecretSlotRow>(&["KEY", "ENVIRONMENT"]);
         assert_priorities_match_headers::<SecretValueRow>(&["KEY", "VALUE"]);
         assert_priorities_match_headers::<SettingsAnswer>(&["NAME"]);
+    }
+
+    /// The trait's own `json_key_for` is the lowercased header, so an impl
+    /// whose mapping is plain lowercase needs no override at all. An impl
+    /// with a real rename still wins: `EXIT` and `WHEN` are two of the seven
+    /// that override it.
+    #[test]
+    fn the_default_json_key_is_the_lowercased_header_and_an_override_still_wins() {
+        assert_eq!(KvUnsetRow::json_key_for("REMOVED"), "removed");
+        assert_eq!(FlockRows::json_key_for("EXIT"), "last_exit");
+        assert_eq!(BarkRows::json_key_for("WHEN"), "at_ms");
     }
 
     /// The 256-colour presentation these cases render at.

@@ -80,23 +80,6 @@ impl Render for SetReport {
         )
     }
 
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "KEY" => "key",
-            "CHANGE" => "change",
-            "OLD" => "old",
-            "NEW" => "new",
-            other => panic!("SetReport::headers() does not include {other:?}"),
-        }
-    }
-
-    // Every field is a column of the change record; the run's own state has
-    // no column for `rows`' reason.
-    const JSON_ONLY: &'static [&'static str] = &[];
-
     // Parallel to `headers()`. KEY and CHANGE identify the row; the two
     // value columns are the unbounded ones a narrow terminal loses first.
     const PRIORITIES: &'static [u8] = &[0, 0, 6, 7];
