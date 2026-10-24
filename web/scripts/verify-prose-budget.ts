@@ -314,7 +314,9 @@ export const BUDGETS: Record<string, number> = {
   // Raised from 330 for the adopt and enable prompt: what the operator is
   // asked, what a no, `--yes` and no terminal do, and the two unknown-
   // permission cases are behaviour a reader cannot guess, not prose to trim.
-  "dog-grants": 430,
+  // Raised from 430 for `shep dogs grant` and `revoke`: what each accepts and
+  // refuses is behaviour a reader cannot guess (#1092).
+  "dog-grants": 470,
 };
 
 

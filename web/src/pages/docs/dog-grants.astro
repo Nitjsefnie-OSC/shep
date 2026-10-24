@@ -57,6 +57,15 @@ granted = ["flock.read", "events:process."]`}</CodeBlock>
       it too, so a typo never silently grants nothing.
     </p>
 
+    <h2 id="changing-one">Changing one</h2>
+    <CodeBlock>{`$ shep dogs revoke otel events:process.
+$ shep dogs grant otel events:process.`}</CodeBlock>
+    <ul>
+      <li>Both write <code>shep.toml</code> and reach a running dog with no restart.</li>
+      <li><code>grant</code> accepts only a permission the dog's manifest declares.</li>
+      <li>A dog with no <code>dog_grants</code> entry is refused: <code>shep enable</code> asks for its list first.</li>
+    </ul>
+
     <h2 id="permissions">Permissions</h2>
     <table>
       <thead>
