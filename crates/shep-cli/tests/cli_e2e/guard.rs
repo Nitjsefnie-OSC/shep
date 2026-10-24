@@ -94,8 +94,15 @@ impl DaemonGuard {
     /// Call it immediately after `.output()` and before the assertion on
     /// `output.status`: registering after it leaks the daemon in exactly the
     /// failed-autostart case where one is most likely.
+    ///
+    /// A home already held is skipped rather than pushed again. A case that
+    /// adopts after every `Output` it runs over one home adopts that home once
+    /// per pass, and [`Self::drop`] sweeps every entry it holds separately.
     pub(crate) fn adopt_home(&mut self, home: &Path) {
-        self.homes.push(home.to_path_buf());
+        let home = home.to_path_buf();
+        if !self.homes.contains(&home) {
+            self.homes.push(home);
+        }
     }
 
     /// Register a dog's own pid, a grandchild whose process group sits outside
@@ -157,6 +164,29 @@ impl Drop for DaemonGuard {
             }
         }
     }
+}
+
+/// A case that adopts one `$SHEP_HOME` per pass of a loop over it must not
+/// register that home once per pass: every entry is swept separately, so
+/// duplicates multiply a failing case's teardown.
+///
+/// Neither temp dir holds a pidfile or [`FIXTURE_PIDS`], so the `Drop` this
+/// test's own teardown runs kills and sweeps nothing.
+#[test]
+fn adopting_the_same_home_twice_registers_it_once() {
+    let shared = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+
+    guard.adopt_home(shared.path());
+    guard.adopt_home(shared.path());
+    guard.adopt_home(other.path());
+
+    assert_eq!(
+        guard.homes,
+        vec![shared.path().to_path_buf(), other.path().to_path_buf()],
+        "a repeated adoption must not add a second entry for the same home"
+    );
 }
 
 #[cfg(unix)]
