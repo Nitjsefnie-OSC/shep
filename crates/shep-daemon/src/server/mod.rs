@@ -21,6 +21,8 @@ mod dog_links;
 mod origin;
 mod peer_auth;
 mod server_lifecycle;
+#[cfg(all(test, unix))]
+mod link_tests;
 #[cfg(test)]
 mod testing;
 #[cfg(unix)]
