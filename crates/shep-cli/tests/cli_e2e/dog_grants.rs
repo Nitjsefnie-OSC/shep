@@ -10,7 +10,7 @@ use super::*;
 /// One request as the `printf` that writes its frame to the dog's fd 4: four
 /// length bytes, then the envelope.
 #[cfg(unix)]
-fn send(id: u64, body: Request) -> String {
+pub(super) fn send(id: u64, body: Request) -> String {
     let json = serde_json::to_string(&Envelope {
         id,
         deadline_ms: None,
@@ -62,7 +62,7 @@ exec sleep 60
 
 /// Waits for the dog's `n`th reply and returns its JSON.
 #[cfg(unix)]
-fn reply(home: &Path, n: u8) -> String {
+pub(super) fn reply(home: &Path, n: u8) -> String {
     let path = home.join(format!("reply-{n}.json"));
     let deadline = Instant::now() + CMD_TIMEOUT;
     loop {

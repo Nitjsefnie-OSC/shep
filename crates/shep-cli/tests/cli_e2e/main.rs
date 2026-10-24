@@ -51,6 +51,7 @@ mod dog_channel;
 mod dog_channel_samples;
 mod dog_delete;
 mod dog_grants;
+mod dogs_grant;
 mod dogs_barks;
 mod fixtures;
 mod flockfile_disabled;
