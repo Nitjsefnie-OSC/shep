@@ -506,6 +506,28 @@ mod tests {
         assert_eq!(result.0.barks[0].subject, "web");
     }
 
+    /// One bark record whose only distinguishing field is when it fired,
+    /// so the `list_barks` tests below can read the order back off `at_ms`
+    /// instead of off a message they had to invent.
+    fn bark_at(at_ms: u64) -> shep_core::barks::Bark {
+        shep_core::barks::Bark {
+            at_ms,
+            rule: "restart-loop".to_string(),
+            subject: "web".to_string(),
+            message: format!("web restarted {at_ms} times in 60s"),
+            sinks: Vec::new(),
+        }
+    }
+
+    /// Writes `records` as the bark history file, oldest line first.
+    fn write_barks(path: &Path, records: &[shep_core::barks::Bark]) {
+        let text: String = records
+            .iter()
+            .map(|bark| format!("{}\n", serde_json::to_string(bark).unwrap()))
+            .collect();
+        std::fs::write(path, text).unwrap();
+    }
+
     /// `get_metrics` is the whistle's other caller of the host sample, and
     /// it crosses the same `spawn_blocking` boundary as the metrics dog's
     /// scrape path. Every other tool here has a test; this is the one
@@ -532,6 +554,170 @@ mod tests {
             "the host sample must survive the trip to the blocking pool"
         );
         assert_eq!(result.0.flock.len(), 1);
+
+        served.await.expect("the fake daemon task must not panic");
+    }
+
+    /// The two handshake fields are the only place a model is told which
+    /// shepherd it is looking at, and both come off the `HelloAck` the same
+    /// call returns, not off the `Response::Flock`.
+    #[tokio::test]
+    async fn get_metrics_reports_the_version_and_pid_from_the_handshake() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+        let served = shep_client::testing::serve_one_request(
+            &socket,
+            matching_ack(),
+            Response::Flock(vec![shep_client::testing::sample_info()]),
+        )
+        .await;
+
+        let whistle = whistle_at(socket, dir.path().join("barks.jsonl"));
+        let result = tokio::time::timeout(TEST_TIMEOUT, whistle.get_metrics())
+            .await
+            .expect("get_metrics must return within the test timeout")
+            .expect("a scripted daemon must not produce a tool error");
+
+        assert_eq!(
+            result.0.daemon_version,
+            env!("CARGO_PKG_VERSION"),
+            "the version the ack carried, not this binary's own guess: {}",
+            result.0.daemon_version
+        );
+        assert_eq!(
+            result.0.daemon_pid, 4242,
+            "the ack's pid, which is the shepherd's, not this whistle's: {}",
+            result.0.daemon_pid
+        );
+
+        served.await.expect("the fake daemon task must not panic");
+    }
+
+    /// `list_barks` answers "what went wrong most recently". Returning the
+    /// oldest records answers a different question, and returning them
+    /// newest-first makes a model re-read the whole list to find the last.
+    #[tokio::test]
+    async fn list_barks_returns_the_newest_tail_asked_for_oldest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let barks_path = dir.path().join("barks.jsonl");
+        write_barks(&barks_path, &[bark_at(1), bark_at(2), bark_at(3)]);
+
+        // Nothing listens here: `list_barks` reads the file alone.
+        let whistle = whistle_at(
+            shep_client::testing::control_address(dir.path()),
+            barks_path,
+        );
+        let result = tokio::time::timeout(
+            TEST_TIMEOUT,
+            whistle.list_barks(Parameters(BarksParams { tail: Some(2) })),
+        )
+        .await
+        .expect("list_barks must return within the test timeout")
+        .expect("reading the tail of the history must not fail");
+
+        let stamps: Vec<u64> = result.0.barks.iter().map(|row| row.at_ms).collect();
+        assert_eq!(
+            stamps,
+            vec![2, 3],
+            "the newest two, still in file order: {stamps:?}"
+        );
+    }
+
+    /// `tail: 1000` is a model asking for more than a context window holds.
+    /// The clamp is what keeps the reply bounded, and it has to clamp
+    /// against the newest end: a cap that kept the oldest 200 alerts would
+    /// answer this question with the least recent half of the history.
+    #[tokio::test]
+    async fn list_barks_caps_the_tail_at_the_maximum() {
+        let dir = tempfile::tempdir().unwrap();
+        let barks_path = dir.path().join("barks.jsonl");
+        let records: Vec<shep_core::barks::Bark> = (1..=205).map(bark_at).collect();
+        write_barks(&barks_path, &records);
+
+        let whistle = whistle_at(
+            shep_client::testing::control_address(dir.path()),
+            barks_path,
+        );
+        let result = tokio::time::timeout(
+            TEST_TIMEOUT,
+            whistle.list_barks(Parameters(BarksParams { tail: Some(1000) })),
+        )
+        .await
+        .expect("list_barks must return within the test timeout")
+        .expect("a request over the cap must be clamped, not refused");
+
+        assert_eq!(
+            result.0.barks.len(),
+            200,
+            "the 200 clamp must hold even against a request for 1000: {}",
+            result.0.barks.len()
+        );
+        assert_eq!(
+            result.0.barks.last().map(|row| row.at_ms),
+            Some(205),
+            "the clamped tail still ends on the newest alert"
+        );
+        assert_eq!(
+            result.0.barks.first().map(|row| row.at_ms),
+            Some(6),
+            "and drops the oldest 5, not the newest"
+        );
+    }
+
+    /// A log the shepherd reported but this process cannot read is a
+    /// different fact from a log that is not there. A note saying "missing"
+    /// sends a model off to look for a file that exists and is merely
+    /// unreadable, and an empty `out` with no note reads as a quiet sheep.
+    #[tokio::test]
+    async fn tail_bleats_refuses_a_log_it_cannot_read_instead_of_noting_it_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = shep_client::testing::control_address(dir.path());
+
+        // A directory where a log file was expected: opening it answers,
+        // and the read that follows is what fails.
+        let not_a_log = dir.path().join("web-out.log");
+        std::fs::create_dir(&not_a_log).unwrap();
+
+        let mut info = shep_client::testing::sample_info();
+        info.out_file = Some(not_a_log.to_string_lossy().into_owned());
+        info.err_file = None;
+
+        let served = shep_client::testing::serve_one_request(
+            &socket,
+            matching_ack(),
+            Response::Described(vec![info]),
+        )
+        .await;
+
+        let whistle = whistle_at(socket, dir.path().join("barks.jsonl"));
+        let outcome = tokio::time::timeout(
+            TEST_TIMEOUT,
+            whistle.tail_bleats(Parameters(TailParams {
+                name: "web".to_string(),
+                lines: None,
+            })),
+        )
+        .await
+        .expect("tail_bleats must return within the test timeout");
+        // `Json<T>` carries no `Debug`, so this cannot be `expect_err`.
+        let refusal = match outcome {
+            Ok(_) => panic!("a log that cannot be read is a refusal, not an empty tail"),
+            Err(refusal) => refusal,
+        };
+
+        assert_eq!(refusal.is_error, Some(true));
+        let structured = refusal
+            .structured_content
+            .expect("a refusal carries structured content a model can branch on");
+        assert_eq!(
+            structured["code"], "log_unreadable",
+            "a distinct code from `internal`, and not a missing-file note: {structured}"
+        );
+        let message = structured["message"].as_str().expect("a string");
+        assert!(
+            message.contains(&not_a_log.to_string_lossy().to_string()),
+            "the message names the path this process tried: {message}"
+        );
 
         served.await.expect("the fake daemon task must not panic");
     }
