@@ -189,11 +189,31 @@ pub(crate) fn sweep_flock(home: &Path) {
 }
 
 #[cfg(unix)]
-/// One non-blocking attempt at the daemon pid recorded at `home`.
+/// The one reader of a daemon pid recorded at `home`, the same path
+/// `shep_daemon::boot::pidfile` builds.
+///
+/// [`daemon_pid`] takes the `Ok` and drops the reason; [`read_daemon_pid`]
+/// turns that reason into the panic a case wants.
+///
+/// # Errors
+/// `String` naming either the pidfile path that could not be read, or the
+/// contents that did not parse as a pid.
+fn read_pidfile(home: &Path) -> Result<nix::unistd::Pid, String> {
+    let path = home.join("pids").join("shepd.pid");
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("no pidfile at {}: {e}", path.display()))?;
+    let raw: i32 = text
+        .trim()
+        .parse()
+        .map_err(|e| format!("bad pidfile contents {text:?}: {e}"))?;
+    Ok(nix::unistd::Pid::from_raw(raw))
+}
+
+#[cfg(unix)]
+/// One non-blocking attempt at [`read_pidfile`]: `None` for either of its two
+/// failures.
 pub(crate) fn daemon_pid(home: &Path) -> Option<nix::unistd::Pid> {
-    let text = std::fs::read_to_string(home.join("pids").join("shepd.pid")).ok()?;
-    let raw: i32 = text.trim().parse().ok()?;
-    Some(nix::unistd::Pid::from_raw(raw))
+    read_pidfile(home).ok()
 }
 
 #[cfg(unix)]
@@ -245,17 +265,13 @@ pub(crate) fn recorded_fixture_pids(home: &Path) -> Vec<nix::unistd::Pid> {
 }
 
 #[cfg(unix)]
-/// Reads the daemon pid recorded at `home`'s pidfile, the same path
-/// `shep_daemon::boot::pidfile` builds.
+/// [`read_pidfile`], panicking with its message: a case that asks for the
+/// shepherd's pid has no use for a `None` it cannot explain.
 pub(crate) fn read_daemon_pid(home: &Path) -> nix::unistd::Pid {
-    let path = home.join("pids").join("shepd.pid");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("no pidfile at {}: {e}", path.display()));
-    let raw: i32 = text
-        .trim()
-        .parse()
-        .unwrap_or_else(|e| panic!("bad pidfile contents {text:?}: {e}"));
-    nix::unistd::Pid::from_raw(raw)
+    match read_pidfile(home) {
+        Ok(pid) => pid,
+        Err(reason) => panic!("{reason}"),
+    }
 }
 
 #[cfg(unix)]

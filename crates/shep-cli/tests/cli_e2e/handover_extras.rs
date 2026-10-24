@@ -303,11 +303,7 @@ fn a_sheep_owed_a_restart_still_gets_one_after_a_daemon_reload() {
 
     let reloaded = shep(home).arg("daemon").arg("reload").output().unwrap();
     assert_success(&reloaded);
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&reloaded.stdout),
-        String::from_utf8_lossy(&reloaded.stderr)
-    );
+    let text = combined_output(&reloaded);
     assert!(
         !text.contains("falls back to a stop-and-start"),
         "a sheep in its restart backoff is carried, not refused: {text}"
@@ -481,11 +477,7 @@ fn a_flock_of_every_carried_kind_survives_a_daemon_reload() {
         .output()
         .unwrap();
     assert_success(&reloaded);
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&reloaded.stdout),
-        String::from_utf8_lossy(&reloaded.stderr)
-    );
+    let text = combined_output(&reloaded);
     // The exact sentence `handover::RefusedReason`'s `Display` ends with;
     // without it the case would pass on a stop-and-start.
     assert!(
