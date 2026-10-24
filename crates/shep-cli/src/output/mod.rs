@@ -52,7 +52,7 @@ pub use rows::{
     HostRows, ImportEnvRow, ImportEnvRows, ImportRow, ImportRows, KillRow, KvEntry, KvRows,
     KvUnsetRow, LabelledLambRows, LambRows, RolledSheep, RolledSheepRows, SavedRollRow,
     SecretKeyRow, SecretKeyRows, SecretSlotRow, SecretStatus, SecretValueRow, SentLineRows,
-    SignalledRows, StartupStep, StartupSteps, TriggeredRows,
+    SettingsAnswer, SignalledRows, StartupStep, StartupSteps, TriggeredRows,
 };
 pub use table::{human_bytes, human_duration, local_timestamp, render_table};
 

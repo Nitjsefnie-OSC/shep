@@ -8,10 +8,10 @@
 
 use super::{
     AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DialStdioArgs,
-    DisableArgs, DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, HostArgs,
-    ImportArgs, InitArgs, KvArgs, KvGetArgs, KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs,
-    RuntimeArgs, SecretArgs, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StartupArgs,
-    StockArgs, StyleArgs, TriggerArgs, WhisperArgs,
+    DisableArgs, DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, GetArgs, HostArgs,
+    ImportArgs, InitArgs, KvArgs, KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs,
+    SecretArgs, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs,
+    TriggerArgs, WhisperArgs,
 };
 
 /// Every verb the binary understands.
@@ -384,12 +384,6 @@ pub enum Commands {
     /// one object per invocation.
     #[command(hide = true)]
     Set(KvSetArgs),
-    /// Read one value from the store, or list the whole store with no key, as
-    /// `shep kv get`.
-    ///
-    /// `shep get` is the store's old spelling, and prints the same notice.
-    #[command(hide = true)]
-    Get(KvGetArgs),
     /// Remove one key from the store, or every key with --all, as
     /// `shep kv unset`.
     ///
@@ -460,6 +454,31 @@ pub enum Commands {
     /// `--dry-run` prints the list and writes nothing, and with no terminal to
     /// ask on the run refuses instead of writing.
     Copy(CopyArgs),
+    /// Print a sheep's or a dog's settings as TOML.
+    ///
+    /// The address is `shep copy`'s: a name, then a path inside the settings
+    /// that name holds. A sheep's name addresses its config and its
+    /// `dogs.<dog>` tables; a dog's name addresses its own section of
+    /// `dogs.toml`. A sheep is looked for first, among the names the running
+    /// flock carries, and anything no sheep is is read as a dog's section.
+    ///
+    /// `shep get api` prints a sheep's whole config, `shep get api.max_memory`
+    /// one field, `shep get api.dogs.kelpie.git` one dog's table inside a
+    /// sheep, and `shep get kelpie.worker` one table inside a dog's own
+    /// section. A path that ends at a value prints that value under the header
+    /// of the table that holds it.
+    ///
+    /// The answer is the TOML the address names, spelled as the file it lives
+    /// in spells it: a sheep's fragment carries its `dogs.<dog>` headers, a
+    /// dog's carries `[<name>]`. `--format json` wraps the same text in the
+    /// one envelope every other verb prints.
+    ///
+    /// A sheep's `env` values are never read: a client is never sent them.
+    /// `shep describe api` lists the keys, and `shep import env` writes them.
+    ///
+    /// A name that is neither a sheep nor a dog is refused by name: the
+    /// key/value store that `shep get` used to read lives at `shep kv get`.
+    Get(GetArgs),
     /// Check whether the shepherd answers.
     Ping,
     /// Shut the shepherd down.
@@ -659,6 +678,8 @@ mod tests {
         let lookout = cmd.find_subcommand("lookout").unwrap();
         assert_eq!(lookout.get_visible_aliases().collect::<Vec<_>>(), ["dash"]);
 
+        // `get` is absent here on purpose: it is the settings verb now, and
+        // only `set` and `unset` remain the store's hidden spellings.
         for hidden in [
             "thatlldo",
             "daemon",
@@ -666,7 +687,6 @@ mod tests {
             "rehome",
             "dial-stdio",
             "set",
-            "get",
             "unset",
         ] {
             assert!(
@@ -690,6 +710,7 @@ mod tests {
             "disable",
             "adopt",
             "kv",
+            "get",
             "ping",
             "kill",
             "save",

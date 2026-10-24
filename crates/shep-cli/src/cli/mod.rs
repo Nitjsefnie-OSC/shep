@@ -21,6 +21,7 @@ mod hosts;
 mod import;
 mod kv;
 mod logs;
+mod settings;
 mod sheep;
 mod store;
 mod system;
@@ -46,6 +47,7 @@ pub use logs::{BarksArgs, BleatsArgs, FlushArgs, ReopenArgs};
 pub(crate) use flock::FOLLOW_INTERVAL_FLOOR_SECONDS;
 #[allow(unused_imports)]
 pub use logs::DEFAULT_BLEAT_LINES;
+pub use settings::GetArgs;
 pub use sheep::{
     CopyArgs, ResetMode, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StockArgs, TriggerArgs,
     WhisperArgs,

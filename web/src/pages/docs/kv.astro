@@ -46,8 +46,8 @@ REMOVED
 $ shep kv get
 KEY  VALUE`;
 
-const oldSpelling = `$ shep get bark.cooldown
-notice[moved]: \`shep get\` moved to \`shep kv get\`; the old spelling still works
+const oldSpelling = `$ shep set bark.cooldown 30s
+notice[moved]: \`shep set\` moved to \`shep kv set\`; the old spelling still works
 KEY            VALUE
 bark.cooldown  30s`;
 ---
@@ -91,11 +91,10 @@ bark.cooldown  30s`;
 
     <h2 id="the-old-spelling">The old spelling</h2>
     <p>
-      <code>shep set</code>, <code>shep get</code> and <code>shep unset</code>{" "}
-      still work, and print where the verb went on stderr. A{" "}
-      <code>--format json</code> run prints no note: that format is one object
-      per invocation. Those three names are being saved for a sheep's or a
-      dog's settings.
+      <code>shep set</code> and <code>shep unset</code> still work, and print
+      where the verb went on stderr. A <code>--format json</code> run prints no
+      note: that format is one object per invocation. <code>shep get</code> is
+      taken: it reads a sheep's or a dog's settings.
     </p>
     <CodeBlock label="table form">{oldSpelling}</CodeBlock>
 

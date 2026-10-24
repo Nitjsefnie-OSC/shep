@@ -178,7 +178,11 @@ impl DogNames {
 }
 
 /// The longest name in `names` that `rest` starts with, `None` when none does.
-fn longest_in(rest: &[String], names: &BTreeSet<String>) -> Option<String> {
+///
+/// `pub(crate)`: `shep get` splits a dog's own name the same way `shep copy`
+/// splits a sheep's, and one rule for "the longest name this address starts
+/// with" is what keeps the two verbs reading `we.b.dogs.kelpie` alike.
+pub(crate) fn longest_in(rest: &[String], names: &BTreeSet<String>) -> Option<String> {
     names
         .iter()
         .filter(|name| {
@@ -278,6 +282,12 @@ pub(crate) fn path_of(
 /// `api` then `token` when it holds a table under `api`. A key nothing holds
 /// stays one segment, which is what lets the plan name the source that is
 /// missing rather than invent a path.
+///
+/// The walk descends by the key it matched, not by the segments that spelled
+/// it. A table holding `api.token` has no `api` to fall into, so stepping one
+/// segment at a time lands outside the table and reads the rest of the address
+/// as segments nothing holds: `api.token.auth.key` becomes `api.token`, `auth`,
+/// `key` instead of `api.token`, `auth.key`.
 pub(crate) fn resolve_keys(
     rest: &[String],
     source: Option<&Value>,
@@ -289,11 +299,10 @@ pub(crate) fn resolve_keys(
     let mut next = 0;
     while next < rest.len() {
         let taken = longest_key(&rest[next..], src, tgt);
-        keys.push(taken.join("."));
-        for part in &taken {
-            src = src.and_then(|value| value.as_object().and_then(|map| map.get(part)));
-            tgt = tgt.and_then(|value| value.as_object().and_then(|map| map.get(part)));
-        }
+        let key = taken.join(".");
+        keys.push(key.clone());
+        src = src.and_then(|value| value.as_object().and_then(|map| map.get(key.as_str())));
+        tgt = tgt.and_then(|value| value.as_object().and_then(|map| map.get(key.as_str())));
         next += taken.len();
     }
     keys
@@ -359,7 +368,10 @@ fn is_path_root(segment: &&str) -> bool {
 ///
 /// Read off the type rather than a hand-kept list, so a field added to
 /// `AppConfig` is copyable without editing this file.
-fn app_fields() -> impl Iterator<Item = &'static str> {
+///
+/// `pub(crate)`: `shep get` refuses a path that is no field for the same
+/// reason `shep copy` does.
+pub(crate) fn app_fields() -> impl Iterator<Item = &'static str> {
     STATIC_FIELDS.iter().map(String::as_str)
 }
 
@@ -651,6 +663,35 @@ mod tests {
                 dog: "kelpie".into(),
                 keys: vec!["api".into(), "limit".into()]
             }
+        );
+    }
+
+    /// fails if the walk falls out of the table a dotted key names: a key
+    /// holding a dot has no shorter key to step through, so the second dotted
+    /// key has to be read inside the first, and `api.token.auth.key` is two
+    /// keys rather than `api.token` and two segments nothing holds.
+    #[test]
+    fn a_dotted_key_inside_a_dotted_key_stays_two_keys() {
+        let source = json!({ "dogs": { "kelpie": { "api.token": { "auth.key": 42 } } } });
+        let deep = parse_against(
+            "web.dogs.kelpie.api.token.auth.key",
+            &flock(),
+            &source,
+            &Value::Null,
+        )
+        .unwrap();
+        assert_eq!(
+            deep.path,
+            ConfigPath::Dog {
+                dog: "kelpie".into(),
+                keys: vec!["api.token".into(), "auth.key".into()]
+            },
+            "the walk stays inside the table `api.token` names"
+        );
+        assert_eq!(
+            deep.path.dotted(),
+            "dogs.kelpie.api.token.auth.key",
+            "it prints back as it was typed"
         );
     }
 

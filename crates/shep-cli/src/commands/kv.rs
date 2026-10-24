@@ -366,7 +366,6 @@ mod tests {
         for (via, expected) in [
             (KvVia::Kv, "kv"),
             (KvVia::Alias("set"), "set"),
-            (KvVia::Alias("get"), "get"),
             (KvVia::Alias("unset"), "unset"),
         ] {
             let mut out = Vec::new();
@@ -376,12 +375,6 @@ mod tests {
                 value: "1".to_string(),
             };
             let code = match via {
-                KvVia::Alias("get") => get(
-                    &mut streams(&mut out, &mut err),
-                    &paths,
-                    &KvGetArgs { key: None },
-                    via,
-                ),
                 KvVia::Alias("unset") => unset(
                     &mut streams(&mut out, &mut err),
                     &paths,

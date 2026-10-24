@@ -517,7 +517,6 @@ pub(crate) async fn run(
         // scripts written against them: same store, same envelope, plus a
         // notice on stderr naming the verb they moved to.
         Commands::Set(ref args) => kv::set(&mut streams, &paths, args, kv::KvVia::Alias("set")),
-        Commands::Get(ref args) => kv::get(&mut streams, &paths, args, kv::KvVia::Alias("get")),
         Commands::Unset(ref args) => {
             kv::unset(&mut streams, &paths, args, kv::KvVia::Alias("unset"))
         }
@@ -532,6 +531,12 @@ pub(crate) async fn run(
         // the copy is of what the running flock holds, not of a file.
         Commands::Copy(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => commands::copy::copy(&client, &mut streams, args).await,
+            Err(code) => code,
+        },
+        // Reads the running flock's settings rather than a file, so it needs
+        // the shepherd: a Flockfile on disk is not what a sheep is running.
+        Commands::Get(ref args) => match connect_client(&mut streams, &link, guard).await {
+            Ok(client) => commands::settings_read::get(&client, &mut streams, args).await,
             Err(code) => code,
         },
         // Does its own connecting: `connect_client` reports and gives up,

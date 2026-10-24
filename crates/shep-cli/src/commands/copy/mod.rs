@@ -254,9 +254,16 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
 
 /// The flock's names, split into sheep and dogs.
 ///
+/// `pub(crate)`: `shep get` resolves an address against the same two name
+/// sets `shep copy` does, and one reader of `Request::ListFlock` is what
+/// keeps the two verbs agreeing on what a name is.
+///
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`.
-async fn flock_names(client: &Client, streams: &mut Streams<'_>) -> Result<FlockNames, ExitCode> {
+pub(crate) async fn flock_names(
+    client: &Client,
+    streams: &mut Streams<'_>,
+) -> Result<FlockNames, ExitCode> {
     match client.list_flock().await {
         Ok(info) => Ok(FlockNames {
             sheep: info
@@ -279,9 +286,12 @@ async fn flock_names(client: &Client, streams: &mut Streams<'_>) -> Result<Flock
 /// `env` is already emptied by the shepherd, which is what makes `env` a
 /// refusal here rather than a copy of something that is not there.
 ///
+/// `pub(crate)`: `shep get` reads the same answer for the sheep half of an
+/// address.
+///
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`.
-async fn read_config(
+pub(crate) async fn read_config(
     client: &Client,
     streams: &mut Streams<'_>,
     name: &str,
