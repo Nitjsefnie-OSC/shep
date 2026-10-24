@@ -58,7 +58,7 @@ use crate::commands::copy;
 use crate::commands::copy::CopyRefusal;
 use crate::commands::copy::address::{self, ConfigPath, FlockNames};
 use crate::commands::copy::plan::Change;
-use crate::commands::settings_read::{self, Holder};
+use crate::commands::settings_read;
 use crate::exit::ExitCode;
 use crate::lookout::probe_sheep_dogs::sheep_schema;
 use crate::output::Streams;
@@ -68,7 +68,9 @@ mod flow;
 mod plan;
 mod schema;
 mod unset;
-mod value;
+#[cfg(test)]
+mod unset_plan_tests;
+pub(crate) mod value;
 
 use self::flow::run;
 pub(crate) use self::unset::unset;
@@ -118,6 +120,8 @@ pub(crate) enum WriteRefusal {
     Refused(String),
     /// The dog's own schema turned the value down.
     Invalid(String),
+    /// The dog itself refused the write, in its own words.
+    ByDog(String),
     /// The holder moved between the read the plan was built from and the write.
     Stale(String),
 }
@@ -130,6 +134,7 @@ impl WriteRefusal {
             | Self::Unknown(message)
             | Self::Refused(message)
             | Self::Invalid(message)
+            | Self::ByDog(message)
             | Self::Stale(message) => message,
         }
     }
@@ -147,7 +152,7 @@ impl WriteRefusal {
         match self {
             Self::Usage(_) => ExitCode::Usage,
             Self::Unknown(_) => ExitCode::NotFound,
-            Self::Refused(_) | Self::Invalid(_) => ExitCode::InvalidConfig,
+            Self::Refused(_) | Self::Invalid(_) | Self::ByDog(_) => ExitCode::InvalidConfig,
             Self::Stale(_) => ExitCode::Failure,
         }
     }
@@ -230,9 +235,10 @@ pub(super) struct Plan {
     /// One entry per key the write touches, in dotted-key order.
     changes: Vec<Change>,
     write: Write,
-    /// The table the write hands the shepherd, as JSON: the dog's table on the
+    /// The table the write leaves behind, as JSON: the dog's table on the
     /// sheep, or the whole section. Empty for a sheep's own field, which is
-    /// one value and not a table.
+    /// one value and not a table, and for a dog's table removed whole, which
+    /// leaves nothing.
     table: Map<String, Json>,
     /// The schema `table` is checked against, `None` when no dog published one
     /// for it.
@@ -339,7 +345,7 @@ async fn set_sheep(
     run(
         client,
         streams,
-        Holder::Sheep,
+        ask.paths,
         name,
         &path.dotted(),
         &plan,
@@ -428,7 +434,7 @@ async fn set_dog(
             run(
                 client,
                 streams,
-                Holder::Dog,
+                ask.paths,
                 &target.name,
                 &rest.join("."),
                 &plan,

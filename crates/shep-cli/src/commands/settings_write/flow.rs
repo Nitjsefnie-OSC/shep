@@ -5,6 +5,7 @@ use std::io::IsTerminal as _;
 
 use serde_json::Value as Json;
 use shep_client::Client;
+use shep_core::paths::ShepPaths;
 use shep_core::protocol::{DogSectionToml, Request, Response};
 
 use super::plan::schema_refusal;
@@ -16,6 +17,7 @@ use crate::commands::copy::confirm::{self, Answer, Go};
 use crate::commands::copy::report::shows_changes_first;
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::settings_read::{self, Holder};
+use crate::dog_settings::{AskFailure, ask_dog};
 use crate::exit::ExitCode;
 use crate::output::{CopyChange, SetReport, Streams, emit, write_outcome};
 
@@ -24,13 +26,14 @@ use crate::output::{CopyChange, SetReport, Streams, emit, write_outcome};
 pub(super) async fn run(
     client: &Client,
     streams: &mut Streams<'_>,
-    holder: Holder,
+    paths: &ShepPaths,
     name: &str,
     path: &str,
     plan: &Plan,
     flags: Flags,
 ) -> ExitCode {
     let verb = flags.verb;
+    let holder = holder_of(&plan.write);
     if let Some(refusal) = schema_refusal(plan, name, path) {
         return refusal.report(streams);
     }
@@ -113,6 +116,19 @@ pub(super) async fn run(
                 .report(streams);
         }
         Err(code) => return code,
+    }
+
+    // A dog whose checks go further than its schema runs them on the table
+    // this write would leave behind, before any of it is sent.
+    if let Some((dog, sheep)) = dog_in(&plan.write, name) {
+        match ask_dog(client, paths, dog, &plan.table, sheep).await {
+            Ok(()) => {}
+            Err(AskFailure::Refused { reason }) => {
+                return WriteRefusal::ByDog(dog_refused(name, dog, &plan.write, &reason))
+                    .report(streams);
+            }
+            Err(AskFailure::Transport(err)) => return client_error(streams, &err),
+        }
     }
 
     let pending = match send(client, streams, name, &plan.write).await {
@@ -336,19 +352,61 @@ pub(super) fn holder_moved(verb: Verb, name: &str, path: &str, write: &Write) ->
     } else {
         format!("{name}.{path}")
     };
-    let head = match write {
+    let verb = verb.as_str();
+    format!(
+        "nothing was written: {} changed while `shep {verb}` waited for the answer. `shep \
+         get {address}` reads what it holds now, and `shep {verb}` again plans against that",
+        holder_phrase(name, write),
+    )
+}
+
+/// The holder this write lands on.
+///
+/// Read off the write rather than handed in by the caller: the request the
+/// write stands in for is what decides whether `name` is a dog or a sheep.
+fn holder_of(write: &Write) -> Holder {
+    match write {
+        Write::DogSection { .. } => Holder::Dog,
+        _other => Holder::Sheep,
+    }
+}
+
+/// The dog whose settings this write carries, and the sheep holding them when
+/// it is a per-sheep table.
+///
+/// `None` is a sheep's own field, which is no dog's settings and so no dog's
+/// to validate.
+fn dog_in<'a>(write: &'a Write, name: &'a str) -> Option<(&'a str, Option<&'a str>)> {
+    match write {
+        Write::SheepDogTable { dog, .. } | Write::DropSheepDogTable { dog, .. } => {
+            Some((dog.as_str(), Some(name)))
+        }
+        Write::DogSection { .. } => Some((name, None)),
+        Write::SheepField { .. } | Write::ResetSheepField { .. } => None,
+    }
+}
+
+/// The holder, named the way the operator named it.
+fn holder_phrase(name: &str, write: &Write) -> String {
+    match write {
         Write::DogSection { .. } => format!("`{name}`'s section"),
         Write::SheepDogTable { dog, .. } | Write::DropSheepDogTable { dog, .. } => {
             format!("`{name}`'s table for `{dog}`")
         }
-        // A sheep's own field is one key and no whole holder, so this sentence
-        // is never built for one.
+        // A sheep's own field is one key and no whole holder, and no dog is
+        // asked about one.
         Write::SheepField { .. } | Write::ResetSheepField { .. } => format!("`{name}`'s field"),
-    };
-    let verb = verb.as_str();
+    }
+}
+
+/// The sentence for a write the dog itself turned down.
+///
+/// The dog's own words are the whole remedy: it is the only party that knows
+/// what its settings have to hold.
+fn dog_refused(name: &str, dog: &str, write: &Write, reason: &str) -> String {
     format!(
-        "nothing was written: {head} changed while `shep {verb}` waited for the answer. `shep \
-         get {address}` reads what it holds now, and `shep {verb}` again plans against that"
+        "nothing was written: `{dog}` refused {}: {reason}",
+        holder_phrase(name, write)
     )
 }
 

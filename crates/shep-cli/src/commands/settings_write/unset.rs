@@ -35,7 +35,7 @@ use crate::commands::copy;
 use crate::commands::copy::address::{self, ConfigPath, FlockNames};
 use crate::commands::copy::plan::{Change, ChangeKind, collect_changes, walk};
 use crate::commands::rpc::{client_error, unexpected_response};
-use crate::commands::settings_read::{self, Holder};
+use crate::commands::settings_read;
 use crate::exit::ExitCode;
 use crate::output::Streams;
 
@@ -66,7 +66,7 @@ pub(crate) async fn unset(
         dry_run: args.dry_run,
     };
     if let Some(name) = address::longest_in(&segments, &flock.sheep) {
-        return unset_sheep(client, streams, &name, &segments, &flock, flags).await;
+        return unset_sheep(client, streams, paths, &name, &segments, &flock, flags).await;
     }
     unset_dog(client, streams, paths, &segments, &flock, flags).await
 }
@@ -75,6 +75,7 @@ pub(crate) async fn unset(
 async fn unset_sheep(
     client: &Client,
     streams: &mut Streams<'_>,
+    paths: &ShepPaths,
     name: &str,
     segments: &[String],
     flock: &FlockNames,
@@ -93,18 +94,7 @@ async fn unset_sheep(
         ConfigPath::Dog { dog, keys } => plan_dog_table(name, dog, keys, &config),
     };
     match plan {
-        Ok(plan) => {
-            run(
-                client,
-                streams,
-                Holder::Sheep,
-                name,
-                &path.dotted(),
-                &plan,
-                flags,
-            )
-            .await
-        }
+        Ok(plan) => run(client, streams, paths, name, &path.dotted(), &plan, flags).await,
         Err(refusal) => refusal.report(streams),
     }
 }
@@ -133,7 +123,7 @@ async fn unset_dog(
             run(
                 client,
                 streams,
-                Holder::Dog,
+                paths,
                 &target.name,
                 &rest.join("."),
                 &plan,
@@ -214,7 +204,7 @@ fn plan_field(
 /// # Errors
 /// [`WriteRefusal::Refused`] when the sheep holds no table for the dog or the
 /// table holds no such key.
-fn plan_dog_table(
+pub(super) fn plan_dog_table(
     sheep: &str,
     dog: &str,
     keys: &[String],
@@ -236,6 +226,9 @@ fn plan_dog_table(
     let before = before.clone();
     let mut after = before.clone();
     let write = if keys.is_empty() {
+        // The table goes whole, so what the holder ends up holding is nothing,
+        // and that is what the dog is asked about.
+        after = Json::Object(Map::new());
         Write::DropSheepDogTable {
             dog: dog.to_string(),
             before: before.clone(),
@@ -255,7 +248,7 @@ fn plan_dog_table(
         };
         Write::SheepDogTable {
             dog: dog.to_string(),
-            table: DogTable::from(table),
+            table: DogTable::from(table.clone()),
             before: before.clone(),
         }
     };
@@ -265,7 +258,9 @@ fn plan_dog_table(
     Ok(Plan {
         changes,
         write,
-        table: Map::new(),
+        // What the holder ends up holding, which is what the dog is asked
+        // about: an empty map for a table that goes whole.
+        table: after.as_object().cloned().unwrap_or_default(),
         schema: None,
         touched: BTreeSet::new(),
     })
@@ -276,7 +271,7 @@ fn plan_dog_table(
 /// # Errors
 /// [`WriteRefusal::Usage`] when the address names the whole section.
 /// [`WriteRefusal::Refused`] when the section holds no such key.
-fn plan_section(
+pub(super) fn plan_section(
     mut doc: toml_edit::DocumentMut,
     name: &str,
     keys: &[String],
@@ -295,6 +290,7 @@ fn plan_section(
             keys.join(".")
         )));
     }
+    let after = table_json(doc.as_table());
     let mut changes = removal_changes(
         walk(&before, keys),
         "",
@@ -307,7 +303,7 @@ fn plan_section(
             toml: doc.to_string(),
             before: answered,
         },
-        table: Map::new(),
+        table: after,
         schema: None,
         touched: BTreeSet::new(),
     })
