@@ -3,15 +3,31 @@
 //! Static only: sheep and fold names are never completed, since that would
 //! need a connected daemon at completion time and `clap_complete`'s dynamic
 //! engine is still an unstable feature upstream.
+//!
+//! Adopted dogs are completed, with the subcommands their manifests declare,
+//! off `shep.toml` and the manifest cache as they stand at generation time.
+//! That is still static: adopting a dog later means generating the script
+//! again.
 
 use clap::CommandFactory;
 
+use crate::adopted_help::{self, AdoptedVerb};
 use crate::cli::{Cli, CompletionArgs};
 use crate::exit::ExitCode;
 
 /// Writes the completion script for `args.shell` to `out`
-pub fn completions(out: &mut dyn std::io::Write, args: &CompletionArgs) -> ExitCode {
-    clap_complete::aot::generate(args.shell, &mut Cli::command(), "shep", out);
+///
+/// `dogs` are the registry's adopted dogs, added to a command tree built for
+/// this script alone. Nothing parses it: `shep <dog>` still reaches the dog
+/// through clap's unknown-subcommand path, so a manifest stays a description
+/// of a verb shep already gave the dog rather than a way to claim one.
+pub fn completions(
+    out: &mut dyn std::io::Write,
+    args: &CompletionArgs,
+    dogs: &[AdoptedVerb],
+) -> ExitCode {
+    let mut command = adopted_help::with_completion_entries(Cli::command(), dogs);
+    clap_complete::aot::generate(args.shell, &mut command, "shep", out);
     ExitCode::Success
 }
 
@@ -26,7 +42,7 @@ mod tests {
         let mut scripts = Vec::new();
         for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
             let mut buf = Vec::new();
-            let code = completions(&mut buf, &CompletionArgs { shell });
+            let code = completions(&mut buf, &CompletionArgs { shell }, &[]);
             assert_eq!(code, ExitCode::Success, "{shell}");
             let script = String::from_utf8(buf).unwrap();
             assert!(!script.is_empty(), "{shell} produced nothing");
@@ -54,7 +70,7 @@ mod tests {
     #[test]
     fn completions_cover_the_visible_aliases() {
         let mut buf = Vec::new();
-        completions(&mut buf, &CompletionArgs { shell: Shell::Bash });
+        completions(&mut buf, &CompletionArgs { shell: Shell::Bash }, &[]);
         let script = String::from_utf8(buf).unwrap();
         for verb in ["flock", "list", "ls", "bleats", "logs"] {
             assert!(script.contains(verb), "{verb} missing from the bash script");

@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 mod adopted;
+mod adopted_help;
 mod cli;
 mod client;
 mod commands;

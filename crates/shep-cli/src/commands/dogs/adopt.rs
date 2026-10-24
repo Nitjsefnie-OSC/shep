@@ -217,7 +217,7 @@ fn default_dog_name(path: &Path) -> String {
 ///
 /// Read off the real `clap::Command` tree rather than a hand-copied list, so
 /// a verb added later is refused automatically.
-fn collides_with_a_verb(name: &str) -> bool {
+pub(crate) fn collides_with_a_verb(name: &str) -> bool {
     use clap::CommandFactory as _;
     crate::cli::Cli::command()
         .get_subcommands()
