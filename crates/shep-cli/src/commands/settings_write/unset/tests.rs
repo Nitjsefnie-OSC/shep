@@ -231,3 +231,54 @@ fn the_question_and_the_stale_refusal_name_the_verb() {
     assert!(text.contains("`shep unset` waited"), "{text}");
     assert!(text.contains("`api`'s table for `kelpie`"), "{text}");
 }
+
+/// fails if an override holding an empty table lists `null` as the value it
+/// drops, or lists nothing and reads as a write with nothing to do.
+#[test]
+fn an_override_holding_an_empty_table_lists_that_table_as_removed() {
+    let config = json!({ "env": {}, "tags": [] });
+
+    for (field, held) in [("env", json!({})), ("tags", json!([]))] {
+        let plan = plan_field("api", field, &config, &[field.to_string()]).unwrap();
+
+        assert_eq!(plan.changes.len(), 1, "{field}");
+        assert_eq!(plan.changes[0].key, field);
+        assert_eq!(plan.changes[0].kind, ChangeKind::Removed);
+        assert_eq!(plan.changes[0].old, Some(held), "{field}");
+    }
+}
+
+/// fails if removing a dog table with nothing in it plans no change, which the
+/// flow reports as "nothing to remove" and never sends.
+#[test]
+fn an_empty_dog_table_still_plans_its_removal() {
+    let config = json!({ "name": "api", "dogs": { "kelpie": {} } });
+
+    let whole = plan_dog_table("api", "kelpie", &[], &config).unwrap();
+    assert_eq!(whole.changes.len(), 1);
+    assert_eq!(whole.changes[0].key, "kelpie");
+    assert_eq!(whole.changes[0].old, Some(json!({})));
+    assert!(matches!(whole.write, Write::DropSheepDogTable { .. }));
+
+    let config = json!({ "dogs": { "kelpie": { "git": {} } } });
+    let inner = plan_dog_table("api", "kelpie", &keys("git"), &config).unwrap();
+    assert_eq!(inner.changes.len(), 1);
+    assert_eq!(inner.changes[0].key, "git");
+    assert_eq!(inner.changes[0].old, Some(json!({})));
+}
+
+/// fails if removing an empty sub-table from a dog's section plans no change.
+#[test]
+fn an_empty_section_table_still_plans_its_removal() {
+    let doc: DocumentMut = "[worker]\n".parse().unwrap();
+
+    let plan = plan_section(doc, "kelpie", &keys("worker")).unwrap();
+
+    assert_eq!(plan.changes.len(), 1);
+    assert_eq!(plan.changes[0].key, "worker");
+    assert_eq!(plan.changes[0].old, Some(json!({})));
+    let Write::DogSection { toml, .. } = &plan.write else {
+        panic!("a section key is removed through the section text");
+    };
+    assert!(!toml.contains("worker"), "{toml}");
+}

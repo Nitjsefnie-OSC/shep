@@ -33,7 +33,7 @@ use super::{Flags, Plan, Verb, Write, WriteRefusal, path_in, resolve_dog, run};
 use crate::cli::UnsetArgs;
 use crate::commands::copy;
 use crate::commands::copy::address::{self, ConfigPath, FlockNames};
-use crate::commands::copy::plan::{ChangeKind, collect_changes, walk};
+use crate::commands::copy::plan::{Change, ChangeKind, collect_changes, walk};
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::settings_read::{self, Holder};
 use crate::exit::ExitCode;
@@ -196,19 +196,9 @@ fn plan_field(
              `shep get {sheep}.{field}` reads it"
         )));
     }
-    let mut changes = Vec::new();
-    collect_changes(config.get(field), None, field, &mut changes);
-    if changes.is_empty() {
-        // A field the config holds as `null` still has an override to drop.
-        changes.push(crate::commands::copy::plan::Change {
-            key: field.to_string(),
-            kind: ChangeKind::Removed,
-            old: Some(Json::Null),
-            new: None,
-        });
-    }
+    let held = config.get(field).unwrap_or(&Json::Null);
     Ok(Plan {
-        changes,
+        changes: removal_changes(Some(held), field, field),
         write: Write::ResetSheepField {
             key: field.to_string(),
         },
@@ -269,8 +259,8 @@ fn plan_dog_table(
             before: before.clone(),
         }
     };
-    let mut changes = Vec::new();
-    collect_changes(walk(&before, keys), None, "", &mut changes);
+    let label = keys.last().map_or(dog, String::as_str);
+    let mut changes = removal_changes(walk(&before, keys), "", label);
     name_the_path(&mut changes, keys);
     Ok(Plan {
         changes,
@@ -305,8 +295,11 @@ fn plan_section(
             keys.join(".")
         )));
     }
-    let mut changes = Vec::new();
-    collect_changes(walk(&before, keys), None, "", &mut changes);
+    let mut changes = removal_changes(
+        walk(&before, keys),
+        "",
+        keys.last().map_or(name, String::as_str),
+    );
     name_the_path(&mut changes, keys);
     Ok(Plan {
         changes,
@@ -318,6 +311,27 @@ fn plan_section(
         schema: None,
         touched: BTreeSet::new(),
     })
+}
+
+/// Every key the removal of `before` drops, as dotted paths under `prefix`.
+///
+/// A value with nothing in it to list, such as an empty table, still has to be
+/// dropped: it is one change named `label` holding the value itself, so the
+/// plan is never mistaken for a write with nothing to do.
+fn removal_changes(before: Option<&Json>, prefix: &str, label: &str) -> Vec<Change> {
+    let mut changes = Vec::new();
+    collect_changes(before, None, prefix, &mut changes);
+    if changes.is_empty()
+        && let Some(old) = before
+    {
+        changes.push(Change {
+            key: label.to_string(),
+            kind: ChangeKind::Removed,
+            old: Some(old.clone()),
+            new: None,
+        });
+    }
+    changes
 }
 
 /// Removes the value at `keys` under `root` and hands it back, `None` when any
