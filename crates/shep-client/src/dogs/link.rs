@@ -3,7 +3,8 @@
 
 use std::path::Path;
 
-#[cfg(unix)]
+use shep_core::transport::ClientStream;
+
 use crate::connection::HANDSHAKE_TIMEOUT;
 use crate::{ConnectError, ReconnectingClient};
 
@@ -17,24 +18,65 @@ use super::DogIdentity;
 ///
 /// # Errors
 ///
-/// - [`ConnectError::Io`]: `$SHEP_DOG_FD` is set and names no usable
-///   connection. The shepherd said this dog has one, so reaching it on the
-///   socket as the operator would hide the fault.
+/// - [`ConnectError::Io`]: `$SHEP_DOG_FD` (`$SHEP_DOG_PIPE` on Windows) is
+///   set and names no usable connection. The shepherd said this dog has one,
+///   so reaching it on the socket as the operator would hide the fault.
 /// - Otherwise as [`ReconnectingClient::connect_as`].
 pub(super) async fn connect(
     identity: &DogIdentity,
     socket: &Path,
 ) -> Result<ReconnectingClient, ConnectError> {
     #[cfg(unix)]
-    return connect_via(inherited()?, identity, socket).await;
-    #[cfg(not(unix))]
-    return ReconnectingClient::connect_as(socket, identity).await;
+    let link = inherited()?;
+    #[cfg(windows)]
+    let link = inherited().await?;
+    connect_via(link, identity, socket).await
+}
+
+/// Whether this process has opened its pipe already. A dog has one
+/// connection from its shepherd: the shepherd serves the first open and
+/// drops the pipe, so a second would find it busy for as long as the first
+/// lives.
+#[cfg(windows)]
+static PIPE_TAKEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// The connection the shepherd spawned this process holding, opened by the
+/// name in `$SHEP_DOG_PIPE`. `None` for a dog started by hand, and for one
+/// that already took it.
+#[cfg(windows)]
+async fn inherited() -> Result<Option<ClientStream>, ConnectError> {
+    use core::sync::atomic::Ordering;
+
+    let var = shep_core::dogs::DOG_LINK_PIPE_VAR;
+    let Some(pipe) = std::env::var_os(var) else {
+        return Ok(None);
+    };
+    if PIPE_TAKEN.load(Ordering::SeqCst) {
+        return Ok(None);
+    }
+    let unusable = |reason: &dyn core::fmt::Display| {
+        ConnectError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{var}: {reason}"),
+        ))
+    };
+    // Bounded: a pipe the shepherd is not accepting on answers busy, and the
+    // transport retries a busy pipe for as long as the caller lets it.
+    let opened = tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        shep_core::transport::connect(Path::new(&pipe)),
+    )
+    .await
+    .map_err(|_elapsed| unusable(&"the pipe stayed busy"))?
+    .map_err(|error| unusable(&error))?;
+    PIPE_TAKEN.store(true, Ordering::SeqCst);
+    Ok(Some(opened))
 }
 
 /// The connection the shepherd spawned this process holding. `None` for a
 /// dog started by hand, and for one that already took it.
 #[cfg(unix)]
-fn inherited() -> Result<Option<tokio::net::UnixStream>, ConnectError> {
+fn inherited() -> Result<Option<ClientStream>, ConnectError> {
     adopt(shep_channel::take_inherited_socket(
         shep_core::dogs::DOG_LINK_FD_VAR,
     ))
@@ -45,7 +87,7 @@ fn inherited() -> Result<Option<tokio::net::UnixStream>, ConnectError> {
 #[cfg(unix)]
 fn adopt(
     taken: Result<Option<std::os::unix::net::UnixStream>, shep_channel::ChannelError>,
-) -> Result<Option<tokio::net::UnixStream>, ConnectError> {
+) -> Result<Option<ClientStream>, ConnectError> {
     let unusable = |reason: &dyn core::fmt::Display| {
         ConnectError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -65,9 +107,8 @@ fn adopt(
 }
 
 /// As [`connect`], with the inherited connection passed in.
-#[cfg(unix)]
 pub(super) async fn connect_via(
-    link: Option<tokio::net::UnixStream>,
+    link: Option<ClientStream>,
     identity: &DogIdentity,
     socket: &Path,
 ) -> Result<ReconnectingClient, ConnectError> {

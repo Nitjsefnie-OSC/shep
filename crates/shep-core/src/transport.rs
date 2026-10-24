@@ -10,6 +10,9 @@
 //! Security: unix relies on `0700` on `$SHEP_HOME/run` plus a same-uid
 //! `peer_cred` check; Windows relies on the pipe's ACL, which grants
 //! `Everyone` read but not write (canonical writeup: shep-daemon's `RpcServer`).
+//! A pipe that must admit only the shepherd's own user is bound with
+//! [`Listener::bind_with`], whose [`PipeInstances`] the daemon implements
+//! where its unsafe code lives.
 
 use std::io;
 use std::path::Path;
@@ -148,6 +151,48 @@ pub async fn connect(addr: &Path) -> io::Result<ClientStream> {
     }
 }
 
+/// How a Windows listener creates each server instance of its pipe
+///
+/// The seam for a pipe's security descriptor. `CreateNamedPipe` takes one as a
+/// raw pointer, so setting it needs `unsafe`, which this crate forbids. The
+/// daemon implements this where its unsafe code lives, and a [`Listener`]
+/// bound with [`Listener::bind_with`] asks it for every instance, the first
+/// and each replacement after an accept, so no instance is ever created
+/// under a different descriptor.
+///
+/// Windows only: a unix socket is protected by the mode of the directory
+/// holding it, not by anything on the socket.
+#[cfg(windows)]
+pub trait PipeInstances: core::fmt::Debug + Send + Sync + 'static {
+    /// Creates one server instance named `addr`, with `options` as given.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `CreateNamedPipe` says.
+    fn create(
+        &self,
+        options: &tokio::net::windows::named_pipe::ServerOptions,
+        addr: &std::ffi::OsStr,
+    ) -> io::Result<tokio::net::windows::named_pipe::NamedPipeServer>;
+}
+
+/// The instances every pipe had before there was a seam: the default
+/// descriptor, which grants `Everyone` read.
+#[cfg(windows)]
+#[derive(Debug)]
+struct DefaultSecurity;
+
+#[cfg(windows)]
+impl PipeInstances for DefaultSecurity {
+    fn create(
+        &self,
+        options: &tokio::net::windows::named_pipe::ServerOptions,
+        addr: &std::ffi::OsStr,
+    ) -> io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+        options.create(addr)
+    }
+}
+
 /// The listening half of the control transport.
 ///
 /// Holds a bound `UnixListener` on unix, and on Windows the *next* idle
@@ -171,6 +216,10 @@ pub struct Listener {
     /// the same name.
     #[cfg(windows)]
     addr: std::ffi::OsString,
+    /// Creates each instance, so the descriptor it carries is the same for
+    /// all of them.
+    #[cfg(windows)]
+    instances: std::sync::Arc<dyn PipeInstances>,
 }
 
 impl Listener {
@@ -195,18 +244,34 @@ impl Listener {
         }
         #[cfg(windows)]
         {
-            use tokio::net::windows::named_pipe::ServerOptions;
-            let server = ServerOptions::new()
+            Self::bind_with(addr, std::sync::Arc::new(DefaultSecurity))
+        }
+    }
+
+    /// As [`Self::bind`], with `instances` creating the pipe, every instance of
+    /// it, so a descriptor of its own can be set.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::bind`].
+    #[cfg(windows)]
+    pub fn bind_with(
+        addr: &Path,
+        instances: std::sync::Arc<dyn PipeInstances>,
+    ) -> io::Result<Self> {
+        let server = instances.create(
+            tokio::net::windows::named_pipe::ServerOptions::new()
                 .first_pipe_instance(true)
                 // Explicit though tokio defaults it on: keeps the pipe
                 // unreachable over SMB from another machine.
-                .reject_remote_clients(true)
-                .create(addr)?;
-            Ok(Self {
-                server: Some(server),
-                addr: addr.as_os_str().to_os_string(),
-            })
-        }
+                .reject_remote_clients(true),
+            addr.as_os_str(),
+        )?;
+        Ok(Self {
+            server: Some(server),
+            addr: addr.as_os_str().to_os_string(),
+            instances,
+        })
     }
 
     /// Wraps a socket this process was handed rather than one it bound.
@@ -255,9 +320,10 @@ impl Listener {
     /// Whatever `CreateNamedPipe` says.
     #[cfg(windows)]
     fn create_instance(&self) -> io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
-        tokio::net::windows::named_pipe::ServerOptions::new()
-            .reject_remote_clients(true)
-            .create(&self.addr)
+        self.instances.create(
+            tokio::net::windows::named_pipe::ServerOptions::new().reject_remote_clients(true),
+            &self.addr,
+        )
     }
 
     /// Waits for the next peer and returns its connected stream.
