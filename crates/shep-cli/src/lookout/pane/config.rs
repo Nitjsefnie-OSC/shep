@@ -29,7 +29,9 @@ use super::sheep_dog::SheepDogTable;
 #[cfg(doc)]
 use super::super::field::ValueKind;
 use super::dogs::dog_names;
-use super::{DogsPane, EnvTyping, ListPane, Lock, PaneEdit, PaneRow, PaneTarget, PaneTyping};
+use super::{
+    DogsPane, EnvTyping, ListPane, Lock, PaneEdit, PaneRow, PaneTarget, PaneTyping, PathStep,
+};
 #[cfg(doc)]
 use shep_core::config::GROUP_ORDER;
 #[cfg(doc)]
@@ -113,7 +115,7 @@ pub struct ConfigPane {
     ///
     /// The schema rides along in the same box because it is the other half
     /// of the same question: it is what says a proposed section may go out,
-    /// and see [`crate::dog_settings::table_refusal`]. Boxed, like
+    /// and see [`crate::dog_settings::touched_refusal`]. Boxed, like
     /// [`Self::dog_table`]: a `Value` this size does not belong in every move
     /// of a pane that sits in [`crate::lookout::app::Body`] unboxed.
     pub(super) section: Option<Box<DogSection>>,
@@ -266,7 +268,7 @@ impl ConfigPane {
     }
 
     /// The schema these rows were built from, for the gate a write goes
-    /// through. See [`crate::dog_settings::table_refusal`].
+    /// through. See [`crate::dog_settings::touched_refusal`].
     ///
     /// [`None`] for a sheep pane, whose write is one field per request and
     /// whose schema is the Flockfile's, and for a dog the shepherd never
@@ -284,6 +286,41 @@ impl ConfigPane {
     #[must_use]
     pub(in crate::lookout) fn section_text(&self) -> Option<&str> {
         self.section.as_ref().map(|held| held.toml.as_str())
+    }
+
+    /// Where the field edits in `edits` land in the table a write carries, as
+    /// property paths, for [`crate::dog_settings::touched_refusal`].
+    ///
+    /// The same walk [`Self::write_path`] does on the way into a dog section:
+    /// an entry leaf at its own index, every other row at the path
+    /// [`flattened`] built its key out of. A key this pane holds no path for
+    /// names nothing the write changes, so it names nothing to check.
+    #[must_use]
+    pub(in crate::lookout) fn touched_paths(&self, edits: &Edits) -> BTreeSet<Vec<String>> {
+        let mut paths = BTreeSet::new();
+        for (key, _) in edits.iter() {
+            let EditKey::Field(row) = key else {
+                continue;
+            };
+            if let Some(leaf) = self.entries.leaf(row) {
+                let path: Vec<String> = leaf
+                    .at
+                    .iter()
+                    .map(|step| match step {
+                        PathStep::Key(name) => name.clone(),
+                        PathStep::Index(index) => index.to_string(),
+                    })
+                    .collect();
+                paths.insert(path);
+            } else if let Some(path) = self.section_paths.get(row).or_else(|| {
+                self.dog_table
+                    .as_ref()
+                    .and_then(|table| table.paths.get(row))
+            }) {
+                paths.insert(path.clone());
+            }
+        }
+        paths
     }
 
     /// Whether `section` is the text this dog pane last took from the
@@ -665,7 +702,7 @@ pub(super) const fn reload_mode(readiness: ConfiguredReadiness, reuse_port: bool
     }
 }
 
-/// A dog's section text as the JSON table [`crate::dog_settings::table_refusal`]
+/// A dog's section text as the JSON table [`crate::dog_settings::touched_refusal`]
 /// reads, or an empty one for text that does not parse.
 ///
 /// The same conversion the pane runs on the section it opens on, so the table

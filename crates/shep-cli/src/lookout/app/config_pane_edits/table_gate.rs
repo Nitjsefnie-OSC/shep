@@ -1,11 +1,14 @@
-//! The gate a dog table write goes through: [`crate::dog_settings::table_refusal`],
-//! called on the table as it is about to go out.
+//! What the write gate does not do: refuse a value the close changed nothing
+//! of.
 //!
 //! Every edit in a pane was already held to the schema on the keystroke that
-//! filed it. What this gate adds is the rest of the table: a request replaces
-//! the whole table, so a value the operator wrote into `dogs.toml` or the
-//! Flockfile by hand, and which the dog's own schema turns down, rides out
-//! through a pane that never touched it.
+//! filed it. The gate [`crate::dog_settings::touched_refusal`] adds is the
+//! check that the write goes through the same door the keystroke did, asked
+//! about the keys the operator chose. A value the operator wrote into
+//! `dogs.toml` or the Flockfile by hand, and which the dog's own schema turns
+//! down, is the shepherd's to take or refuse: the pane never read it, so it
+//! goes back out as it came. These two tests are that promise, one per table
+//! pane.
 
 use serde_json::{Value, json};
 use shep_core::protocol::Response;
@@ -94,31 +97,18 @@ fn close_over(app: &mut App, section: &str) -> Effect {
     })
 }
 
+/// The edit is one the schema takes. The `keep = 0` beside it is not, and no
+/// edit touched it, so the section goes out with both, exactly as it did
+/// before the write went through the shared validator.
 #[test]
-fn a_dog_section_the_dogs_own_schema_refuses_is_not_written() {
-    let mut app = app_in_dog_pane_over(gate_schema(), &section_with_a_refused_keep());
+fn a_dog_section_holds_a_value_the_schema_refuses_and_still_writes_it() {
+    let section = section_with_a_refused_keep();
+    let mut app = app_in_dog_pane_over(gate_schema(), &section);
     type_field(&mut app, "name", "large");
     assert_eq!(
         app.config_pane().expect("the pane is open").edits().len(),
         1
     );
-    assert_eq!(
-        close_over(&mut app, &section_with_a_refused_keep()),
-        Effect::None,
-        "the section goes nowhere"
-    );
-    let notice = app.notice().expect("a refusal").to_string();
-    assert_eq!(notice, "jobs: keep is \"0\"; keep starts at 1", "{notice}");
-}
-
-/// The control: the same pane, the same edit, over a section the schema takes,
-/// still writes. Without this the gate above passes for a gate that refuses
-/// every close.
-#[test]
-fn a_dog_section_the_schema_takes_still_writes_in_one_request() {
-    let section = "# how many to keep\nkeep = 8\nname = \"small\"\n".to_string();
-    let mut app = app_in_dog_pane_over(gate_schema(), &section);
-    type_field(&mut app, "name", "large");
     let written = section.replace("name = \"small\"", "name = \"large\"");
     let effect = close_over(&mut app, &section);
     let Effect::SendAll(sent) = effect else {
@@ -130,16 +120,17 @@ fn a_dog_section_the_schema_takes_still_writes_in_one_request() {
     };
     assert_eq!(name, "jobs");
     assert_eq!(toml.as_str(), written);
+    assert!(toml.as_str().contains("keep = 0"), "{}", toml.as_str());
+    assert!(app.notice().is_none(), "{:?}", app.notice());
 }
 
-/// A sheep's `dogs.<dog>` table, with a value the dog's `x-sheep-sheep`
-/// schema refuses sitting in it from the Flockfile.
+/// `web`'s `jobs` table carries `concurrency = 2`, and this schema asks for a
+/// floor of 10. The value came from the Flockfile, and the edit is to a key
+/// of its own, so the table goes back out whole.
 #[test]
-fn a_sheep_dog_table_the_schema_refuses_is_not_written() {
+fn a_sheep_dog_table_holds_a_value_the_schema_refuses_and_still_writes_it() {
     let mut app = app_in_web(Control::Allowed);
     let ask = ask_dogs(&mut app, KeyPress::Confirm);
-    // `web`'s jobs table carries `concurrency = 2`, and this schema asks for
-    // a floor of 10: the value is the shepherd's, not one this pane typed.
     let _ = app.update(Msg::SheepDogs {
         sheep: "web".into(),
         ask,
@@ -160,11 +151,44 @@ fn a_sheep_dog_table_the_schema_refuses_is_not_written() {
     let _ = app.update(Msg::Key(KeyPress::Confirm));
     type_field(&mut app, "region", "eu-west-1");
     let effect = close_jobs_table(&mut app);
-    assert_eq!(effect, Effect::None, "the table goes nowhere");
-    let notice = app.notice().expect("a refusal").to_string();
+    let Effect::SendAll(sent) = effect else {
+        panic!("the close writes: {effect:?}");
+    };
+    let [
+        Sent::SetSheepDogTable {
+            table: Some(table), ..
+        },
+    ] = sent.as_slice()
+    else {
+        panic!("one table write: {sent:?}");
+    };
+    let table = table.as_map();
     assert_eq!(
-        notice,
-        "web.jobs: concurrency is \"2\"; concurrency starts at 10"
+        table.get("concurrency"),
+        Some(&json!(2)),
+        "the Flockfile's own value rides out"
     );
-    assert!(!notice.contains(TOKEN), "{notice}");
+    assert_eq!(table.get("region"), Some(&json!("eu-west-1")));
+    assert!(app.notice().is_none(), "{:?}", app.notice());
+}
+
+/// The gate is on the path even when it has nothing to say: a pane with
+/// nothing filed writes nothing, and a pane with an edit the schema takes
+/// writes one request.
+#[test]
+fn a_dog_section_the_schema_takes_writes_in_one_request() {
+    let section = "# how many to keep\nkeep = 8\nname = \"small\"\n".to_string();
+    let mut app = app_in_dog_pane_over(gate_schema(), &section);
+    type_field(&mut app, "name", "large");
+    let written = section.replace("name = \"small\"", "name = \"large\"");
+    let effect = close_over(&mut app, &section);
+    let Effect::SendAll(sent) = effect else {
+        panic!("the close writes: {effect:?}");
+    };
+    assert_eq!(sent.len(), 1);
+    let Sent::SetDogSection { name, toml, .. } = &sent[0] else {
+        panic!("a dog section write: {sent:?}");
+    };
+    assert_eq!(name, "jobs");
+    assert_eq!(toml.as_str(), written);
 }

@@ -1,6 +1,6 @@
 use super::super::*;
 
-use crate::dog_settings::table_refusal;
+use crate::dog_settings::touched_refusal;
 use crate::lookout::pane::toml_table;
 
 impl App {
@@ -40,17 +40,20 @@ impl App {
                 let schema = pane.schema().cloned();
                 match pane.edited_section_with(&edits) {
                     SectionWrite::Written(toml) => {
-                        // The gate is the one `shep set` uses, over the section
-                        // as it is about to go out: a value the pane filed
+                        // The gate is the one `shep set` uses, asked about
+                        // the keys this close changed. A value the pane filed
                         // already passed the same rules on the keystroke that
-                        // filed it, so what this catches is a table the
-                        // operator wrote into `dogs.toml` by hand that the
-                        // dog's own schema turns down, which the shepherd
-                        // would take without reading.
-                        if let Some(refused) = schema
-                            .as_ref()
-                            .and_then(|schema| table_refusal(schema, &toml_table(toml.as_str())))
-                        {
+                        // filed it. A value the operator wrote into
+                        // `dogs.toml` by hand is the shepherd's own: the pane
+                        // never read it and does not speak for it, so it rides
+                        // out as it came.
+                        if let Some(refused) = schema.as_ref().and_then(|schema| {
+                            touched_refusal(
+                                schema,
+                                &toml_table(toml.as_str()),
+                                &pane.touched_paths(&edits),
+                            )
+                        }) {
                             self.notice = Some(Notice::grave(format!("{name}: {}", refused.text)));
                             return Vec::new();
                         }
@@ -112,9 +115,10 @@ impl App {
             PaneTarget::SheepDog { sheep, dog, .. } => {
                 let schema = pane.schema().cloned();
                 let table = pane.edited_table_with(&edits);
+                let touched = pane.touched_paths(&edits);
                 if let Some(refused) = schema
                     .as_ref()
-                    .and_then(|schema| table_refusal(schema, &table))
+                    .and_then(|schema| touched_refusal(schema, &table, &touched))
                 {
                     self.notice = Some(Notice::grave(format!("{sheep}.{dog}: {}", refused.text)));
                     return Vec::new();

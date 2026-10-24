@@ -32,7 +32,7 @@ pub(in crate::lookout) struct SheepDogTable {
     /// included.
     table: Map<String, Value>,
     /// The dog's `x-shep-sheep` answer, kept so a write can be checked
-    /// against it. See [`crate::dog_settings::table_refusal`].
+    /// against it. See [`crate::dog_settings::touched_refusal`].
     pub(super) schema: Value,
 }
 
