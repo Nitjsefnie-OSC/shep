@@ -36,6 +36,8 @@ mod enable;
 mod grant;
 mod grants;
 mod remove;
+mod second_look;
+mod upgrade;
 mod vet;
 
 #[cfg(all(test, unix))]
@@ -50,12 +52,22 @@ mod defaults_adoption_tests;
 mod emit_dog_action_tests;
 #[cfg(test)]
 mod enable_builtin_tests;
+#[cfg(test)]
+mod grant_builtin_tests;
+#[cfg(all(test, unix))]
+mod grant_record_tests;
 #[cfg(all(test, unix))]
 mod grant_tests;
 #[cfg(all(test, unix))]
 mod manifest_adoption_tests;
 #[cfg(test)]
+mod second_look_race_tests;
+#[cfg(test)]
+mod second_look_tests;
+#[cfg(test)]
 mod test_support;
+#[cfg(all(test, unix))]
+mod upgrade_tests;
 
 pub use adopt::adopt;
 pub use barks::barks;
@@ -64,6 +76,7 @@ pub use enable::enable;
 pub(crate) use grant::{Change, change};
 pub use remove::rehome;
 pub(crate) use remove::{Removal, remove_dog};
+pub(crate) use upgrade::{upgrade_grants, upgrade_notice};
 pub use vet::{DogSchema, warn_of_a_dog_a_restart_would_break};
 // `adopted_help` lists the registry's dogs in `--help` and in a completion
 // script from the cache `adopt` already filled, and skips a name a verb

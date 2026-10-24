@@ -1,3 +1,4 @@
+use super::access_marks::mark_access;
 use crate::cli::{DogsArgs, Format};
 use crate::commands::rpc::typed_request_error;
 use crate::dog_index::{self, AvailableDog, DogSourceKind};
@@ -5,18 +6,25 @@ use crate::exit::ExitCode;
 use crate::fetch;
 use crate::output::{AvailableDogRows, DogRows, Streams, emit, write_outcome};
 use shep_client::Client;
+use shep_core::paths::ShepPaths;
 
-/// Lists the dogs and nothing else: the same `Request::ListFlock` [`flock`](crate::commands::query::flock_display::flock)
+/// Lists the dogs and nothing else, marked with what `shep.toml` records of their access: the same `Request::ListFlock` [`flock`](crate::commands::query::flock_display::flock)
 /// sends, filtered to the entries carrying a `testing::dog` marker
 ///
 /// `args.filter` is a case-insensitive substring match against the dog's
 /// name, the one field a running dog and a community-index entry share.
 /// Not [`emit_flock`](crate::output::emit_flock), which would print the sheep table's header row over
 /// a dogs-only listing.
-pub async fn dogs(client: &Client, streams: &mut Streams<'_>, args: &DogsArgs) -> ExitCode {
+pub async fn dogs(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    args: &DogsArgs,
+) -> ExitCode {
     let filter = args.filter.as_deref();
     match client.list_flock().await {
-        Ok(procs) => {
+        Ok(mut procs) => {
+            mark_access(&mut procs, paths);
             let rows = DogRows(
                 procs
                     .into_iter()

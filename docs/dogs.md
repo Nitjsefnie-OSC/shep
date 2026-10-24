@@ -238,6 +238,39 @@ granted = ["flock.read", "events:process."]
 - A dog with no manifest prompts "declares nothing, runs with full access" and records no entry. A manifest that declares no permissions records `granted = []` without a question. A built-in dog is asked like any other, from a manifest built into the binary with no probe: `metrics` declares `flock.read`, `events:channel.metric` and `events:process.`; `bark` declares `flock.read`, `events:process.` and, optional, `events:log.`.
 - Grants keep an honest dog in bounds. They are not a sandbox: a dog runs as the operator and could open the control socket like the CLI.
 
+### Upgrades
+
+Neither a new shep nor a rebuilt dog widens access without the operator seeing it. The CLI keeps the record in the same `[daemon.dog_grants.<name>]` table; the shepherd still judges `granted` alone.
+
+```toml
+[daemon.dog_grants.otel]
+granted = ["flock.read"]
+waiting = ["events:process."]
+reviewed = false
+```
+
+- At daemon boot and at reload, and in `shep enable` and `shep dogs grant` for the dog they act on, the CLI compares each enabled or recorded dog's manifest with its entry.
+- An enabled dog with a manifest and no entry gets its declared list as `granted` with `reviewed = false`: granted at upgrade, not reviewed. A manifest that declares nothing is written as reviewed `granted = []`. This includes `metrics` and `bark` enabled before grants existed.
+- A dog with no manifest, or one that cannot be read, is left alone: undeclared, full access.
+- A dog with an entry whose manifest now declares a permission it holds neither as granted nor as revoked gets that permission in `waiting`. The dog keeps running on `granted`; `waiting` is never sent to the shepherd.
+- `shep dogs revoke` of a still-declared permission records it in `revoked`, so a later boot does not read it as new.
+- `shep enable` of a dog with `waiting` or `reviewed = false` lists what it holds and what waits, and asks. A yes grants the waiting permissions and clears the marks. A no, or no terminal without `--yes`, changes nothing and the dog carries on with its old grants.
+- `shep dogs grant <dog> <permission>` names one permission. It moves that permission out of `waiting`, clears `reviewed = false`, and says what still waits.
+- `reviewed` is written only as `false`, and `waiting` and `revoked` only when non-empty, so an entry the operator has dealt with is a plain `granted` list.
+- A rebuild under a running shepherd is noticed at the next boot, reload, `enable` or `grant`. `shep flock` and `shep dogs` only read.
+
+### Marks in listings
+
+`shep dogs` and `shep flock` (its Dogs table) show an `ACCESS` column, and `--format json` adds an `access` object to each dog row of this machine's flock:
+
+| Mark | Means |
+|---|---|
+| `undeclared` | no grants entry, an enabled dog with full access |
+| `not reviewed` | the list was written at upgrade and the operator has not re-enabled the dog or run `shep dogs grant` |
+| `waiting` | a newer build declares permissions the operator has not approved |
+
+`access` is `{"undeclared": bool, "not_reviewed": bool, "waiting": [string]}`. It is additive, so `SCHEMA_VERSION` and `PROTOCOL_VERSION` do not move, and it is absent on a sheep, on a row from `--host` and on fleet listings.
+
 ## When a dog starts
 
 Every dog starts after the flock by default, so a metrics dog does not answer

@@ -2,7 +2,7 @@
 //! `shep enable`/`disable`/`adopt`/`rehome` render.
 
 use serde::Serialize;
-use shep_core::protocol::{DogSource, ProcessInfo};
+use shep_core::protocol::{DogAccess, DogSource, ProcessInfo};
 
 use crate::output::Render;
 use crate::style::Presentation;
@@ -19,6 +19,26 @@ fn source_cell(source: Option<&DogSource>) -> String {
     source.map_or(EMPTY, |source| source.into()).to_owned()
 }
 
+/// The ACCESS column's cell: the marks `access` carries, or `-` for a dog
+/// with nothing to flag.
+///
+/// Names stay in the JSON. The cell says which of the three states, because
+/// a column has room for words and not for a list of permissions.
+fn access_cell(access: Option<&DogAccess>) -> String {
+    let Some(access) = access.filter(|access| !access.is_clear()) else {
+        return EMPTY.to_owned();
+    };
+    [
+        (access.undeclared, "undeclared"),
+        (access.not_reviewed, "not reviewed"),
+        (!access.waiting.is_empty(), "waiting"),
+    ]
+    .into_iter()
+    .filter_map(|(on, word)| on.then_some(word))
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
 /// The dogs half of a flock listing: the `ProcessInfo`s whose `dog` marker
 /// is set.
 ///
@@ -28,7 +48,7 @@ fn source_cell(source: Option<&DogSource>) -> String {
 /// ```text
 /// common:  ID  NAME  STATUS  PID  RESTARTS  EXIT  CPU  MEM  UPTIME
 /// sheep:   ... + FOLD  SMIT
-/// dogs:    ... + SOURCE
+/// dogs:    ... + SOURCE  ACCESS
 /// ```
 ///
 /// `FOLD` and `SMIT` are impossible for a dog rather than empty: a dog
@@ -41,6 +61,7 @@ impl Render for DogRows {
     fn headers() -> &'static [&'static str] {
         &[
             "ID", "NAME", "STATUS", "PID", "RESTARTS", "EXIT", "CPU", "MEM", "UPTIME", "SOURCE",
+            "ACCESS",
         ]
     }
 
@@ -65,6 +86,7 @@ impl Render for DogRows {
                     crate::output::human_duration(p.uptime_ms),
                     // `None` is unreachable: callers filter on `dog.is_some()`.
                     source_cell(p.dog.as_ref()),
+                    access_cell(p.access.as_ref()),
                 ]
             })
             .collect()
@@ -97,6 +119,7 @@ impl Render for DogRows {
             "MEM" => "memory_bytes",
             "UPTIME" => "uptime_ms",
             "SOURCE" => "dog",
+            "ACCESS" => "access",
             other => panic!("DogRows::headers() does not include {other:?}"),
         }
         .to_owned()
@@ -136,8 +159,9 @@ impl Render for DogRows {
 
     // Parallel to `headers()`. The nine shared columns carry the numbers
     // `FlockRows` gives them, so both tables narrow in the same order.
-    // SOURCE takes FOLD's `7`.
-    const PRIORITIES: &'static [u8] = &[0, 0, 0, 2, 4, 6, 5, 3, 1, 7];
+    // SOURCE takes FOLD's `7`; ACCESS ties EXIT's `6` and, being later, goes
+    // first of the two. The JSON always carries it.
+    const PRIORITIES: &'static [u8] = &[0, 0, 0, 2, 4, 6, 5, 3, 1, 7, 6];
 }
 
 /// `DogActionRow`'s STATUS cell and the SHEPHERD cell beside it, as one
@@ -301,7 +325,7 @@ pub(crate) mod tests {
                 DogSource::BuiltIn { grants: None },
             )]),
             |j| &j[0],
-            &["UPTIME", "CPU", "MEM", "SOURCE", "EXIT"],
+            &["UPTIME", "CPU", "MEM", "SOURCE", "EXIT", "ACCESS"],
         );
     }
 

@@ -38,9 +38,9 @@ pub(super) struct Mode {
 /// One permission a dog declared that this shep knows.
 #[derive(Debug)]
 pub(super) struct Listed {
-    name: String,
-    required: bool,
-    reason: String,
+    pub(super) name: String,
+    pub(super) required: bool,
+    pub(super) reason: String,
 }
 
 /// What a dog's manifest comes to once read by this shep.
@@ -256,7 +256,7 @@ pub(super) fn consent_from(
 }
 
 /// The sentence every prompt carries.
-fn not_confined(name: &str) -> String {
+pub(super) fn not_confined(name: &str) -> String {
     format!(
         "Grants keep {name}'s requests in bounds and do not confine it: it runs as you and \
          can do anything you can."

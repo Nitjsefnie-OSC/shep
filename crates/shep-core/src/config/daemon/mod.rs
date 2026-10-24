@@ -6,6 +6,8 @@
 
 mod config;
 mod dog_grants;
+#[cfg(test)]
+mod dog_grants_state_tests;
 mod error;
 mod overrides;
 mod sections;

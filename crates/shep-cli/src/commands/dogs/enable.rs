@@ -16,6 +16,7 @@ use crate::output::{DogActionStatus, Streams};
 use super::consent::{Input, Verdict, consent_from, review};
 use super::depends::warn_of_unmet_depends;
 use super::grants::warn_if_unenforced;
+use super::second_look::second_look;
 use super::vet::{VERSION_BUDGET, fail_adopt, read_manifest};
 use super::{
     DECLINED_STATUS, NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, emit_dog_action,
@@ -120,6 +121,9 @@ pub(super) async fn enable_asking(
     yes: bool,
     input: &mut Input,
 ) -> ExitCode {
+    if let Err(code) = second_look(streams, paths, name, yes, input) {
+        return code;
+    }
     let grants = match ask_before_first_enable(streams, paths, name, yes, input) {
         Ok(grants) => grants,
         Err(code) => return code,

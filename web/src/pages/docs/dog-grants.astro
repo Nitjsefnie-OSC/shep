@@ -30,6 +30,7 @@ import CodeBlock from "../../components/docs/CodeBlock.astro";
         <li><code>shep adopt</code> and the first <code>shep enable</code> list what a dog declares and ask. A yes writes <code>[daemon.dog_grants.&lt;name&gt;] granted = [...]</code> to <code>shep.toml</code>.</li>
         <li>A request outside the list is refused with a <code>forbidden</code> error naming the dog, the request and the permission.</li>
         <li>No entry means full access. An empty list means nothing.</li>
+        <li>An upgrade never widens a dog unseen: new permissions wait for your approval, and <code>shep flock</code> and <code>shep dogs</code> mark what you have not looked at.</li>
         <li>Grants are not a sandbox.</li>
       </ul>
     </ShortVersion>
@@ -56,7 +57,8 @@ granted = ["flock.read", "events:process."]`}</CodeBlock>
         <code>events:process.</code>; <code>bark</code> declares{" "}
         <code>flock.read</code>, <code>events:process.</code> and an optional{" "}
         <code>events:log.</code> for log rules.
-        A built-in enabled before grants existed keeps full access.
+        A built-in enabled before grants existed is granted its list at
+        upgrade, <a href="#upgrading">marked not reviewed</a>.
       </li>
     </ul>
     <p>
@@ -73,6 +75,49 @@ $ shep dogs grant otel events:process.`}</CodeBlock>
       <li><code>grant</code> accepts only a permission the dog's manifest declares.</li>
       <li>A dog with no <code>dog_grants</code> entry is refused: <code>shep enable</code> asks for its list first.</li>
     </ul>
+
+    <h2 id="upgrading">Upgrading</h2>
+    <p>
+      shep keeps the record in the same table. The shepherd still reads{" "}
+      <code>granted</code> alone.
+    </p>
+    <CodeBlock>{`# shep.toml
+[daemon.dog_grants.otel]
+granted = ["flock.read"]
+waiting = ["events:process."]
+reviewed = false`}</CodeBlock>
+    <ul>
+      <li>
+        The first shep with grants writes an enabled dog's declared list as{" "}
+        <code>granted</code>, with <code>reviewed = false</code>. That
+        covers <code>metrics</code> and <code>bark</code> too.
+      </li>
+      <li>A dog with no manifest stays undeclared, with full access.</li>
+      <li>
+        A rebuilt dog that declares more puts the new permissions in{" "}
+        <code>waiting</code>, and runs on <code>granted</code> meanwhile.
+      </li>
+      <li>
+        <code>shep enable</code> asks about what waits. A no, or no terminal
+        without <code>--yes</code>, changes nothing.
+      </li>
+      <li>
+        <code>shep dogs grant</code> approves the one permission it names
+        and clears <code>reviewed = false</code>.
+      </li>
+      <li>
+        shep notices a rebuild at the next boot, reload, <code>enable</code>{" "}
+        or <code>grant</code>.
+      </li>
+    </ul>
+    <p>
+      <code>shep dogs</code> and the Dogs table of <code>shep flock</code>{" "}
+      show an <code>ACCESS</code> column for this machine's dogs:{" "}
+      <code>undeclared</code>, <code>not reviewed</code> or{" "}
+      <code>waiting</code>. <code>--format json</code> adds{" "}
+      <code>access</code> to each dog row, and the schema version does not
+      move.
+    </p>
 
     <h2 id="permissions">Permissions</h2>
     <table>
