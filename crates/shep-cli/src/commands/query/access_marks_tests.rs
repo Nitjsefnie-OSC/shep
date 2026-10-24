@@ -20,7 +20,10 @@ fn dog(name: &str, grants: Option<Grants>) -> ProcessInfo {
 }
 
 fn record(paths: &ShepPaths, name: &str, record: &GrantRecord) {
-    ShepToml::try_edit(&paths.daemon_config, |cfg| cfg.set_grant_record(name, record)).unwrap();
+    ShepToml::try_edit(&paths.daemon_config, |cfg| {
+        cfg.set_grant_record(name, record)
+    })
+    .unwrap();
 }
 
 fn read_only() -> Grants {
