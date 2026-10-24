@@ -1,13 +1,15 @@
-//! [`super::table_refusal`]: what a proposed dog table has to be, and what
-//! it is refused for.
+//! [`super::table::table_refusal`] and [`super::touched_refusal`]: what a
+//! proposed dog table has to be, and what it is refused for.
 //!
 //! Every case is driven through a schema spelled the way a dog's `--schema`
 //! answer is spelled, through a `$ref` and an `anyOf`, so a test proves the
 //! gate reads the schema and not a fixture shaped like one.
 
+use std::collections::BTreeSet;
+
 use serde_json::{Map, Value, json};
 
-use super::table_refusal;
+use super::table::{table_refusal, touched_refusal};
 
 /// A dog's own section schema: a bounded integer, a list whose item schema
 /// publishes `minLength`, a closed set, a nested table with a `pattern`, an
@@ -361,4 +363,112 @@ fn the_debug_of_a_refusal_names_the_path_and_the_sentence() {
         format!("{refused:?}"),
         "TableRefusal { path: [\"keep\"], text: \"keep is \\\"0\\\"; keep starts at 1\" }"
     );
+}
+
+/// The keys a caller chose, as property paths.
+fn touched(paths: &[&[&str]]) -> BTreeSet<Vec<String>> {
+    paths
+        .iter()
+        .map(|path| path.iter().map(|name| (*name).to_owned()).collect())
+        .collect()
+}
+
+/// [`touched_refusal`] is [`table_refusal`] with the walk unchanged and the
+/// answers narrowed to the keys its caller chose. Every pair below is the same
+/// table asked twice: once about a key it edited, once about one it did not.
+#[test]
+fn a_touched_scalar_is_refused_and_an_untouched_one_is_not() {
+    let proposed = table(json!({ "keep": 0, "merge": "never" }));
+    let refused = touched_refusal(&schema(), &proposed, &touched(&[&["keep"]]))
+        .expect("keep is a key this caller chose");
+    assert_eq!(refused.path, ["keep"]);
+    assert_eq!(refused.text, "keep is \"0\"; keep starts at 1");
+    assert_eq!(
+        touched_refusal(&schema(), &proposed, &touched(&[&["region"]])),
+        None,
+        "the two refusals in this table sit at keys nobody here chose"
+    );
+}
+
+#[test]
+fn a_touched_list_element_is_refused_and_an_untouched_one_is_not() {
+    let proposed = table(json!({ "tags": ["ask", "ab"] }));
+    let refused = touched_refusal(&schema(), &proposed, &touched(&[&["tags", "1"]]))
+        .expect("the second element is the one that was edited");
+    assert_eq!(refused.path, ["tags", "1"]);
+    assert_eq!(
+        refused.text,
+        "tags.1 is \"ab\"; tags.1 needs at least 3 characters"
+    );
+    assert_eq!(
+        touched_refusal(&schema(), &proposed, &touched(&[&["tags", "0"]])),
+        None,
+        "the element this caller edited is the one the item schema takes"
+    );
+}
+
+#[test]
+fn a_touched_union_is_refused_for_the_tag_it_names() {
+    let proposed = table(json!({ "retro": { "kind": "robot" } }));
+    let refused = touched_refusal(&schema(), &proposed, &touched(&[&["retro"]]))
+        .expect("the union row is the one that was edited");
+    assert_eq!(refused.path, ["retro"]);
+    assert_eq!(
+        refused.text,
+        "retro is \"robot\", which is not a kind retro takes; try one of none, path, plugin"
+    );
+    assert_eq!(
+        touched_refusal(&schema(), &proposed, &touched(&[&["keep"]])),
+        None,
+        "an untouched key does not get to report the union"
+    );
+}
+
+#[test]
+fn a_touched_nested_leaf_is_refused_at_its_whole_path() {
+    let proposed = table(json!({ "hours": { "start": "9am" } }));
+    let refused = touched_refusal(&schema(), &proposed, &touched(&[&["hours", "start"]]))
+        .expect("the leaf is the row an editor writes");
+    assert_eq!(refused.path, ["hours", "start"]);
+    assert_eq!(
+        refused.text,
+        "hours.start is \"9am\", which it does not take; try it matches ^\\d{2}:\\d{2}$"
+    );
+    assert_eq!(
+        touched_refusal(&schema(), &proposed, &touched(&[&["hours"]])),
+        None,
+        "the table row itself names no value to check"
+    );
+}
+
+/// An entry of an array of tables is a path with an index in it, which is how
+/// a pane files an edit under `hosts[0].weight`.
+#[test]
+fn a_touched_entry_leaf_is_refused_and_another_entry_is_not() {
+    let proposed = table(json!({
+        "hosts": [{ "name": "build", "weight": 0 }, { "name": "web", "weight": 0 }]
+    }));
+    let refused = touched_refusal(&schema(), &proposed, &touched(&[&["hosts", "0", "weight"]]))
+        .expect("the first entry's weight is the one that was edited");
+    assert_eq!(refused.path, ["hosts", "0", "weight"]);
+    assert_eq!(
+        refused.text,
+        "hosts.0.weight is \"0\"; hosts.0.weight starts at 1"
+    );
+    assert_eq!(
+        touched_refusal(&schema(), &proposed, &touched(&[&["hosts", "1", "name"]])),
+        None,
+        "the other entry's bad weight rode in from the file and is not this caller's"
+    );
+}
+
+/// The two doors agree wherever both answer, which is the reason there is one
+/// module: a value cannot pass the keystroke and fail the write.
+#[test]
+fn the_scoped_door_answers_what_the_whole_door_answers_for_the_same_key() {
+    let proposed = table(json!({ "keep": 0, "merge": "never" }));
+    let whole = table_refusal(&schema(), &proposed).expect("keep is the first refusal");
+    let scoped = touched_refusal(&schema(), &proposed, &touched(&[&["keep"]]))
+        .expect("asked about keep, answered about keep");
+    assert_eq!(scoped, whole);
 }

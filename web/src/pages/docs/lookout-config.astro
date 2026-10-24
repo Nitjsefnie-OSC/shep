@@ -604,8 +604,7 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       name. <code>Esc</code> writes the whole
       table and lands on the dashboard, not back on the sub-screen. If the
       table changed since the pane opened, nothing is written: the pane
-      reloads it under your edits, and <code>Esc</code> again writes. A value the
-      schema refuses is named.
+      reloads it under your edits, and <code>Esc</code> again writes.
     </p>
     <p>
       A setting that is one of several shapes, a tagged union, reads as its
@@ -717,8 +716,7 @@ esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d b
       fields changed, the write sends the section whole, in one request, so the
       comments and key order in <code>dogs.toml</code> survive it. Applying
       an empty value removes the key, which puts the dog back on its own
-      default. A write that cannot land, or that the dog's schema refuses, is
-      refused whole. Neither
+      default. A write that cannot land is refused whole. Neither
       <code>*</code> nor <code>!</code> appears: a dog has
       no Flockfile to differ from, and <code>dogs.toml</code> is the one
       copy of its settings.

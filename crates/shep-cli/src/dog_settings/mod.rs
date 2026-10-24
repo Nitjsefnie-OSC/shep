@@ -8,9 +8,11 @@
 //! it, or the two disagree in front of the operator. Both now call here.
 //!
 //! Two doors, one set of rules. [`refusal`] answers one typed buffer against
-//! one field, which is what a keystroke in a pane needs. [`table_refusal`]
+//! one field, which is what a keystroke in a pane needs. [`table::table_refusal`]
 //! answers a whole proposed table against the schema that describes it,
-//! which is what a write that carries a table needs. Each arm of each door
+//! which is what a write that carries a table needs. [`touched_refusal`] is
+//! the same walk over only the keys a caller chose, which is what a pane that
+//! writes a table it only partly chose needs. Each arm of each door
 //! reads the same bounds, the same grammars and the same sentences, so a
 //! value cannot pass one and fail the other.
 //!
@@ -45,7 +47,7 @@ mod table_tests;
 
 pub use forms::bullets;
 pub use items::item_refusal;
-pub(crate) use table::table_refusal;
+pub(crate) use table::touched_refusal;
 
 use shep_core::values::{MemSize, UpDuration};
 

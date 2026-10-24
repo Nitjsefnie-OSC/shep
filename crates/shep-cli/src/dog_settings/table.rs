@@ -7,7 +7,9 @@
 //! half answers the table: it takes the schema a dog answered (`--schema` for
 //! its own section, the `x-shep-sheep` value for its table on a sheep) and
 //! the table about to be written, and answers the first refusal it finds,
-//! with the key path the value sits at and the reason for it.
+//! with the key path the value sits at and the reason for it. [`table_refusal`]
+//! covers every key the schema names; [`touched_refusal`] covers only the keys
+//! its caller chose, with the same arms, the same order and the same sentences.
 //!
 //! Every rule is the one [`super`] already applies to a typed buffer, read
 //! off the same [`crate::lookout::field::flattened`] walk of the schema: the
@@ -28,6 +30,8 @@
 //! - It refuses nothing for a key the table does not carry. An absent key and
 //!   a `null` both mean unset, which is the pane's own unset spelling and,
 //!   for a dog, the way a value goes back to the dog's default.
+
+use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
@@ -64,6 +68,35 @@ impl TableRefusal {
     }
 }
 
+/// Which keys of the proposed table the walk answers for.
+///
+/// [`Scope::Whole`] is what a caller that chose every key needs.
+/// [`Scope::Touched`] is what a pane needs: it writes a whole table, but the
+/// only keys it chose are the ones an operator edited, and a value the
+/// operator wrote into `dogs.toml` or the Flockfile by hand goes back out as
+/// it came. Whether lookout should ever refuse one is a separate decision.
+#[derive(Clone, Copy)]
+enum Scope<'a> {
+    /// Every key the schema names.
+    Whole,
+    /// Only the keys whose property path is in `touched`.
+    Touched(&'a BTreeSet<Vec<String>>),
+}
+
+impl Scope<'_> {
+    fn holds(self, path: &[String]) -> bool {
+        match self {
+            Scope::Whole => true,
+            Scope::Touched(touched) => touched.contains(path),
+        }
+    }
+}
+
+/// The refusal for `path`, or [`None`] when `scope` does not cover that key.
+fn report(scope: Scope<'_>, path: &[String], text: String) -> Option<TableRefusal> {
+    scope.holds(path).then(|| TableRefusal::at(path, text))
+}
+
 /// Why `table` is not a table `schema` takes, or [`None`] when nothing in it
 /// disagrees with the schema.
 ///
@@ -81,9 +114,32 @@ impl TableRefusal {
 /// [`None`] is not a promise that the dog accepts the table. It says no rule
 /// the schema published is broken by it, which is all shep can know about a
 /// config its author wrote in another binary.
+/// No non-test caller yet: `#[allow(dead_code)]` says so rather than
+/// inventing one. `shep set` (#1096) is the caller this door was cut for, and
+/// it will ask about every key it writes, because it writes a table it chose
+/// whole.
+#[allow(dead_code)]
 #[must_use]
 pub fn table_refusal(schema: &Value, table: &Map<String, Value>) -> Option<TableRefusal> {
-    flattened_refusal(&flattened(schema), table, &[], "")
+    flattened_refusal(&flattened(schema), table, &[], "", Scope::Whole)
+}
+
+/// [`table_refusal`] over only the keys in `touched`.
+///
+/// `touched` holds property paths, the same paths [`crate::lookout::field::flattened`]
+/// built the row keys from: `["models", "provider"]` for a nested table's
+/// leaf, `["clients", "0", "name"]` for one field of one entry of an array of
+/// tables. A refusal the walk finds at any other key is not reported, so a
+/// caller that writes a table it only partly chose asks about the part it
+/// chose. Nothing else changes: the same arms, the same order, the same
+/// sentences.
+#[must_use]
+pub fn touched_refusal(
+    schema: &Value,
+    table: &Map<String, Value>,
+    touched: &BTreeSet<Vec<String>>,
+) -> Option<TableRefusal> {
+    flattened_refusal(&flattened(schema), table, &[], "", Scope::Touched(touched))
 }
 
 /// Every leaf of `flat`, read out of `table`, in row order.
@@ -97,12 +153,13 @@ fn flattened_refusal(
     table: &Map<String, Value>,
     base_path: &[String],
     base_key: &str,
+    scope: Scope<'_>,
 ) -> Option<TableRefusal> {
     for field in flat.fields.fields() {
         let Some(rest) = flat.paths.get(&field.key) else {
             continue;
         };
-        if let Some(refused) = leaf_refusal(flat, field, rest, base_path, base_key, table) {
+        if let Some(refused) = leaf_refusal(flat, field, rest, base_path, base_key, table, scope) {
             return Some(refused);
         }
     }
@@ -124,6 +181,7 @@ fn leaf_refusal(
     base_path: &[String],
     base_key: &str,
     table: &Map<String, Value>,
+    scope: Scope<'_>,
 ) -> Option<TableRefusal> {
     let path: Vec<String> = base_path.iter().chain(rest.iter()).cloned().collect();
     let key = below(base_key, &field.key);
@@ -137,7 +195,8 @@ fn leaf_refusal(
                 .take(depth + 1)
                 .map(|name| segment(name))
                 .collect();
-            Some(TableRefusal::at(
+            report(
+                scope,
                 &base_path
                     .iter()
                     .chain(rest[..=depth].iter())
@@ -147,12 +206,14 @@ fn leaf_refusal(
                     &below(base_key, &prefix.join(".")),
                     &shown_for(field.secret, value),
                 ),
-            ))
+            )
         }
         Held::Leaf(value) => match &field.kind {
-            FieldKind::Entries(kind) => entries_refusal(flat, field, kind, value, &path, &key),
-            FieldKind::Union(union) => union_refusal(union, value, &path, &key),
-            _ => scalar_refusal(field, value, &key, &path),
+            FieldKind::Entries(kind) => {
+                entries_refusal(flat, field, kind, value, &path, &key, scope)
+            }
+            FieldKind::Union(union) => union_refusal(union, value, &path, &key, scope),
+            _ => scalar_refusal(field, value, &key, &path, scope),
         },
     }
 }
@@ -169,30 +230,34 @@ fn scalar_refusal(
     value: &Value,
     key: &str,
     path: &[String],
+    scope: Scope<'_>,
 ) -> Option<TableRefusal> {
     let shown = shown_for(field.secret, value);
     match &field.kind {
         FieldKind::Integer => integer_refusal(key, &field.bounds, &text_of(value), &shown)
-            .map(|r| TableRefusal::at(path, r.text)),
+            .and_then(|r| report(scope, path, r.text)),
         FieldKind::Number => number_refusal(key, &field.bounds, &text_of(value), &shown)
-            .map(|r| TableRefusal::at(path, r.text)),
+            .and_then(|r| report(scope, path, r.text)),
         FieldKind::Bool => value
             .as_bool()
             .is_none()
-            .then(|| TableRefusal::at(path, not_a_toggle(key, &shown))),
+            .then(|| not_a_toggle(key, &shown))
+            .and_then(|text| report(scope, path, text)),
         FieldKind::Text | FieldKind::Suggested(_) => match value.as_str() {
-            Some(text) => refusal(&named(field, key), text).map(|r| TableRefusal::at(path, r.text)),
-            None => Some(TableRefusal::at(path, not_a_string(key, &shown))),
+            Some(text) => {
+                refusal(&named(field, key), text).and_then(|r| report(scope, path, r.text))
+            }
+            None => report(scope, path, not_a_string(key, &shown)),
         },
         // A closed set on a scalar is chosen from rather than typed, so it
         // never reaches [`refusal`] at all. A table can hold anything.
         FieldKind::Choice(names) => match value.as_str() {
             Some(text) if names.iter().any(|name| name == text) => None,
-            _ => Some(TableRefusal::at(path, takes_one_of(key, &shown, names))),
+            _ => report(scope, path, takes_one_of(key, &shown, names)),
         },
         FieldKind::List(item) => {
             let Some(elements) = value.as_array() else {
-                return Some(TableRefusal::at(path, not_a_list(key, &shown)));
+                return report(scope, path, not_a_list(key, &shown));
             };
             let bounds = field.bounds.items.as_deref().cloned().unwrap_or_default();
             for (index, element) in elements.iter().enumerate() {
@@ -210,10 +275,7 @@ fn scalar_refusal(
                     &text_of(element),
                     field.secret,
                 ) {
-                    return Some(TableRefusal::at(
-                        &below_path(path, &index.to_string()),
-                        refused.text,
-                    ));
+                    return report(scope, &below_path(path, &index.to_string()), refused.text);
                 }
             }
             None
@@ -234,24 +296,26 @@ fn entries_refusal(
     value: &Value,
     path: &[String],
     key: &str,
+    scope: Scope<'_>,
 ) -> Option<TableRefusal> {
     let shape = flat.shapes.get(&field.key)?;
     let shown = shown_for(field.secret, value);
     match kind {
         Entries::Array => {
             let Some(entries) = value.as_array() else {
-                return Some(TableRefusal::at(path, not_a_list(key, &shown)));
+                return report(scope, path, not_a_list(key, &shown));
             };
             for (index, entry) in entries.iter().enumerate() {
                 let slot = below(key, &index.to_string());
                 let entry_path = below_path(path, &index.to_string());
                 let Some(table) = entry.as_object() else {
-                    return Some(TableRefusal::at(
+                    return report(
+                        scope,
                         &entry_path,
                         not_a_table(&slot, &shown_for(field.secret, entry)),
-                    ));
+                    );
                 };
-                if let Some(refused) = flattened_refusal(shape, table, &entry_path, &slot) {
+                if let Some(refused) = flattened_refusal(shape, table, &entry_path, &slot, scope) {
                     return Some(refused);
                 }
             }
@@ -259,18 +323,19 @@ fn entries_refusal(
         }
         Entries::Map => {
             let Some(entries) = value.as_object() else {
-                return Some(TableRefusal::at(path, not_a_table(key, &shown)));
+                return report(scope, path, not_a_table(key, &shown));
             };
             for (name, entry) in entries {
                 let slot = below(key, &segment(name));
                 let entry_path = below_path(path, name);
                 let Some(table) = entry.as_object() else {
-                    return Some(TableRefusal::at(
+                    return report(
+                        scope,
                         &entry_path,
                         not_a_table(&slot, &shown_for(field.secret, entry)),
-                    ));
+                    );
                 };
-                if let Some(refused) = flattened_refusal(shape, table, &entry_path, &slot) {
+                if let Some(refused) = flattened_refusal(shape, table, &entry_path, &slot, scope) {
                     return Some(refused);
                 }
             }
@@ -285,29 +350,37 @@ fn entries_refusal(
 /// A union is never a secret row: a schema that reaches a secret is read as
 /// no [`crate::lookout::field::Union`] at all, so nothing here has to redact
 /// a tag.
-fn union_refusal(union: &Union, value: &Value, path: &[String], key: &str) -> Option<TableRefusal> {
+fn union_refusal(
+    union: &Union,
+    value: &Value,
+    path: &[String],
+    key: &str,
+    scope: Scope<'_>,
+) -> Option<TableRefusal> {
     let Some(table) = value.as_object() else {
-        return Some(TableRefusal::at(path, not_a_table(key, &text_of(value))));
+        return report(scope, path, not_a_table(key, &text_of(value)));
     };
     let tags: Vec<&str> = union.tags().collect();
     let Some(tag) = table.get(&union.tag).and_then(Value::as_str) else {
-        return Some(TableRefusal::at(
+        return report(
+            scope,
             path,
             format!(
                 "{key} names no {} of its own; try one of {}",
                 union.tag,
                 tags.join(", ")
             ),
-        ));
+        );
     };
     let Some(arm) = union.arm(tag) else {
-        return Some(TableRefusal::at(
+        return report(
+            scope,
             path,
             format!(
                 "{key} is \"{tag}\", which is not a kind {key} takes; try one of {}",
                 tags.join(", ")
             ),
-        ));
+        );
     };
     for arm_field in &arm.fields {
         let Some(held) = table.get(&arm_field.key) else {
@@ -318,7 +391,7 @@ fn union_refusal(union: &Union, value: &Value, path: &[String], key: &str) -> Op
         }
         let arm_key = below(key, &segment(&arm_field.key));
         let arm_path = below_path(path, &arm_field.key);
-        if let Some(refused) = scalar_refusal(arm_field, held, &arm_key, &arm_path) {
+        if let Some(refused) = scalar_refusal(arm_field, held, &arm_key, &arm_path, scope) {
             return Some(refused);
         }
     }
