@@ -9,20 +9,13 @@ use super::*;
 fn add_host_writes_a_top_level_array_and_keeps_comments_and_order() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("shep.toml");
-    let original =
-        "# the shepherd's own knobs\n[daemon]\nlog_level = \"info\"  # chatty\nlog_json = false\n";
-    std::fs::write(&path, original).unwrap();
+    std::fs::write(&path, PRESERVATION_SEED).unwrap();
 
     assert!(ShepToml::try_edit(&path, |doc| doc.add_host("amp2")).unwrap());
     assert!(ShepToml::try_edit(&path, |doc| doc.add_host("deploy@build")).unwrap());
 
     let written = std::fs::read_to_string(&path).unwrap();
-    assert!(written.contains("# the shepherd's own knobs"));
-    assert!(written.contains("# chatty"));
-    assert!(
-        written.find("log_level").unwrap() < written.find("log_json").unwrap(),
-        "key order survives"
-    );
+    assert_preserves_comments_and_key_order(&written);
     let cfg = DaemonConfig::load(Some(&written), &|_| None).unwrap();
     assert_eq!(cfg.hosts, ["amp2", "deploy@build"], "top level: {written}");
     assert!(!cfg.daemon.log_json);
