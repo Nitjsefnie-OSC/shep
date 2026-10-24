@@ -930,8 +930,9 @@ manifest when there is one. It caches the manifest in `$SHEP_HOME/manifests`
 under the binary's sha256, so a build is asked once and a rebuilt binary is
 asked again. When the manifest carries `defaults` and `dogs.toml` holds no
 section for the dog, `shep adopt` writes them as that section; a section the
-operator already wrote is never touched, and a `defaults` that is not valid
-TOML is a warning, not a refusal. A dog that declares no `defaults` writes
+operator already wrote is never touched, a `defaults` that is not valid
+TOML is a warning, not a refusal, and a `dogs.toml` that is not valid TOML
+refuses the adopt rather than being replaced. A dog that declares no `defaults` writes
 nothing, and no dog needs a `--print-config`-style flag of its own to ship
 them any more. `shep adopt` and `shep enable` warn, and go ahead, when a dog
 in `depends` is not adopted or `depends.shep` is newer than this shep. A

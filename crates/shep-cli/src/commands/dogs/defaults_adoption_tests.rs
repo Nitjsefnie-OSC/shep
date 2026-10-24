@@ -236,3 +236,52 @@ async fn a_broken_dogs_toml_refuses_an_adopt_that_would_write_defaults() {
         "a refused write strikes nothing"
     );
 }
+
+/// The broken file is judged before the dog's text: a `defaults` that is
+/// also invalid must not let an unreadable `dogs.toml` ride through the
+/// adopt hidden behind the warning about the dog.
+#[tokio::test]
+async fn a_broken_dogs_toml_refuses_even_when_the_defaults_are_also_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    std::fs::create_dir_all(&paths.home).unwrap();
+    let before = "[otel\n";
+    std::fs::write(&paths.dogs_config, before).unwrap();
+    let binary = write_dog(dir.path(), &manifest_with_defaults("interval = \n"));
+
+    let (code, notices) = adopt_otel(&paths, &binary).await;
+
+    assert_eq!(code, ExitCode::InvalidConfig, "{notices}");
+    assert!(notices.contains("dogs.toml"), "{notices}");
+    assert_eq!(
+        std::fs::read_to_string(&paths.dogs_config).unwrap(),
+        before,
+        "a refused write strikes nothing"
+    );
+}
+
+/// The warning about a dog's broken `defaults` says nothing was added, not
+/// that the dog has no section: a section the operator wrote earlier is
+/// still there, and the notice must not read as if it were missing.
+#[tokio::test]
+async fn the_unreadable_defaults_warning_says_nothing_was_added_not_that_no_section_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    std::fs::create_dir_all(&paths.home).unwrap();
+    let before = "[otel]\ninterval = \"5m\" # mine\n";
+    std::fs::write(&paths.dogs_config, before).unwrap();
+    let binary = write_dog(dir.path(), &manifest_with_defaults("interval = \n"));
+
+    let (code, notices) = adopt_otel(&paths, &binary).await;
+
+    assert_eq!(code, ExitCode::Success, "{notices}");
+    assert!(
+        notices.contains("nothing was added to dogs.toml for it"),
+        "{notices}"
+    );
+    assert!(
+        !notices.contains("its section was not written"),
+        "the notice may not claim a section is absent when one is there: {notices}"
+    );
+    assert_eq!(std::fs::read_to_string(&paths.dogs_config).unwrap(), before);
+}

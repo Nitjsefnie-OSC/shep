@@ -280,9 +280,9 @@ const DOG_DEFAULTS_UNREADABLE_NOTICE: &str = "dog_defaults_unreadable";
 /// is the one to fix it.
 fn warn_unreadable_defaults(streams: &mut Streams<'_>, name: &str) {
     let message = format!(
-        "{name} shipped a manifest whose `defaults` is not valid TOML, so its section was \
-         not written. The dog is adopted and runs normally; this is a bug to report to \
-         whoever wrote it"
+        "{name} shipped a manifest whose `defaults` is not valid TOML, so nothing was \
+         added to dogs.toml for it. The dog is adopted and runs normally; this is a bug to \
+         report to whoever wrote it"
     );
     streams.aside(DOG_DEFAULTS_UNREADABLE_NOTICE, &message);
 }

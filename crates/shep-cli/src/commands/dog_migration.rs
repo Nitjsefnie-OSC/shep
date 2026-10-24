@@ -146,15 +146,20 @@ pub(crate) fn dog_section_exists(path: &Path, name: &str) -> Result<bool, DogMig
 /// `[sinks]` arrives as `[name.sinks]`. The section lands after every
 /// section already in the file, the same way a migrated one does.
 ///
-/// The read that finds an existing section takes no lock and opens the
-/// file for reading only: an adopted dog re-adopted over its own written
-/// section leaves the file byte-for-byte, down to its inode.
+/// `dogs.toml` is read before the `defaults` are judged, so an unreadable
+/// file is reported whatever the manifest declared: a broken `dogs.toml`
+/// cannot ride through an adopt hidden behind the warning about a dog's
+/// bad `defaults`. That first read is the gate, not the decision. Whether
+/// a section is already there is decided only inside the lock, so the
+/// answer is never a read a concurrent writer has invalidated. A kept
+/// section still means no write at all: the file survives byte-for-byte,
+/// down to its inode.
 ///
 /// # Errors
 /// - [`DogMigrationError::ReadDogs`] and [`DogMigrationError::Parse`] when
-///   `dogs.toml` exists and cannot be read or is not valid TOML. A file
-///   shep cannot read is a file shep cannot write into, so the adopt
-///   refuses rather than replacing it.
+///   `dogs.toml` exists and cannot be read or is not valid TOML, whatever
+///   the `defaults` hold. A file shep cannot read is a file shep cannot
+///   write into, so the adopt refuses rather than replacing it.
 /// - [`DogMigrationError::Lock`] and [`DogMigrationError::Write`] for the
 ///   underlying I/O of the write.
 ///
@@ -166,6 +171,10 @@ pub(crate) fn seed_dog_defaults(
     name: &str,
     defaults: &str,
 ) -> Result<DefaultsOutcome, DogMigrationError> {
+    // The gate read: its answer is discarded, its error is not. Judging
+    // the operator's file first is what reports a broken `dogs.toml` even
+    // when the dog's `defaults` are broken too.
+    read_dogs_document(&paths.dogs_config)?;
     let Ok(parsed) = defaults.parse::<DocumentMut>() else {
         return Ok(DefaultsOutcome::Unreadable);
     };
@@ -174,12 +183,10 @@ pub(crate) fn seed_dog_defaults(
     if parsed.is_empty() {
         return Ok(DefaultsOutcome::Empty);
     }
-    if read_dogs_document(&paths.dogs_config)?.contains_key(name) {
-        return Ok(DefaultsOutcome::Kept);
-    }
-    // The lock is taken only for a real write, and the section is looked
-    // for again inside it: one appearing between the two reads is a
-    // section, and sections are not overwritten.
+    // The lock is taken before the section is looked for, so `Kept` is
+    // never decided from a read a concurrent writer has already replaced:
+    // a section appearing is kept, and one vanishing mid-flight re-seeds
+    // on the next adopt rather than being missed by a stale glance.
     let _lock = ConfigLock::acquire(&paths.dogs_config).map_err(DogMigrationError::Lock)?;
     let mut merged = read_dogs_document(&paths.dogs_config)?;
     if merged.contains_key(name) {
