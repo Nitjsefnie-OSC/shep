@@ -4,13 +4,10 @@ use super::*;
 /// entries, so the two differ by row count as well as by content.
 #[tokio::test]
 async fn a_lifecycle_verb_renders_the_whole_flock_as_a_table() {
-    use shep_client::testing::fake_client_on;
     use shep_core::protocol::ProcessInfo;
     use shep_core::status::ProcStatus;
 
-    let dir = tempfile::tempdir().unwrap();
-    let address = shep_client::testing::control_address(dir.path());
-    let (client, daemon) = fake_client_on(&address).await;
+    let (_dir, client, daemon) = a_daemon_on_a_tempdir().await;
     daemon.reply_to_list(a_flock_with_a_dog());
 
     let mut out = Vec::new();
@@ -67,13 +64,10 @@ async fn a_lifecycle_verb_renders_the_whole_flock_as_a_table() {
 /// listing rather than fetching one and discarding it.
 #[tokio::test]
 async fn the_json_surface_keeps_the_rows_the_verb_touched() {
-    use shep_client::testing::fake_client_on;
     use shep_core::protocol::ProcessInfo;
     use shep_core::status::ProcStatus;
 
-    let dir = tempfile::tempdir().unwrap();
-    let address = shep_client::testing::control_address(dir.path());
-    let (client, daemon) = fake_client_on(&address).await;
+    let (_dir, client, daemon) = a_daemon_on_a_tempdir().await;
     daemon.reply_to_list(a_flock_with_a_dog());
 
     let mut out = Vec::new();
@@ -301,11 +295,7 @@ fn an_all_that_matched_nothing_counts_sheep_and_not_dogs() {
 /// "matched nothing" to an exit code lives in `load_one`.
 #[tokio::test]
 async fn a_start_on_an_empty_fold_exits_not_found_without_a_start_request() {
-    use shep_client::testing::fake_client_on;
-
-    let dir = tempfile::tempdir().unwrap();
-    let address = shep_client::testing::control_address(dir.path());
-    let (client, daemon) = fake_client_on(&address).await;
+    let (_dir, client, daemon) = a_daemon_on_a_tempdir().await;
     daemon.reply_to_list(a_foldable_flock());
 
     let mut out = Vec::new();
@@ -344,12 +334,9 @@ async fn a_start_on_an_empty_fold_exits_not_found_without_a_start_request() {
 /// replaced.
 #[tokio::test]
 async fn a_target_naming_a_running_sheep_leaves_it_alone() {
-    use shep_client::testing::fake_client_on;
     use shep_core::status::ProcStatus;
 
-    let dir = tempfile::tempdir().unwrap();
-    let path = shep_client::testing::control_address(dir.path());
-    let (client, daemon) = fake_client_on(&path).await;
+    let (_dir, client, daemon) = a_daemon_on_a_tempdir().await;
     daemon.reply_to_list(vec![
         shep_core::protocol::ProcessInfo::builder(7, "api-auth", ProcStatus::Online).build(),
     ]);
