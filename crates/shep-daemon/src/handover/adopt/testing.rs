@@ -210,7 +210,9 @@ pub(super) fn adopt_a_copy(blob: &Handover) -> io::Result<()> {
 }
 
 /// [`adopt_a_copy`], handing back what was adopted so a case can use it.
-pub(super) fn adopt_a_copy_keeping(blob: &Handover) -> io::Result<super::Adopted> {
+pub(super) fn adopt_a_copy_keeping(
+    blob: &Handover,
+) -> io::Result<super::adopt_descriptors::Adopted> {
     // Propagated, never `unwrap_or(fd)`: falling back to the original
     // hands `adopt` the fixture's own live descriptor to close.
     let mut dups = Duplicates(Vec::new());
