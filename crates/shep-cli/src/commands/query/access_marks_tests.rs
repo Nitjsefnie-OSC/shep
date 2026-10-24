@@ -47,6 +47,21 @@ fn a_dog_with_no_grants_is_marked_undeclared() {
 }
 
 #[test]
+fn a_disabled_dog_with_no_grants_is_not_running_with_full_access() {
+    let (_dir, paths) = paths();
+    let mut rows = vec![
+        ProcessInfo::builder(1, "bark", ProcStatus::Stopped)
+            .dog(Some(DogSource::BuiltIn { grants: None }))
+            .disabled(Some(true))
+            .build(),
+    ];
+
+    mark_access(&mut rows, &paths);
+
+    assert_eq!(rows[0].access, Some(DogAccess::default()));
+}
+
+#[test]
 fn a_list_written_at_upgrade_is_marked_not_reviewed() {
     let (_dir, paths) = paths();
     record(&paths, "otel", &GrantRecord::at_upgrade(read_only()));

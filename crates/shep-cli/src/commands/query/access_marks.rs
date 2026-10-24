@@ -19,7 +19,9 @@ pub(crate) fn mark_access(procs: &mut [ProcessInfo], paths: &ShepPaths) {
         return;
     };
     for proc in procs.iter_mut().filter(|proc| proc.dog.is_some()) {
-        let undeclared = proc.dog.as_ref().is_some_and(|dog| dog.grants().is_none());
+        // A disabled dog runs nothing, so it has no full access to flag.
+        let undeclared = proc.disabled != Some(true)
+            && proc.dog.as_ref().is_some_and(|dog| dog.grants().is_none());
         let record = cfg.grant_record(&proc.name).ok().flatten();
         proc.access = Some(DogAccess {
             undeclared,
