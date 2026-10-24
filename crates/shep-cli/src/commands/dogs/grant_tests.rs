@@ -257,3 +257,38 @@ async fn revoking_what_is_not_held_changes_nothing_and_succeeds() {
         before
     );
 }
+
+/// A record of the manifest that cannot be read back is a declaration unread,
+/// not a dog that declares nothing, so the grant says which and writes nothing.
+#[tokio::test]
+async fn a_grant_is_not_judged_by_a_manifest_record_that_cannot_be_read() {
+    let (dir, paths) = home_with(DECLARES_TWO, Some(&["flock.read"]), true);
+    let binary = dir.path().join("shep-otel");
+    // Answers once, so the first read files the record, and is silent after.
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = --shep-manifest ] && [ ! -e \"$0.asked\" ]; then touch \"$0.asked\"; cat <<'EOF'\n{DECLARES_TWO}\nEOF\nfi\nexit 0\n"
+    );
+    std::fs::write(&binary, script).unwrap();
+    let (code, _) = run(Change::Grant, &paths, "flock.read").await;
+    assert_eq!(code, ExitCode::Success);
+    let record = std::fs::read_dir(paths.home.join("manifests"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    std::fs::write(record, "{ truncated").unwrap();
+    let before = std::fs::read_to_string(&paths.daemon_config).unwrap();
+
+    let (code, said) = run(Change::Grant, &paths, "events:process.").await;
+
+    assert_eq!(code, ExitCode::Usage);
+    assert!(
+        said.contains("otel's manifest record could not be read"),
+        "{said}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&paths.daemon_config).unwrap(),
+        before
+    );
+}

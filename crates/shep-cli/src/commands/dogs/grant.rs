@@ -20,7 +20,7 @@ use crate::output::{DogActionStatus, Streams};
 
 use super::enable::fail_enable_unknown_dog;
 use super::grants::warn_if_unenforced;
-use super::vet::{VERSION_BUDGET, fail_adopt, read_manifest};
+use super::vet::{ManifestRead, VERSION_BUDGET, fail_adopt, read_manifest};
 use super::{connect_or_absent, dog_source, emit_dog_action, fail_config};
 
 /// Which of the two verbs ran.
@@ -95,8 +95,15 @@ pub(crate) async fn change(
     if change == Change::Grant {
         let declared = match &binary {
             Some(binary) => match read_manifest(binary, &paths.home, name, VERSION_BUDGET) {
-                Ok(manifest) => manifest.map_or_else(Vec::new, |manifest| {
-                    manifest.permissions.into_iter().map(|p| p.name).collect()
+                Ok(ManifestRead::Unreadable) => {
+                    return streams.fail(ExitCode::Usage, &unreadable(name));
+                }
+                Ok(read) => read.manifest().map_or_else(Vec::new, |manifest| {
+                    manifest
+                        .permissions
+                        .iter()
+                        .map(|p| p.name.clone())
+                        .collect()
                 }),
                 Err(refusal) => return fail_adopt(streams, binary, &refusal),
             },
@@ -202,6 +209,14 @@ fn not_declared(name: &str, permission: &str, declared: &[String]) -> String {
     format!(
         "{name} did not declare `{permission}`, so it cannot be granted. It declares: {}",
         sorted.join(", ")
+    )
+}
+
+/// The refusal of a grant when the record of what the dog declares is lost.
+fn unreadable(name: &str) -> String {
+    format!(
+        "{name}'s manifest record could not be read, so what it declares is unknown. \
+         Nothing was changed; the cache under `manifests/` in the shep home is safe to delete"
     )
 }
 
