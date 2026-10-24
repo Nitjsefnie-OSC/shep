@@ -11,6 +11,7 @@
 //! dispatches: `"metrics"` to [`metrics::run`], `"bark"` to [`bark::run`].
 
 pub mod bark;
+mod manifests;
 pub mod metrics;
 
 pub use shep_client::dogs::DogRuntime;
@@ -113,6 +114,14 @@ pub(crate) fn builtin_schema(name: &str) -> Option<serde_json::Value> {
         BuiltInDog::Bark => config_schema::<bark::BarkConfig>(),
     };
     serde_json::to_value(schema).ok()
+}
+
+/// What a built-in dog declares, without spawning anything.
+///
+/// [`None`] for a name that is not a built-in, which is how a caller tells an
+/// adopted dog (spawn its recorded path and ask) from a built-in (this).
+pub(crate) fn builtin_manifest(name: &str) -> Option<shep_core::dogs::manifest::Manifest> {
+    BuiltInDog::from_name(name).map(manifests::manifest_of)
 }
 
 /// Runs the named dog until it is signalled. `main`'s `Commands::Dog` arm.
