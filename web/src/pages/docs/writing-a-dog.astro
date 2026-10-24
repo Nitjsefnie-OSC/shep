@@ -546,10 +546,14 @@ shep-channel: true`}</CodeBlock>
     <p>
       Two cases ask nobody, and the write lands: a dog the shepherd has no live
       channel for (not in the flock, stopped, or started before it asked for
-      one), and a dog this machine never adopted, which has no manifest to
-      declare <code>validate</code> in. What shep cannot read is never an
-      acceptance: a manifest or a <code>shep.toml</code> it cannot read stops
-      the write and names it.
+      one), and a dog with no manifest. A dog has no manifest when this machine
+      never adopted it, and when it answers <code>--shep-manifest</code> with
+      nothing at all: a build older than the flag, one whose argument parser
+      rejects an unknown flag, one that ignores the flag and starts its loop.
+      None of those ever declared <code>validate</code>. What shep cannot read
+      is never an acceptance: a cached manifest for this exact binary that
+      neither reads nor answers, and a <code>shep.toml</code> that will not
+      parse, both stop the write and name it.
     </p>
     <p>
       <code>validate</code> without <code>channel</code> is refused at adopt,

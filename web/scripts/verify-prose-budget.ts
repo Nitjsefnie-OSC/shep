@@ -117,12 +117,24 @@ export const BUDGETS: Record<string, number> = {
   // shep could not read the manifest at all. The first is the case an operator
   // hits on a stopped dog, and the page said the opposite of what the code
   // does.
-  "writing-a-dog": 5210,
+  //
+  // Raised a third time on #1098, to 5262, for the other half of the same
+  // sentence: a dog that answers `--shep-manifest` with nothing, because it is
+  // older than the flag or its argument parser rejects an unknown one, has no
+  // manifest and is never asked. A dog author deciding whether to declare
+  // `validate` has to be able to tell those apart from a cached manifest shep
+  // lost the reading of, which is the case that stops the write.
+  "writing-a-dog": 5262,
   // Raised from 3380 on 2026-10-24 for "Dropping one override": `shep unset`
   // is a new verb that undoes `shep set`, and the page's only other way to
   // put a setting back was a whole-file `--reset`, so the section is new
   // operator-facing surface, not prose to trim back out.
-  overrides: 3440,
+  //
+  // Raised on #1098, to 3447, because `shep copy <from>.dogs.<dog>
+  // <to>.dogs.<dog>` is a write to that dog's settings and a dog that declared
+  // `validate` is asked about it. An operator reading the copy section needs to
+  // know the dog can refuse it.
+  overrides: 3447,
   // Raised from 3240 on 2026-09-27 for "A sheep's dogs row": the sub-screen
   // and the per-sheep table pane are new operator-facing surface, not
   // prose to trim back out.

@@ -271,7 +271,8 @@ boot_first_dogs = ["log-rotate"]`}</CodeBlock>
     </p>
     <p>
       A dog declaring <code>validate</code> is asked before any write to its
-      settings lands, and its refusal stops the write in its own words:
+      settings lands, and its refusal stops the write in its own words. A copy
+      of a table is one of those writes:
     </p>
     <CodeBlock>{`$ shep set api.dogs.kelpie.git.checkout /srv/other --yes
 KEY       CHANGE   OLD       NEW
