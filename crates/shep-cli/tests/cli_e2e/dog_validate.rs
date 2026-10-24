@@ -198,6 +198,36 @@ fn a_dog_that_refuses_its_settings_stops_the_write_and_says_why() {
         "[dogs.quiet.git]\nnote = \"banned\"\n"
     );
 
+    // A manifest shep cannot read answers no verdict. The adopted binary is
+    // what the manifest is read from, so a dog whose binary is gone is a dog
+    // whose `validate` cannot be checked, and that stops the write rather than
+    // passing for a dog that declared nothing.
+    std::fs::remove_file(&validating).expect("the adopted dog's binary");
+
+    let unreadable = shep(home)
+        .arg("set")
+        .arg("api.dogs.kelpie.git.checkout")
+        .arg("/srv/nowhere")
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert_eq!(
+        unreadable.status.code(),
+        Some(4),
+        "InvalidConfig; {unreadable:?}"
+    );
+    let stderr = String::from_utf8_lossy(&unreadable.stderr);
+    assert!(
+        stderr.contains("nothing was written")
+            && stderr.contains("cannot tell whether `kelpie` wants to be consulted"),
+        "{stderr}"
+    );
+    assert_eq!(
+        read_table(home, "api.dogs.kelpie.git"),
+        "[dogs.kelpie.git]\ncheckout = \"/srv/other\"\n",
+        "a manifest shep cannot read writes nothing"
+    );
+
     for name in ["kelpie", "quiet"] {
         assert_success(&shep(home).arg("disable").arg(name).output().unwrap());
     }

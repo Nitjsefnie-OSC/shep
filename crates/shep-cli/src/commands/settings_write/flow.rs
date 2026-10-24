@@ -127,6 +127,12 @@ pub(super) async fn run(
                 return WriteRefusal::ByDog(dog_refused(name, dog, &plan.write, &reason))
                     .report(streams);
             }
+            // No dog said this one: shep could not read whether the dog wanted
+            // to be asked, or could not read what it answered.
+            Err(AskFailure::Unknown { reason }) => {
+                return WriteRefusal::Refused(format!("nothing was written: {reason}"))
+                    .report(streams);
+            }
             Err(AskFailure::Transport(err)) => return client_error(streams, &err),
         }
     }

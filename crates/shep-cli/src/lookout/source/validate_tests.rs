@@ -60,6 +60,12 @@ fn validating() -> &'static str {
     r#"{"manifest":1,"name":"kelpie","version":"0.2.0","protocol":12,"channel":true,"validate":true}"#
 }
 
+/// A cached manifest with `validate` left out, which is what every dog adopted
+/// before this field did anything has.
+fn declares_nothing() -> &'static str {
+    r#"{"manifest":1,"name":"kelpie","version":"0.2.0","protocol":12,"channel":true}"#
+}
+
 /// A shepherd that refuses the ask in the dog's words, and answers anything
 /// else with `Pong`.
 async fn a_shepherd_that_refuses(
@@ -163,12 +169,12 @@ async fn a_dashboard_write_to_a_dogs_section_is_asked_about_too() {
     );
 }
 
-/// A dog with no manifest saying otherwise is not asked, and the dashboard
-/// writes it as it always did.
+/// A dog whose cached manifest declares nothing is not asked, and the
+/// dashboard writes it as it always did.
 #[tokio::test]
 async fn a_dashboard_write_about_a_dog_that_declared_nothing_goes_straight_through() {
     let dir = tempfile::tempdir().unwrap();
-    let paths = home_with(dir.path(), None);
+    let paths = home_with(dir.path(), Some(declares_nothing()));
     let (client, mut envelopes) =
         fake_client_answering_refusals(&control_address(dir.path()), |_| Ok(Response::Pong)).await;
     let flock = ClientFlock {

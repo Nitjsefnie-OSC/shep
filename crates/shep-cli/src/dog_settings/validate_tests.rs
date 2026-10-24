@@ -25,32 +25,41 @@ fn home_with(dir: &Path, manifest: Option<&str>) -> ShepPaths {
     std::fs::create_dir_all(&paths.home).unwrap();
     let binary = dir.join("shep-kelpie");
     std::fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
-    // Written by the same writer `shep adopt` uses, so the adopted path is
-    // quoted the way TOML quotes a path. A windows runner spells every temp
-    // path with backslashes, and a raw backslash in a TOML basic string is an
-    // escape sequence, not a separator.
+    // `None` is a dog this machine never adopted, which is the built-in case:
+    // no `adopted_dogs` entry, and no manifest of its own to declare
+    // `validate` in. An adopted one is recorded by the same writer
+    // `shep adopt` uses, so the path is quoted the way TOML quotes a path. A
+    // windows runner spells every temp path with backslashes, and a raw
+    // backslash in a TOML basic string is an escape sequence, not a separator.
+    let Some(manifest) = manifest else {
+        return paths;
+    };
     ShepToml::edit(&paths.daemon_config, |doc| {
         doc.adopt_dog("kelpie", &binary, true).unwrap();
     })
     .unwrap();
-    if let Some(manifest) = manifest {
-        let mut context = ring::digest::Context::new(&ring::digest::SHA256);
-        context.update(&std::fs::read(&binary).unwrap());
-        let digest = context.finish();
-        let hex = digest.as_ref().iter().fold(String::new(), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        });
-        let dir = paths.home.join("manifests");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(format!("{hex}.json")), manifest).unwrap();
-    }
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    context.update(&std::fs::read(&binary).unwrap());
+    let digest = context.finish();
+    let hex = digest.as_ref().iter().fold(String::new(), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    });
+    let cache = paths.home.join("manifests");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(cache.join(format!("{hex}.json")), manifest).unwrap();
     paths
 }
 
 /// A manifest declaring `validate`, which is the only manifest that gets asked.
 fn validating() -> &'static str {
     r#"{"manifest":1,"name":"kelpie","version":"0.2.0","protocol":12,"channel":true,"validate":true}"#
+}
+
+/// The same manifest with `validate` left out, which is what every dog adopted
+/// before this field did anything has cached.
+fn declares_nothing() -> &'static str {
+    r#"{"manifest":1,"name":"kelpie","version":"0.2.0","protocol":12,"channel":true}"#
 }
 
 fn table(pairs: &[(&str, serde_json::Value)]) -> serde_json::Map<String, serde_json::Value> {
@@ -245,10 +254,7 @@ async fn a_dog_that_accepts_clears_the_write() {
 /// A dog that declared nothing is never asked, and never costs a round trip.
 #[tokio::test]
 async fn a_dog_without_validate_is_never_asked() {
-    for manifest in [
-        None,
-        Some(r#"{"manifest":1,"name":"kelpie","version":"0.2.0","protocol":12,"channel":true}"#),
-    ] {
+    for manifest in [None, Some(declares_nothing())] {
         let dir = tempfile::tempdir().unwrap();
         let (client, paths, mut envelopes) =
             asked(dir.path(), manifest, ActionOutcome::TimedOut).await;
@@ -369,5 +375,121 @@ async fn an_adopted_path_with_a_backslash_in_it_is_still_read() {
     assert!(
         envelopes.try_recv().is_ok(),
         "a dog that declared validate is asked even with a backslash in its path"
+    );
+}
+
+/// A cache file that will not parse is not a manifest that declares nothing.
+///
+/// The distinction is the finding this test pins: a dog that declared
+/// `validate` and whose manifest shep cannot read is a dog whose check the
+/// operator believes is running, and reading it as "nothing declared" would
+/// let the write through with the check never run.
+#[tokio::test]
+async fn a_manifest_shep_cannot_read_refuses_the_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = home_with(dir.path(), Some(validating()));
+    let cache = paths.home.join("manifests");
+    let file = std::fs::read_dir(&cache)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .next()
+        .expect("the fixture cached one manifest");
+    std::fs::write(&file, "{\"manifest\":1,\"name\":").unwrap();
+
+    let (client, _envelopes) =
+        shep_client::testing::fake_client_answering_refusals(&control_address(dir.path()), |_| {
+            Ok(Response::Pong)
+        })
+        .await;
+
+    let failure = ask_dog(&client, &paths, "kelpie", &table(&[]), None)
+        .await
+        .expect_err("an unreadable manifest is not an acceptance");
+    let AskFailure::Unknown { reason } = failure else {
+        panic!("an unreadable manifest is no verdict, and no dog's refusal either: {failure:?}");
+    };
+    assert!(
+        reason.contains("kelpie") && reason.contains("manifest") && reason.contains("consulted"),
+        "the sentence names the dog, what could not be read, and what that blocks: {reason}"
+    );
+}
+
+/// A `shep.toml` that will not parse leaves `validate` unknown too.
+#[tokio::test]
+async fn a_shep_toml_that_will_not_parse_refuses_the_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = home_with(dir.path(), Some(validating()));
+    std::fs::write(&paths.daemon_config, "[daemon\nenabled_dogs = ").unwrap();
+
+    let (client, _envelopes) =
+        shep_client::testing::fake_client_answering_refusals(&control_address(dir.path()), |_| {
+            Ok(Response::Pong)
+        })
+        .await;
+
+    let failure = ask_dog(&client, &paths, "kelpie", &table(&[]), None)
+        .await
+        .expect_err("a config shep cannot read is not a config that says nothing");
+    assert!(
+        matches!(&failure, AskFailure::Unknown { reason } if reason.contains("kelpie")),
+        "{failure:?}"
+    );
+}
+
+/// A shepherd that matched the dog and answered with no row answered no verdict.
+#[tokio::test]
+async fn an_answer_with_no_row_for_the_dog_refuses_the_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = home_with(dir.path(), Some(validating()));
+    let (client, _envelopes) = shep_client::testing::fake_client_answering_refusals(
+        &control_address(dir.path()),
+        |request| match request {
+            Request::Trigger { .. } => Ok(Response::Triggered(Vec::new())),
+            _other => Ok(Response::Pong),
+        },
+    )
+    .await;
+
+    let failure = ask_dog(&client, &paths, "kelpie", &table(&[]), None)
+        .await
+        .expect_err("no row is no verdict");
+    assert!(
+        matches!(&failure, AskFailure::Unknown { reason } if reason.contains("no row")),
+        "{failure:?}"
+    );
+}
+
+/// An adopted dog with no cached manifest is read the way `shep adopt` reads
+/// it, and a dog that answers no manifest cannot have declared `validate`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_dog_that_answers_no_manifest_at_all_is_not_asked() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    std::fs::create_dir_all(&paths.home).unwrap();
+    let binary = dir.path().join("shep-kelpie");
+    std::fs::write(&binary, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    ShepToml::edit(&paths.daemon_config, |doc| {
+        doc.adopt_dog("kelpie", &binary, true).unwrap();
+    })
+    .unwrap();
+
+    let (client, mut envelopes) =
+        shep_client::testing::fake_client_answering_refusals(&control_address(dir.path()), |_| {
+            Ok(Response::Pong)
+        })
+        .await;
+
+    assert_eq!(
+        ask_dog(&client, &paths, "kelpie", &table(&[]), None).await,
+        Ok(())
+    );
+    assert_eq!(
+        envelopes.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty),
+        "a dog that answers no manifest has nowhere to declare validate"
     );
 }

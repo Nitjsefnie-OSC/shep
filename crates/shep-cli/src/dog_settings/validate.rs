@@ -11,9 +11,11 @@
 //! The ask is one call, [`ask_dog`], and both doors use it: `shep set` and
 //! `shep unset` through [`crate::commands::settings_write`], and every write
 //! the lookout dashboard sends through [`crate::lookout::source::ClientFlock`].
-//! A dog that declared nothing is never asked, and a dog that is not running
-//! has nothing to ask: its settings are the ones an operator edits before
-//! `shep enable`, so the write goes ahead.
+//! A dog that declared nothing is never asked, and a dog that is running with
+//! no channel open has nothing to ask: its settings are the ones an operator
+//! edits before `shep enable`, so the write goes ahead. What shep cannot read
+//! is never an acceptance, so an unreadable reply, an outcome this build does
+//! not know, and a manifest this build cannot read all stop the write.
 
 use serde_json::{Map, Value as Json};
 use shep_client::Client;
@@ -35,6 +37,12 @@ pub(crate) enum AskFailure {
         /// The sentence the operator reads.
         reason: String,
     },
+    /// Whether the dog wanted to be consulted is unknown: what says so, or what
+    /// answers it, could not be read. Not [`Self::Refused`]: no dog said this.
+    Unknown {
+        /// The sentence the operator reads.
+        reason: String,
+    },
     /// The ask itself never produced an answer.
     Transport(RequestError),
 }
@@ -48,7 +56,7 @@ impl AskFailure {
     /// daemon's refusal alike.
     pub(crate) fn request_error(&self) -> RequestError {
         match self {
-            Self::Refused { reason } => RequestError::Rpc(RpcError {
+            Self::Refused { reason } | Self::Unknown { reason } => RequestError::Rpc(RpcError {
                 code: RpcErrorCode::InvalidConfig,
                 message: reason.clone(),
                 daemon_version: None,
@@ -64,14 +72,17 @@ impl AskFailure {
 /// `sheep` names the sheep whose table this is, and `None` says it is the
 /// dog's own section.
 ///
-/// `Ok(())` is the dog accepting and the three cases with nobody to ask: the
-/// dog declared nothing, the dog is not in this flock, and the dog is in it
+/// `Ok(())` is the dog accepting, and the three cases with nobody to ask: the
+/// dog is not adopted on this machine, so no manifest of its own is here to
+/// declare anything; the dog is not in this flock at all; and the dog is in it
 /// with no live channel to answer on.
 ///
 /// # Errors
-/// [`AskFailure::Refused`] for a refusal, an answer that is not a verdict, and
-/// a dog that answered nothing inside its own `action_timeout`.
-/// [`AskFailure::Transport`] for an ask that never reached the shepherd.
+/// [`AskFailure::Refused`] for a refusal and for a dog that answered nothing
+/// inside its own `action_timeout`. [`AskFailure::Unknown`] for an answer with
+/// no verdict in it and for a manifest that could not be read, which leaves
+/// whether the dog wants to be consulted unknown. [`AskFailure::Transport`] for
+/// an ask that never reached the shepherd.
 pub(crate) async fn ask_dog(
     client: &Client,
     paths: &ShepPaths,
@@ -79,8 +90,12 @@ pub(crate) async fn ask_dog(
     table: &Map<String, Json>,
     sheep: Option<&str>,
 ) -> Result<(), AskFailure> {
-    if !declares_validate(dog, paths) {
-        return Ok(());
+    match declares_validate(dog, paths) {
+        Declaration::Silent => return Ok(()),
+        Declaration::Declared => {}
+        // A dog that asked to be consulted and cannot be reached as one is not
+        // a dog that cleared the write.
+        Declaration::Unknown { reason } => return Err(AskFailure::Unknown { reason }),
     }
     let proposed = Proposed::new(table.clone(), sheep.map(str::to_owned));
     let ask = Request::Trigger {
@@ -90,10 +105,22 @@ pub(crate) async fn ask_dog(
     };
     let deadline = deadline_for(&ask);
     match client.request_with_deadline(ask, deadline).await {
-        Ok(Response::Triggered(rows)) => rows
-            .iter()
-            .find_map(|row| refusal_for(dog, &row.outcome))
-            .map_or(Ok(()), Err),
+        Ok(Response::Triggered(rows)) => {
+            if let Some(failure) = rows.iter().find_map(|row| refusal_for(dog, &row.outcome)) {
+                return Err(failure);
+            }
+            // The shepherd matched the dog and answered with no row, so no
+            // verdict came back, and a write is cleared by a verdict.
+            if rows.is_empty() {
+                return Err(AskFailure::Unknown {
+                    reason: format!(
+                        "`{dog}` was asked to validate the write and the shepherd answered \
+                         with no row for it",
+                    ),
+                });
+            }
+            Ok(())
+        }
         // No such dog in this flock: nothing to ask, and a dog an operator has
         // not enabled yet is the ordinary case for a first write.
         Err(RequestError::Rpc(err)) if err.code == RpcErrorCode::NotFound => Ok(()),
@@ -122,7 +149,13 @@ fn refusal_for(dog: &str, outcome: &ActionOutcome) -> Option<AskFailure> {
         // started before it asked for one. There is no process to ask, and a
         // settings write is what makes a dog worth enabling.
         ActionOutcome::NoChannel | ActionOutcome::DogNoChannel | ActionOutcome::Skipped => None,
-        _other => None,
+        // An outcome this build does not know carries no verdict this build can
+        // read, and a write is cleared by a verdict.
+        _other => Some(AskFailure::Unknown {
+            reason: format!(
+                "`{dog}` answered the ask with something this shep cannot read: {_other:?}",
+            ),
+        }),
     }
 }
 
@@ -173,21 +206,56 @@ pub(crate) fn section_table(toml: &str) -> Option<Map<String, Json>> {
     ))
 }
 
+/// What this machine says about whether `dog` wants to be consulted.
+enum Declaration {
+    /// Its manifest declares `validate`.
+    Declared,
+    /// Nothing declares it: `dog` is not adopted here, or its manifest answers
+    /// none. A manifest is the only place `validate` can be declared, so a dog
+    /// that answers no manifest cannot ask for this.
+    Silent,
+    /// The manifest exists to be read and was not, so whether the dog wants to
+    /// be consulted is unknown rather than answered.
+    Unknown {
+        /// The sentence the operator reads.
+        reason: String,
+    },
+}
+
 /// Whether `dog` declared `validate`: from its cached manifest when this exact
 /// adopted binary has been read before, and from the binary otherwise.
 ///
-/// A built-in dog has no manifest and is never asked, and a manifest is the
-/// only place `validate` can be declared, so a dog that answers no manifest
-/// cannot ask for this.
-fn declares_validate(dog: &str, paths: &ShepPaths) -> bool {
-    let Some(path) = ShepToml::read_only(&paths.daemon_config)
-        .ok()
-        .and_then(|doc| doc.adopted_dog_path(dog))
-    else {
-        return false;
+/// A built-in dog has no manifest and is never asked.
+///
+/// A read that failed is [`Declaration::Unknown`], not [`Declaration::Silent`]:
+/// a corrupt cache file, a binary that will not answer, and a `shep.toml` that
+/// will not parse all leave a dog that declared `validate` unasked, and a check
+/// an operator believes is running would never run.
+fn declares_validate(dog: &str, paths: &ShepPaths) -> Declaration {
+    let doc = match ShepToml::read_only(&paths.daemon_config) {
+        Ok(doc) => doc,
+        Err(err) => {
+            return Declaration::Unknown {
+                reason: format!(
+                    "shep cannot tell whether `{dog}` wants to be consulted before this write: \
+                     {} is unreadable ({err})",
+                    paths.daemon_config.display()
+                ),
+            };
+        }
     };
-    read_manifest(&path, &paths.home, dog, VERSION_BUDGET)
-        .ok()
-        .flatten()
-        .is_some_and(|manifest| manifest.validate)
+    let Some(path) = doc.adopted_dog_path(dog) else {
+        return Declaration::Silent;
+    };
+    match read_manifest(&path, &paths.home, dog, VERSION_BUDGET) {
+        Ok(Some(manifest)) if manifest.validate => Declaration::Declared,
+        Ok(_) => Declaration::Silent,
+        Err(err) => Declaration::Unknown {
+            reason: format!(
+                "shep cannot tell whether `{dog}` wants to be consulted before this write: its \
+                 manifest at {} could not be read ({err})",
+                path.display()
+            ),
+        },
+    }
 }
