@@ -143,6 +143,10 @@ pub fn table_refusal(schema: &Value, table: &Map<String, Value>) -> Option<Table
 /// caller that writes a table it only partly chose asks about the part it
 /// chose. Nothing else changes: the same arms, the same order, the same
 /// sentences.
+///
+/// An unreported refusal does not end the walk. A bad value the caller did not
+/// choose rides along in the write either way, and stopping there would hide
+/// the refusal at the key it did choose, which is the one it can act on.
 #[must_use]
 pub fn touched_refusal(
     schema: &Value,
@@ -301,23 +305,28 @@ fn scalar_refusal(
                 // and `ListPane::apply_typing` files an integer element as
                 // `Value::from(i64)`.
                 let shown_element = shown_for(field.secret, element);
-                match item {
+                // An element this caller did not choose is not an answer to
+                // give, and not a reason to stop looking at the ones it did:
+                // the bad element rides along in the write either way, so the
+                // walk only stops on a refusal it is allowed to report.
+                let wrong_type = match item {
                     ListItem::Integer if !element.is_number() => {
-                        return report(
-                            scope,
-                            &element_path,
-                            not_a_whole_number(&slot, &shown_element).text,
-                        );
+                        Some(not_a_whole_number(&slot, &shown_element).text)
                     }
                     ListItem::Text | ListItem::Choice(_) if element.as_str().is_none() => {
-                        return report(scope, &element_path, not_a_string(&slot, &shown_element));
+                        Some(not_a_string(&slot, &shown_element))
                     }
-                    ListItem::Integer | ListItem::Text | ListItem::Choice(_) => {}
-                }
+                    ListItem::Integer | ListItem::Text | ListItem::Choice(_) => None,
+                };
                 if let Some(refused) =
-                    item_refusal(&slot, item, &bounds, &text_of(element), field.secret)
+                    wrong_type.and_then(|text| report(scope, &element_path, text))
                 {
-                    return report(scope, &element_path, refused.text);
+                    return Some(refused);
+                }
+                let item_rule = item_refusal(&slot, item, &bounds, &text_of(element), field.secret)
+                    .and_then(|refused| report(scope, &element_path, refused.text));
+                if let Some(refused) = item_rule {
+                    return Some(refused);
                 }
             }
             None
@@ -350,12 +359,14 @@ fn entries_refusal(
             for (index, entry) in entries.iter().enumerate() {
                 let slot = below(key, &index.to_string());
                 let entry_path = below_path(path, &index.to_string());
+                // An entry this caller did not choose is skipped, not reported,
+                // and the entries after it are still checked.
                 let Some(table) = entry.as_object() else {
-                    return report(
-                        scope,
-                        &entry_path,
-                        not_a_table(&slot, &shown_for(field.secret, entry)),
-                    );
+                    let refused = not_a_table(&slot, &shown_for(field.secret, entry));
+                    if let Some(refused) = report(scope, &entry_path, refused) {
+                        return Some(refused);
+                    }
+                    continue;
                 };
                 if let Some(refused) = flattened_refusal(shape, table, &entry_path, &slot, scope) {
                     return Some(refused);
@@ -371,11 +382,11 @@ fn entries_refusal(
                 let slot = below(key, &segment(name));
                 let entry_path = below_path(path, name);
                 let Some(table) = entry.as_object() else {
-                    return report(
-                        scope,
-                        &entry_path,
-                        not_a_table(&slot, &shown_for(field.secret, entry)),
-                    );
+                    let refused = not_a_table(&slot, &shown_for(field.secret, entry));
+                    if let Some(refused) = report(scope, &entry_path, refused) {
+                        return Some(refused);
+                    }
+                    continue;
                 };
                 if let Some(refused) = flattened_refusal(shape, table, &entry_path, &slot, scope) {
                     return Some(refused);

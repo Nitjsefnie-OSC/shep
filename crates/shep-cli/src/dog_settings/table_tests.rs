@@ -613,3 +613,80 @@ fn a_list_item_closed_set_spelled_as_a_one_of_refuses_a_name_it_does_not_carry()
         "modes.1 is \"never\"; modes.1 takes one of ask, auto"
     );
 }
+
+/// The scoped door keeps walking past a value it may not report. The bad value
+/// rides along in the write either way, and the key the caller chose is the one
+/// it can act on.
+#[test]
+fn an_untouched_bad_element_does_not_hide_a_touched_one() {
+    let proposed = table(json!({ "tags": ["a", "b"] }));
+    let refused = touched_refusal(&schema(), &proposed, &touched(&[&["tags", "1"]]))
+        .expect("tags.1 is under the item schema's minLength");
+    assert_eq!(refused.path, ["tags", "1"]);
+    assert_eq!(
+        refused.text,
+        "tags.1 is \"b\"; tags.1 needs at least 3 characters"
+    );
+}
+
+#[test]
+fn an_untouched_element_of_the_wrong_type_does_not_hide_a_touched_one() {
+    let proposed = table(json!({ "tags": [8, "ab"] }));
+    let refused = touched_refusal(&schema(), &proposed, &touched(&[&["tags", "1"]]))
+        .expect("tags.1 is under the item schema's minLength");
+    assert_eq!(refused.path, ["tags", "1"]);
+    assert_eq!(
+        refused.text,
+        "tags.1 is \"ab\"; tags.1 needs at least 3 characters"
+    );
+    let refused = touched_refusal(&schema(), &proposed, &touched(&[&["tags", "0"]]))
+        .expect("asked about tags.0, which is a number");
+    assert_eq!(
+        refused.text,
+        "tags.0 is \"8\", which is not a string shep accepts"
+    );
+}
+
+#[test]
+fn an_untouched_entry_that_is_not_a_table_does_not_hide_a_touched_one() {
+    let proposed = table(json!({ "hosts": ["not a table", { "name": "web", "weight": 0 }] }));
+    let refused = touched_refusal(&schema(), &proposed, &touched(&[&["hosts", "1", "weight"]]))
+        .expect("hosts.1.weight is under the item schema's floor");
+    assert_eq!(refused.path, ["hosts", "1", "weight"]);
+    assert_eq!(
+        refused.text,
+        "hosts.1.weight is \"0\"; hosts.1.weight starts at 1"
+    );
+    let refused = touched_refusal(&schema(), &proposed, &touched(&[&["hosts", "0"]]))
+        .expect("asked about hosts.0, which is a string");
+    assert_eq!(
+        refused.text,
+        "hosts.0 is \"not a table\", which is not a table shep accepts"
+    );
+}
+
+/// The map half of an entry row, which walks in key order and holds the same
+/// promise.
+#[test]
+fn an_untouched_map_entry_that_is_not_a_table_does_not_hide_a_touched_one() {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "hosts": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": { "weight": { "type": "integer", "minimum": 1 } },
+                },
+            },
+        },
+    });
+    let proposed = table(json!({ "hosts": { "a": "not a table", "b": { "weight": 0 } } }));
+    let refused = touched_refusal(&schema, &proposed, &touched(&[&["hosts", "b", "weight"]]))
+        .expect("hosts.b.weight is under the item schema's floor");
+    assert_eq!(refused.path, ["hosts", "b", "weight"]);
+    assert_eq!(
+        refused.text,
+        "hosts.b.weight is \"0\"; hosts.b.weight starts at 1"
+    );
+}
