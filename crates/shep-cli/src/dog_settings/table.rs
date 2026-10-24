@@ -19,6 +19,14 @@
 //! door and fail the other, which is the whole reason there is one module
 //! rather than a copy in the pane and a copy in the CLI.
 //!
+//! One rule belongs to a table alone, because a table is JSON and a buffer is
+//! text: a value has to be the JSON type the schema names before any rule on
+//! it is read. `keep = "8"` in a dog's section is a string, and the pane's
+//! door would never have filed one for an `integer`; handing it to the same
+//! parse as text would take it. So each arm asks what kind of value it was
+//! given, and refuses with the sentence the pane already uses for a value of
+//! the wrong kind.
+//!
 //! Two things it does not do, both because shep is not the authority on a
 //! dog's config beyond what that dog published:
 //!
@@ -35,10 +43,12 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use crate::lookout::field::{Entries, Field, FieldKind, Flattened, Union, flattened, segment};
+use crate::lookout::field::{
+    Entries, Field, FieldKind, Flattened, ListItem, Union, flattened, segment,
+};
 
 use super::numbers::{integer_refusal, number_refusal};
-use super::{item_refusal, refusal, shown_value};
+use super::{item_refusal, not_a_number, not_a_whole_number, refusal, shown_value};
 
 /// Why a proposed table is not one the dog's schema takes.
 ///
@@ -225,6 +235,11 @@ fn leaf_refusal(
 /// [`integer_refusal`] and [`number_refusal`] for the two numeric kinds,
 /// [`refusal`] for a string's grammar or `pattern`, and [`item_refusal`] for
 /// one element of a list, against the bounds its item schema published.
+///
+/// Each arm is reached through the value's JSON type first, and a value of
+/// the wrong one is refused with [`not_a_whole_number`], [`not_a_number`],
+/// [`not_a_string`] or [`not_a_list`] rather than handed to a parse that
+/// would read it as text.
 fn scalar_refusal(
     field: &Field,
     value: &Value,
@@ -234,8 +249,18 @@ fn scalar_refusal(
 ) -> Option<TableRefusal> {
     let shown = shown_for(field.secret, value);
     match &field.kind {
+        // The parse is for a value that is a number. A JSON string is not one,
+        // however it reads: `keep = "8"` is a string in the table the section
+        // writer hands on, and the pane files an integer as `Value::from(i64)`
+        // and a decimal as `Value::from(f64)`, never as a string.
+        FieldKind::Integer if !value.is_number() => {
+            report(scope, path, not_a_whole_number(key, &shown).text)
+        }
         FieldKind::Integer => integer_refusal(key, &field.bounds, &text_of(value), &shown)
             .and_then(|r| report(scope, path, r.text)),
+        FieldKind::Number if !value.is_number() => {
+            report(scope, path, not_a_number(key, &shown).text)
+        }
         FieldKind::Number => number_refusal(key, &field.bounds, &text_of(value), &shown)
             .and_then(|r| report(scope, path, r.text)),
         FieldKind::Bool => value
@@ -268,14 +293,31 @@ fn scalar_refusal(
                 if element.is_null() {
                     continue;
                 }
-                if let Some(refused) = item_refusal(
-                    &below(key, &index.to_string()),
-                    item,
-                    &bounds,
-                    &text_of(element),
-                    field.secret,
-                ) {
-                    return report(scope, &below_path(path, &index.to_string()), refused.text);
+                let slot = below(key, &index.to_string());
+                let element_path = below_path(path, &index.to_string());
+                // The element's own type before its item schema's rules, for
+                // [`FieldKind::Integer`]'s reason: [`text_of`] would hand `8`
+                // to a string list's `pattern` as "8" and `true` as "true",
+                // and `ListPane::apply_typing` files an integer element as
+                // `Value::from(i64)`.
+                let shown_element = shown_for(field.secret, element);
+                match item {
+                    ListItem::Integer if !element.is_number() => {
+                        return report(
+                            scope,
+                            &element_path,
+                            not_a_whole_number(&slot, &shown_element).text,
+                        );
+                    }
+                    ListItem::Text | ListItem::Choice(_) if element.as_str().is_none() => {
+                        return report(scope, &element_path, not_a_string(&slot, &shown_element));
+                    }
+                    ListItem::Integer | ListItem::Text | ListItem::Choice(_) => {}
+                }
+                if let Some(refused) =
+                    item_refusal(&slot, item, &bounds, &text_of(element), field.secret)
+                {
+                    return report(scope, &element_path, refused.text);
                 }
             }
             None
@@ -485,9 +527,12 @@ fn not_a_table(key: &str, shown: &str) -> String {
     format!("{key} is \"{shown}\", which is not a table shep accepts")
 }
 
-/// The refusal for a value a closed set does not name, in the shape
-/// [`super::enum_refusal`] gives an `enum`: the set is the one rule an
-/// operator can satisfy by copying from it.
+/// The refusal for a value a closed set does not name, in the sentence shape
+/// [`super::enum_refusal`] gives an `enum`, built from the set the
+/// [`crate::lookout::field::FieldKind::Choice`] itself holds rather than
+/// through that door: a closed set can come from a `oneOf` of `const`s, where
+/// `bounds.choices` holds nothing and [`super::enum_refusal`] would fail open.
+/// The set is the one rule an operator can satisfy by copying from it.
 fn takes_one_of(key: &str, shown: &str, names: &[String]) -> String {
     format!(
         "{key} is \"{shown}\"; {key} takes one of {}",

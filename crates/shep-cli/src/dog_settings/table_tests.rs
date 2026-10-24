@@ -24,7 +24,9 @@ fn schema() -> Value {
                 "type": "object",
                 "properties": {
                     "keep": { "type": "integer", "minimum": 1, "maximum": 64 },
+                    "rate": { "type": "number", "exclusiveMinimum": 0 },
                     "tags": { "type": "array", "items": { "type": "string", "minLength": 3 } },
+                    "levels": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
                     "merge": { "enum": ["ask", "auto"] },
                     "hours": {
                         "type": "object",
@@ -89,7 +91,9 @@ fn table(value: Value) -> Map<String, Value> {
 fn accepted() -> Value {
     json!({
         "keep": 8,
+        "rate": 1.5,
         "tags": ["ask", "auto"],
+        "levels": [1, 2],
         "merge": "ask",
         "hours": { "start": "09:30" },
         "hosts": [{ "name": "build", "weight": 2 }],
@@ -471,4 +475,122 @@ fn the_scoped_door_answers_what_the_whole_door_answers_for_the_same_key() {
     let scoped = touched_refusal(&schema(), &proposed, &touched(&[&["keep"]]))
         .expect("asked about keep, answered about keep");
     assert_eq!(scoped, whole);
+}
+
+/// A table is JSON and a buffer is text, and this is the one rule that
+/// belongs to the table door alone: a value has to be the JSON type the schema
+/// names before any rule on it is read. `keep = "8"` is what an operator writes
+/// into `dogs.toml` when the number is a string in their head, and the pane
+/// files an integer as `Value::from(i64)`, never as a string.
+#[test]
+fn a_string_that_reads_like_a_number_is_refused_for_an_integer_field() {
+    let refused = table_refusal(&schema(), &table(json!({ "keep": "8" })))
+        .expect("\"8\" is a string, not a number");
+    assert_eq!(refused.path, ["keep"]);
+    assert_eq!(
+        refused.text,
+        "keep is \"8\", which is not a whole number shep accepts"
+    );
+}
+
+#[test]
+fn a_string_that_reads_like_a_decimal_is_refused_for_a_number_field() {
+    let refused = table_refusal(&schema(), &table(json!({ "rate": "1.5" })))
+        .expect("\"1.5\" is a string, not a number");
+    assert_eq!(refused.path, ["rate"]);
+    assert_eq!(
+        refused.text,
+        "rate is \"1.5\", which is not a number shep accepts"
+    );
+}
+
+/// A JSON number is not a whole number either, and the parse still says so:
+/// the type gate opens the door, it does not answer who walks through it.
+#[test]
+fn a_decimal_is_refused_for_an_integer_field() {
+    let refused = table_refusal(&schema(), &table(json!({ "keep": 8.5 })))
+        .expect("8.5 is not a whole number");
+    assert_eq!(
+        refused.text,
+        "keep is \"8.5\", which is not a whole number shep accepts"
+    );
+}
+
+/// The control on the three above: the numbers the pane files are taken, and a
+/// number out of its bounds is refused by the bound.
+#[test]
+fn a_json_number_is_taken_and_a_number_out_of_bounds_is_refused_by_its_bound() {
+    assert_eq!(
+        table_refusal(&schema(), &table(json!({ "keep": 8, "rate": 1.5 }))),
+        None,
+        "the shape the pane files"
+    );
+    let refused = table_refusal(&schema(), &table(json!({ "rate": 0 })))
+        .expect("0 is not above a floor of 0");
+    assert_eq!(refused.text, "rate is \"0\"; rate must be above 0");
+}
+
+/// The same rule one level down, where the reviewer's third finding sat: an
+/// element is converted to text for the item schema's rules, and a number or a
+/// boolean handed to a string list's `pattern` reads as "8" and "true".
+#[test]
+fn a_number_element_is_refused_for_a_string_list() {
+    let refused = table_refusal(&schema(), &table(json!({ "tags": ["ask", 8] })))
+        .expect("8 is a number, not a string");
+    assert_eq!(refused.path, ["tags", "1"]);
+    assert_eq!(
+        refused.text,
+        "tags.1 is \"8\", which is not a string shep accepts"
+    );
+}
+
+#[test]
+fn a_boolean_element_is_refused_for_a_string_list() {
+    let refused = table_refusal(&schema(), &table(json!({ "tags": [true] })))
+        .expect("true is a boolean, not a string");
+    assert_eq!(refused.path, ["tags", "0"]);
+    assert_eq!(
+        refused.text,
+        "tags.0 is \"true\", which is not a string shep accepts"
+    );
+}
+
+#[test]
+fn a_string_that_reads_like_a_number_is_refused_for_an_integer_list() {
+    let refused = table_refusal(&schema(), &table(json!({ "levels": ["2"] })))
+        .expect("\"2\" is a string, not a number");
+    assert_eq!(refused.path, ["levels", "0"]);
+    assert_eq!(
+        refused.text,
+        "levels.0 is \"2\", which is not a whole number shep accepts"
+    );
+}
+
+/// The control on the three above, and the bound below it: an integer list
+/// takes the numbers `ListPane::apply_typing` files, and refuses one under its
+/// item schema's floor.
+#[test]
+fn an_integer_element_is_taken_and_one_under_the_floor_is_refused_by_the_floor() {
+    assert_eq!(
+        table_refusal(&schema(), &table(json!({ "levels": [2, 3] }))),
+        None,
+        "the shape the list editor files"
+    );
+    let refused = table_refusal(&schema(), &table(json!({ "levels": [0] })))
+        .expect("0 is under the item schema's floor");
+    assert_eq!(refused.path, ["levels", "0"]);
+    assert_eq!(refused.text, "levels.0 is \"0\"; levels.0 starts at 1");
+}
+
+/// A type refusal resolves what it may print through the same door every
+/// other sentence here does.
+#[test]
+fn a_type_refusal_for_a_secret_names_the_marker_and_not_the_value() {
+    let refused = table_refusal(&schema(), &table(json!({ "token": 90210 })))
+        .expect("a number is not a string");
+    assert_eq!(
+        refused.text,
+        "token is \"<set>\", which is not a string shep accepts"
+    );
+    assert!(!refused.text.contains("90210"), "{}", refused.text);
 }
