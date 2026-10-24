@@ -28,13 +28,13 @@ async fn a_dog_at_rest_is_listed_stopped_and_disabled_and_nothing_is_spawned() {
 
     let registered = actor.register_dog_at_rest(
         &dog_from("metrics", "/dogs/metrics"),
-        DogSource::BuiltIn,
+        DogSource::BuiltIn { grants: None },
         &names(&["metrics"]),
     );
 
     assert_eq!(registered.status, ProcStatus::Stopped);
     assert_eq!(registered.disabled, Some(true));
-    assert_eq!(registered.dog, Some(DogSource::BuiltIn));
+    assert_eq!(registered.dog, Some(DogSource::BuiltIn { grants: None }));
     assert_eq!(registered.pid, None);
     assert_eq!(actor.runner.spawn_count(), 0);
     assert_eq!(listed(&actor), vec![registered]);
@@ -47,7 +47,7 @@ async fn a_dog_the_operator_enabled_is_listed_without_the_mark() {
 
     let registered = actor.register_dog_at_rest(
         &dog_from("bark", "/dogs/bark"),
-        DogSource::BuiltIn,
+        DogSource::BuiltIn { grants: None },
         &names(&[]),
     );
 
@@ -63,7 +63,7 @@ async fn a_sheep_already_holding_the_name_is_neither_replaced_nor_marked() {
 
     let answered = actor.register_dog_at_rest(
         &dog_from("metrics", "/dogs/metrics"),
-        DogSource::BuiltIn,
+        DogSource::BuiltIn { grants: None },
         &names(&["metrics"]),
     );
 
@@ -80,18 +80,21 @@ async fn starting_a_dog_at_rest_runs_it_under_the_id_it_was_listed_with() {
     let api = actor.register_at_rest(&dog_from("api", "/sheep/api"));
     let metrics = actor.register_dog_at_rest(
         &dog_from("metrics", "/dogs/metrics"),
-        DogSource::BuiltIn,
+        DogSource::BuiltIn { grants: None },
         &names(&["metrics"]),
     );
     let bark = actor.register_dog_at_rest(
         &dog_from("bark", "/dogs/bark"),
-        DogSource::BuiltIn,
+        DogSource::BuiltIn { grants: None },
         &names(&["bark"]),
     );
     assert_eq!((api.id, metrics.id, bark.id), (0, 1, 2));
 
     let started = actor
-        .do_start_dog(dog_from("metrics", "/dogs/metrics"), DogSource::BuiltIn)
+        .do_start_dog(
+            dog_from("metrics", "/dogs/metrics"),
+            DogSource::BuiltIn { grants: None },
+        )
         .unwrap();
 
     assert_eq!(started.id, metrics.id);
@@ -114,17 +117,20 @@ async fn the_next_sheep_after_an_enable_still_takes_the_next_free_id() {
     );
     actor.register_dog_at_rest(
         &dog_from("metrics", "/dogs/metrics"),
-        DogSource::BuiltIn,
+        DogSource::BuiltIn { grants: None },
         &names(&["metrics"]),
     );
     actor.register_dog_at_rest(
         &dog_from("bark", "/dogs/bark"),
-        DogSource::BuiltIn,
+        DogSource::BuiltIn { grants: None },
         &names(&["bark"]),
     );
 
     actor
-        .do_start_dog(dog_from("metrics", "/dogs/metrics"), DogSource::BuiltIn)
+        .do_start_dog(
+            dog_from("metrics", "/dogs/metrics"),
+            DogSource::BuiltIn { grants: None },
+        )
         .unwrap();
     let after = actor.register_at_rest(&dog_from("web", "/sheep/web"));
 
@@ -137,6 +143,7 @@ async fn enabling_after_a_re_adopt_spawns_the_path_in_the_request() {
     let dir = tempfile::tempdir().unwrap();
     let mut actor = actor_with_an_empty_flock(&dir, vec![ProcScript::never_exits()]);
     let adopted = |path: &str| DogSource::Adopted {
+        grants: None,
         path: path.into(),
         channel: false,
     };
@@ -159,11 +166,17 @@ async fn starting_a_dog_that_is_running_answers_with_it_and_spawns_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let mut actor = actor_with_an_empty_flock(&dir, vec![ProcScript::never_exits()]);
     let first = actor
-        .do_start_dog(dog_from("bark", "/dogs/bark"), DogSource::BuiltIn)
+        .do_start_dog(
+            dog_from("bark", "/dogs/bark"),
+            DogSource::BuiltIn { grants: None },
+        )
         .unwrap();
 
     let again = actor
-        .do_start_dog(dog_from("bark", "/dogs/bark"), DogSource::BuiltIn)
+        .do_start_dog(
+            dog_from("bark", "/dogs/bark"),
+            DogSource::BuiltIn { grants: None },
+        )
         .unwrap();
 
     assert_eq!(again.id, first.id);
@@ -176,18 +189,21 @@ async fn a_dog_at_rest_that_cannot_spawn_is_errored_and_keeps_its_id() {
     let mut actor = actor_with_an_empty_flock(&dir, Vec::new());
     let at_rest = actor.register_dog_at_rest(
         &dog_from("bark", "/dogs/bark"),
-        DogSource::BuiltIn,
+        DogSource::BuiltIn { grants: None },
         &names(&["bark"]),
     );
 
-    let failed = actor.do_start_dog(dog_from("bark", "/dogs/bark"), DogSource::BuiltIn);
+    let failed = actor.do_start_dog(
+        dog_from("bark", "/dogs/bark"),
+        DogSource::BuiltIn { grants: None },
+    );
 
     assert!(matches!(failed, Err(SupervisorError::SpawnFailed(_))));
     let rows = listed(&actor);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].id, at_rest.id);
     assert_eq!(rows[0].status, ProcStatus::Errored);
-    assert_eq!(rows[0].dog, Some(DogSource::BuiltIn));
+    assert_eq!(rows[0].dog, Some(DogSource::BuiltIn { grants: None }));
 }
 
 /// A dog the operator stopped is `Stopped` like one at rest, and a boot that
@@ -197,7 +213,10 @@ async fn a_dog_that_ran_and_stopped_is_not_started_again_by_a_second_start_dog()
     let dir = tempfile::tempdir().unwrap();
     let mut actor = actor_with_an_empty_flock(&dir, vec![ProcScript::never_exits()]);
     let running = actor
-        .do_start_dog(dog_from("metrics", "/dogs/metrics"), DogSource::BuiltIn)
+        .do_start_dog(
+            dog_from("metrics", "/dogs/metrics"),
+            DogSource::BuiltIn { grants: None },
+        )
         .unwrap();
     let slot = actor.sheep.get_mut(&running.id).unwrap();
     slot.entry.status = ProcStatus::Stopped;
@@ -208,7 +227,10 @@ async fn a_dog_that_ran_and_stopped_is_not_started_again_by_a_second_start_dog()
     });
 
     let again = actor
-        .do_start_dog(dog_from("metrics", "/dogs/metrics"), DogSource::BuiltIn)
+        .do_start_dog(
+            dog_from("metrics", "/dogs/metrics"),
+            DogSource::BuiltIn { grants: None },
+        )
         .unwrap();
 
     assert_eq!(again.id, running.id);

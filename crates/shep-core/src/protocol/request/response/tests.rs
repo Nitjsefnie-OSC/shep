@@ -73,6 +73,7 @@ fn reply_wire_snapshots() {
                 id: 7,
                 name: "otel".to_string(),
                 dog: Some(DogSource::Adopted {
+                    grants: None,
                     path: "/usr/local/bin/shep-otel".to_string(),
                     channel: false,
                 }),
@@ -93,7 +94,7 @@ fn reply_wire_snapshots() {
             result: Ok(Response::DogStarted(ProcessInfo {
                 id: 4,
                 name: "metrics".to_string(),
-                dog: Some(DogSource::BuiltIn),
+                dog: Some(DogSource::BuiltIn { grants: None }),
                 ..sample_info()
             })),
         },
@@ -299,6 +300,7 @@ fn reply_wire_snapshots() {
                 ProcessInfo::builder(10, "log-rotate", ProcStatus::Online)
                     .pid(Some(208_341))
                     .dog(Some(DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-log-rotate".to_string(),
                         channel: false,
                     }))
@@ -313,6 +315,7 @@ fn reply_wire_snapshots() {
                 ProcessInfo::builder(10, "log-rotate", ProcStatus::Online)
                     .pid(Some(208_341))
                     .dog(Some(DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-log-rotate".to_string(),
                         channel: false,
                     }))
@@ -528,7 +531,7 @@ fn reply_wire_snapshots() {
             result: Ok(Response::SheepDogTable { table: None }),
         },
     ];
-    insta::assert_json_snapshot!("reply_wire_v11", replies);
+    insta::assert_json_snapshot!("reply_wire_v12", replies);
 }
 
 /// The additive claim on `SheepFieldSet::warning` has three halves and

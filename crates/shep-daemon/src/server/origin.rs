@@ -8,7 +8,7 @@ use shep_core::protocol::Request;
 
 #[cfg(unix)]
 use super::link_table::Lease;
-use crate::rpc::RpcContext;
+use crate::rpc::{RpcContext, kind_of};
 
 /// Which half of a connection a task serves, for a handover that parks both.
 #[derive(Debug, Clone, Copy)]
@@ -55,6 +55,18 @@ impl Origin {
     pub(super) fn dog<'a>(&'a self, claimed: Option<&'a str>) -> Option<&'a str> {
         match self {
             Self::Socket => claimed,
+            Self::Dog { name, .. } => Some(name),
+        }
+    }
+
+    /// The dog whose grants bound this connection's requests: the link's own
+    /// name, and never a socket's claim.
+    ///
+    /// A socket acts as the operator, so a `Hello` naming a dog buys it no
+    /// grants and costs it none.
+    pub(super) fn bound_dog(&self) -> Option<&str> {
+        match self {
+            Self::Socket => None,
             Self::Dog { name, .. } => Some(name),
         }
     }
@@ -191,16 +203,6 @@ impl Attribution {
     }
 }
 
-/// The wire name of `request`'s variant, and nothing of what it carries.
-///
-/// A request that serializes with no `kind` is still narrated, as `request`.
-fn kind_of(request: &Request) -> String {
-    serde_json::to_value(request)
-        .ok()
-        .and_then(|value| value.get("kind")?.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "request".to_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +213,16 @@ mod tests {
         let link = Origin::untracked_dog("metrics", 7);
         assert_eq!(link.dog(Some("bark")), Some("metrics"));
         assert_eq!(link.dog(None), Some("metrics"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_link_is_bound_by_its_dogs_grants() {
+        assert_eq!(
+            Origin::untracked_dog("metrics", 7).bound_dog(),
+            Some("metrics")
+        );
+        assert_eq!(Origin::Socket.bound_dog(), None);
     }
 
     #[test]

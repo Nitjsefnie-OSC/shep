@@ -18,7 +18,7 @@ const DOG_FIXTURE_START_BUDGET: Duration = Duration::from_secs(10);
 pub(super) async fn start_test_dog(ctx: &crate::rpc::RpcContext, name: &str) {
     let spec = DogSpec {
         name: name.to_string(),
-        source: DogSource::BuiltIn,
+        source: DogSource::BuiltIn { grants: None },
     };
     let app = dog_app(&spec, &ctx.paths).expect("the dog fixture must assemble");
     // Bounded, because the callers below run under a paused clock and this
@@ -27,7 +27,8 @@ pub(super) async fn start_test_dog(ctx: &crate::rpc::RpcContext, name: &str) {
     // timeout fires rather than waiting on a wall clock.
     tokio::time::timeout(
         DOG_FIXTURE_START_BUDGET,
-        ctx.supervisor.start_dog(app, DogSource::BuiltIn),
+        ctx.supervisor
+            .start_dog(app, DogSource::BuiltIn { grants: None }),
     )
     .await
     .expect("the dog fixture must start inside its budget")

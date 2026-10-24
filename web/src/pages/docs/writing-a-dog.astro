@@ -303,8 +303,9 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       There is no sandbox, and it would be a mistake to assume one. An
       adopted dog runs at the shepherd's own trust level, with no isolation
       beyond it: the same trust an ordinary sheep in your Flockfile already
-      has. Adopting a dog does not grant anything beyond what any process
-      your own config already starts could do.
+      has. Adopting a dog grants nothing beyond what any process your own
+      config starts could do. Limit one with{" "}
+      <a href="/docs/dog-grants">grants</a>; they are no sandbox.
     </Callout>
     <p>
       Somebody else has probably already written the dog you're about to
@@ -474,7 +475,7 @@ against the current shep-core, or run a shep that accepts protocol 6`}</CodeBloc
       by a message, adds a line to its answer:
     </p>
     <CodeBlock>{`shep-otel 0.2.0
-shep-protocol: 11
+shep-protocol: 12
 shep-channel: true`}</CodeBlock>
     <p>
       <code>shep adopt</code> records the ask in{" "}

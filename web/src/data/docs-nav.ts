@@ -322,6 +322,16 @@ export const docsNav: DocsNavGroup[] = [
         source: "docs/dogs.md",
       },
       {
+        slug: "dog-grants",
+        label: "Dog grants",
+        plain: "plugin permissions",
+        summary:
+          "A list in shep.toml of what a dog may ask of the shepherd, and the refusal it gets outside it.",
+        built: true,
+        source: "docs/dogs.md",
+        spec: { anchor: "8-dogs-plugins", label: "§8 Dogs" },
+      },
+      {
         slug: "community-dogs",
         label: "Community dogs",
         plain: "community plugins",

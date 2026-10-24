@@ -307,6 +307,7 @@ export const BUDGETS: Record<string, number> = {
   "community-dogs": 300,
   terminology: 210,
   "pm2-verbs": 40,
+  "dog-grants": 330,
 };
 
 

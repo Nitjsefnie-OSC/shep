@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn describe_says_nothing_extra_about_a_row_that_is_not_silent() {
-        let mut talking = dog_info("bark", DogSource::BuiltIn);
+        let mut talking = dog_info("bark", DogSource::BuiltIn { grants: None });
         talking.handshook = Some(true);
         talking.dog_stale = Some(false);
 

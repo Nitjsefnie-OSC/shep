@@ -360,7 +360,9 @@ fn instance_counts_agree_with_instance_count_for_every_name() {
         info_with_instance(3, "web", 2),
         info(4, "worker"),
         ProcessInfo::builder(5, "metrics", ProcStatus::Online)
-            .dog(Some(shep_core::protocol::DogSource::BuiltIn))
+            .dog(Some(shep_core::protocol::DogSource::BuiltIn {
+                grants: None,
+            }))
             .build(),
     ];
     let cache: HashMap<u32, ProcessInfo> = rows.iter().map(|row| (row.id, row.clone())).collect();

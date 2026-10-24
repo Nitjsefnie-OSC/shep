@@ -13,6 +13,7 @@ fn dog(name: &str, source: DogSource) -> crate::dogs::DogSpec {
 
 fn adopted(name: &str) -> DogSource {
     DogSource::Adopted {
+        grants: None,
         path: format!("/usr/local/bin/shep-{name}"),
         channel: false,
     }
@@ -39,8 +40,8 @@ fn built_in_refusal(name: &str) -> RpcError {
 async fn deleting_a_built_in_dog_at_rest_is_refused_and_leaves_it_listed() {
     let h = harness(vec![]);
     crate::dogs::register_dogs_at_rest(
-        &[dog("metrics", DogSource::BuiltIn)],
-        &[dog("metrics", DogSource::BuiltIn)],
+        &[dog("metrics", DogSource::BuiltIn { grants: None })],
+        &[dog("metrics", DogSource::BuiltIn { grants: None })],
         &h.ctx.paths,
         &h.ctx.supervisor,
     )
@@ -52,7 +53,7 @@ async fn deleting_a_built_in_dog_at_rest_is_refused_and_leaves_it_listed() {
     let flock = list_flock(&h.ctx, 2).await;
     assert_eq!(flock.len(), 1, "{flock:?}");
     assert_eq!(flock[0].name, "metrics");
-    assert_eq!(flock[0].dog, Some(DogSource::BuiltIn));
+    assert_eq!(flock[0].dog, Some(DogSource::BuiltIn { grants: None }));
 }
 
 /// A dog on its kill ladder is refused for the same reason as one at rest:
@@ -168,7 +169,7 @@ async fn a_sheep_that_kept_a_built_in_dogs_name_is_deletable() {
     .result
     .expect("the sheep started");
     crate::dogs::register_dogs_at_rest(
-        &[dog("metrics", DogSource::BuiltIn)],
+        &[dog("metrics", DogSource::BuiltIn { grants: None })],
         &[],
         &h.ctx.paths,
         &h.ctx.supervisor,
@@ -191,7 +192,7 @@ async fn a_wildcard_delete_takes_the_sheep_and_passes_the_dog_by() {
     let h = harness(vec![ProcScript::never_exits()]);
     start_web(&h).await;
     crate::dogs::register_dogs_at_rest(
-        &[dog("bark", DogSource::BuiltIn)],
+        &[dog("bark", DogSource::BuiltIn { grants: None })],
         &[],
         &h.ctx.paths,
         &h.ctx.supervisor,

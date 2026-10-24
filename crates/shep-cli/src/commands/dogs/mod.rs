@@ -20,6 +20,7 @@
 
 use shep_client::{Client, ConnectError};
 use shep_core::paths::ShepPaths;
+use shep_core::permissions::Grants;
 use shep_core::protocol::DogSource;
 
 use crate::commands::shep_toml::{ShepToml, ShepTomlError};
@@ -31,6 +32,7 @@ mod barks;
 mod depends;
 mod disable;
 mod enable;
+mod grants;
 mod remove;
 mod vet;
 
@@ -115,7 +117,9 @@ fn emit_dog_action(
 pub(crate) fn fail_config(streams: &mut Streams<'_>, err: &ShepTomlError) -> ExitCode {
     let code = match err {
         ShepTomlError::Io { .. } => ExitCode::Failure,
-        ShepTomlError::Parse { .. } | ShepTomlError::WrongShape { .. } => ExitCode::InvalidConfig,
+        ShepTomlError::Parse { .. }
+        | ShepTomlError::WrongShape { .. }
+        | ShepTomlError::BadGrants { .. } => ExitCode::InvalidConfig,
     };
     streams.fail(code, &err.to_string())
 }
@@ -126,14 +130,19 @@ pub(crate) fn fail_config(streams: &mut Streams<'_>, err: &ShepTomlError) -> Exi
 /// recorded there is its binary; a name absent from that map is a built-in
 /// dog, an argv branch of this binary. `shep.toml` is the only place either
 /// verb can learn it.
-fn dog_source(cfg: &ShepToml, name: &str) -> DogSource {
-    adopted_source(cfg, name).unwrap_or(DogSource::BuiltIn)
+///
+/// `grants` is what [`ShepToml::granted`] read for `name`. The verbs that send
+/// the source read it with `?` so a typo stops them; the ones that only
+/// report it pass `None`, since a bad entry is no reason to refuse them.
+fn dog_source(cfg: &ShepToml, name: &str, grants: Option<Grants>) -> DogSource {
+    adopted_source(cfg, name, grants.clone()).unwrap_or(DogSource::BuiltIn { grants })
 }
 
-/// [`dog_source`] for an adopted `name`, carrying its recorded channel ask,
-/// and `None` for any other name.
-fn adopted_source(cfg: &ShepToml, name: &str) -> Option<DogSource> {
+/// [`dog_source`] for an adopted `name`, carrying its recorded channel ask
+/// and `grants`, and `None` for any other name.
+fn adopted_source(cfg: &ShepToml, name: &str, grants: Option<Grants>) -> Option<DogSource> {
     cfg.adopted_dog_path(name).map(|path| DogSource::Adopted {
+        grants,
         path: path.display().to_string(),
         channel: cfg.asked_for_channel(name),
     })

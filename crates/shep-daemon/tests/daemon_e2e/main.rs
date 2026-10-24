@@ -46,6 +46,9 @@ mod daemon_lifetime;
 // a `/bin/sh` script.
 #[cfg(unix)]
 mod dog_link;
+// Unix only, as `dog_link` is.
+#[cfg(unix)]
+mod dog_grants;
 mod dog_tables;
 mod harness;
 mod lifecycle;

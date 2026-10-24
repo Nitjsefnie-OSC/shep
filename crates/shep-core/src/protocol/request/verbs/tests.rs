@@ -234,7 +234,7 @@ fn request_wire_snapshots() {
             12,
             Request::EnableDog {
                 name: "metrics".to_string(),
-                source: DogSource::BuiltIn,
+                source: DogSource::BuiltIn { grants: None },
             },
         ),
         envelope(
@@ -501,13 +501,13 @@ fn request_wire_snapshots() {
             },
         ),
     ];
-    insta::assert_json_snapshot!("request_wire_v11", requests);
+    insta::assert_json_snapshot!("request_wire_v12", requests);
 }
 
 /// The request names a sheep and a stream. A `path` key here would make the
 /// shepherd a reader of arbitrary files.
 #[test]
-fn tail_log_request_wire_v11() {
+fn tail_log_request_wire_v12() {
     assert_eq!(
         serde_json::to_string(&Request::TailLog {
             id: 3,

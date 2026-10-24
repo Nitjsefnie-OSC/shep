@@ -183,11 +183,11 @@ fn an_instance_selector_reaches_a_dog() {
 
     let flock = vec![
         ProcessInfo::builder(0, "metrics", ProcStatus::Online)
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .instance(Some(0))
             .build(),
         ProcessInfo::builder(1, "metrics", ProcStatus::Online)
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .instance(Some(1))
             .build(),
     ];
@@ -276,7 +276,7 @@ fn an_all_that_matched_nothing_counts_sheep_and_not_dogs() {
 
     let all = ProcessSelector::parse("all").unwrap();
     let dogs_only = [ProcessInfo::builder(0, "log-rotate", ProcStatus::Online)
-        .dog(Some(DogSource::BuiltIn))
+        .dog(Some(DogSource::BuiltIn { grants: None }))
         .build()];
 
     let said = selector_miss("all", &all, &dogs_only).expect("a miss is reported");

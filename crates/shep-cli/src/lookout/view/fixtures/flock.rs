@@ -118,7 +118,7 @@ pub fn app_with_a_dog() -> App {
             .build(),
         ProcessInfo::builder(90, "otel", ProcStatus::Online)
             .pid(Some(90_000))
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .build(),
     ];
     app_with(flock, plain())
@@ -131,6 +131,7 @@ pub fn app_with_a_dog_selected_and_control() -> App {
     let dog = ProcessInfo::builder(90, "otel", ProcStatus::Online)
         .pid(Some(90_000))
         .dog(Some(DogSource::Adopted {
+            grants: None,
             path: "/opt/otel".to_string(),
             channel: false,
         }))
@@ -146,7 +147,7 @@ pub fn app_with_a_built_in_dog_selected_and_control() -> App {
     let decoy = ProcessInfo::builder(0, "!decoy", ProcStatus::Online).build();
     let dog = ProcessInfo::builder(90, "otel", ProcStatus::Online)
         .pid(Some(90_000))
-        .dog(Some(DogSource::BuiltIn))
+        .dog(Some(DogSource::BuiltIn { grants: None }))
         .build();
     let mut app = app_with(vec![decoy, dog], plain());
     app.set_control_for_tests(Control::Allowed);
