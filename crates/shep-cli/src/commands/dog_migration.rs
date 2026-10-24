@@ -1,7 +1,10 @@
 //! Moving `[dog.<name>]` out of `shep.toml` and into `dogs.toml`, once.
 //!
-//! [`migrate_dog_sections`] runs at the top of every daemon boot and does
-//! nothing on all but the first. It is one of the writers `dogs.toml` has:
+//! [`migrate_dog_sections`] runs at the top of every daemon boot, and
+//! `shep adopt` runs it before seeding a manifest's `defaults` so a home
+//! that still holds `[dog.<name>]` values moves them before a seeded
+//! section could collide with them. It does nothing on all but the first.
+//! It is one of the writers `dogs.toml` has:
 //! the others are [`seed_dog_defaults`], which `shep adopt` runs when a
 //! manifest carries `defaults`, and `shep_daemon::dogs::set_dog_section`,
 //! which the config pane reaches through `Request::SetDogConfig`. All

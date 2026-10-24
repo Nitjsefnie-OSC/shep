@@ -9,7 +9,9 @@ use shep_core::paths::{ShepPaths, user_home};
 use shep_core::protocol::{DogSource, Request, Response};
 
 use crate::cli::AdoptArgs;
-use crate::commands::dog_migration::{DefaultsOutcome, DogMigrationError, seed_dog_defaults};
+use crate::commands::dog_migration::{
+    DefaultsOutcome, DogMigrationError, migrate_dog_sections, seed_dog_defaults,
+};
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::shep_toml::ShepToml;
 use crate::exit::ExitCode;
@@ -77,6 +79,24 @@ pub async fn adopt(streams: &mut Streams<'_>, paths: &ShepPaths, args: &AdoptArg
         .as_ref()
         .and_then(|manifest| manifest.defaults.as_deref())
     {
+        // A home that still holds `[dog.<name>]` values in `shep.toml` must
+        // move them before a seeded section could sit beside them: seeding
+        // first would write a second copy of a section the boot's migration
+        // then refuses to move for holding values in both files. The
+        // migration is what the next boot runs anyway, and it is idempotent,
+        // so running it here only moves that boot's work earlier, where the
+        // operator is watching. Same report as `shep reload` gives.
+        match migrate_dog_sections(paths) {
+            Ok(moved) if moved.is_empty() => {}
+            Ok(moved) => streams.aside(
+                "adopt",
+                &format!(
+                    "moved dog config out of shep.toml and into dogs.toml: {}",
+                    moved.join(", ")
+                ),
+            ),
+            Err(err) => return fail_dogs_config(streams, &err),
+        }
         match seed_dog_defaults(paths, &name, defaults) {
             Ok(DefaultsOutcome::Written) => report_defaults_written(streams, &name),
             Ok(DefaultsOutcome::Kept | DefaultsOutcome::Empty) => {}
@@ -287,14 +307,18 @@ fn warn_unreadable_defaults(streams: &mut Streams<'_>, name: &str) {
     streams.aside(DOG_DEFAULTS_UNREADABLE_NOTICE, &message);
 }
 
-/// Renders a `dogs.toml` failure and returns its exit code.
+/// Renders a `dogs.toml` or migration failure and returns its exit code.
 ///
 /// A `dogs.toml` that is not valid TOML is the operator's broken config, so
-/// [`ExitCode::InvalidConfig`] like a broken `shep.toml`; the I/O modes
-/// have no more specific code than [`ExitCode::Failure`].
+/// [`ExitCode::InvalidConfig`] like a broken `shep.toml`, and so are the
+/// migration's two refusals: a name holding values in both files, and a
+/// `[dog]` whose names did not come back as sections. The I/O modes have no
+/// more specific code than [`ExitCode::Failure`].
 fn fail_dogs_config(streams: &mut Streams<'_>, err: &DogMigrationError) -> ExitCode {
     let code = match err {
-        DogMigrationError::Parse(_) => ExitCode::InvalidConfig,
+        DogMigrationError::Parse(_)
+        | DogMigrationError::WouldOverwrite { .. }
+        | DogMigrationError::SectionsUnreadable { .. } => ExitCode::InvalidConfig,
         _ => ExitCode::Failure,
     };
     streams.fail(code, &err.to_string())

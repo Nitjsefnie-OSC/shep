@@ -285,3 +285,58 @@ async fn the_unreadable_defaults_warning_says_nothing_was_added_not_that_no_sect
     );
     assert_eq!(std::fs::read_to_string(&paths.dogs_config).unwrap(), before);
 }
+
+/// A home upgraded from the `[dog.<name>]` layout, re-adopted before its
+/// first daemon boot: the legacy settings must move into `dogs.toml`
+/// before the manifest's `defaults` are judged. Seeding first would write
+/// a second copy of the section, and the boot's migration would then
+/// refuse the name for holding values in both files.
+#[tokio::test]
+async fn re_adopting_a_legacy_dog_moves_its_settings_before_writing_anything() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    std::fs::create_dir_all(&paths.home).unwrap();
+    std::fs::write(&paths.daemon_config, "[dog.otel]\ninterval = \"5m\"\n").unwrap();
+    let binary = write_dog(dir.path(), &manifest_with_defaults("interval = \"1h\"\n"));
+
+    let (code, notices) = adopt_otel(&paths, &binary).await;
+
+    assert_eq!(code, ExitCode::Success, "{notices}");
+    let dogs = std::fs::read_to_string(&paths.dogs_config).unwrap();
+    assert!(dogs.contains("interval = \"5m\""), "{dogs}");
+    assert!(
+        !dogs.contains("\"1h\""),
+        "the manifest defaults must not second-guess the operator's settings: {dogs}"
+    );
+    assert!(
+        notices.contains("moved dog config out of shep.toml and into dogs.toml: otel"),
+        "the move must be reported, the way `muster` reports it: {notices}"
+    );
+    let shep_toml = std::fs::read_to_string(&paths.daemon_config).unwrap();
+    assert!(!shep_toml.contains("[dog.otel]"), "{shep_toml}");
+    let moved = crate::commands::dog_migration::migrate_dog_sections(&paths).unwrap();
+    assert!(
+        moved.is_empty(),
+        "the next boot must find nothing left to move and nothing to refuse: {moved:?}"
+    );
+}
+
+/// The same home with the collision already hand-made: values for the dog
+/// in both files. `adopt` must refuse with the migration's own complaint
+/// rather than succeed and leave the next boot to fail.
+#[tokio::test]
+async fn a_legacy_home_that_would_collide_refuses_the_adopt_before_boot_would() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    std::fs::create_dir_all(&paths.home).unwrap();
+    std::fs::write(&paths.daemon_config, "[dog.otel]\ninterval = \"5m\"\n").unwrap();
+    let before = "[otel]\ninterval = \"10m\"\n";
+    std::fs::write(&paths.dogs_config, before).unwrap();
+    let binary = write_dog(dir.path(), &manifest_with_defaults("interval = \"1h\"\n"));
+
+    let (code, notices) = adopt_otel(&paths, &binary).await;
+
+    assert_eq!(code, ExitCode::InvalidConfig, "{notices}");
+    assert!(notices.contains("otel"), "{notices}");
+    assert_eq!(std::fs::read_to_string(&paths.dogs_config).unwrap(), before);
+}
