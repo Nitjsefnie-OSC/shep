@@ -54,6 +54,14 @@ fn record_over_grid(reset: ResetDepth) -> shep_core::overrides::AppOverrides {
         .1
 }
 
+/// The keys an override record still holds, sorted. The sort is there
+/// because `serde_json::Map` is insertion-ordered, and this is a set.
+fn held_keys(record: &shep_core::overrides::AppOverrides) -> Vec<&String> {
+    let mut held: Vec<&String> = record.fields.keys().collect();
+    held.sort();
+    held
+}
+
 /// Both axes in one test: the mode is the pair, and a test checking one
 /// axis would pass for two different modes.
 #[test]
@@ -133,9 +141,7 @@ fn all_puts_back_every_setting_and_env_with_it() {
 #[test]
 fn file_spends_only_the_override_it_put_back() {
     let record = record_over_grid(ResetDepth::File);
-    let mut held: Vec<&String> = record.fields.keys().collect();
-    // Sorted: `serde_json::Map` is insertion-ordered, and this is a set.
-    held.sort();
+    let held = held_keys(&record);
     assert_eq!(
         held,
         vec!["env", "max_memory"],
@@ -148,9 +154,7 @@ fn file_spends_only_the_override_it_put_back() {
 #[test]
 fn policy_spends_every_setting_override_and_keeps_env() {
     let record = record_over_grid(ResetDepth::Policy);
-    let mut held: Vec<&String> = record.fields.keys().collect();
-    // Sorted: `serde_json::Map` is insertion-ordered, and this is a set.
-    held.sort();
+    let held = held_keys(&record);
     assert_eq!(
         held,
         vec!["env"],
@@ -164,9 +168,7 @@ fn policy_spends_every_setting_override_and_keeps_env() {
 #[test]
 fn env_spends_only_the_env_override() {
     let record = record_over_grid(ResetDepth::Env);
-    let mut held: Vec<&String> = record.fields.keys().collect();
-    // Sorted: `serde_json::Map` is insertion-ordered, and this is a set.
-    held.sort();
+    let held = held_keys(&record);
     assert_eq!(
         held,
         vec!["max_memory", "max_restarts"],
