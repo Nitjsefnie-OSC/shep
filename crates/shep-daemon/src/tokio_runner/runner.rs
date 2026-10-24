@@ -20,7 +20,7 @@ use std::os::unix::process::ExitStatusExt as _;
 use std::path::Path;
 use std::process::Stdio;
 #[cfg(unix)]
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 #[cfg(unix)]
 use command_fds::{CommandFdExt, FdMapping};
@@ -36,7 +36,9 @@ use tokio::sync::mpsc;
 
 use crate::channel::CHANNEL_VERSION;
 #[cfg(unix)]
-use crate::runner::{AdoptSpec, AdoptedReaper};
+use shep_core::dogs::{DOG_LINK_FD, DOG_LINK_FD_VAR};
+#[cfg(unix)]
+use crate::runner::{AdoptSpec, AdoptedReaper, DogLink};
 use crate::runner::{
     ExitOutcome, Preflight, ProcIo, ProcessRunner, RunnerError, RunningProcess, SpawnSpec,
     StopSignal,
@@ -44,13 +46,28 @@ use crate::runner::{
 
 use super::CHANNEL_CAPACITY;
 #[cfg(unix)]
+use super::dog_link;
+#[cfg(unix)]
 use super::log_file::carried_sink;
 use super::log_file::{LogSink, PipeFds};
 use super::pump::{spawn_channel_pumps, spawn_log_pump, spawn_stdin_pump};
 
 /// Real [`crate::runner::ProcessRunner`] over actual OS processes.
-#[derive(Debug, Default)]
-pub struct TokioRunner;
+#[derive(Debug)]
+pub struct TokioRunner {
+    /// Where each dog's connection goes once its child has a pid.
+    #[cfg(unix)]
+    links: mpsc::UnboundedSender<DogLink>,
+    /// The other end of `links`, until [`ProcessRunner::dog_links`] takes it.
+    #[cfg(unix)]
+    links_rx: Mutex<Option<mpsc::UnboundedReceiver<DogLink>>>,
+}
+
+impl Default for TokioRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// The exit code [`TokioProc::kill_tree`] terminates a job with.
 ///
@@ -74,7 +91,14 @@ impl TokioRunner {
     /// Builds a runner that spawns real OS child processes.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        #[cfg(unix)]
+        let (links, links_rx) = mpsc::unbounded_channel();
+        Self {
+            #[cfg(unix)]
+            links,
+            #[cfg(unix)]
+            links_rx: Mutex::new(Some(links_rx)),
+        }
     }
 }
 
@@ -509,6 +533,14 @@ impl ProcessRunner for TokioRunner {
         ))
     }
 
+    #[cfg(unix)]
+    fn dog_links(&self) -> Option<mpsc::UnboundedReceiver<DogLink>> {
+        self.links_rx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+
     fn spawn(&self, spec: &SpawnSpec) -> Result<(Self::Proc, ProcIo), RunnerError> {
         let mut command = Command::new(&spec.program);
         command.args(&spec.args);
@@ -626,6 +658,10 @@ impl ProcessRunner for TokioRunner {
         // assembled after the spawn: the number is in reach only here.
         #[cfg(unix)]
         let mut channel_fd: Option<RawFd> = None;
+        // `fd_mappings` installs a pre-exec hook each call, and its own docs
+        // warn against calling it twice on one command.
+        #[cfg(unix)]
+        let mut mappings: Vec<FdMapping> = Vec::new();
         #[cfg(unix)]
         if spec.channel {
             command.env("SHEP_CHANNEL_FD", "3");
@@ -646,15 +682,10 @@ impl ProcessRunner for TokioRunner {
                 RunnerError::SpawnFailed(format!("shepherd channel set_nonblocking: {error}"))
             })?;
             let child_fd = OwnedFd::from(std_child_end);
-            command
-                .as_std_mut()
-                .fd_mappings(vec![FdMapping {
-                    parent_fd: child_fd,
-                    child_fd: 3,
-                }])
-                .map_err(|error| {
-                    RunnerError::SpawnFailed(format!("shepherd channel fd mapping: {error}"))
-                })?;
+            mappings.push(FdMapping {
+                parent_fd: child_fd,
+                child_fd: 3,
+            });
             channel_fd = Some(daemon_end.as_raw_fd());
             spawn_channel_pumps(daemon_end, from_child_tx, to_child_rx);
         } else {
@@ -662,6 +693,25 @@ impl ProcessRunner for TokioRunner {
             // reports closed at once and a stray send fails fast.
             drop(from_child_tx);
             drop(to_child_rx);
+        }
+
+        // Held until the child has a pid: the server that serves it records
+        // contact by that pid.
+        #[cfg(unix)]
+        let mut dog_end = None;
+        #[cfg(unix)]
+        if spec.dog_link {
+            let (daemon_end, mapping) = dog_link::pair()?;
+            command.env(DOG_LINK_FD_VAR, DOG_LINK_FD.to_string());
+            mappings.push(mapping);
+            dog_end = Some(daemon_end);
+        }
+        #[cfg(unix)]
+        if !mappings.is_empty() {
+            command
+                .as_std_mut()
+                .fd_mappings(mappings)
+                .map_err(|error| RunnerError::SpawnFailed(format!("fd mapping: {error}")))?;
         }
 
         let mut child = command
@@ -674,6 +724,16 @@ impl ProcessRunner for TokioRunner {
         let pid = child.id().ok_or_else(|| {
             RunnerError::SpawnFailed("child exited before its pid could be read".to_string())
         })?;
+        // A send that fails means nothing is serving links, and the dog falls
+        // back to the control socket.
+        #[cfg(unix)]
+        if let Some(stream) = dog_end {
+            let _ = self.links.send(DogLink {
+                name: spec.name.clone(),
+                pid,
+                stream,
+            });
+        }
 
         // As early as containment can happen: the child exists and everything
         // it spawns from here inherits the job. Fatal on failure, because a

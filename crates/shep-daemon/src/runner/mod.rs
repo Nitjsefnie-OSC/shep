@@ -16,6 +16,8 @@
 /// itself lives in the crate-private `handover` module.
 #[cfg(unix)]
 pub use crate::handover::reap::AdoptedReaper;
+#[cfg(unix)]
+mod dog_link;
 mod log_path_security;
 mod log_protocol;
 mod path_advisories;
@@ -30,6 +32,8 @@ mod testing;
 #[cfg(all(test, unix))]
 pub(crate) use log_path_security::SYMLINK_REFUSED;
 pub(crate) use log_path_security::{check_log_ancestry, open_log_path};
+#[cfg(unix)]
+pub use dog_link::DogLink;
 pub use log_protocol::{ExitOutcome, FlushError, LogCtl, LogLine, ReopenError};
 pub(crate) use path_advisories::{cwd_advisory, log_path_advisory};
 /// Gated with the type: `AdoptSpec` is the handover's, and Windows has no

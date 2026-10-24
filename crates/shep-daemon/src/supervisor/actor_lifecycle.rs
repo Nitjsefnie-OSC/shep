@@ -126,6 +126,7 @@ impl<R: ProcessRunner> Actor<R> {
         let slot = self.sheep.get(&id).expect("respawn: unknown id");
         let app = slot.entry.spec.clone();
         let instance = slot.entry.instance;
+        let dog_link = slot.entry.dog.is_some();
         // Computed ahead of the mutable borrow below.
         let next_epoch = slot.epoch + 1;
         let spec = match assemble(
@@ -135,7 +136,7 @@ impl<R: ProcessRunner> Actor<R> {
             credentials,
             &self.secret_view(&app),
         ) {
-            Ok(spec) => spec,
+            Ok(spec) => SpawnSpec { dog_link, ..spec },
             Err(err) => return self.refuse_spawn(id, manually, &err),
         };
         let source = ReadinessSource::of_normalized(app.config());
