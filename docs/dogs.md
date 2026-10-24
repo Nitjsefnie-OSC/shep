@@ -490,7 +490,7 @@ Once adopted, `shep <name> [args...]` runs the dog directly — the same
 (never a `$PATH` scan). It's a second invocation mode, distinct from the
 one the shepherd itself uses: an adopted dog the shepherd starts gets no
 argv and two environment variables (`$SHEP_HOME` and `$SHEP_DOG_NAME`,
-below); a dog you name on the command line gets whatever you typed after
+below, and on unix a third, `$SHEP_DOG_FD`); a dog you name on the command line gets whatever you typed after
 it, passed straight through, plus those same two. A built-in verb or alias
 always wins over a same-named dog.
 
@@ -528,16 +528,17 @@ table send `Request::SheepDogSettingsResolved { name, dog }`, which answers
 that text. Shep sets two
 variables of its own on a dog: `$SHEP_HOME`, which is how it finds that
 socket in the first place, and `$SHEP_DOG_NAME`, which is the `name` to put
-in that request. No `[<name>]` value ever rides along beside them, for
-the reason given above. A section's key is not one of its values.
+in that request. On unix a supervised dog gets a third, `$SHEP_DOG_FD`,
+below. No `[<name>]` value ever rides along beside them, for the reason given
+above. A section's key is not one of its values.
 
-On unix the shepherd also hands a supervised dog a connection that is already
-open, as descriptor 4 named in `$SHEP_DOG_FD`. It speaks the same protocol as
-the socket and is served from the dog's spawn, so it works during the muster
+`$SHEP_DOG_FD` names a connection that is already open, as descriptor 4. It
+speaks the same protocol as the socket and is served from the dog's spawn, so it works during the muster
 restore, when the socket does not yet answer. The connection is the dog's
 identity: a `dog_name` sent on it is ignored. Fall back to the socket when the
-variable is absent or the connection closes. A dog started by hand has none.
-`DogRuntime` does all of this.
+variable is absent or the connection closes. A variable that is set but names
+no usable descriptor is a fault, not an absence. A dog started by hand has
+none. `DogRuntime` does all of this.
 
 **Put that name in the `Hello` too, as `dog_name`.** Optional, and nothing
 breaks without it right up until the shepherd is replaced by one your binary

@@ -88,7 +88,7 @@ impl Attribution {
     /// one of its kind before.
     pub(super) fn note(&mut self, ctx: &RpcContext, request: &Request) {
         let Some(dog) = &self.dog else { return };
-        let Some(kind) = kind_of(request) else { return };
+        let kind = kind_of(request);
         if self.seen.insert(kind.clone()) {
             crate::dogs::narrate_by_name(
                 &ctx.supervisor,
@@ -101,9 +101,13 @@ impl Attribution {
 }
 
 /// The wire name of `request`'s variant, and nothing of what it carries.
-fn kind_of(request: &Request) -> Option<String> {
-    let value = serde_json::to_value(request).ok()?;
-    value.get("kind")?.as_str().map(str::to_owned)
+///
+/// A request that serializes with no `kind` is still narrated, as `request`.
+fn kind_of(request: &Request) -> String {
+    serde_json::to_value(request)
+        .ok()
+        .and_then(|value| value.get("kind")?.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "request".to_owned())
 }
 
 #[cfg(test)]
@@ -150,7 +154,7 @@ mod tests {
 
     #[test]
     fn a_request_is_named_by_its_variant_alone() {
-        assert_eq!(kind_of(&Request::Ping).as_deref(), Some("ping"));
-        assert_eq!(kind_of(&Request::ListFlock).as_deref(), Some("list_flock"));
+        assert_eq!(kind_of(&Request::Ping), "ping");
+        assert_eq!(kind_of(&Request::ListFlock), "list_flock");
     }
 }

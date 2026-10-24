@@ -17,26 +17,51 @@ use super::DogIdentity;
 ///
 /// # Errors
 ///
-/// See [`ReconnectingClient::connect_as`].
+/// - [`ConnectError::Io`]: `$SHEP_DOG_FD` is set and names no usable
+///   connection. The shepherd said this dog has one, so reaching it on the
+///   socket as the operator would hide the fault.
+/// - Otherwise as [`ReconnectingClient::connect_as`].
 pub(super) async fn connect(
     identity: &DogIdentity,
     socket: &Path,
 ) -> Result<ReconnectingClient, ConnectError> {
     #[cfg(unix)]
-    return connect_via(inherited(), identity, socket).await;
+    return connect_via(inherited()?, identity, socket).await;
     #[cfg(not(unix))]
     return ReconnectingClient::connect_as(socket, identity).await;
 }
 
-/// The connection the shepherd spawned this process holding, if it did and
-/// it can be used. A dog started by hand has none.
+/// The connection the shepherd spawned this process holding. `None` for a
+/// dog started by hand, and for one that already took it.
 #[cfg(unix)]
-fn inherited() -> Option<tokio::net::UnixStream> {
-    let std_stream = shep_channel::take_inherited_socket(shep_core::dogs::DOG_LINK_FD_VAR)
-        .ok()
-        .flatten()?;
-    std_stream.set_nonblocking(true).ok()?;
-    tokio::net::UnixStream::from_std(std_stream).ok()
+fn inherited() -> Result<Option<tokio::net::UnixStream>, ConnectError> {
+    adopt(shep_channel::take_inherited_socket(
+        shep_core::dogs::DOG_LINK_FD_VAR,
+    ))
+}
+
+/// Makes what `take_inherited_socket` found into a connection this runtime
+/// can use.
+#[cfg(unix)]
+fn adopt(
+    taken: Result<Option<std::os::unix::net::UnixStream>, shep_channel::ChannelError>,
+) -> Result<Option<tokio::net::UnixStream>, ConnectError> {
+    let unusable = |reason: &dyn core::fmt::Display| {
+        ConnectError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{}: {reason}", shep_core::dogs::DOG_LINK_FD_VAR),
+        ))
+    };
+    match taken {
+        Ok(None) | Err(shep_channel::ChannelError::AlreadyTaken) => Ok(None),
+        Err(error) => Err(unusable(&error)),
+        Ok(Some(stream)) => {
+            stream.set_nonblocking(true).map_err(ConnectError::Io)?;
+            tokio::net::UnixStream::from_std(stream)
+                .map(Some)
+                .map_err(ConnectError::Io)
+        }
+    }
 }
 
 /// As [`connect`], with the inherited connection passed in.
@@ -100,6 +125,34 @@ mod tests {
             }
             (hello, seen)
         })
+    }
+
+    #[tokio::test]
+    async fn a_variable_that_names_no_connection_is_an_error_and_not_a_fallback() {
+        let taken = Err(shep_channel::ChannelError::Unusable(
+            "SHEP_DOG_FD=fido".to_owned(),
+        ));
+
+        let err = adopt(taken).unwrap_err();
+
+        assert!(matches!(err, ConnectError::Io(_)), "{err:?}");
+        assert!(err.to_string().contains("SHEP_DOG_FD"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn no_variable_and_a_link_already_taken_both_mean_the_socket() {
+        assert!(adopt(Ok(None)).unwrap().is_none());
+        assert!(
+            adopt(Err(shep_channel::ChannelError::AlreadyTaken))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_taken_link_becomes_a_usable_stream() {
+        let (ours, _theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        assert!(adopt(Ok(Some(ours))).unwrap().is_some());
     }
 
     #[tokio::test]
