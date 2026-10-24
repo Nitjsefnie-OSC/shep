@@ -1,5 +1,5 @@
-//! Arguments for the settings verbs: `shep get <name>[.<path>]` and
-//! `shep set <name>[.<path>] <value>`.
+//! Arguments for the settings verbs: `shep get <name>[.<path>]`,
+//! `shep set <name>[.<path>] <value>` and `shep unset <name>[.<path>]`.
 //!
 //! One address, spelled [`CopyArgs`](crate::cli::CopyArgs)'s way: a sheep's
 //! or a dog's name, then a path inside the settings that name holds. Nothing
@@ -35,6 +35,26 @@ pub struct SetArgs {
     /// The new value, as TOML: `5`, `true`, `["a", "b"]`, `{ keep = 1 }`. Text
     /// that is not TOML is the string as typed, such as `3s`
     pub value: String,
+    /// Print what would change and write nothing
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Write without asking
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// Arguments to `shep unset`.
+///
+/// [`SetArgs`] without the value: the address names what to drop, and the
+/// question `set` asks before it writes is the question `unset` asks too. A
+/// sheep's field has no value to put back by hand, so dropping its override
+/// is what returns the Flockfile's; a dog's key is removed so the dog's own
+/// default applies.
+#[derive(Debug, clap::Args)]
+pub struct UnsetArgs {
+    /// A sheep's field, or a key inside a dog's settings, such as
+    /// `api.max_memory`, `api.dogs.kelpie.git`, or `kelpie.worker.timeout`
+    pub address: String,
     /// Print what would change and write nothing
     #[arg(long)]
     pub dry_run: bool,

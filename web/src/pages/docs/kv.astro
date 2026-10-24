@@ -46,10 +46,6 @@ REMOVED
 $ shep kv get
 KEY  VALUE`;
 
-const oldSpelling = `$ shep unset bark.cooldown
-notice[moved]: \`shep unset\` moved to \`shep kv unset\`; the old spelling still works
-REMOVED
-1`;
 ---
 
 <DocsLayout
@@ -91,14 +87,12 @@ REMOVED
 
     <h2 id="the-old-spelling">The old spelling</h2>
     <p>
-      <code>shep unset</code> still works, and prints where the verb went on
-      stderr. A <code>--format json</code> run prints no note: that format is
-      one object per invocation. <code>shep get</code> and <code>shep set</code>
-      are taken: they read and write a sheep's or a dog's settings. A
+      There is none. <code>shep get</code>, <code>shep set</code> and{" "}
+      <code>shep unset</code> read, write and undo a sheep's or a dog's
+      settings, and none of them reaches this store. A
       <code>shep set feature.flag on</code> is refused as a name no sheep or dog
       is, and the sentence names <code>shep kv set</code>.
     </p>
-    <CodeBlock label="table form">{oldSpelling}</CodeBlock>
 
     <h2 id="real-output">Real output</h2>
     <p>Run against a fresh <code>$SHEP_HOME</code>, no shepherd listening:</p>
@@ -125,7 +119,8 @@ REMOVED
     <p>
       A sheep's own settings are not in this store: <code>shep copy</code>{" "}
       moves one, over the socket, because it reads what the running flock
-      holds, and <code>shep set</code> changes one the same way.
+      holds, <code>shep set</code> changes one the same way, and{" "}
+      <code>shep unset</code> drops it again.
     </p>
 
     <h2 id="no-shepherd-required">No shepherd required</h2>

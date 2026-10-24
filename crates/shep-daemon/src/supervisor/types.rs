@@ -87,6 +87,9 @@ pub(crate) struct FieldSet {
     /// reached. `Command::SetSheepEnv` answers with the same thing and for
     /// the same reason: the muster roll is written from the registry.
     pub(crate) app: ResolvedApp,
+    /// The value the field holds now: what a set wrote, or what a reset
+    /// put back.
+    pub(crate) value: serde_json::Value,
     /// `true` when the running child does not have the value yet.
     pub(crate) pending: bool,
     /// The `warning` [`shep_core::protocol::Response::SheepFieldSet`]

@@ -9,9 +9,9 @@
 use super::{
     AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DialStdioArgs,
     DisableArgs, DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, GetArgs, HostArgs,
-    ImportArgs, InitArgs, KvArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs,
-    SelectorArgs, ServeArgs, SetArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs,
-    TriggerArgs, WhisperArgs,
+    ImportArgs, InitArgs, KvArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs, SelectorArgs,
+    ServeArgs, SetArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs, TriggerArgs,
+    UnsetArgs, WhisperArgs,
 };
 
 /// Every verb the binary understands.
@@ -400,12 +400,26 @@ pub enum Commands {
     ///
     /// The key/value store this verb used to write lives at `shep kv set`.
     Set(SetArgs),
-    /// Remove one key from the store, or every key with --all, as
-    /// `shep kv unset`.
+    /// Drop an override, or remove a dog's key, so what was there before applies.
     ///
-    /// `shep unset` is the store's old spelling, and prints the same notice.
-    #[command(hide = true)]
-    Unset(KvUnsetArgs),
+    /// The address is `shep set`'s. On a sheep's field it drops the override
+    /// you set, so the Flockfile's value returns, in `shep get` and in the
+    /// running config. A field with no override is refused: it already holds
+    /// the Flockfile's value. On a key of a dog's settings, whether the dog's
+    /// table on a sheep or its section of `dogs.toml`, it removes the key, so
+    /// the dog's own default applies. A sheep's whole `dogs.<dog>` table can be
+    /// removed too; a whole `dogs.toml` section, `env`, `name`, `instances` and
+    /// the whole `dogs` map are refused.
+    ///
+    /// The flow and the flags are `shep set`'s: the change list prints first,
+    /// `--yes` skips the question, `--dry-run` writes nothing, and
+    /// `--format json` prints one envelope after the answer. A key dropped from
+    /// a field the sheep only reads at spawn waits for the next one, and
+    /// `shep reload` promotes it.
+    ///
+    /// The key/value store this verb used to remove from lives at
+    /// `shep kv unset`.
+    Unset(UnsetArgs),
     /// Store the values a Flockfile refers to and never carries.
     ///
     /// Reads and writes `$SHEP_HOME/secrets.json` directly and never
@@ -694,10 +708,9 @@ mod tests {
         let lookout = cmd.find_subcommand("lookout").unwrap();
         assert_eq!(lookout.get_visible_aliases().collect::<Vec<_>>(), ["dash"]);
 
-        // `get` and `set` are absent from the hidden list on purpose: they are
-        // the settings verbs now, and only `unset` remains the store's hidden
-        // spelling.
-        for hidden in ["thatlldo", "daemon", "dog", "rehome", "dial-stdio", "unset"] {
+        // `get`, `set` and `unset` are absent from the hidden list on purpose:
+        // they are the settings verbs.
+        for hidden in ["thatlldo", "daemon", "dog", "rehome", "dial-stdio"] {
             assert!(
                 cmd.find_subcommand(hidden).unwrap().is_hide_set(),
                 "{hidden} must stay hidden from --help"
@@ -721,6 +734,7 @@ mod tests {
             "kv",
             "get",
             "set",
+            "unset",
             "ping",
             "kill",
             "save",

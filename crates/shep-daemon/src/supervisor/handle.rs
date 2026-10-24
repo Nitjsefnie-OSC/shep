@@ -305,6 +305,27 @@ impl SupervisorHandle {
         .await?
     }
 
+    /// Drops the operator's override of one config field on one sheep.
+    ///
+    /// [`Actor::handle_reset_sheep_field`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_sheep_field`], and [`SupervisorError::InvalidField`]
+    /// also when the operator holds no override of the key.
+    pub(crate) async fn reset_sheep_field(
+        &self,
+        name: &str,
+        key: &str,
+    ) -> Result<Option<FieldSet>, SupervisorError> {
+        self.call(|reply| Command::ResetSheepField {
+            name: name.to_string(),
+            key: key.to_string(),
+            reply,
+        })
+        .await?
+    }
+
     /// `dog`'s table on every sheep carrying one, by sheep name. See
     /// [`Actor::handle_dog_sheep_settings`].
     ///

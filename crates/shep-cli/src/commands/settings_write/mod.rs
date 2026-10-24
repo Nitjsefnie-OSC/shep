@@ -1,4 +1,5 @@
-//! `shep set <address> <value>`: one write for any settings in the flock.
+//! `shep set <address> <value>` and `shep unset <address>`: one write for any
+//! settings in the flock, and the undo for it.
 //!
 //! The address is `shep copy`'s and `shep get`'s, resolved against the names
 //! the running flock carries: a sheep's name addresses its config and the
@@ -14,6 +15,12 @@
 //! and new values, ask, write. Nothing is sent until the operator has seen
 //! every key the write touches, which is also why a refusal never leaves a
 //! half-written sheep behind.
+//!
+//! `shep unset` is the same flow with no value: [`unset()`] plans the removal of
+//! a key, and [`run`] asks and writes it the way it does a set. A sheep's field
+//! goes through [`Request::ResetSheepField`], which drops the operator's
+//! override so the Flockfile's value returns, and a dog's key is removed from
+//! the table or the section that holds it.
 //!
 //! The value is TOML, and text that is not TOML is the string as typed: `5`
 //! is a number, `true` is a toggle, `["a", "b"]` is a list, `{ keep = 1 }` is
@@ -34,34 +41,66 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::io::IsTerminal as _;
 
 use serde_json::{Map, Value as Json};
 use shep_client::Client;
 use shep_core::config::DogTable;
 use shep_core::paths::ShepPaths;
-use shep_core::protocol::{DogSectionToml, Request, Response};
+#[cfg(doc)]
+use shep_core::protocol::Request;
 use toml_edit::DocumentMut;
 
-use self::plan::{field_changes, plan_dog_table, plan_section, schema_refusal};
+use self::plan::{field_changes, plan_dog_table, plan_section};
 use self::schema::{dog_schema, known_dogs};
 use self::value::value_of;
-use crate::cli::{Format, SetArgs};
+use crate::cli::SetArgs;
 use crate::commands::copy;
+use crate::commands::copy::CopyRefusal;
 use crate::commands::copy::address::{self, ConfigPath, FlockNames};
-use crate::commands::copy::confirm::{self, Answer, Go};
 use crate::commands::copy::plan::Change;
-use crate::commands::copy::report::shows_changes_first;
-use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::settings_read::{self, Holder};
 use crate::exit::ExitCode;
 use crate::lookout::probe_sheep_dogs::sheep_schema;
-use crate::output::{CopyChange, SetReport, Streams, emit, write_outcome};
+use crate::output::Streams;
 
 mod edit;
+mod flow;
 mod plan;
 mod schema;
+mod unset;
 mod value;
+
+use self::flow::run;
+pub(crate) use self::unset::unset;
+
+/// Which of the two verbs this run is, for the words it prints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verb {
+    /// `shep set`.
+    Set,
+    /// `shep unset`.
+    Unset,
+}
+
+impl Verb {
+    /// The verb as typed, which is also the `command` its envelope carries.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Set => "set",
+            Self::Unset => "unset",
+        }
+    }
+}
+
+/// The verb and the two flags a run was given.
+#[derive(Debug, Clone, Copy)]
+struct Flags {
+    verb: Verb,
+    /// `--yes`: write without asking.
+    yes: bool,
+    /// `--dry-run`: print the changes and write nothing.
+    dry_run: bool,
+}
 
 /// Why a write stopped before it wrote anything.
 ///
@@ -155,15 +194,30 @@ pub(super) enum Write {
         /// The table the sheep holds afterwards.
         table: DogTable,
         /// The table the sheep held when this plan was built, which is what
-        /// [`holder_unchanged`] checks the sheep still holds.
+        /// [`flow::holder_unchanged`] checks the sheep still holds.
         before: Json,
+    },
+    /// One dog's whole table on one sheep, removed through
+    /// [`Request::SetSheepDogSettings`] with no table.
+    DropSheepDogTable {
+        /// The dog's name.
+        dog: String,
+        /// The table the sheep held when this plan was built, which is what
+        /// [`flow::holder_unchanged`] checks the sheep still holds.
+        before: Json,
+    },
+    /// One `AppConfig` field's override, dropped through
+    /// [`Request::ResetSheepField`].
+    ResetSheepField {
+        /// The field name.
+        key: String,
     },
     /// One dog's whole section, through [`Request::SetDogConfig`].
     DogSection {
         /// The section text, edited in place from the text the shepherd
         /// answered.
         toml: String,
-        /// The text the shepherd answered, which is what [`holder_unchanged`]
+        /// The text the shepherd answered, which is what [`flow::holder_unchanged`]
         /// checks it still answers.
         before: String,
     },
@@ -192,8 +246,8 @@ pub(super) struct Plan {
 /// address and value, and the flock and the files the address was resolved
 /// against.
 pub(super) struct Ask<'a> {
-    /// The flags the operator typed: `--yes`, `--dry-run`, `--format`.
-    args: &'a SetArgs,
+    /// The flags the operator typed: `--yes`, `--dry-run`.
+    flags: Flags,
     /// The value, already read as TOML.
     value: Json,
     /// The names the running flock carries.
@@ -228,7 +282,11 @@ pub(crate) async fn set(
         Err(refusal) => return refusal.report(streams),
     };
     let ask = Ask {
-        args,
+        flags: Flags {
+            verb: Verb::Set,
+            yes: args.yes,
+            dry_run: args.dry_run,
+        },
         value,
         flock: &flock,
         paths,
@@ -251,16 +309,7 @@ async fn set_sheep(
         Ok(config) => config,
         Err(code) => return code,
     };
-    let depth = name.split('.').count();
-    let written = address::Written {
-        sheep: name.to_string(),
-        segments: segments[depth..].to_vec(),
-    };
-    // The same sheep on both sides of `path_of`: `copy` resolves a dotted dog
-    // name against the two tables it is copying between, and this verb has the
-    // one it is writing.
-    let dogs = address::DogNames::new(ask.flock, &config, &Json::Null);
-    let path = match address::path_of(&written, &dogs, &config, &config) {
+    let path = match path_in(name, segments, ask.flock, &config) {
         Ok(path) => path,
         Err(refusal) => return refusal.report(streams),
     };
@@ -294,11 +343,104 @@ async fn set_sheep(
         name,
         &path.dotted(),
         &plan,
-        ask.args,
+        ask.flags,
     )
     .await
 }
+
+/// Where in sheep `name`'s settings the address points: one of its fields, or
+/// a key inside one of its dog tables.
+///
+/// # Errors
+/// The refusal [`address::path_of`] gives for a path no write reaches.
+fn path_in(
+    name: &str,
+    segments: &[String],
+    flock: &FlockNames,
+    config: &Json,
+) -> Result<ConfigPath, CopyRefusal> {
+    let depth = name.split('.').count();
+    let written = address::Written {
+        sheep: name.to_string(),
+        segments: segments[depth..].to_vec(),
+    };
+    // The same sheep on both sides of `path_of`: `copy` resolves a dotted dog
+    // name against the two tables it is copying between, and this verb has the
+    // one it is writing.
+    let dogs = address::DogNames::new(flock, config, &Json::Null);
+    address::path_of(&written, &dogs, config, config)
+}
+
+/// The dog an address names, and the section of `dogs.toml` it holds now.
+pub(super) struct DogTarget {
+    /// The dog's name, dotted where the dog is.
+    name: String,
+    /// The section text the shepherd answered, `None` for a dog the flock runs
+    /// with no section yet.
+    section: Option<String>,
+}
+
+impl DogTarget {
+    /// The section as a document to edit in place, empty for a dog with no
+    /// section.
+    ///
+    /// # Errors
+    /// The [`ExitCode`] already reported to `streams`, for text that is not
+    /// TOML.
+    fn document(&self, streams: &mut Streams<'_>) -> Result<DocumentMut, ExitCode> {
+        let Some(section) = &self.section else {
+            return Ok(DocumentMut::new());
+        };
+        section
+            .parse::<DocumentMut>()
+            .map_err(|_| streams.fail(ExitCode::InvalidConfig, &unparsable(&self.name)))
+    }
+
+    /// The segments of the address after the dog's name.
+    fn rest<'a>(&self, segments: &'a [String]) -> &'a [String] {
+        &segments[self.name.split('.').count()..]
+    }
+}
+
 /// One dog's own section of `dogs.toml`.
+async fn set_dog(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    segments: &[String],
+    ask: &Ask<'_>,
+) -> ExitCode {
+    let target = match resolve_dog(client, streams, segments, ask.flock, ask.paths).await {
+        Ok(target) => target,
+        Err(code) => return code,
+    };
+    let doc = match target.document(streams) {
+        Ok(doc) => doc,
+        Err(code) => return code,
+    };
+    let rest = target.rest(segments);
+    let keys = settings_read::dog_steps(doc.as_table(), rest);
+    match plan_section(doc, &target.name, &keys, &ask.value) {
+        Ok(plan) => {
+            let plan = Plan {
+                schema: dog_schema(&target.name, ask.paths),
+                ..plan
+            };
+            run(
+                client,
+                streams,
+                Holder::Dog,
+                &target.name,
+                &rest.join("."),
+                &plan,
+                ask.flags,
+            )
+            .await
+        }
+        Err(refusal) => refusal.report(streams),
+    }
+}
+
+/// The dog an address names.
 ///
 /// The name is the longest run of segments the shepherd answers a section for,
 /// which is what tells `kelpie` and `kelpie.worker` apart, and it is the rule
@@ -306,29 +448,30 @@ async fn set_sheep(
 /// longest first, and the first candidate with a section is the dog.
 ///
 /// A dog the flock runs with no section yet is the one case with nothing to
-/// read, and the write creates it: the operator named a key, and a section
-/// that does not exist yet is no reason to refuse it.
+/// read, and a write creates it: the operator named a key, and a section that
+/// does not exist yet is no reason to refuse it.
 ///
 /// A section is not what makes a dog known. The candidate has to be a name the
 /// shepherd will take a `Request::SetDogConfig` for, which is the same set the
 /// daemon guards that request on, so a section left behind by a dog that is no
 /// longer adopted or enabled is refused here rather than sent to be refused
 /// there with a sentence that names neither.
-async fn set_dog(
+///
+/// # Errors
+/// The [`ExitCode`] already reported to `streams`.
+pub(super) async fn resolve_dog(
     client: &Client,
     streams: &mut Streams<'_>,
     segments: &[String],
-    ask: &Ask<'_>,
-) -> ExitCode {
+    flock: &FlockNames,
+    paths: &ShepPaths,
+) -> Result<DogTarget, ExitCode> {
     let mut named: Option<String> = None;
     let mut sectioned: Option<String> = None;
-    let known = known_dogs(ask.paths);
+    let known = known_dogs(paths);
     for name in settings_read::dog_candidates(segments) {
-        let section = match settings_read::read_dog_section(client, streams, &name).await {
-            Ok(section) => section,
-            Err(code) => return code,
-        };
-        let holds = ask.flock.dogs.contains(&name) || known.contains(&name);
+        let section = settings_read::read_dog_section(client, streams, &name).await?;
+        let holds = flock.dogs.contains(&name) || known.contains(&name);
         if holds && named.is_none() {
             named = Some(name.clone());
         }
@@ -342,332 +485,19 @@ async fn set_dog(
             // `kelpie` is not.
             continue;
         }
-        let Ok(doc) = section.parse::<DocumentMut>() else {
-            return streams.fail(ExitCode::InvalidConfig, &unparsable(&name));
-        };
-        let depth = name.split('.').count();
-        let rest = &segments[depth..];
-        let keys = settings_read::dog_steps(doc.as_table(), rest);
-        return match plan_section(doc, &name, &keys, &ask.value) {
-            Ok(plan) => {
-                let plan = Plan {
-                    schema: dog_schema(&name, ask.paths),
-                    ..plan
-                };
-                run(
-                    client,
-                    streams,
-                    Holder::Dog,
-                    &name,
-                    &rest.join("."),
-                    &plan,
-                    ask.args,
-                )
-                .await
-            }
-            Err(refusal) => refusal.report(streams),
-        };
+        return Ok(DogTarget {
+            name,
+            section: Some(section),
+        });
     }
-    let Some(dog) = named else {
-        return match sectioned {
-            Some(name) => WriteRefusal::Unknown(no_known_dog(&name)).report(streams),
-            None => WriteRefusal::Unknown(no_such_name(segments)).report(streams),
-        };
-    };
-    let depth = dog.split('.').count();
-    let rest = &segments[depth..];
-    match plan_section(DocumentMut::new(), &dog, rest, &ask.value) {
-        Ok(plan) => {
-            let plan = Plan {
-                schema: dog_schema(&dog, ask.paths),
-                ..plan
-            };
-            run(
-                client,
-                streams,
-                Holder::Dog,
-                &dog,
-                &rest.join("."),
-                &plan,
-                ask.args,
-            )
-            .await
-        }
-        Err(refusal) => refusal.report(streams),
+    match (named, sectioned) {
+        (Some(name), _) => Ok(DogTarget {
+            name,
+            section: None,
+        }),
+        (None, Some(name)) => Err(WriteRefusal::Unknown(no_known_dog(&name)).report(streams)),
+        (None, None) => Err(WriteRefusal::Unknown(no_such_name(segments)).report(streams)),
     }
-}
-/// Prints the change list, asks, writes, and reports what the write left
-/// waiting.
-async fn run(
-    client: &Client,
-    streams: &mut Streams<'_>,
-    holder: Holder,
-    name: &str,
-    path: &str,
-    plan: &Plan,
-    args: &SetArgs,
-) -> ExitCode {
-    if let Some(refusal) = schema_refusal(plan, name, path) {
-        return refusal.report(streams);
-    }
-    let mut report = report_for(holder, name, path, plan, false, args.dry_run);
-    if plan.changes.is_empty() {
-        announce(
-            streams,
-            "set",
-            &format!(
-                "nothing to write: `{}.{}` already holds that value",
-                name, report.path
-            ),
-        );
-        return finish(streams, &report);
-    }
-    let go = confirm::decide(
-        args.dry_run,
-        args.yes,
-        std::io::stdin().is_terminal(),
-        !plan.changes.is_empty(),
-    );
-
-    // The change list prints before anything is asked about it, in every
-    // form. Where it prints depends on what that form's stdout carries: the
-    // table form's stdout is the change list, and the JSON form's is one
-    // envelope that can only be written after the write the question gates.
-    if shows_changes_first(streams.fmt, go)
-        && let Err(code) = print_changes(streams, &report)
-    {
-        return code;
-    }
-
-    if go == Go::Refuse {
-        return streams.fail(
-            ExitCode::Usage,
-            "nothing was written: `shep set` asks before it writes, and this run has no terminal \
-             to ask on. Pass --yes to write without asking, or --dry-run to see the changes and \
-             write nothing",
-        );
-    }
-    if go == Go::Ask {
-        let mut reader = std::io::stdin().lock();
-        match ask(streams, name, &report.path, plan.changes.len(), &mut reader) {
-            Answer::Yes => {}
-            Answer::No => {
-                announce(streams, "set", "nothing was written");
-                return finish(streams, &report);
-            }
-            Answer::Failed(reason) => {
-                return streams.fail(
-                    ExitCode::Failure,
-                    &format!("nothing was written: the question could not be read ({reason})"),
-                );
-            }
-        }
-    }
-    if go == Go::DryRun {
-        announce(streams, "dry_run", "nothing was written");
-        return finish(streams, &report);
-    }
-
-    // The answer was given, and the holder may have moved while it was being
-    // given. A whole-section or whole-table write carries every key it read, so
-    // a stale plan overwrites what someone else wrote in the meantime.
-    match holder_unchanged(client, streams, name, &plan.write).await {
-        Ok(true) => {}
-        Ok(false) => {
-            return WriteRefusal::Stale(holder_moved(name, &report.path, &plan.write))
-                .report(streams);
-        }
-        Err(code) => return code,
-    }
-
-    let pending = match send(client, streams, name, &plan.write).await {
-        Ok(pending) => pending,
-        Err(code) => return code,
-    };
-    report = report_for(holder, name, path, plan, true, args.dry_run);
-    report.pending = pending;
-    if !report.pending.is_empty() {
-        announce(
-            streams,
-            "parked",
-            &format!(
-                "{} waiting on the next spawn (`shep reload {name}` promotes them)",
-                report.pending.join(", ")
-            ),
-        );
-    }
-    announce(
-        streams,
-        "written",
-        &format!(
-            "wrote {} change{} onto `{}`",
-            plan.changes.len(),
-            if plan.changes.len() == 1 { "" } else { "s" },
-            name
-        ),
-    );
-    finish(streams, &report)
-}
-
-/// Prints a notice, in the form that has room for one.
-///
-/// The table form's stdout is prose lines beside the change list. The JSON
-/// form's stdout is the one envelope this invocation owes, and a notice printed
-/// in it is a second object on the same stream, which is what a consumer
-/// piping into `jq` chokes on. Everything a notice would have said is a field
-/// of that envelope: `written`, `dry_run` and `pending`.
-fn announce(streams: &mut Streams<'_>, code: &str, message: &str) {
-    if streams.fmt == Format::Table {
-        streams.note(code, message);
-    }
-}
-
-/// Asks the operator, on stderr, beside the change list the question is about.
-fn ask(
-    streams: &mut Streams<'_>,
-    name: &str,
-    path: &str,
-    changes: usize,
-    reader: &mut dyn std::io::BufRead,
-) -> Answer {
-    let question = if changes == 1 {
-        format!("set `{}.{}`? [y/N] ", name, path)
-    } else {
-        format!("set {changes} keys under `{}.{}`? [y/N] ", name, path)
-    };
-    streams.aside("confirm", &question);
-    confirm::read_answer(reader)
-}
-
-/// Sends the plan's write, and reports which keys wait for a respawn.
-///
-/// # Errors
-/// The [`ExitCode`] already reported to `streams`.
-async fn send(
-    client: &Client,
-    streams: &mut Streams<'_>,
-    name: &str,
-    write: &Write,
-) -> Result<Vec<String>, ExitCode> {
-    let request = match write {
-        Write::SheepField { key, value } => Request::SetSheepField {
-            name: name.to_string(),
-            key: key.clone(),
-            value: value.clone(),
-        },
-        Write::SheepDogTable { dog, table, .. } => Request::SetSheepDogSettings {
-            name: name.to_string(),
-            dog: dog.clone(),
-            table: Some(table.clone()),
-        },
-        Write::DogSection { toml, .. } => Request::SetDogConfig {
-            name: name.to_string(),
-            toml: DogSectionToml::from(toml.clone()),
-        },
-    };
-    let pending_key = match write {
-        Write::SheepField { key, .. } => key.clone(),
-        _ => String::new(),
-    };
-    match client.request(request).await {
-        Ok(Response::SheepFieldSet {
-            pending, warning, ..
-        }) => {
-            if let Some(warning) = warning {
-                streams.aside("warning", &warning);
-            }
-            Ok(pending.then_some(pending_key).into_iter().collect())
-        }
-        Ok(Response::SheepDogSettingsSet { .. }) | Ok(Response::DogConfigSet { .. }) => {
-            Ok(Vec::new())
-        }
-        Ok(_other) => Err(unexpected_response(streams)),
-        Err(err) => Err(client_error(streams, &err)),
-    }
-}
-
-/// The check that the holder still holds what the plan was built from.
-///
-/// [`Request::SetDogConfig`] replaces a whole section and
-/// [`Request::SetSheepDogSettings`] replaces a whole table, so what this sends
-/// carries every key it read, not only the one the operator named. Between the
-/// read and the answer the lookout config pane can file a write of its own on a
-/// different key of the same holder, and the text read before the question would
-/// overwrite it with no warning. A sheep's own field is the one write of one key
-/// rather than of a whole holder, so it has nothing to re-read.
-///
-/// The comparison is on the whole holder rather than on the key the operator
-/// named: a holder that moved anywhere is one this plan no longer describes, and
-/// re-planning against it here would write a change the operator never saw the
-/// old value of.
-///
-/// # Errors
-/// The [`ExitCode`] already reported to `streams`.
-async fn holder_unchanged(
-    client: &Client,
-    streams: &mut Streams<'_>,
-    name: &str,
-    write: &Write,
-) -> Result<bool, ExitCode> {
-    Ok(match write {
-        Write::SheepField { .. } => true,
-        Write::DogSection { before, .. } => {
-            match settings_read::read_dog_section(client, streams, name).await {
-                Ok(now) => !section_moved(before, &now),
-                Err(code) => return Err(code),
-            }
-        }
-        Write::SheepDogTable { dog, before, .. } => {
-            let config = match copy::read_config(client, streams, name).await {
-                Ok(config) => config,
-                Err(code) => return Err(code),
-            };
-            let now = address::dog_table(&config, dog)
-                .and_then(Json::as_object)
-                .cloned()
-                .unwrap_or_default();
-            !table_moved(before, &Json::Object(now))
-        }
-    })
-}
-
-/// `true` when a dog's section is no longer the text this plan was built from.
-///
-/// The compare ignores the blank line a section may or may not end with: the
-/// text is what the shepherd answered both times, and a difference in nothing
-/// but trailing whitespace is not a change an operator made.
-fn section_moved(before: &str, now: &str) -> bool {
-    before.trim() != now.trim()
-}
-
-/// `true` when a sheep's table for a dog is no longer the table this plan was
-/// built from.
-fn table_moved(before: &Json, now: &Json) -> bool {
-    before != now
-}
-
-/// The sentence for a holder that moved between the read and the write.
-///
-/// The remedy is to read again, because the change list the operator answered
-/// describes the holder this run read, and nothing here can show them the old
-/// value of a key that moved in between.
-pub(super) fn holder_moved(name: &str, path: &str, write: &Write) -> String {
-    let address = if path.is_empty() {
-        name.to_string()
-    } else {
-        format!("{name}.{path}")
-    };
-    let head = match write {
-        Write::DogSection { .. } => format!("`{name}`'s section"),
-        Write::SheepDogTable { dog, .. } => format!("`{name}`'s table for `{dog}`"),
-        // A sheep's own field is one key and no whole holder, so this sentence
-        // is never built for one.
-        Write::SheepField { .. } => format!("`{name}`'s field"),
-    };
-    format!(
-        "nothing was written: {head} changed while `shep set` waited for the answer. `shep get \
-         {address}` reads what it holds now, and `shep set` again plans against that"
-    )
 }
 
 /// The sentence for a value that parses as TOML and has no place in the JSON the
@@ -722,71 +552,6 @@ pub(super) fn unparsable(name: &str) -> String {
          {name}` reads the same text"
     )
 }
-/// The report a plan renders, before or after the write.
-pub(super) fn report_for(
-    holder: Holder,
-    name: &str,
-    path: &str,
-    plan: &Plan,
-    written: bool,
-    dry_run: bool,
-) -> SetReport {
-    SetReport {
-        kind: holder.as_str(),
-        name: name.to_string(),
-        path: path.to_string(),
-        written,
-        dry_run,
-        pending: Vec::new(),
-        changes: plan
-            .changes
-            .iter()
-            .map(|change| CopyChange {
-                key: change.key.clone(),
-                change: change.kind.as_str(),
-                old: change.old.clone(),
-                new: change.new.clone(),
-            })
-            .collect(),
-    }
-}
-
-/// Prints the change list on the stream the operator is reading.
-///
-/// The table form prints it on stdout. A form whose stdout is a JSON envelope
-/// prints it on stderr, so the operator sees what they are being asked to
-/// approve while stdout stays the one envelope the `--format json` rule keeps.
-///
-/// # Errors
-/// [`ExitCode::Failure`] if the write itself failed.
-fn print_changes(streams: &mut Streams<'_>, report: &SetReport) -> Result<(), ExitCode> {
-    let writer: &mut dyn std::io::Write = if streams.fmt == Format::Table {
-        &mut *streams.out
-    } else {
-        &mut *streams.err
-    };
-    emit(writer, Format::Table, "set", report.clone(), streams.style).map_err(|_| ExitCode::Failure)
-}
-
-/// Prints the run's verdict.
-///
-/// The table form already printed the change list, so this adds nothing to it.
-/// The JSON form prints the one envelope this invocation owes, with `written`,
-/// `pending` and `dry_run` filled in by what actually happened: a parked key is
-/// a field of that envelope rather than a second object on stdout.
-fn finish(streams: &mut Streams<'_>, report: &SetReport) -> ExitCode {
-    if streams.fmt != Format::Json {
-        return ExitCode::Success;
-    }
-    write_outcome(emit(
-        &mut *streams.out,
-        Format::Json,
-        "set",
-        report.clone(),
-        streams.style,
-    ))
-}
-
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

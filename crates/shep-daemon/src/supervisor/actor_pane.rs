@@ -379,25 +379,37 @@ impl<R: ProcessRunner> Actor<R> {
         key: &str,
         value: &serde_json::Value,
     ) -> Result<Option<FieldSet>, SupervisorError> {
-        // A pane is never sent a whole `env` or `dogs` map, and a wholesale
-        // write of either would wipe every env key, or every other dog's
-        // table, but the one being set. The Structural fields are identity
-        // and flock shape: `handle_scale` owns the count.
-        let owner = match key {
-            "env" => Some("env is set one key at a time; use `SetSheepEnv`"),
-            "dogs" => Some("dogs is set one dog's table at a time; use `SetSheepDogSettings`"),
-            _ => None,
-        };
-        if let Some(refusal) = owner {
-            return Err(SupervisorError::InvalidField(refusal.to_string()));
-        }
-        if apply_group(key) == ApplyGroup::Structural {
-            return Err(SupervisorError::InvalidField(format!(
-                "{key} is not a config write; `shep stock` moves an instance count, and a \
-                 name change is a different sheep"
-            )));
-        }
+        refuse_unowned_key(key)?;
         self.write_sheep_field(name, key, value)
+    }
+
+    /// Drops the operator's override of `key` on `name`, so the value it held
+    /// before comes back, and applies or parks that value as
+    /// [`Self::write_sheep_field`] does.
+    ///
+    /// The value that returns is the override record's `template` for the key:
+    /// the Flockfile's value as of the last load that named it, or the value
+    /// the sheep held when the operator first spoke for it. A record written
+    /// before that was kept has none, and the key goes back to the built-in
+    /// default, which is the value a pane's `d` restores too.
+    ///
+    /// `Ok(None)` when no sheep has that name.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::InvalidField`] - the key is one
+    ///   [`Self::handle_set_sheep_field`] refuses, or the operator has not
+    ///   overridden it, or the value it goes back to will not normalize.
+    ///   Nothing was written.
+    /// - [`SupervisorError::IsADog`] and [`SupervisorError::Overrides`], as
+    ///   [`Self::write_sheep_field`] raises them.
+    pub(super) fn handle_reset_sheep_field(
+        &mut self,
+        name: &str,
+        key: &str,
+    ) -> Result<Option<FieldSet>, SupervisorError> {
+        refuse_unowned_key(key)?;
+        self.apply_sheep_field(name, key, FieldSource::Reset)
     }
 
     /// Records `key` on `name` as an operator override, applies what can
@@ -459,12 +471,30 @@ impl<R: ProcessRunner> Actor<R> {
         key: &str,
         value: &serde_json::Value,
     ) -> Result<Option<FieldSet>, SupervisorError> {
+        self.apply_sheep_field(name, key, FieldSource::Set(value))
+    }
+
+    /// [`Self::write_sheep_field`] and [`Self::handle_reset_sheep_field`]:
+    /// the one path that validates a field's value, writes the override
+    /// store, and applies or parks the result. `source` is the only
+    /// difference between the two, which is why they cannot drift.
+    fn apply_sheep_field(
+        &mut self,
+        name: &str,
+        key: &str,
+        source: FieldSource<'_>,
+    ) -> Result<Option<FieldSet>, SupervisorError> {
         let Some(id) = self.representative_id(name) else {
             return Ok(None);
         };
         // Before the store is read, for [`Self::ensure_not_dog`]'s reason:
         // this door reaches `script` and `args` directly.
         self.ensure_not_dog(name, id)?;
+        let value = match source {
+            FieldSource::Set(value) => value.clone(),
+            FieldSource::Reset => self.template_value(name, key)?,
+        };
+        let value = &value;
         let Some(slot) = self.sheep.get(&id) else {
             return Ok(None);
         };
@@ -493,7 +523,7 @@ impl<R: ProcessRunner> Actor<R> {
                 "no config field named {key}"
             )));
         }
-        object.insert(key.to_string(), value.clone());
+        let before = object.insert(key.to_string(), value.clone());
         let edited: AppConfig = serde_json::from_value(serde_json::Value::Object(object))
             .map_err(|err| SupervisorError::InvalidField(format!("{key}: {err}")))?;
         let merged = normalize(edited)
@@ -546,7 +576,23 @@ impl<R: ProcessRunner> Actor<R> {
         let park_all = next_spec.is_none();
 
         let overridden = self.mutate_override(name, |record| {
-            record.fields.insert(key.to_string(), value.clone());
+            match source {
+                // The value the key held before this write is the one a
+                // reset returns to, unless the operator already holds the
+                // key and the record remembers an older one.
+                FieldSource::Set(_) => {
+                    if !record.fields.contains_key(key)
+                        && let Some(before) = before
+                    {
+                        record.template.insert(key.to_string(), before);
+                    }
+                    record.fields.insert(key.to_string(), value.clone());
+                }
+                FieldSource::Reset => {
+                    record.fields.remove(key);
+                    record.template.remove(key);
+                }
+            }
             Ok(())
         })?;
 
@@ -597,8 +643,75 @@ impl<R: ProcessRunner> Actor<R> {
         let in_force = !park_all && reaches_running(key);
         Ok(Some(FieldSet {
             app: parked.unwrap_or_else(|| next_spec.unwrap_or(merged)),
+            value: value.clone(),
             pending: !in_force,
             warning,
         }))
     }
+
+    /// The value a reset puts `key` back to, from `name`'s override record.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::InvalidField`] - the operator holds no override of
+    ///   `key`, so there is nothing to drop and a no-op would read as success.
+    /// - [`SupervisorError::Overrides`] - the store could not be read.
+    fn template_value(&self, name: &str, key: &str) -> Result<serde_json::Value, SupervisorError> {
+        let record = overrides::get(&self.paths.overrides, name)
+            .map_err(|err| SupervisorError::Overrides(err.to_string()))?
+            .unwrap_or_default();
+        if !record.fields.contains_key(key) {
+            return Err(SupervisorError::InvalidField(format!(
+                "{key} has no override to drop: it already holds the Flockfile's value"
+            )));
+        }
+        if let Some(template) = record.template.get(key) {
+            return Ok(template.clone());
+        }
+        let defaults = serde_json::to_value(AppConfig::default())
+            .map_err(|err| SupervisorError::InvalidField(format!("{key}: {err}")))?;
+        defaults
+            .get(key)
+            .cloned()
+            .ok_or_else(|| SupervisorError::InvalidField(format!("no config field named {key}")))
+    }
+}
+
+/// Where [`Actor::apply_sheep_field`] gets the value it applies.
+#[derive(Clone, Copy)]
+enum FieldSource<'a> {
+    /// The operator's value, recorded as an override.
+    Set(&'a serde_json::Value),
+    /// The value the key held before the operator spoke for it, with the
+    /// override dropped.
+    Reset,
+}
+
+/// The refusal for the keys `SetSheepField` and `ResetSheepField` leave to
+/// another request.
+///
+/// A pane is never sent a whole `env` or `dogs` map, and a wholesale write of
+/// either would wipe every env key, or every other dog's table, but the one
+/// being set. The Structural fields are identity and flock shape:
+/// `handle_scale` owns the count.
+///
+/// # Errors
+///
+/// [`SupervisorError::InvalidField`] - `env`, `dogs`, or a Structural key.
+fn refuse_unowned_key(key: &str) -> Result<(), SupervisorError> {
+    let owner = match key {
+        "env" => Some("env is set one key at a time; use `SetSheepEnv`"),
+        "dogs" => Some("dogs is set one dog's table at a time; use `SetSheepDogSettings`"),
+        _ => None,
+    };
+    if let Some(refusal) = owner {
+        return Err(SupervisorError::InvalidField(refusal.to_string()));
+    }
+    if apply_group(key) == ApplyGroup::Structural {
+        return Err(SupervisorError::InvalidField(format!(
+            "{key} is not a config write; `shep stock` moves an instance count, and a \
+             name change is a different sheep"
+        )));
+    }
+    Ok(())
 }

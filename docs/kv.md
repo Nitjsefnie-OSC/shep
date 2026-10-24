@@ -38,17 +38,11 @@ empties the store — a flag, not a key named `all`, because nothing stops you
 having a key called `all` and `shep kv unset all` would then mean something
 different depending on your own store.
 
-`shep unset` still works as a hidden alias and prints a note on stderr naming
-the verb it moved to, in the table format an operator reads: under
-`--format json` it prints no note, because that format is one object per
-invocation. It is hidden because
-those names are the settings verbs, and a
-script written against it keeps its exit codes, its `--format json`
-envelope, and the `command` key it reads. `shep get` and `shep set` are no
-longer among them: `shep get` prints a sheep's or a dog's settings, `shep set`
-changes one, and `shep kv get` and `shep kv set` are this store's reader and
-writer. A `shep set feature.flag on` is refused as a name no sheep or dog is,
-and the sentence names `shep kv set`.
+There is no hidden spelling of these verbs. `shep get` prints a sheep's or a
+dog's settings, `shep set` changes one, `shep unset` drops an override or
+removes a dog's key, and `shep kv get`, `shep kv set` and `shep kv unset` are
+this store's reader, writer and remover. A `shep set feature.flag on` is
+refused as a name no sheep or dog is, and the sentence names `shep kv set`.
 
 A key that was never there answers `NotFound` on `kv get` and on `kv unset`
 (exit code 3): a script can write `shep kv get feature.flag || echo default`

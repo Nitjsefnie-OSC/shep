@@ -105,6 +105,10 @@ fn flock_edit_holds_every_request_that_changes_a_sheeps_config() {
             key: "autorestart".into(),
             value: serde_json::Value::Bool(true),
         },
+        Request::ResetSheepField {
+            name: "web".into(),
+            key: "autorestart".into(),
+        },
         Request::SetSheepEnv {
             name: "web".into(),
             key: "K".into(),
