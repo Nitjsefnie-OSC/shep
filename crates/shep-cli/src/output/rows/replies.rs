@@ -115,12 +115,12 @@ impl Render for TriggeredRows {
         ReplyRows::rows_for(self.rows(), presentation, status_word)
     }
 
+    /// # Panics
+    /// If `header` is not one of `Self::headers()`'s own values.
     #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        reply_rows_json_key!(header)
+    fn json_key_for(header: &str) -> String {
+        reply_rows_json_key!(header).to_owned()
     }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     const PRIORITIES: &'static [u8] = ReplyRows::PRIORITIES;
 }
@@ -215,12 +215,12 @@ impl Render for SignalledRows {
         ReplyRows::rows_for(self.rows(), presentation, status_word)
     }
 
+    /// # Panics
+    /// If `header` is not one of `Self::headers()`'s own values.
     #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        reply_rows_json_key!(header)
+    fn json_key_for(header: &str) -> String {
+        reply_rows_json_key!(header).to_owned()
     }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     const PRIORITIES: &'static [u8] = ReplyRows::PRIORITIES;
 }
@@ -269,12 +269,12 @@ impl Render for SentLineRows {
         ReplyRows::rows_for(self.rows(), presentation, status_word)
     }
 
+    /// # Panics
+    /// If `header` is not one of `Self::headers()`'s own values.
     #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        reply_rows_json_key!(header)
+    fn json_key_for(header: &str) -> String {
+        reply_rows_json_key!(header).to_owned()
     }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     const PRIORITIES: &'static [u8] = ReplyRows::PRIORITIES;
 }
@@ -346,7 +346,7 @@ impl Render for BarkRows {
     /// # Panics
     /// If `header` is not one of `Self::headers()`'s own values.
     #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
+    fn json_key_for(header: &str) -> String {
         match header {
             "WHEN" => "at_ms",
             "RULE" => "rule",
@@ -355,9 +355,8 @@ impl Render for BarkRows {
             "SINKS" => "sinks",
             other => panic!("BarkRows::headers() does not include {other:?}"),
         }
+        .to_owned()
     }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     // Parallel to `headers()`. MESSAGE, unbounded free text, drops before
     // SINKS; both can be lost.

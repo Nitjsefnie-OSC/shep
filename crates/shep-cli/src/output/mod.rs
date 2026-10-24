@@ -195,14 +195,26 @@ pub trait Render: Serialize {
     fn rows_for(&self, _presentation: Presentation, _status_word: bool) -> Vec<Vec<String>> {
         self.rows()
     }
-    /// Table header -> JSON key, the documented name mapping
-    /// (`UPTIME` -> `uptime_ms`, and so on).
+    /// Table header -> JSON key.
     ///
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    fn json_key_for(header: &str) -> &'static str;
+    /// Defaults to the lowercased header, which is the whole mapping for
+    /// every table whose JSON key is its header spelled in lowercase. A table
+    /// whose key is renamed overrides it, and an override keeps the contract
+    /// this method used to state for every impl: it panics on a header
+    /// outside its own `headers()`. `FlockRows` maps `EXIT` -> `last_exit`
+    /// and `UPTIME` -> `uptime_ms`, `BarkRows` maps `WHEN` -> `at_ms`.
+    ///
+    /// The default never panics, and no rendering path calls it: every call
+    /// site sits in `rows`' anti-drift tests, which pass only values taken
+    /// from `Self::headers()` and compare the mapped set against the keys the
+    /// payload really serializes. A header with no key, or a key with no
+    /// header, fails there.
+    fn json_key_for(header: &str) -> String {
+        header.to_lowercase()
+    }
     /// Serialized fields that legitimately have no column, each with a
-    /// comment giving the reason. Usually empty.
+    /// comment giving the reason. Empty by default: an impl names the
+    /// constant only when it has entries to name, each with its reason.
     ///
     /// This constant is the only thing standing between an unmapped
     /// `Serialize` field and a silently-widened, unreviewed pass of
@@ -210,7 +222,7 @@ pub trait Render: Serialize {
     /// keys matches, never why a field belongs here. Every entry an impl
     /// adds must carry its own inline `//` comment stating that reason
     /// (`"note", // internal only, never shown to a user`).
-    const JSON_ONLY: &'static [&'static str];
+    const JSON_ONLY: &'static [&'static str] = &[];
 
     /// Per-column drop priority for [`table::render_boxed`], parallel to
     /// [`Self::headers`]: index `i` here is the priority of column `i`

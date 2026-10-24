@@ -62,22 +62,6 @@ impl Render for EmptiedFiles {
         )
     }
 
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "STREAM" => "stream",
-            "FILE" => "file",
-            "RESULT" => "result",
-            other => panic!("EmptiedFiles::headers() does not include {other:?}"),
-        }
-    }
-
-    // Every field is a column: a verb that emptied a file and would not say
-    // which one has reported nothing.
-    const JSON_ONLY: &'static [&'static str] = &[];
-
     // Parallel to `headers()`. Three columns is `render_boxed`'s own floor,
     // so this never narrows.
     const PRIORITIES: &'static [u8] = &[0, 6, 0];
@@ -99,18 +83,6 @@ impl Render for DeletedIds {
     fn rows(&self) -> Vec<Vec<String>> {
         self.0.iter().map(|id| vec![id.to_string()]).collect()
     }
-
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "ID" => "id",
-            other => panic!("DeletedIds::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     // One column, and it is the row's whole identity.
     const PRIORITIES: &'static [u8] = &[0];
@@ -152,19 +124,6 @@ impl Render for KillRow {
         )
     }
 
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "PID" => "pid",
-            "SOCKET_REMOVED" => "socket_removed",
-            other => panic!("KillRow::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
-
     // Two columns, both the point of the report.
     const PRIORITIES: &'static [u8] = &[0, 0];
 }
@@ -203,20 +162,6 @@ impl Render for RolledSheepRows {
             .collect()
     }
 
-    /// # Panics
-    /// If `header` is not one of [`Self::headers`]'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "NAME" => "name",
-            "INSTANCES" => "instances",
-            "STATUS" => "status",
-            other => panic!("RolledSheepRows has no column {other}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
-
     // Parallel to `headers()`. Three columns never narrows.
     const PRIORITIES: &'static [u8] = &[0, 6, 0];
 }
@@ -242,19 +187,6 @@ impl Render for SavedRollRow {
     fn rows(&self) -> Vec<Vec<String>> {
         vec![vec![self.file.clone(), self.apps.to_string()]]
     }
-
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "FILE" => "file",
-            "APPS" => "apps",
-            other => panic!("SavedRollRow::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     // Two columns, both the point of the report.
     const PRIORITIES: &'static [u8] = &[0, 0];
@@ -318,21 +250,6 @@ impl Render for ImportRows {
             },
         )
     }
-
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "NAME" => "name",
-            "SCRIPT" => "script",
-            "INSTANCES" => "instances",
-            "REUSE_PORT" => "reuse_port",
-            other => panic!("ImportRows::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     // Parallel to `headers()`. Only SCRIPT, an unbounded path, is ever
     // actually lost.
@@ -398,21 +315,6 @@ impl Render for ImportEnvRows {
         )
     }
 
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "KEY" => "key",
-            "STORE" => "store",
-            "SLOT" => "slot",
-            "BYTES" => "bytes",
-            other => panic!("ImportEnvRows::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
-
     // Parallel to `headers()`. KEY and STORE are the report; SLOT and BYTES
     // are context a narrow terminal can lose.
     const PRIORITIES: &'static [u8] = &[0, 0, 1, 2];
@@ -475,21 +377,6 @@ impl Render for StartupSteps {
             },
         )
     }
-
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "ACTION" => "action",
-            "TARGET" => "target",
-            "RESULT" => "result",
-            other => panic!("StartupSteps::headers() does not include {other:?}"),
-        }
-    }
-
-    // Every field is a column, for `EmptiedFiles`' reason.
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     // Parallel to `headers()`. Three columns never narrows.
     const PRIORITIES: &'static [u8] = &[6, 0, 0];

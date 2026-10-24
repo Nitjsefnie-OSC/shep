@@ -57,18 +57,6 @@ impl Render for SettingsAnswer {
         ]]
     }
 
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "NAME" => "name",
-            "KIND" => "kind",
-            "PATH" => "path",
-            other => panic!("SettingsAnswer::headers() does not include {other:?}"),
-        }
-    }
-
     // The answer itself: a TOML document has no columns, and a cell would
     // flatten the newlines that make it one.
     const JSON_ONLY: &'static [&'static str] = &["toml"];

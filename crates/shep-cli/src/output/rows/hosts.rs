@@ -34,18 +34,6 @@ impl Render for HostRows {
             .collect()
     }
 
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "HOST" => "host",
-            other => panic!("HostRows::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
-
     // One column: a row with no host is not a row.
     const PRIORITIES: &'static [u8] = &[0];
 }

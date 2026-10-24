@@ -85,7 +85,7 @@ impl Render for DogRows {
     /// # Panics
     /// If `header` is not one of `Self::headers()`'s own values.
     #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
+    fn json_key_for(header: &str) -> String {
         match header {
             "ID" => "id",
             "NAME" => "name",
@@ -99,6 +99,7 @@ impl Render for DogRows {
             "SOURCE" => "dog",
             other => panic!("DogRows::headers() does not include {other:?}"),
         }
+        .to_owned()
     }
 
     const JSON_ONLY: &'static [&'static str] = &[
@@ -240,7 +241,7 @@ impl Render for DogActionRow {
     /// # Panics
     /// If `header` is not one of `Self::headers()`'s own values.
     #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
+    fn json_key_for(header: &str) -> String {
         match header {
             "NAME" => "name",
             "SOURCE" => "source",
@@ -248,11 +249,11 @@ impl Render for DogActionRow {
             "STATUS" => "status",
             other => panic!("DogActionRow::headers() does not include {other:?}"),
         }
+        .to_owned()
     }
     // Parallel to `headers()`. SOURCE drops before SHEPHERD, and a 4-column
     // table loses only one of the two.
     const PRIORITIES: &'static [u8] = &[0, 7, 6, 0];
-    const JSON_ONLY: &'static [&'static str] = &[];
 }
 
 #[cfg(test)]
