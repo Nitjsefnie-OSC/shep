@@ -23,14 +23,9 @@ async fn a_fold_flag_lands_on_the_resolved_app() {
 
     let _ = start(&client, &mut streams, &args, None, &BTreeMap::new()).await;
 
-    let sent = next_start(&mut envelopes).await;
-    match sent.body {
-        Request::Start { apps } => {
-            assert_eq!(apps.len(), 1);
-            assert_eq!(apps[0].fold.as_deref(), Some("backend"));
-        }
-        other => panic!("expected Request::Start, got {other:?}"),
-    }
+    let apps = start_apps(next_start(&mut envelopes).await);
+    assert_eq!(apps.len(), 1);
+    assert_eq!(apps[0].fold.as_deref(), Some("backend"));
 }
 
 /// Matched with the dot stripped, absent for a name with no extension,
@@ -78,14 +73,9 @@ async fn a_shep_toml_mapping_fills_an_unset_interpreter() {
     )
     .await;
 
-    let sent = next_start(&mut envelopes).await;
-    match sent.body {
-        Request::Start { apps } => {
-            assert_eq!(apps.len(), 1);
-            assert_eq!(apps[0].interpreter.as_deref(), Some("node"));
-        }
-        other => panic!("expected Request::Start, got {other:?}"),
-    }
+    let apps = start_apps(next_start(&mut envelopes).await);
+    assert_eq!(apps.len(), 1);
+    assert_eq!(apps[0].interpreter.as_deref(), Some("node"));
 }
 
 /// Layer 2: the mapping is a fallback, not a policy.
@@ -120,14 +110,9 @@ async fn a_flockfile_interpreter_outranks_the_shep_toml_mapping() {
     )
     .await;
 
-    let sent = next_start(&mut envelopes).await;
-    match sent.body {
-        Request::Start { apps } => {
-            assert_eq!(apps.len(), 1);
-            assert_eq!(apps[0].interpreter.as_deref(), Some("bun"));
-        }
-        other => panic!("expected Request::Start, got {other:?}"),
-    }
+    let apps = start_apps(next_start(&mut envelopes).await);
+    assert_eq!(apps.len(), 1);
+    assert_eq!(apps[0].interpreter.as_deref(), Some("bun"));
 }
 
 /// Layer 3, the one-off override typed on the command line.
@@ -157,14 +142,9 @@ async fn the_interpreter_flag_outranks_a_flockfiles_own_field() {
 
     let _ = start(&client, &mut streams, &args, None, &interpreters).await;
 
-    let sent = next_start(&mut envelopes).await;
-    match sent.body {
-        Request::Start { apps } => {
-            assert_eq!(apps.len(), 1);
-            assert_eq!(apps[0].interpreter.as_deref(), Some("deno"));
-        }
-        other => panic!("expected Request::Start, got {other:?}"),
-    }
+    let apps = start_apps(next_start(&mut envelopes).await);
+    assert_eq!(apps.len(), 1);
+    assert_eq!(apps[0].interpreter.as_deref(), Some("deno"));
 }
 
 #[test]
