@@ -282,9 +282,9 @@ fn entries_refusal(
 /// A tagged union: the table has to name one of the arms, and every field of
 /// the arm it names is held to its own bounds.
 ///
-/// A union is never a secret row: [`crate::lookout::field::union::union_of`]
-/// reads a union that reaches a secret as no union at all, so nothing here
-/// has to redact a tag.
+/// A union is never a secret row: a schema that reaches a secret is read as
+/// no [`crate::lookout::field::Union`] at all, so nothing here has to redact
+/// a tag.
 fn union_refusal(union: &Union, value: &Value, path: &[String], key: &str) -> Option<TableRefusal> {
     let Some(table) = value.as_object() else {
         return Some(TableRefusal::at(path, not_a_table(key, &text_of(value))));

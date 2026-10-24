@@ -671,7 +671,8 @@ pub(super) const fn reload_mode(readiness: ConfiguredReadiness, reuse_port: bool
 /// The same conversion the pane runs on the section it opens on, so the table
 /// a write is checked against is built the way the table the pane's rows were
 /// read out of is. A section that does not parse reads as empty and refuses
-/// nothing: [`SectionWrite::Refused`] is what stops that write, in the sentence
+/// nothing: [`crate::lookout::pane::SectionWrite::Refused`] is what stops that
+/// write, in the sentence
 /// that names the file.
 pub(in crate::lookout) fn toml_table(text: &str) -> Map<String, Value> {
     text.parse::<toml::Table>()
