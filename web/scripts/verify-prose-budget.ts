@@ -91,7 +91,13 @@ export const BUDGETS: Record<string, number> = {
   // name, `shep <dog> --help` prints its declared subcommands, and
   // `shep completions` offers both. An operator sees all three, and a dog
   // author writes the manifest that drives them.
-  "writing-a-dog": 4860,
+  //
+  // Raised again the same day, 4860 to 4875, for what that surface refuses:
+  // a manifest's copy prints as one line, and a name a shell would read as
+  // code is not completed. With both sentences cut to what still reads, the
+  // page measured 4860 against 4860, and a page at zero left fails the
+  // moment another branch adds one word to it.
+  "writing-a-dog": 4875,
   overrides: 3380,
   // Raised from 3240 on 2026-09-27 for "A sheep's dogs row": the sub-screen
   // and the per-sheep table pane are new operator-facing surface, not

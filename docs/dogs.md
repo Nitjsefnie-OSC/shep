@@ -957,6 +957,15 @@ whose name is not one word is neither listed nor completed. A manifest is
 written by whoever built the dog, and its text reaches a template clap parses
 and a completion script a shell reads.
 
+A completion word is code before it is text. `clap_complete` writes
+subcommand names into its scripts with no quoting: bash gets them inside
+`opts="…"` and inside `case` patterns, fish inside `-n "…"`, and zsh escapes
+its help text while writing the name raw. So a name reaches a completion
+script only when it is a word a shell takes as a bare word: letters of any
+script and digits, separated by `-`, `_` or `.`, starting on a letter or
+digit. A dog named `$(touch>x)` stays in `shep --help` and still runs, and is
+not completed.
+
 `Probe` builds it from what the dog already gives it. `permission`, `verb`,
 `depends_on_dog`, `depends_on_shep`, `defaults` and `validate` add what it
 declares:
