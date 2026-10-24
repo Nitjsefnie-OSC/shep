@@ -292,31 +292,27 @@ fn changed_keys(
         .collect()
 }
 
+/// The entries of `table` whose names are in `keys`.
+///
+/// A name in `keys` that `table` has no entry for is skipped: a namespace
+/// marked persistable with nothing pushed for it writes no entry rather
+/// than an empty one.
+fn projected<V: Clone>(
+    keys: &BTreeSet<String>,
+    table: &BTreeMap<String, V>,
+) -> BTreeMap<String, V> {
+    keys.iter()
+        .filter_map(|name| table.get(name).map(|value| (name.clone(), value.clone())))
+        .collect()
+}
+
 /// The cache file `state` should hold: its persisting namespaces and no
 /// others.
 fn persisted_view(state: &State) -> CacheFile {
     CacheFile {
         version: PROVIDER_CACHE_VERSION,
-        namespaces: state
-            .persisted
-            .iter()
-            .filter_map(|name| {
-                state
-                    .namespaces
-                    .get(name)
-                    .map(|table| (name.clone(), table.clone()))
-            })
-            .collect(),
-        pushed: state
-            .persisted
-            .iter()
-            .filter_map(|name| {
-                state
-                    .pushed
-                    .get(name)
-                    .map(|environments| (name.clone(), environments.clone()))
-            })
-            .collect(),
+        namespaces: projected(&state.persisted, &state.namespaces),
+        pushed: projected(&state.persisted, &state.pushed),
     }
 }
 
@@ -649,6 +645,25 @@ mod tests {
         assert!(
             !raw.contains("unpersisted"),
             "neither its values nor its pairs: {raw}"
+        );
+    }
+
+    #[test]
+    fn projected_keeps_only_persisted_names_and_skips_absent_ones() {
+        let keys = BTreeSet::from([
+            "kept".to_string(),
+            "absent".to_string(),
+            "also-kept".to_string(),
+        ]);
+        let table = BTreeMap::from([
+            ("kept".to_string(), 1u32),
+            ("also-kept".to_string(), 2),
+            ("unkeyed".to_string(), 3),
+        ]);
+        assert_eq!(
+            projected(&keys, &table),
+            BTreeMap::from([("kept".to_string(), 1u32), ("also-kept".to_string(), 2)]),
+            "`absent` is in no table, `unkeyed` is in no persisted set"
         );
     }
 
