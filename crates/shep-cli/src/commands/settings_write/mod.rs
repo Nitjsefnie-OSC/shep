@@ -16,7 +16,7 @@
 //! every key the write touches, which is also why a refusal never leaves a
 //! half-written sheep behind.
 //!
-//! `shep unset` is the same flow with no value: [`unset`] plans the removal of
+//! `shep unset` is the same flow with no value: [`unset()`] plans the removal of
 //! a key, and [`run`] asks and writes it the way it does a set. A sheep's field
 //! goes through [`Request::ResetSheepField`], which drops the operator's
 //! override so the Flockfile's value returns, and a dog's key is removed from
@@ -46,6 +46,8 @@ use serde_json::{Map, Value as Json};
 use shep_client::Client;
 use shep_core::config::DogTable;
 use shep_core::paths::ShepPaths;
+#[cfg(doc)]
+use shep_core::protocol::Request;
 use toml_edit::DocumentMut;
 
 use self::plan::{field_changes, plan_dog_table, plan_section};
@@ -192,7 +194,7 @@ pub(super) enum Write {
         /// The table the sheep holds afterwards.
         table: DogTable,
         /// The table the sheep held when this plan was built, which is what
-        /// [`holder_unchanged`] checks the sheep still holds.
+        /// [`flow::holder_unchanged`] checks the sheep still holds.
         before: Json,
     },
     /// One dog's whole table on one sheep, removed through
@@ -201,7 +203,7 @@ pub(super) enum Write {
         /// The dog's name.
         dog: String,
         /// The table the sheep held when this plan was built, which is what
-        /// [`holder_unchanged`] checks the sheep still holds.
+        /// [`flow::holder_unchanged`] checks the sheep still holds.
         before: Json,
     },
     /// One `AppConfig` field's override, dropped through
@@ -215,7 +217,7 @@ pub(super) enum Write {
         /// The section text, edited in place from the text the shepherd
         /// answered.
         toml: String,
-        /// The text the shepherd answered, which is what [`holder_unchanged`]
+        /// The text the shepherd answered, which is what [`flow::holder_unchanged`]
         /// checks it still answers.
         before: String,
     },

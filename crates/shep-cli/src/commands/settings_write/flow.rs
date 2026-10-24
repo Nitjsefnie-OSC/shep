@@ -282,7 +282,7 @@ async fn send(
 ///
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`.
-async fn holder_unchanged(
+pub(super) async fn holder_unchanged(
     client: &Client,
     streams: &mut Streams<'_>,
     name: &str,
