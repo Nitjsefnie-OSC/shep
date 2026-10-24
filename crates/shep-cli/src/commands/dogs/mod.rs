@@ -37,7 +37,7 @@ mod grants;
 mod remove;
 mod vet;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod adopt_consent_tests;
 #[cfg(test)]
 mod consent_tests;
