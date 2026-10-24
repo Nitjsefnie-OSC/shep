@@ -1,11 +1,13 @@
-//! The probe contract between shep and a dog: the flag names, the grammar
-//! of the `shep-` key lines, and the schema's secret marker key.
+//! The contract between shep and a dog: the flag names, the grammar of the
+//! `shep-` key lines, the schema's secret marker key, and the [`validate`]
+//! trigger a dog answers before shep writes its settings.
 //!
 //! Shared by `shep-cli`'s `adopt` (the asker) and `shep_client::dogs::probe`
 //! (the answerer), so the two agree by construction rather than by copying
 //! a doc snippet.
 
 pub mod manifest;
+pub mod validate;
 
 /// The flag a candidate is spawned with when shep asks for its version; the
 /// contract `docs/dogs.md` publishes. Read by `shep-cli`'s `adopt`, answered
