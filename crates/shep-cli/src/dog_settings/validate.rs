@@ -8,14 +8,19 @@
 //!
 //! [`validate`]: shep_core::dogs::manifest::Manifest::validate
 //!
-//! The ask is one call, [`ask_dog`], and both doors use it: `shep set` and
-//! `shep unset` through [`crate::commands::settings_write`], and every write
-//! the lookout dashboard sends through [`crate::lookout::source::ClientFlock`].
-//! A dog that declared nothing is never asked, and a dog that is running with
-//! no channel open has nothing to ask: its settings are the ones an operator
-//! edits before `shep enable`, so the write goes ahead. What shep cannot read
-//! is never an acceptance, so an unreadable reply, an outcome this build does
-//! not know, and a manifest this build cannot read all stop the write.
+//! The ask is one call, [`ask_dog`], and every door that writes a dog's
+//! settings uses it: `shep set` and `shep unset` through
+//! [`crate::commands::settings_write`], `shep copy` through
+//! [`crate::commands::copy`], and every write the lookout dashboard sends
+//! through [`crate::lookout::source::ClientFlock`]. A dog that declared nothing
+//! is never asked, and a dog that is running with no channel open has nothing
+//! to ask: its settings are the ones an operator edits before `shep enable`, so
+//! the write goes ahead. What shep cannot read is never an acceptance, so an
+//! unreadable reply, an outcome this build does not know, and a cached manifest
+//! this build cannot read all stop the write. A dog that answers
+//! [`MANIFEST_FLAG`](shep_core::dogs::MANIFEST_FLAG) with nothing at all is not
+//! one of those: it has no manifest, so it declared nothing, and a dog that
+//! declared nothing is never asked.
 
 use serde_json::{Map, Value as Json};
 use shep_client::Client;
@@ -212,10 +217,11 @@ enum Declaration {
     Declared,
     /// Nothing declares it: `dog` is not adopted here, or its manifest answers
     /// none. A manifest is the only place `validate` can be declared, so a dog
-    /// that answers no manifest cannot ask for this.
+    /// that answers no manifest, in any of the ways a dog answers none, cannot
+    /// ask for this.
     Silent,
-    /// The manifest exists to be read and was not, so whether the dog wants to
-    /// be consulted is unknown rather than answered.
+    /// A record of a manifest is here and was not readable, so whether the dog
+    /// wants to be consulted is unknown rather than answered.
     Unknown {
         /// The sentence the operator reads.
         reason: String,
@@ -227,13 +233,16 @@ enum Declaration {
 ///
 /// A built-in dog has no manifest and is never asked.
 ///
-/// A read that failed is [`Declaration::Unknown`], not [`Declaration::Silent`]:
-/// a corrupt cache file whose replacement probe gave nothing readable, a binary
-/// that will not run at all, and a `shep.toml` that will not parse all leave a
-/// dog that declared `validate` unasked, and a check an operator believes is
-/// running would never run. Only a dog that answered nothing and exited 0, which
-/// is a dog that never heard of `--shep-manifest`, is read as declaring
-/// nothing.
+/// A dog that gave no manifest is [`Declaration::Silent`], in every way a dog
+/// gives none: it printed nothing, printed something that is not a manifest,
+/// rejected the flag with a non-zero exit, or was still running when the probe
+/// budget ran out. That is every dog adopted before `--shep-manifest` and every
+/// dog that ignores an unknown flag, and none of them ever declared `validate`:
+/// the declaration is only ever what a manifest said, and a dog that never
+/// printed one never said it. Only a record of a manifest this read could not
+/// reach is [`Declaration::Unknown`], which is a corrupt cache file for this
+/// exact binary that the binary could not restate, a `shep.toml` that will not
+/// parse, and an adopted path that will not run at all.
 fn declares_validate(dog: &str, paths: &ShepPaths) -> Declaration {
     let doc = match ShepToml::read_only(&paths.daemon_config) {
         Ok(doc) => doc,
@@ -258,17 +267,18 @@ fn declares_validate(dog: &str, paths: &ShepPaths) -> Declaration {
                 Declaration::Silent
             }
         }
-        // A dog that printed nothing and exited 0 is a dog adopted before
-        // `--shep-manifest` existed. It has no declaration to lose.
+        // A dog that gave no manifest, however it gave none, has no
+        // declaration to lose: nothing was ever recorded for this build.
         Ok(ManifestRead::Absent) => Declaration::Silent,
-        // A probe that timed out, failed, or printed something that is not a
-        // manifest says nothing about what the dog wants, and silence here is
-        // not the dog's: the declaration is on that binary, and this read
-        // could not reach it.
+        // A cache file for this exact binary is a manifest some earlier read of
+        // it printed, and neither that file nor this probe says what it said.
+        // Silence here is not the dog's: the declaration is on this binary, and
+        // this read could not reach it.
         Ok(ManifestRead::Unreadable) => Declaration::Unknown {
             reason: format!(
-                "shep cannot tell whether `{dog}` wants to be consulted before this write: its \
-                 manifest at {} gave no answer shep could read",
+                "shep cannot tell whether `{dog}` wants to be consulted before this write: the \
+                 manifest cached for {} cannot be read, and the binary answered nothing when \
+                 asked again",
                 path.display()
             ),
         },

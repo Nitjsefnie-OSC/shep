@@ -512,48 +512,78 @@ fn adopted_binary(paths: &ShepPaths) -> std::path::PathBuf {
 /// answers.
 #[cfg(unix)]
 fn replace_the_dog_with_a_probe(paths: &ShepPaths, body: &str) {
-    use std::os::unix::fs::PermissionsExt as _;
-
     let binary = adopted_binary(paths);
     std::fs::write(&binary, format!("#!/bin/sh\n{body}\nexit 0\n")).unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    make_executable_at(&binary);
 }
 
-/// A dog that declared `validate` in a manifest this read cannot reach is a dog
-/// that still declared it. A probe that prints something that is not a manifest
-/// is not a dog that declared nothing, and reading it that way is the check
-/// going missing with nothing saying so.
+/// Makes the fixture binary one the probe can run, without touching its bytes,
+/// so the digest the cache is keyed on still names it.
+#[cfg(unix)]
+fn make_executable(paths: &ShepPaths) {
+    make_executable_at(&adopted_binary(paths));
+}
+
+#[cfg(unix)]
+fn make_executable_at(binary: &Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Every request the run put on the wire.
+///
+/// `#[cfg(unix)]` with its only callers: the dogs it counts are shell scripts.
+#[cfg(unix)]
+fn sent(mut envelopes: tokio::sync::mpsc::UnboundedReceiver<Envelope>) -> Vec<Request> {
+    let mut out = Vec::new();
+    while let Ok(envelope) = envelopes.try_recv() {
+        out.push(envelope.body);
+    }
+    out
+}
+
+/// A dog that cannot have declared `validate` is never asked, and the write
+/// lands. `--shep-manifest` is newer than most dogs: one built on
+/// `shep_client`'s argument parser rejects the unknown flag with a non-zero
+/// exit, and a dog that ignores it starts its main loop and is killed when the
+/// probe budget runs out. Neither ever printed a manifest, so neither has a
+/// declaration to lose, and a gate that refused them would make every dog
+/// adopted before the flag unconfigurable.
 #[cfg(unix)]
 #[tokio::test]
-async fn a_probe_that_prints_no_manifest_refuses_the_write() {
+async fn a_dog_that_rejects_the_manifest_flag_is_never_asked() {
     let dir = tempfile::tempdir().unwrap();
     let paths = home_with(dir.path(), Some(validating()));
-    replace_the_dog_with_a_probe(&paths, "echo 'not a manifest'");
+    replace_the_dog_with_a_probe(
+        &paths,
+        r#"if [ "$1" = --shep-manifest ]; then
+  echo 'unknown flag: --shep-manifest' >&2
+  exit 1
+fi"#,
+    );
 
-    let (client, _envelopes) =
+    let (client, envelopes) =
         shep_client::testing::fake_client_answering_refusals(&control_address(dir.path()), |_| {
             Ok(Response::Pong)
         })
         .await;
 
-    let failure = ask_dog(&client, &paths, "kelpie", &table(&[]), None)
-        .await
-        .expect_err("a probe that answered nothing readable answered nothing");
-    let AskFailure::Unknown { reason } = failure else {
-        panic!("a probe that failed is no dog's refusal: {failure:?}");
-    };
+    let landed = ask_dog(&client, &paths, "kelpie", &table(&[]), None).await;
+    assert!(landed.is_ok(), "{landed:?}");
+    let requests = sent(envelopes);
     assert!(
-        reason.contains("no answer shep could read") && reason.contains("kelpie"),
-        "{reason}"
+        !requests
+            .iter()
+            .any(|r| matches!(r, Request::Trigger { .. })),
+        "a dog that never printed a manifest is no dog to ask: {requests:?}"
     );
 }
 
-/// The same for a probe that was still running when the budget ran out. The
-/// dog is running, which is the case an operator would least expect to lose
-/// its own check.
+/// The same for a dog whose probe was still running when the budget ran out.
 #[cfg(unix)]
 #[tokio::test]
-async fn a_probe_that_never_answers_refuses_the_write() {
+async fn a_dog_that_never_answers_the_manifest_flag_is_never_asked() {
     let dir = tempfile::tempdir().unwrap();
     let paths = home_with(dir.path(), Some(validating()));
     replace_the_dog_with_a_probe(
@@ -563,6 +593,59 @@ async fn a_probe_that_never_answers_refuses_the_write() {
 fi"#,
     );
 
+    let (client, envelopes) =
+        shep_client::testing::fake_client_answering_refusals(&control_address(dir.path()), |_| {
+            Ok(Response::Pong)
+        })
+        .await;
+
+    let landed = ask_dog(&client, &paths, "kelpie", &table(&[]), None).await;
+    assert!(landed.is_ok(), "{landed:?}");
+    let requests = sent(envelopes);
+    assert!(
+        !requests
+            .iter()
+            .any(|r| matches!(r, Request::Trigger { .. })),
+        "a probe that ran out of budget said nothing about what the dog wants: {requests:?}"
+    );
+}
+
+/// And for one that answers the flag with a usage banner on stdout: what it
+/// printed is not a manifest, which is the same answer as printing nothing.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_dog_that_prints_no_manifest_for_the_flag_is_never_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = home_with(dir.path(), Some(validating()));
+    replace_the_dog_with_a_probe(&paths, "echo 'not a manifest'");
+
+    let (client, envelopes) =
+        shep_client::testing::fake_client_answering_refusals(&control_address(dir.path()), |_| {
+            Ok(Response::Pong)
+        })
+        .await;
+
+    let landed = ask_dog(&client, &paths, "kelpie", &table(&[]), None).await;
+    assert!(landed.is_ok(), "{landed:?}");
+    assert!(
+        !sent(envelopes)
+            .iter()
+            .any(|request| matches!(request, Request::Trigger { .. })),
+        "no manifest, no declaration, no ask"
+    );
+}
+
+/// A cache file filed under this binary's own digest is a manifest shep printed
+/// for it once. That record is what a corrupt one loses, and losing it is not
+/// the same as never having one: the dog asked to be consulted, and this read
+/// cannot tell what it asked.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_cached_manifest_that_neither_reads_nor_answers_refuses_the_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = home_with(dir.path(), Some("{ truncated"));
+    make_executable(&paths);
+
     let (client, _envelopes) =
         shep_client::testing::fake_client_answering_refusals(&control_address(dir.path()), |_| {
             Ok(Response::Pong)
@@ -571,9 +654,12 @@ fi"#,
 
     let failure = ask_dog(&client, &paths, "kelpie", &table(&[]), None)
         .await
-        .expect_err("a probe that outlasted its budget answered nothing");
+        .expect_err("a record of a manifest that cannot be read is no acceptance");
+    let AskFailure::Unknown { reason } = failure else {
+        panic!("a lost record is no dog's refusal: {failure:?}");
+    };
     assert!(
-        matches!(&failure, AskFailure::Unknown { reason } if reason.contains("no answer shep could read")),
-        "{failure:?}"
+        reason.contains("cannot be read") && reason.contains("answered nothing"),
+        "{reason}"
     );
 }
