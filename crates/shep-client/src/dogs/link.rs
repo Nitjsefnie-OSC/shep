@@ -34,9 +34,8 @@ pub(super) async fn connect(
 }
 
 /// Whether this process has opened its pipe already. A dog has one
-/// connection from its shepherd: the shepherd serves the first open and
-/// drops the pipe, so a second would find it busy for as long as the first
-/// lives.
+/// connection from its shepherd: the shepherd accepts the first open and then
+/// drops its listener, so a second open would find no pipe by that name.
 #[cfg(windows)]
 static PIPE_TAKEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 

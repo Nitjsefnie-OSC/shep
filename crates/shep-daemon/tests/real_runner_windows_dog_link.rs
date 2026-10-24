@@ -162,7 +162,7 @@ async fn a_sheep_is_given_no_pipe() {
     let spec = script_spec(
         &dir,
         &[&format!(
-            "(echo [%SHEP_DOG_PIPE%]) > \"{}\"",
+            "if defined SHEP_DOG_PIPE ((echo set) > \"{0}\") else ((echo unset) > \"{0}\")",
             seen.display()
         )],
     );
@@ -173,5 +173,5 @@ async fn a_sheep_is_given_no_pipe() {
     let named = first_line(&seen).await;
     let _ = tokio::time::timeout(SETTLE, proc.wait()).await;
 
-    assert_eq!(named, "[]");
+    assert_eq!(named, "unset");
 }
