@@ -694,8 +694,8 @@ the ordinary case, not a skew, and comparing the two would report every
 dog that exists.
 
 A candidate gets one second to exit and another to have its output read,
-and an adopt runs two probes, so roughly four seconds is the worst case. Its
-process group is killed either way, so a dog that ignores both flags and
+and an adopt runs up to three probes, so roughly six seconds is the worst case.
+Its process group is killed either way, so a dog that ignores every flag and
 runs costs that time and is adopted with an unknown protocol. It cannot
 hang the `adopt` that is vetting it.
 
@@ -904,9 +904,10 @@ already visible and unread.
 ## Answering `--shep-manifest`
 
 One flag describes the dog whole: `--shep-manifest`, answered on stdout with
-one JSON object, manifest v1. Nothing in shep reads it yet; a dog can start
-declaring now. `--version` and `--schema` stay as they are, for a dog built
-against an older shep and for an older shep adopting this one.
+one JSON object, manifest v1. `shep adopt` asks it first. `--version` and
+`--schema` stay as they are, for a dog built against an older shep and for an
+older shep adopting this one, and `shep adopt` asks them when a dog answers no
+manifest.
 
 | Field | Meaning |
 | --- | --- |
@@ -923,7 +924,15 @@ against an older shep and for an older shep adopting this one.
 `manifest`, `name`, `version` and `protocol` are required; the rest default
 to nothing declared. A reader ignores a field it does not know, so a later
 manifest reads on an older shep. Output that is not a manifest, or a
-non-zero exit, means the dog has none.
+non-zero exit, means the dog has none: it is adopted through `--version` and
+`--schema`, as before.
+
+`shep adopt` takes the version, protocol, channel ask and schema from the
+manifest when there is one. It caches the manifest in `$SHEP_HOME/manifests`
+under the binary's sha256, so a build is asked once and a rebuilt binary is
+asked again. `shep adopt` and `shep enable` warn, and go ahead, when a dog in
+`depends` is not adopted or `depends.shep` is newer than this shep. A
+dependency's own version is not checked.
 
 `Probe` builds it from what the dog already gives it. `permission`, `verb`,
 `depends_on_dog`, `depends_on_shep`, `defaults` and `validate` add what it

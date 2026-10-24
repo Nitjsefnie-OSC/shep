@@ -12,6 +12,8 @@ use crate::commands::shep_toml::{ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
 use crate::output::{DogActionStatus, Streams};
 
+use super::depends::warn_of_unmet_depends;
+use super::vet::{VERSION_BUDGET, read_manifest};
 use super::{
     NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, emit_dog_action, fail_config,
 };
@@ -79,11 +81,37 @@ pub async fn enable(streams: &mut Streams<'_>, paths: &ShepPaths, name: &str) ->
             return fail_enable_unknown_dog(streams, name, &adopted);
         }
     };
+    warn_of_unmet_depends_of(streams, paths, name, &source);
     let client = match connect_or_absent(paths, streams).await {
         Ok(client) => client,
         Err(code) => return code,
     };
     enable_after_config(streams, name, &source, client.as_ref()).await
+}
+
+/// Warns, for an adopted dog, of what its manifest needs and is missing.
+///
+/// A built-in dog has no binary to read. The manifest comes from the cache
+/// when this binary has been read before, so a dog adopted by an older shep,
+/// or rebuilt since, is asked once more. A dog with no readable manifest
+/// earns nothing here.
+fn warn_of_unmet_depends_of(
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    name: &str,
+    source: &DogSource,
+) {
+    let DogSource::Adopted { path, .. } = source else {
+        return;
+    };
+    let Ok(Some(manifest)) = read_manifest(Path::new(path), &paths.home, name, VERSION_BUDGET)
+    else {
+        return;
+    };
+    let adopted = ShepToml::read_only(&paths.daemon_config)
+        .map(|cfg| cfg.adopted_dog_names())
+        .unwrap_or_default();
+    warn_of_unmet_depends(streams, name, &manifest, &adopted);
 }
 
 /// Renders [`enable`]'s refusal of a name that names no dog.

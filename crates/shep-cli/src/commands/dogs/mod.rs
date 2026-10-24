@@ -28,6 +28,7 @@ use crate::output::{DogActionRow, DogActionStatus, Streams, emit, write_outcome}
 
 mod adopt;
 mod barks;
+mod depends;
 mod disable;
 mod enable;
 mod remove;
@@ -35,6 +36,8 @@ mod vet;
 
 #[cfg(all(test, unix))]
 mod emit_dog_action_tests;
+#[cfg(all(test, unix))]
+mod manifest_adoption_tests;
 #[cfg(test)]
 mod test_support;
 
