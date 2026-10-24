@@ -198,6 +198,39 @@ silently falls back to its default of `true`. Ordinary TOML, and the same
 trap catches any dog name with a dot in it, not only a provider's
 namespace.
 
+## Grants
+
+A dog talks to the shepherd over its own connection and, by default, may ask
+for anything the CLI can. To keep an honest dog in bounds and make what it
+asks attributable, list what it may do in `shep.toml`:
+
+```toml
+[daemon.dog_grants.otel]
+granted = ["flock.read", "events:process."]
+```
+
+| Permission | Lets the dog |
+|---|---|
+| `flock.read` | look at the flock and its configuration |
+| `flock.control` | start, stop, restart and signal sheep |
+| `flock.edit` | add and delete sheep and change their configuration |
+| `logs.read` | read the end of a sheep's log |
+| `logs.manage` | reopen and flush logs |
+| `events:<prefix>` | subscribe to topics that begin with the prefix |
+| `secrets.read:<scope>` | read a sheep's dog settings with secrets resolved, in the environment the scope names |
+| `secrets.write:<namespace>` | push values into that namespace |
+| `dogs.control` | enable, disable and configure other dogs |
+| `dogs.trigger:<name>` | send an action to the named dog |
+| `shepherd.control` | stop the shepherd |
+
+- The table that maps every request to one permission is `shep_core::permissions::need`, an exhaustive match: a new request does not compile until it is placed.
+- A refusal is `RpcErrorCode::Forbidden`: ``dog `otel` was refused `stop`: it needs `flock.control`, which was not granted to it``.
+- No entry means undeclared and full access. `granted = []` grants nothing.
+- A dog always keeps its own `dogs.toml` section, its own sheep settings and the `config.dog.<name>` and `config.sheep.<name>` topics.
+- `Subscribe` is checked per topic against the `events:` prefixes, on the literal head of the pattern before its first glob character.
+- Grants are read at boot and sent with `EnableDog`. A shepherd below protocol 12 records them and enforces nothing; `shep adopt` and `shep enable` say so.
+- Grants keep an honest dog in bounds. They are not a sandbox: a dog runs as the operator and could open the control socket like the CLI.
+
 ## When a dog starts
 
 Every dog starts after the flock by default, so a metrics dog does not answer
@@ -630,7 +663,9 @@ There is no sandbox here, and it would be a mistake to assume one: **an
 adopted dog runs at the shepherd's own trust level, with no isolation
 beyond it.** That is the same trust an ordinary sheep in your Flockfile
 already has, so adopting a dog does not grant anything beyond what any
-process your own config already starts could do. It is an honest
+process your own config already starts could do. An operator can list what a
+dog may ask of the shepherd (see [Grants](#grants)); that keeps an honest
+dog in bounds and is not a sandbox. It is an honest
 comparison, not a hand-wave: you were already trusting whatever you point
 a Flockfile's `script` at, and a third-party dog is held to no higher bar
 than that.
