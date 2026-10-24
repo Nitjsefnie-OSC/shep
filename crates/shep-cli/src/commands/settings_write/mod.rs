@@ -65,6 +65,8 @@ use crate::output::Streams;
 
 mod edit;
 mod flow;
+#[cfg(test)]
+mod flow_stale_tests;
 mod plan;
 mod schema;
 mod unset;

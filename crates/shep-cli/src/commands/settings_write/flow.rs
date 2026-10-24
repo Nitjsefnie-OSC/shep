@@ -109,13 +109,8 @@ pub(super) async fn run(
     // The answer was given, and the holder may have moved while it was being
     // given. A whole-section or whole-table write carries every key it read, so
     // a stale plan overwrites what someone else wrote in the meantime.
-    match holder_unchanged(client, streams, name, &plan.write).await {
-        Ok(true) => {}
-        Ok(false) => {
-            return WriteRefusal::Stale(holder_moved(verb, name, &report.path, &plan.write))
-                .report(streams);
-        }
-        Err(code) => return code,
+    if let Some(code) = stale_holder(client, streams, name, &plan.write, verb, &report.path).await {
+        return code;
     }
 
     // A dog whose checks go further than its schema runs them on the table
@@ -134,6 +129,16 @@ pub(super) async fn run(
                     .report(streams);
             }
             Err(AskFailure::Transport(err)) => return client_error(streams, &err),
+        }
+        // The ask waits on the dog's own `action_timeout`, which is a second
+        // window of the same kind the question already was: a dashboard filing
+        // its own write on another key of this holder while the dog thinks is
+        // the edit this plan would silently overwrite. The plan is as stale as
+        // it was before the ask, and the dog's yes says nothing about it.
+        if let Some(code) =
+            stale_holder(client, streams, name, &plan.write, verb, &report.path).await
+        {
+            return code;
         }
     }
 
@@ -272,6 +277,31 @@ async fn send(
         }
         Ok(_other) => Err(unexpected_response(streams)),
         Err(err) => Err(client_error(streams, &err)),
+    }
+}
+
+/// The refusal for a holder that moved, or `None` while it still holds what the
+/// plan was built from.
+///
+/// The reporting half, split from [`holder_unchanged`] because a write that
+/// waits on a dog is checked twice: once before the ask and once after it.
+///
+/// # Errors
+/// The [`ExitCode`] already reported to `streams`.
+async fn stale_holder(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    name: &str,
+    write: &Write,
+    verb: Verb,
+    path: &str,
+) -> Option<ExitCode> {
+    match holder_unchanged(client, streams, name, write).await {
+        Ok(true) => None,
+        Ok(false) => {
+            Some(WriteRefusal::Stale(holder_moved(verb, name, path, write)).report(streams))
+        }
+        Err(code) => Some(code),
     }
 }
 
