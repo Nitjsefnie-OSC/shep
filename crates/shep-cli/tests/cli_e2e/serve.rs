@@ -27,7 +27,7 @@ fn serve_registers_a_sheep_that_answers_on_its_port() {
     guard.adopt_home(dir.path());
     assert_success(&output);
 
-    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (status, body) = poll_http_get(addr, "/", &[]);
     assert_eq!(status, 200, "body={body}");
     assert!(body.contains("hello from shep serve"), "{body}");
@@ -101,7 +101,7 @@ fn a_served_sheep_stops_on_sigterm_rather_than_riding_the_ladder_to_sigkill() {
     guard.adopt_home(dir.path());
     assert_success(&output);
 
-    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (status, body) = poll_http_get(addr, "/", &[]);
     assert_eq!(status, 200, "body={body}");
 
@@ -165,7 +165,7 @@ fn a_refused_symlink_writes_the_path_and_the_flag_to_the_sheeps_bleats() {
     guard.adopt_home(dir.path());
     assert_success(&output);
 
-    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (status, body) = poll_http_get(addr, "/current/index.html", &[]);
     assert_eq!(status, 404, "body={body}");
 
@@ -206,7 +206,7 @@ fn a_served_sheep_with_follow_symlinks_serves_the_deploy_layout_and_says_so() {
     guard.adopt_home(dir.path());
     assert_success(&output);
 
-    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (status, body) = poll_http_get(addr, "/current/index.html", &[]);
     assert_eq!(status, 200, "body={body}");
     assert!(body.contains("the deploy layout"), "{body}");
