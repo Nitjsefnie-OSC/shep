@@ -273,9 +273,8 @@ impl ReconnectingClient {
     /// # Errors
     ///
     /// See [`Client::connect_over`].
-    #[cfg(unix)]
     pub(crate) async fn connect_over_link(
-        link: tokio::net::UnixStream,
+        link: shep_core::transport::ClientStream,
         socket: &Path,
         timeout: Duration,
         dog_name: Option<&str>,

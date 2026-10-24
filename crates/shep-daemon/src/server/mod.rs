@@ -16,7 +16,6 @@
 
 mod accept_backoff;
 mod conn_protocol;
-#[cfg(unix)]
 mod dog_links;
 #[cfg(unix)]
 mod link_table;
@@ -32,7 +31,6 @@ mod server_lifecycle;
 #[cfg(test)]
 mod testing;
 mod tracked_codec;
-#[cfg(unix)]
 pub(crate) use dog_links::serve_dog_links;
 #[cfg(unix)]
 pub(crate) use link_table::DogLinks;
