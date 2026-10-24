@@ -1012,9 +1012,15 @@ Options:
           Print version
 @@VERB:dogs@@
 List the dogs, and nothing else. `--available` lists the community index of dogs you could adopt
-instead of the ones this shepherd is running
+instead of the ones this shepherd is running. `grant` and `revoke` change one permission of a dog
 
 Usage: shep dogs [OPTIONS] [FILTER]
+       shep dogs <COMMAND>
+
+Commands:
+  grant   Grant a dog one permission it declared
+  revoke  Revoke one permission from a dog
+  help    Print this message or the help of the given subcommand(s)
 
 Arguments:
   [FILTER]
@@ -1026,6 +1032,146 @@ Options:
           List the dogs published in the community index instead of the ones this shepherd is
           running. Needs no shepherd
 
+      --format <FORMAT>
+          Output format
+
+          Possible values:
+          - table: Human-readable columns (the default)
+          - json:  A versioned JSON envelope, one object per invocation
+          
+          [default: table]
+
+  -q, --quiet
+          Suppress non-essential output
+          
+          Currently narrows `bleats`' own notices (a dropped-events count, a daemon-shutdown notice,
+          ...): diagnostics distinct from a sheep's own line or a real error, both of which still
+          print regardless.
+
+      --style <STYLE>
+          How much this invocation dresses up its output: `full`, `plain`, or `bare`
+          
+          Wins over `$SHEP_STYLE` and `shep.toml`'s `[style] level`. Omit to let those decide; `shep
+          style` reports which one answered.
+
+          Possible values:
+          - full:  Sheep, boxes and colour
+          - plain: Boxes and colour, no sheep
+          - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
+          `describe`, `fold`, `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`, `enable`,
+          `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb refuses it
+          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
+          no hidden `--exec` form over it. `--home` still names this machine's home, never the
+          host's.
+
+      --home <HOME>
+          Talk to a different shepherd
+          
+          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
+          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
+          flock from every directory.
+          
+          [env: SHEP_HOME=]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+@@VERB:dogs grant@@
+Grant a dog one permission it declared.
+
+Writes `[daemon.dog_grants.<dog>]` in `shep.toml` and tells a running shepherd, which judges the
+dog's next request by the new grants with no restart. Only a permission the dog's manifest declares
+can be granted; `shep adopt` and the first `shep enable` ask about the whole list.
+
+Grants keep a dog's requests in bounds and do not confine it: it runs as you and can do anything you
+can.
+
+Usage: shep dogs grant [OPTIONS] <NAME> <PERMISSION>
+
+Arguments:
+  <NAME>
+          The dog's name, as `shep adopt` registered it
+
+  <PERMISSION>
+          The permission, as the dog's manifest spells it: `flock.read`, `events:process.`,
+          `secrets.read:staging`
+
+Options:
+      --format <FORMAT>
+          Output format
+
+          Possible values:
+          - table: Human-readable columns (the default)
+          - json:  A versioned JSON envelope, one object per invocation
+          
+          [default: table]
+
+  -q, --quiet
+          Suppress non-essential output
+          
+          Currently narrows `bleats`' own notices (a dropped-events count, a daemon-shutdown notice,
+          ...): diagnostics distinct from a sheep's own line or a real error, both of which still
+          print regardless.
+
+      --style <STYLE>
+          How much this invocation dresses up its output: `full`, `plain`, or `bare`
+          
+          Wins over `$SHEP_STYLE` and `shep.toml`'s `[style] level`. Omit to let those decide; `shep
+          style` reports which one answered.
+
+          Possible values:
+          - full:  Sheep, boxes and colour
+          - plain: Boxes and colour, no sheep
+          - bare:  Exactly what shep printed before any of this, and exactly what a pipe gets
+
+      --host <DEST>
+          Reach another host's shepherd over ssh
+          
+          DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from ~/.ssh/config. `flock`,
+          `describe`, `fold`, `bleats`, `stop`, `restart`, `reload`, `delete`, `stock`, `enable`,
+          `disable`, `signal`, `whisper`, `trigger` and `lookout` take it; any other verb refuses it
+          rather than act on this machine. `describe` shows no secrets over it, and `enable` takes
+          no hidden `--exec` form over it. `--home` still names this machine's home, never the
+          host's.
+
+      --home <HOME>
+          Talk to a different shepherd
+          
+          Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You almost certainly
+          want the default, ~/.shep. Must be an absolute path: a relative one would name a different
+          flock from every directory.
+          
+          [env: SHEP_HOME=]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+@@VERB:dogs revoke@@
+Revoke one permission from a dog.
+
+Writes `[daemon.dog_grants.<dog>]` in `shep.toml` and tells a running shepherd, which refuses the
+dog's next request that needs it with no restart.
+
+Usage: shep dogs revoke [OPTIONS] <NAME> <PERMISSION>
+
+Arguments:
+  <NAME>
+          The dog's name, as `shep adopt` registered it
+
+  <PERMISSION>
+          The permission, as the dog's manifest spells it: `flock.read`, `events:process.`,
+          `secrets.read:staging`
+
+Options:
       --format <FORMAT>
           Output format
 

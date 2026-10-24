@@ -200,7 +200,7 @@ pub enum Commands {
     Flock(FlockArgs),
     /// List the dogs, and nothing else. `--available` lists the community
     /// index of dogs you could adopt instead of the ones this shepherd is
-    /// running.
+    /// running. `grant` and `revoke` change one permission of a dog.
     Dogs(DogsArgs),
     /// Turn a sheep or a dog back on. A sheep named here has its disabled
     /// mark cleared and is started; a dog is written into `[daemon]

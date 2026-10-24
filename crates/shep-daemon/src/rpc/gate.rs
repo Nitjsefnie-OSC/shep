@@ -6,12 +6,17 @@
 //! reaches, and which environment a sheep resolves its secrets in. The
 //! control socket never comes through here; it acts as the operator.
 
+use bytes::Bytes;
 use shep_core::permissions::{Grants, Need, Permission, need};
 use shep_core::protocol::{Request, RpcError, RpcErrorCode};
 use shep_core::selector::ProcessSelector;
 
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+
 use super::context::RpcContext;
 use super::error::rpc_error;
+use crate::bus::{TopicFilter, spawn_forwarder, spawn_guarded_forwarder};
 
 /// Whether the dog `dog` may send `request`.
 ///
@@ -135,6 +140,32 @@ pub(crate) async fn check_carried(
         },
     )
     .await
+}
+
+/// Forwards the events `filter` selects to the connection `out`, and for a
+/// dog's own connection stops when its grants no longer cover every topic.
+///
+/// A `Subscribe` is checked once, by [`check`]; this is the recheck an
+/// `EnableDog` that narrows the dog's grants needs, since the forwarder
+/// otherwise keeps the filter it was armed with.
+pub(crate) fn spawn_checked_forwarder(
+    ctx: &RpcContext,
+    dog: Option<&str>,
+    filter: TopicFilter,
+    out: mpsc::Sender<Bytes>,
+) -> JoinHandle<()> {
+    let Some(dog) = dog else {
+        return spawn_forwarder(&ctx.events, filter, out);
+    };
+    let (known_dogs, dog) = (ctx.known_dogs.clone(), dog.to_owned());
+    let topics = filter.patterns().to_vec();
+    spawn_guarded_forwarder(&ctx.events, filter, out, move || {
+        known_dogs.grants(&dog).is_none_or(|grants| {
+            topics
+                .iter()
+                .all(|topic| grants.allows_topic(topic) || is_own_config_topic(topic, &dog))
+        })
+    })
 }
 
 /// `Ok` when `grants` holds `permission`, and its name otherwise.

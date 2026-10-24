@@ -58,7 +58,8 @@ fi
 # `every_listed_verb_has_a_block_in_the_committed_reference` fails when this
 # array has grown and nobody re-ran this script.
 VERBS=(
-  start add serve stop restart reload delete stock flock dogs enable disable
+  start add serve stop restart reload delete stock flock dogs "dogs grant"
+  "dogs revoke" enable disable
   adopt describe trigger signal whisper fold bleats lookout whistle
   reopen flush barks kv "kv get" "kv set" "kv unset" secret "secret set"
   "secret get" "secret unset" "secret list" host "host add" "host remove"

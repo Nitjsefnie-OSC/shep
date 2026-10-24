@@ -54,6 +54,7 @@ mod dog_delete;
 mod dog_grants;
 mod dog_validate;
 mod dogs_barks;
+mod dogs_grant;
 mod fixtures;
 mod flockfile_disabled;
 mod flockfile_load;

@@ -233,7 +233,11 @@ fn warn_of_unmet_depends_of(
 /// the refusal was decided under, and empty where nothing has been adopted.
 /// [`ExitCode::InvalidConfig`] rather than [`ExitCode::Usage`]: the name is
 /// one the daemon config cannot resolve, not a malformed argument.
-fn fail_enable_unknown_dog(streams: &mut Streams<'_>, name: &str, adopted: &[String]) -> ExitCode {
+pub(super) fn fail_enable_unknown_dog(
+    streams: &mut Streams<'_>,
+    name: &str,
+    adopted: &[String],
+) -> ExitCode {
     let valid: Vec<String> = crate::dog::BUILT_IN_DOGS
         .iter()
         .map(|built_in| format!("{built_in:?}"))

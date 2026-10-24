@@ -354,7 +354,9 @@ export const BUDGETS: Record<string, number> = {
   // permission cases are behaviour a reader cannot guess, not prose to trim.
   // Raised from 430 for the built-in dogs: that they ask like any other, and
   // what each declares, is behaviour a reader cannot guess.
-  "dog-grants": 460,
+  // Raised again for `shep dogs grant` and `revoke`: what each accepts and
+  // refuses is behaviour a reader cannot guess (#1092).
+  "dog-grants": 490,
 };
 
 

@@ -29,6 +29,8 @@ mod quiesce_tests;
 mod resume_grants_tests;
 #[cfg(all(test, unix))]
 mod resume_tests;
+#[cfg(all(test, unix))]
+mod revoked_subscription_tests;
 mod server_lifecycle;
 #[cfg(test)]
 mod testing;

@@ -4,8 +4,8 @@ use super::peer_auth::ConnError;
 use super::peer_auth::{check_peer, daemon_uid, peer_pid};
 use super::server_lifecycle::{CONN_QUEUE, HANDSHAKE_TIMEOUT_MS};
 use super::tracked_codec::TrackedCodec;
-use crate::bus::{TopicFilter, spawn_forwarder};
-use crate::rpc::{Outcome, RpcContext, check_carried, dispatch};
+use crate::bus::TopicFilter;
+use crate::rpc::{Outcome, RpcContext, check_carried, dispatch, spawn_checked_forwarder};
 use crate::supervisor::ConnId;
 use bytes::{Bytes, BytesMut};
 use core::time::Duration;
@@ -143,9 +143,12 @@ async fn read_loop(
                 send(out, &reply).await?; // ordered ahead of any event by the queue
                 // A second Subscribe REPLACES the first: spec §6 gives a
                 // connection one topic list, not a growing union.
-                if let Some(old) =
-                    forwarder.replace(spawn_forwarder(&ctx.events, filter, out.clone()))
-                {
+                if let Some(old) = forwarder.replace(spawn_checked_forwarder(
+                    ctx,
+                    origin.bound_dog(),
+                    filter,
+                    out.clone(),
+                )) {
                     old.abort();
                 }
             }
@@ -212,7 +215,12 @@ async fn resume(
         }
     };
     send(out, &BusEvent::Dropped { count: 1 }).await?;
-    Ok(Some(spawn_forwarder(&ctx.events, filter, out.clone())))
+    Ok(Some(spawn_checked_forwarder(
+        ctx,
+        origin.bound_dog(),
+        filter,
+        out.clone(),
+    )))
 }
 
 async fn handshake(
