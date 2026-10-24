@@ -24,6 +24,7 @@ impl Response {
             Self::SheepEnvSet { .. } => "SheepEnvSet",
             Self::SheepEnvBatch { .. } => "SheepEnvBatch",
             Self::SheepFieldSet { .. } => "SheepFieldSet",
+            Self::SheepFieldReset { .. } => "SheepFieldReset",
             Self::DogSheepSettings { .. } => "DogSheepSettings",
             Self::SheepDogTable { .. } => "SheepDogTable",
             Self::SheepDogSettingsSet { .. } => "SheepDogSettingsSet",

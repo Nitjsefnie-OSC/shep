@@ -608,6 +608,22 @@ sheep or dog is is refused by name. No wire change: the writes are
 `Request::SetSheepField`, `Request::SetSheepDogSettings` and
 `Request::SetDogConfig`.
 
+**One undo drops an override or removes a dog's key** (issue #1097, under the
+settings spec #1073). `shep unset <address>` takes `shep set`'s address and
+flow, with the same `--yes`, `--dry-run` and `--format json`. A sheep's field
+goes through the new `Request::ResetSheepField { name, key }`: the shepherd
+drops the operator's override and the Flockfile's value returns, in `shep get`
+and in the running config, and the reply says what the field holds again. A key
+inside a sheep's table for a dog leaves the table, so the dog's default
+applies, and a key of a dog's own section leaves `dogs.toml` with the comments
+around it. A field with no override is refused with a sentence pointing at
+`shep get`, and the section as a whole is a usage error. The override record
+gained a `template` map holding the value in force before the first override,
+so the reset has a value to restore and a Flockfile edit keeps reaching the
+sheep. `shep unset` stopped being the key/value store's hidden spelling at the
+same time, so none of the store's old verbs remain. Wire change: additive
+`ResetSheepField` and `SheepFieldReset`, no `PROTOCOL_VERSION` move.
+
 **A community dog index lists the dogs others have written, and shep prints
 how to install one without running anything** (2026-08-21 for the index and
 its parser, 2026-08-23 for the verb). `web/public/dogs.json` is a document

@@ -238,6 +238,29 @@ pub enum Request {
         /// `Debug`, not to this field.
         value: serde_json::Value,
     },
+    /// Drops the operator's override of one config field, so the value the
+    /// Flockfile gave it comes back.
+    ///
+    /// [`Self::SetSheepField`]'s undo. The value that returns is the one the
+    /// field held before the operator spoke for it: the Flockfile's value as
+    /// of the last load that named the field, or the value the sheep was
+    /// created with. A field overridden before that was recorded goes back to
+    /// the built-in default.
+    ///
+    /// Refuses the keys [`Self::SetSheepField`] refuses, and refuses a key the
+    /// operator has not overridden: there is nothing to drop, and a silent
+    /// no-op would read as success. The apply classification governs the
+    /// restored value exactly as it governs a set one.
+    ///
+    /// Answers [`Response::SheepFieldReset`], or
+    /// [`RpcErrorCode::NotFound`] when no sheep has that name.
+    ResetSheepField {
+        /// The sheep's name, not a selector, for [`Self::SheepConfig`]'s
+        /// reason.
+        name: String,
+        /// The [`AppConfig`] field whose override to drop.
+        key: String,
+    },
     /// One dog's `[app.dogs.<name>]` table, for every sheep carrying one.
     ///
     /// It reads the stored spec, which is in force because `dogs` is

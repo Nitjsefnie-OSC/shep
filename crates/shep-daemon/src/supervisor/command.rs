@@ -244,6 +244,15 @@ pub(crate) enum Command {
         /// written.
         reply: oneshot::Sender<Result<Option<FieldSet>, SupervisorError>>,
     },
+    /// See [`Actor::handle_reset_sheep_field`].
+    ResetSheepField {
+        /// The sheep's name, not a selector, for [`Self::Scale`]'s reason.
+        name: String,
+        /// The `AppConfig` field whose override to drop.
+        key: String,
+        /// Answers as [`Self::SetSheepField`] does.
+        reply: oneshot::Sender<Result<Option<FieldSet>, SupervisorError>>,
+    },
     /// Reads one dog's table off every sheep carrying one. See
     /// [`Actor::handle_dog_sheep_settings`].
     DogSheepSettings {

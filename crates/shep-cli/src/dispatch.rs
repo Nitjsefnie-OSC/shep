@@ -518,17 +518,10 @@ pub(crate) async fn run(
         // Reads and writes `kv.json` directly and never connects to the
         // shepherd.
         Commands::Kv(ref args) => match &args.command {
-            cli::KvCommand::Get(args) => kv::get(&mut streams, &paths, args, kv::KvVia::Kv),
-            cli::KvCommand::Set(args) => kv::set(&mut streams, &paths, args, kv::KvVia::Kv),
-            cli::KvCommand::Unset(args) => kv::unset(&mut streams, &paths, args, kv::KvVia::Kv),
+            cli::KvCommand::Get(args) => kv::get(&mut streams, &paths, args),
+            cli::KvCommand::Set(args) => kv::set(&mut streams, &paths, args),
+            cli::KvCommand::Unset(args) => kv::unset(&mut streams, &paths, args),
         },
-        // The store's old spelling, hidden from `--help` and kept for the
-        // scripts written against it: same store, same envelope, plus a notice
-        // on stderr naming the verb it moved to. `set` is gone from this arm:
-        // it writes a sheep's or a dog's settings now.
-        Commands::Unset(ref args) => {
-            kv::unset(&mut streams, &paths, args, kv::KvVia::Alias("unset"))
-        }
         // Same rule, same file-first reason: `shep secret set` before a
         // first `shep start` is the ordinary first-run order.
         Commands::Secret(ref args) => secret::secret(&mut streams, &paths, args),
@@ -553,6 +546,14 @@ pub(crate) async fn run(
         // new one is what that flock holds, not what a file says.
         Commands::Set(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => commands::settings_write::set(&client, &mut streams, &paths, args).await,
+            Err(code) => code,
+        },
+        // Drops what `set` wrote, from the same running flock and under the
+        // same rule: the override it drops is the one that flock holds.
+        Commands::Unset(ref args) => match connect_client(&mut streams, &link, guard).await {
+            Ok(client) => {
+                commands::settings_write::unset(&client, &mut streams, &paths, args).await
+            }
             Err(code) => code,
         },
         // Does its own connecting: `connect_client` reports and gives up,

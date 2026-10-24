@@ -10,9 +10,12 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, json};
 
+use super::flow::{ask, holder_moved, report_for, section_moved, table_moved};
+use super::plan::schema_refusal;
 use super::plan::{name_the_path, touched_paths};
 use super::*;
 use crate::cli::Format;
+use crate::commands::copy::confirm::Answer;
 use crate::commands::copy::plan::ChangeKind;
 use crate::output::Streams;
 
@@ -498,7 +501,7 @@ fn the_question_is_answered_the_way_copy_answers_it() {
                 fmt: Format::Table,
             };
             let mut reader = Cursor::new(text.as_bytes());
-            ask(&mut streams, name, path, changes, &mut reader)
+            ask(&mut streams, Verb::Set, name, path, changes, &mut reader)
         };
         (answer, String::from_utf8_lossy(&err).to_string())
     };
@@ -855,7 +858,7 @@ fn a_holder_that_moved_names_the_holder_and_the_reader() {
         toml: String::new(),
         before: String::new(),
     };
-    let text = holder_moved("kelpie", "", &section);
+    let text = holder_moved(Verb::Set, "kelpie", "", &section);
     assert!(text.starts_with("nothing was written:"), "{text}");
     assert!(text.contains("`kelpie`'s section"), "{text}");
     assert!(text.contains("changed while `shep set` waited"), "{text}");
@@ -866,7 +869,7 @@ fn a_holder_that_moved_names_the_holder_and_the_reader() {
         table: DogTable::from(Map::new()),
         before: Json::Null,
     };
-    let text = holder_moved("api", "dogs.kelpie.git", &table);
+    let text = holder_moved(Verb::Set, "api", "dogs.kelpie.git", &table);
     assert!(text.contains("`api`'s table for `kelpie`"), "{text}");
     assert!(text.contains("`shep get api.dogs.kelpie.git`"), "{text}");
 
