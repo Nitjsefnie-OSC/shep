@@ -1,12 +1,13 @@
-use super::origin::{Attribution, Origin};
+use super::origin::{Attribution, Origin, Side};
 use super::peer_auth::ConnError;
 #[cfg(unix)]
 use super::peer_auth::{check_peer, daemon_uid, peer_pid};
 use super::server_lifecycle::{CONN_QUEUE, HANDSHAKE_TIMEOUT_MS};
+use super::tracked_codec::TrackedCodec;
 use crate::bus::{TopicFilter, spawn_forwarder};
 use crate::rpc::{Outcome, RpcContext, dispatch};
 use crate::supervisor::ConnId;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use core::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
@@ -15,12 +16,13 @@ use shep_core::protocol::{
     RpcErrorCode, codec, decode_frame, encode_frame,
 };
 use shep_core::transport::{ServerReadHalf, ServerStream};
+use std::io;
 use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-type Frames = FramedRead<ServerReadHalf, LengthDelimitedCodec>;
+type Frames = FramedRead<ServerReadHalf, TrackedCodec>;
 
 // The ordering here is load-bearing (see `handshake` and `converse` below):
 // auth before a single byte is read from the peer, the handshake before any
@@ -62,9 +64,13 @@ pub(super) async fn serve_conn(
     // uid never reaches a handler, so it has nothing to scope.
     let conn = ConnId::next();
     let (read_half, write_half) = shep_core::transport::split(stream);
-    let mut frames = FramedRead::new(read_half, codec());
+    let mut frames = FramedRead::new(read_half, TrackedCodec::new(codec()));
     let (out_tx, out_rx) = mpsc::channel::<Bytes>(CONN_QUEUE);
-    let writer = tokio::spawn(write_loop(FramedWrite::new(write_half, codec()), out_rx));
+    let writer = tokio::spawn(write_loop(
+        FramedWrite::new(write_half, codec()),
+        out_rx,
+        origin.clone(),
+    ));
 
     let outcome = converse(&mut frames, &out_tx, conn, peer, &origin, &ctx).await;
 
@@ -124,7 +130,7 @@ async fn read_loop(
     forwarder: &mut Option<JoinHandle<()>>,
     attribution: &mut Attribution,
 ) -> Result<(), ConnError> {
-    while let Some(frame) = frames.next().await {
+    while let Some(frame) = next_frame(frames, origin).await {
         let frame = frame?; // oversize/short frame ends the connection
         let envelope: Envelope = decode_frame(&frame).map_err(ConnError::Decode)?;
         attribution.note(ctx, &envelope.body);
@@ -205,10 +211,13 @@ async fn handshake(
     origin: &Origin,
     ctx: &RpcContext,
 ) -> Result<(), ConnError> {
-    let frame = tokio::time::timeout(Duration::from_millis(HANDSHAKE_TIMEOUT_MS), frames.next())
-        .await
-        .map_err(|_| ConnError::HandshakeTimeout)?
-        .ok_or(ConnError::NoHandshake)??;
+    let frame = tokio::time::timeout(
+        Duration::from_millis(HANDSHAKE_TIMEOUT_MS),
+        next_frame(frames, origin),
+    )
+    .await
+    .map_err(|_| ConnError::HandshakeTimeout)?
+    .ok_or(ConnError::NoHandshake)??;
     if !origin.contacts_on_open()
         && let Some(pid) = peer
     {
@@ -310,11 +319,48 @@ async fn handshake(
     send(out, &ack).await
 }
 
+/// The next frame off `frames`, parking first while a handover has frozen
+/// this connection
+///
+/// Parks only on a frame boundary: a frame whose bytes are partly read stays
+/// being read, because the bytes taken off the socket would not survive the
+/// exec and the successor would start in the middle of it.
+async fn next_frame(frames: &mut Frames, origin: &Origin) -> Option<Result<BytesMut, io::Error>> {
+    loop {
+        if frames.decoder().holding() {
+            return frames.next().await;
+        }
+        tokio::select! {
+            biased;
+            () = origin.frozen() => {
+                // A cancelled read may have taken the start of a frame.
+                if !frames.decoder().holding() {
+                    origin.park(Side::Reader).await;
+                }
+            }
+            frame = frames.next() => return frame,
+        }
+    }
+}
+
+/// Writes the frames queued on `rx`, a batch at a time, parking between
+/// batches while a handover has frozen `origin`'s connection so that it never
+/// execs with a frame half on the wire.
 async fn write_loop<W: AsyncWrite + Unpin>(
     mut sink: FramedWrite<W, LengthDelimitedCodec>,
     mut rx: mpsc::Receiver<Bytes>,
+    origin: Origin,
 ) {
-    while let Some(first) = rx.recv().await {
+    loop {
+        let first = tokio::select! {
+            biased;
+            () = origin.frozen() => {
+                origin.park(Side::Writer).await;
+                continue;
+            }
+            first = rx.recv() => first,
+        };
+        let Some(first) = first else { return };
         // `send` is feed plus flush, one flush per frame. What is already
         // queued shares one flush, taken before waiting again. The batch is
         // capped: `try_recv` never yields, so a producer that refills the

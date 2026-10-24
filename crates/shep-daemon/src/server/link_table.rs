@@ -14,11 +14,15 @@
 //! the gap goes unanswered and is lost with the exec, as any request in
 //! flight is.
 
+use core::time::Duration;
 use std::collections::BTreeMap;
 use std::os::fd::{AsFd, OwnedFd};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::sync::Notify;
+use tokio::time::Instant;
+
+use super::origin::Side;
 
 use crate::handover::DogConnection;
 
@@ -30,6 +34,16 @@ struct Held {
     fd: OwnedFd,
     /// `None` until the dog's `Hello`; then its topic patterns.
     topics: Option<Vec<String>>,
+    /// Whether the reader is held at a frame boundary by a freeze.
+    reader_parked: bool,
+    /// Whether the writer is held at a frame boundary by a freeze.
+    writer_parked: bool,
+}
+
+impl Held {
+    const fn parked(&self) -> bool {
+        self.reader_parked && self.writer_parked
+    }
 }
 
 /// The table's shared state: a key per connection, so two connections of one
@@ -50,8 +64,8 @@ struct Rows {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DogLinks {
     rows: Arc<Mutex<Rows>>,
-    /// Woken when the freeze ends.
-    thawed: Arc<Notify>,
+    /// Woken when the table freezes or thaws, or a task parks or resumes.
+    changed: Arc<Notify>,
 }
 
 impl DogLinks {
@@ -86,6 +100,8 @@ impl DogLinks {
                 pid,
                 fd,
                 topics: resumed,
+                reader_parked: false,
+                writer_parked: false,
             },
         );
         Lease {
@@ -93,35 +109,59 @@ impl DogLinks {
         }
     }
 
-    /// Freezes the table and returns a fresh duplicate of every connection
-    /// being served, for a handover to carry.
+    /// Freezes the table, waits up to `within` for every connection's reader
+    /// and writer to park at a frame boundary, and returns a fresh duplicate
+    /// of each connection that did, for a handover to carry.
     ///
     /// Duplicates rather than the table's own descriptors, so the numbers the
     /// blob names stay valid for as long as the caller holds these, whatever
-    /// happens to the connections meanwhile. The caller that does not exec
-    /// calls [`thaw`](Self::thaw).
-    pub(crate) fn freeze(&self) -> Vec<DogConnection> {
-        let mut rows = self.lock();
-        rows.frozen = true;
-        Self::copy(&rows)
+    /// happens to the connections meanwhile. A connection still mid-frame when
+    /// the wait ends is left out. The caller that does not exec calls
+    /// [`thaw`](Self::thaw).
+    pub(crate) async fn freeze(&self, within: Duration) -> Vec<DogConnection> {
+        self.lock().frozen = true;
+        self.changed.notify_waiters();
+        let deadline = Instant::now() + within;
+        loop {
+            // Registered before the check, so a park between the two is not
+            // missed.
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.lock().held.values().all(Held::parked) {
+                break;
+            }
+            if tokio::time::timeout_at(deadline, changed).await.is_err() {
+                break;
+            }
+        }
+        let rows = self.lock();
+        for held in rows.held.values().filter(|held| !held.parked()) {
+            tracing::warn!(
+                dog = held.name,
+                "a dog connection was mid-frame at a handover and is not carried"
+            );
+        }
+        Self::copy(&rows, Held::parked)
     }
 
     /// Ends a freeze, for a handover that was refused: the tasks it held
     /// carry on.
     pub(crate) fn thaw(&self) {
         self.lock().frozen = false;
-        self.thawed.notify_waiters();
+        self.changed.notify_waiters();
     }
 
     /// [`freeze`](Self::freeze) without the freeze.
     #[cfg(test)]
     pub(super) fn snapshot(&self) -> Vec<DogConnection> {
-        Self::copy(&self.lock())
+        Self::copy(&self.lock(), |_| true)
     }
 
-    fn copy(rows: &Rows) -> Vec<DogConnection> {
+    fn copy(rows: &Rows, wanted: impl Fn(&Held) -> bool) -> Vec<DogConnection> {
         rows.held
             .values()
+            .filter(|held| wanted(held))
             .filter_map(|held| {
                 Some(DogConnection {
                     name: held.name.clone(),
@@ -176,11 +216,9 @@ impl Lease {
         };
         let mut change = Some(change);
         loop {
-            // Registered before the check, so a thaw between the two is not
-            // missed.
-            let thawed = links.thawed.notified();
-            tokio::pin!(thawed);
-            thawed.as_mut().enable();
+            let changed = links.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             {
                 let mut rows = links.lock();
                 if !rows.frozen {
@@ -190,8 +228,59 @@ impl Lease {
                     return;
                 }
             }
-            thawed.await;
+            // Held here, not parked: the connection is mid-exchange, so a
+            // freeze leaves it out rather than carry a dog that is waiting on
+            // a reply.
+            changed.await;
         }
+    }
+
+    /// Resolves once the table is frozen, and never for an untracked lease.
+    pub(super) async fn frozen(&self) {
+        let Some((links, _)) = &self.tracked else {
+            return core::future::pending().await;
+        };
+        loop {
+            let changed = links.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if links.lock().frozen {
+                return;
+            }
+            changed.await;
+        }
+    }
+
+    /// Holds `side` at a frame boundary until the table thaws, telling the
+    /// freeze it is there.
+    pub(super) async fn park(&self, side: Side) {
+        let Some((links, _)) = &self.tracked else {
+            return;
+        };
+        self.mark(side, true);
+        loop {
+            let changed = links.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if !links.lock().frozen {
+                break;
+            }
+            changed.await;
+        }
+        self.mark(side, false);
+    }
+
+    fn mark(&self, side: Side, parked: bool) {
+        let Some((links, key)) = &self.tracked else {
+            return;
+        };
+        if let Some(held) = links.lock().held.get_mut(key) {
+            match side {
+                Side::Reader => held.reader_parked = parked,
+                Side::Writer => held.writer_parked = parked,
+            }
+        }
+        links.changed.notify_waiters();
     }
 }
 

@@ -25,10 +25,13 @@ mod link_tests;
 mod origin;
 mod peer_auth;
 #[cfg(all(test, unix))]
+mod quiesce_tests;
+#[cfg(all(test, unix))]
 mod resume_tests;
 mod server_lifecycle;
 #[cfg(test)]
 mod testing;
+mod tracked_codec;
 #[cfg(unix)]
 pub(crate) use dog_links::serve_dog_links;
 #[cfg(unix)]

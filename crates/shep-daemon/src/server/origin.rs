@@ -10,6 +10,15 @@ use shep_core::protocol::Request;
 use super::link_table::Lease;
 use crate::rpc::RpcContext;
 
+/// Which half of a connection a task serves, for a handover that parks both.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Side {
+    /// The task reading frames off the socket.
+    Reader,
+    /// The task writing frames onto it.
+    Writer,
+}
+
 /// How a connection reached the daemon
 ///
 /// A connection on the control socket is whoever the uid check lets in, and
@@ -90,6 +99,29 @@ impl Origin {
         #[cfg(unix)]
         if let Self::Dog { lease, .. } = self {
             lease.subscribed(patterns).await;
+        }
+    }
+
+    /// Resolves once a handover has frozen this connection's row, and never for
+    /// a connection no handover carries.
+    pub(super) async fn frozen(&self) {
+        #[cfg(unix)]
+        if let Self::Dog { lease, .. } = self {
+            return lease.frozen().await;
+        }
+        core::future::pending::<()>().await;
+    }
+
+    /// Holds `side` of this connection at a frame boundary until the freeze
+    /// ends. A socket has no row to hold.
+    #[cfg_attr(
+        not(unix),
+        allow(unused_variables, reason = "only a unix link has a row to park on")
+    )]
+    pub(super) async fn park(&self, side: Side) {
+        #[cfg(unix)]
+        if let Self::Dog { lease, .. } = self {
+            lease.park(side).await;
         }
     }
 

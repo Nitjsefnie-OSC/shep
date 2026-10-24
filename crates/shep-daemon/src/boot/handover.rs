@@ -148,6 +148,10 @@ fn successor_handover_at(path: &Path) -> Option<crate::handover::Handover> {
     }
 }
 
+/// How long a handover waits for each dog connection to reach a frame
+/// boundary before leaving it behind.
+const DOG_LINK_PARK: core::time::Duration = core::time::Duration::from_secs(1);
+
 /// What [`rehydrate`] rebuilds from a blob: the home's lock, the control
 /// listener, and the flock to install with the counters and the in-flight
 /// reloads it ran under.
@@ -203,9 +207,10 @@ pub(super) async fn hand_over_now(
     // numbers written into the blob stay live sockets for as long as these
     // duplicates are open. A dog that connected after the snapshot above is
     // not in the blob and so not carried; it falls back to the control socket.
-    // The freeze holds the tasks serving the dogs from changing what the blob
-    // says until the exec, or until a refusal thaws them below.
-    let dog_links = seam.dog_links.freeze();
+    // The freeze parks the tasks serving the dogs on a frame boundary, so the
+    // blob neither changes nor splits a frame until the exec, or until a
+    // refusal thaws them below.
+    let dog_links = seam.dog_links.freeze(DOG_LINK_PARK).await;
     blob.carry_dog_links(&dog_links);
     let refusal = match hand_over_carrying(&candidates, &blob, seam) {
         Ok(never) => match never {},

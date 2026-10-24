@@ -16,15 +16,19 @@ use tokio_util::codec::Framed;
 
 /// What a client reads off a link that is being served: the daemon's own side
 /// of a socketpair, with the table and the shutdown switch its server runs on.
-struct Served {
-    client: Client,
-    table: DogLinks,
+pub(super) struct Served {
+    pub(super) client: Client,
+    pub(super) table: DogLinks,
     _shutdown: watch::Sender<bool>,
 }
 
 /// Hands one `resumed` link for `name` to a running [`serve_dog_links`], as a
 /// successor's runner does for a connection it adopted.
-async fn serve(ctx: &crate::rpc::RpcContext, name: &str, resumed: Option<Vec<String>>) -> Served {
+pub(super) async fn serve(
+    ctx: &crate::rpc::RpcContext,
+    name: &str,
+    resumed: Option<Vec<String>>,
+) -> Served {
     let (server, client) = shep_core::transport::connected_pair().await.unwrap();
     let (links, links_rx) = mpsc::unbounded_channel();
     let (shutdown, shutdown_rx) = watch::channel(false);
@@ -60,7 +64,7 @@ async fn serve(ctx: &crate::rpc::RpcContext, name: &str, resumed: Option<Vec<Str
     }
 }
 
-async fn ping(client: &mut Client, id: u64) -> ServerFrame {
+pub(super) async fn ping(client: &mut Client, id: u64) -> ServerFrame {
     client
         .send(&Envelope {
             id,

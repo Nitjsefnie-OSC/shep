@@ -91,18 +91,43 @@ async fn an_untracked_lease_changes_nothing() {
     lease.subscribed(&["x".to_owned()]).await;
 }
 
+use core::time::Duration;
+use std::sync::Arc;
+
+use crate::server::origin::Side;
+
+const SHORT: Duration = Duration::from_millis(100);
+
+/// Stands in for a connection's two tasks: parks both when the table freezes.
+fn park_both(lease: &Arc<Lease>) -> tokio::task::JoinHandle<()> {
+    let (reader, writer) = (Arc::clone(lease), Arc::clone(lease));
+    tokio::spawn(async move {
+        tokio::join!(
+            async {
+                reader.frozen().await;
+                reader.park(Side::Reader).await;
+            },
+            async {
+                writer.frozen().await;
+                writer.park(Side::Writer).await;
+            }
+        );
+    })
+}
+
 #[tokio::test]
 async fn a_frozen_table_holds_a_greeting_until_it_thaws() {
     let links = DogLinks::default();
     let stream = socket();
-    let lease = links.register("metrics", 41, &stream, None);
+    let lease = Arc::new(links.register("metrics", 41, &stream, None));
+    let parked = park_both(&lease);
 
-    let carried = links.freeze();
-    let greeting = tokio::spawn(async move {
-        lease.greeted().await;
-        lease
+    let carried = links.freeze(Duration::from_secs(5)).await;
+    let greeting = tokio::spawn({
+        let lease = Arc::clone(&lease);
+        async move { lease.greeted().await }
     });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     assert_eq!(carried[0].topics, None, "the copy is what the blob carries");
     assert_eq!(links.snapshot()[0].topics, None, "the row did not move");
@@ -112,7 +137,8 @@ async fn a_frozen_table_holds_a_greeting_until_it_thaws() {
     );
 
     links.thaw();
-    let _lease = greeting.await.unwrap();
+    greeting.await.unwrap();
+    parked.await.unwrap();
     assert_eq!(links.snapshot()[0].topics, Some(vec![]));
 }
 
@@ -120,10 +146,53 @@ async fn a_frozen_table_holds_a_greeting_until_it_thaws() {
 async fn a_change_made_before_the_freeze_is_in_the_copy() {
     let links = DogLinks::default();
     let stream = socket();
-    let lease = links.register("metrics", 41, &stream, None);
+    let lease = Arc::new(links.register("metrics", 41, &stream, None));
+    let _parked = park_both(&lease);
 
     lease.subscribed(&["process.*".to_owned()]).await;
-    let carried = links.freeze();
+    let carried = links.freeze(Duration::from_secs(5)).await;
 
     assert_eq!(carried[0].topics, Some(vec!["process.*".to_owned()]));
+}
+
+#[tokio::test]
+async fn a_connection_whose_tasks_do_not_park_is_left_out_of_the_copy() {
+    let links = DogLinks::default();
+    let (parks, stuck) = (socket(), socket());
+    let parking = Arc::new(links.register("metrics", 41, &parks, None));
+    let _mid_frame = links.register("bark", 42, &stuck, None);
+    let _parked = park_both(&parking);
+
+    let carried = links.freeze(SHORT).await;
+
+    assert_eq!(carried.len(), 1);
+    assert_eq!(carried[0].name, "metrics");
+}
+
+#[tokio::test]
+async fn a_connection_with_only_its_reader_parked_is_left_out() {
+    let links = DogLinks::default();
+    let stream = socket();
+    let lease = Arc::new(links.register("metrics", 41, &stream, None));
+    let reader = Arc::clone(&lease);
+    let _half = tokio::spawn(async move {
+        reader.frozen().await;
+        reader.park(Side::Reader).await;
+    });
+
+    assert!(links.freeze(SHORT).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_thaw_releases_a_parked_task() {
+    let links = DogLinks::default();
+    let stream = socket();
+    let lease = Arc::new(links.register("metrics", 41, &stream, None));
+    let parked = park_both(&lease);
+    links.freeze(Duration::from_secs(5)).await;
+
+    links.thaw();
+
+    parked.await.unwrap();
+    assert!(!links.lock().held.values().any(Held::parked));
 }
