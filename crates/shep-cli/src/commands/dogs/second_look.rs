@@ -76,7 +76,9 @@ pub(super) fn second_look(
             Answer::Failed(reason) => {
                 return Err(streams.fail(
                     ExitCode::Failure,
-                    &format!("nothing was changed: the question could not be read ({reason})"),
+                    &format!(
+                        "no permission was approved: the question could not be read ({reason})"
+                    ),
                 ));
             }
         }

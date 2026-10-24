@@ -84,3 +84,10 @@ fn a_mark_is_worth_a_glance_and_a_dash_is_muted() {
     assert_eq!(last(&flagged), painted("undeclared", Role::Butter));
     assert_eq!(last(&clear), painted("-", Role::Ink3));
 }
+
+#[test]
+fn marks_that_are_all_clear_read_as_a_muted_dash() {
+    let rows = DogRows(vec![dog(Some(DogAccess::default()))]).rows_for(coloured(), true);
+
+    assert_eq!(rows[0].last().unwrap(), &painted("-", Role::Ink3));
+}

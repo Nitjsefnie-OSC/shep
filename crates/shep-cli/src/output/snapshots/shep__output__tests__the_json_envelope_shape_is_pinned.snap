@@ -36,14 +36,7 @@ expression: out
       "overridden": [
         "cwd"
       ],
-      "max_memory": null,
-      "access": {
-        "undeclared": true,
-        "not_reviewed": true,
-        "waiting": [
-          "logs.read"
-        ]
-      }
+      "max_memory": null
     },
     {
       "id": 2,
@@ -75,14 +68,7 @@ expression: out
       "overridden": [
         "cwd"
       ],
-      "max_memory": null,
-      "access": {
-        "undeclared": true,
-        "not_reviewed": true,
-        "waiting": [
-          "logs.read"
-        ]
-      }
+      "max_memory": null
     },
     {
       "id": 3,
@@ -114,14 +100,7 @@ expression: out
       "overridden": [
         "cwd"
       ],
-      "max_memory": null,
-      "access": {
-        "undeclared": true,
-        "not_reviewed": true,
-        "waiting": [
-          "logs.read"
-        ]
-      }
+      "max_memory": null
     }
   ]
 }

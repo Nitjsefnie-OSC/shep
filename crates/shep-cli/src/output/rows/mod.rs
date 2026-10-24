@@ -84,12 +84,6 @@ pub(crate) mod tests {
             // `JSON_ONLY` anyway.
             .pending(Some(vec!["env".to_string()]))
             .overridden(Some(vec!["cwd".to_string()]))
-            // What the CLI lays over a dog's row from `shep.toml`.
-            .access(Some(DogAccess {
-                undeclared: true,
-                not_reviewed: true,
-                waiting: vec!["logs.read".to_string()],
-            }))
             .build()
     }
 
@@ -107,10 +101,17 @@ pub(crate) mod tests {
         sample_info(1, "web", uptime_ms)
     }
 
-    /// A dog-shaped `ProcessInfo`: `sample_info` with `dog` set to `source`.
+    /// A dog-shaped `ProcessInfo`: `sample_info` with `dog` set to `source`,
+    /// and the marks the CLI lays over a dog's row from `shep.toml`, which a
+    /// sheep never carries.
     pub(crate) fn dog_info(name: &str, source: DogSource) -> ProcessInfo {
         let mut info = sample_info(1, name, 60_000);
         info.dog = Some(source);
+        info.access = Some(DogAccess {
+            undeclared: true,
+            not_reviewed: true,
+            waiting: vec!["logs.read".to_string()],
+        });
         info
     }
 

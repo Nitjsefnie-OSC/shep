@@ -6,13 +6,6 @@ expression: out
   "command": "flock",
   "data": [
     {
-      "access": {
-        "not_reviewed": true,
-        "undeclared": true,
-        "waiting": [
-          "logs.read"
-        ]
-      },
       "cpu_ms": null,
       "cpu_percent": 12.5,
       "depends_on": [],
@@ -46,13 +39,6 @@ expression: out
       "uptime_ms": 60000
     },
     {
-      "access": {
-        "not_reviewed": true,
-        "undeclared": true,
-        "waiting": [
-          "logs.read"
-        ]
-      },
       "cpu_ms": null,
       "cpu_percent": 12.5,
       "depends_on": [],
@@ -86,13 +72,6 @@ expression: out
       "uptime_ms": 60000
     },
     {
-      "access": {
-        "not_reviewed": true,
-        "undeclared": true,
-        "waiting": [
-          "logs.read"
-        ]
-      },
       "cpu_ms": null,
       "cpu_percent": 12.5,
       "depends_on": [],
@@ -126,13 +105,6 @@ expression: out
       "uptime_ms": 60000
     },
     {
-      "access": {
-        "not_reviewed": true,
-        "undeclared": true,
-        "waiting": [
-          "logs.read"
-        ]
-      },
       "cpu_ms": null,
       "cpu_percent": 12.5,
       "depends_on": [],

@@ -25,22 +25,18 @@ fn source_cell(source: Option<&DogSource>) -> String {
 /// Names stay in the JSON. The cell says which of the three states, because
 /// a column has room for words and not for a list of permissions.
 fn access_cell(access: Option<&DogAccess>) -> String {
-    let Some(access) = access else {
+    let Some(access) = access.filter(|access| !access.is_clear()) else {
         return EMPTY.to_owned();
     };
-    let marks: Vec<&str> = [
+    [
         (access.undeclared, "undeclared"),
         (access.not_reviewed, "not reviewed"),
         (!access.waiting.is_empty(), "waiting"),
     ]
     .into_iter()
     .filter_map(|(on, word)| on.then_some(word))
-    .collect();
-    if marks.is_empty() {
-        EMPTY.to_owned()
-    } else {
-        marks.join(", ")
-    }
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 /// The dogs half of a flock listing: the `ProcessInfo`s whose `dog` marker

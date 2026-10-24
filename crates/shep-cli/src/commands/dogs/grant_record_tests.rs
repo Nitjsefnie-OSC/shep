@@ -122,3 +122,25 @@ async fn a_grant_says_what_still_waits() {
         "the other permission is not granted by naming one"
     );
 }
+
+#[tokio::test]
+async fn a_grant_for_an_enabled_dog_with_no_record_does_not_write_one_to_mark_it_reviewed() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ShepPaths::resolve(&|_| None, dir.path());
+    let binary = write_dog(dir.path(), DECLARES_TWO);
+    std::fs::create_dir_all(&paths.home).unwrap();
+    let before = format!(
+        "[daemon]\nenabled_dogs = [\"otel\"]\n\n[daemon.adopted_dogs]\notel = \"{}\"\n",
+        binary.display()
+    );
+    std::fs::write(&paths.daemon_config, &before).unwrap();
+
+    let (code, said) = run(Change::Grant, &paths, "flock.read").await;
+
+    assert_eq!(code, ExitCode::Usage, "{said}");
+    assert!(said.contains("shep enable otel"), "{said}");
+    assert_eq!(
+        std::fs::read_to_string(&paths.daemon_config).unwrap(),
+        before
+    );
+}

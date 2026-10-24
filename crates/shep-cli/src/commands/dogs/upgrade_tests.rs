@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use shep_core::paths::ShepPaths;
 use shep_core::permissions::{Grants, Permission};
 
-use super::upgrade::{Declaration, plan, upgrade_grants};
+use super::upgrade::{Declaration, plan, upgrade_grants, upgrade_notice};
 use crate::commands::shep_toml::{GrantRecord, ShepToml};
 
 fn grants(names: &[&str]) -> Grants {
@@ -249,5 +249,17 @@ fn a_rebuilt_dog_that_asks_for_more_is_recorded_as_waiting_and_keeps_its_grants(
     assert_eq!(
         recorded(&paths, "otel"),
         Some(record(&["flock.read"], &["logs.read"], &[], true))
+    );
+}
+
+#[test]
+fn the_notice_names_each_dog_and_claims_nothing_about_what_changed() {
+    let notice = upgrade_notice(&["bark".to_owned(), "otel".to_owned()]);
+
+    assert!(notice.contains("bark, otel"), "{notice}");
+    assert!(notice.contains("`shep dogs` shows"), "{notice}");
+    assert!(
+        !notice.contains("is marked") && !notice.contains("are marked"),
+        "{notice}"
     );
 }

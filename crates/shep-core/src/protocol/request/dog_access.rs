@@ -22,9 +22,38 @@ pub struct DogAccess {
     pub waiting: Vec<String>,
 }
 
+impl DogAccess {
+    /// Whether no mark is set, so a listing has nothing to flag.
+    #[must_use]
+    pub fn is_clear(&self) -> bool {
+        !self.undeclared && !self.not_reviewed && self.waiting.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_mark_alone_makes_access_not_clear() {
+        assert!(DogAccess::default().is_clear());
+        for marked in [
+            DogAccess {
+                undeclared: true,
+                ..DogAccess::default()
+            },
+            DogAccess {
+                not_reviewed: true,
+                ..DogAccess::default()
+            },
+            DogAccess {
+                waiting: vec!["logs.read".to_string()],
+                ..DogAccess::default()
+            },
+        ] {
+            assert!(!marked.is_clear(), "{marked:?}");
+        }
+    }
 
     #[test]
     fn every_mark_is_a_key_even_when_it_is_clear() {

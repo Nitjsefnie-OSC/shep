@@ -189,8 +189,8 @@ pub(super) fn upgrade_one(paths: &ShepPaths, name: &str) -> Result<(), ShepTomlE
 #[must_use]
 pub(crate) fn upgrade_notice(changed: &[String]) -> String {
     format!(
-        "updated the grants recorded for {}: new permissions wait for `shep enable` or \
-         `shep dogs grant`, and a list written at upgrade is marked not reviewed",
+        "updated the grants recorded for {}: `shep dogs` shows any permission waiting for \
+         `shep enable` or `shep dogs grant`, and any list not yet reviewed",
         changed.join(", ")
     )
 }

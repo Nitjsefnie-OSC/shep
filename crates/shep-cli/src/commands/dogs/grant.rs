@@ -117,8 +117,12 @@ pub(crate) async fn change(
         }
     }
     // Before the edit, so a permission the dog's build has just come to ask
-    // for is already waiting when the operator grants it.
-    if let Err(err) = upgrade_one(paths, name) {
+    // for is already waiting when the operator grants it. Only for a dog that
+    // has a record: writing one here would mark a whole declared list
+    // reviewed on the strength of one permission named.
+    if matches!(cfg.grant_record(name), Ok(Some(_)))
+        && let Err(err) = upgrade_one(paths, name)
+    {
         return fail_config(streams, &err);
     }
     let applied = ShepToml::try_edit(&paths.daemon_config, |cfg| {
@@ -272,7 +276,7 @@ fn unreadable(name: &str) -> String {
 fn unrecorded(name: &str) -> String {
     format!(
         "{name} has no recorded grants: it either declares nothing and runs with full access, \
-         or was never asked. Nothing was changed; `shep enable {name}` asks for its \
-         permissions when it is not yet enabled"
+         or was never asked. Nothing was changed; `shep enable {name}` lists its \
+         permissions and asks"
     )
 }
