@@ -9,6 +9,7 @@ use shep_daemon::boot::{self, BootError, Shepherd};
 
 use super::lifecycle::{DaemonRunError, daemon_exit_code, read_daemon_config_source};
 use super::reload_report::report_reload;
+use crate::commands::dogs::{upgrade_grants, upgrade_notice};
 use crate::commands::{admin, dog_migration};
 use crate::exit::ExitCode;
 use crate::output::Streams;
@@ -160,6 +161,18 @@ async fn reload_with_wait(
             let err = DaemonRunError::DogMigration(err);
             return streams.fail(daemon_exit_code(&err), &err.to_string());
         }
+    }
+
+    // A reload is when a rebuilt dog is picked up, so this is when what it now
+    // asks for is put to wait. Before the successor reads `shep.toml`; a
+    // refusal leaves every dog on the grants it holds.
+    match upgrade_grants(paths) {
+        Ok(changed) if changed.is_empty() => {}
+        Ok(changed) => streams.aside("reload", &upgrade_notice(&changed)),
+        Err(err) => streams.aside(
+            "reload",
+            &format!("could not update the grants recorded for dogs: {err}"),
+        ),
     }
 
     // Connected to ask who is there, and, on the handover arm, whether this

@@ -9,6 +9,10 @@ use crate::permissions::Grants;
 /// for the reason [`super::DaemonSection::adopted_dogs`] gives: that file's
 /// `[<name>]` table is the dog's own, and a dog must never be able to
 /// grant itself anything.
+///
+/// Only `granted` is judged by the shepherd. `waiting`, `revoked` and
+/// `reviewed` are the CLI's record of the upgrade path, read here so the
+/// strict table accepts them.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DogGrantsSection {
@@ -20,6 +24,22 @@ pub struct DogGrantsSection {
     /// granting nothing.
     #[serde(deserialize_with = "strict_grants")]
     pub granted: Grants,
+    /// Permissions a newer binary declared that the operator has not
+    /// approved. The dog runs on `granted` alone until they are.
+    #[serde(default, deserialize_with = "strict_grants")]
+    pub waiting: Grants,
+    /// Permissions the operator took away, so a binary that still declares
+    /// them is not read as asking for something new.
+    #[serde(default, deserialize_with = "strict_grants")]
+    pub revoked: Grants,
+    /// `false` for a list written at upgrade that the operator has not yet
+    /// looked at. Absent means reviewed.
+    #[serde(default = "reviewed_by_default")]
+    pub reviewed: bool,
+}
+
+const fn reviewed_by_default() -> bool {
+    true
 }
 
 fn strict_grants<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Grants, D::Error> {

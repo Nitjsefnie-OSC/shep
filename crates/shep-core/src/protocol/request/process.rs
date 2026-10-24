@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::LevelRule;
 use crate::status::ProcStatus;
 
-use super::DogSource;
+use super::{DogAccess, DogSource};
 
 // Named by intra-doc links and by nothing rustc compiles, so the
 // import is behind `cfg(doc)` rather than flagged unused.
@@ -278,6 +278,12 @@ pub struct ProcessInfo {
     /// every daemon before it wrote. Additive, like [`Self::disabled`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_timestamps: Option<bool>,
+    /// The marks on a dog's access: undeclared, not reviewed, permissions
+    /// waiting. `None` for a sheep and in a reply from the shepherd, which
+    /// does not know them; the CLI that prints a listing fills it in from
+    /// `shep.toml`. Additive, like [`Self::disabled`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<DogAccess>,
 }
 
 /// Orders one flock listing the way every operator-facing surface presents
@@ -334,6 +340,7 @@ impl ProcessInfo {
                 reload_deadline_ms: None,
                 disabled: None,
                 log_timestamps: None,
+                access: None,
             },
         }
     }
@@ -506,6 +513,12 @@ impl ProcessInfoBuilder {
         self
     }
 
+    /// Sets the marks on this dog's access; `None` for a sheep.
+    pub fn access(mut self, access: Option<DogAccess>) -> Self {
+        self.info.access = access;
+        self
+    }
+
     /// Finishes the row.
     #[must_use]
     pub fn build(self) -> ProcessInfo {
@@ -567,6 +580,7 @@ pub(super) fn sample_info() -> ProcessInfo {
         // `None` for the same reason, its shape pinned by
         // `a_stamps_off_flag_is_absent_from_the_wire_until_set`.
         log_timestamps: None,
+        access: None,
     }
 }
 

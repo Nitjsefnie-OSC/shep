@@ -347,7 +347,7 @@ pub(crate) async fn flock_command_on(
         }
         Link::Host { dest, .. } => {
             return match connect_client(streams, link, guard).await {
-                Ok(client) => query::flock_from(&client, streams, Some(dest)).await,
+                Ok(client) => query::flock_from(&client, streams, Some(dest), None).await,
                 Err(code) => code,
             };
         }
@@ -361,7 +361,7 @@ pub(crate) async fn flock_command_on(
     }
     match Client::connect(&paths.socket).await {
         Ok(client) => match refuse_version_skew(streams, &client, guard) {
-            Ok(()) => query::flock(&client, streams).await,
+            Ok(()) => query::flock_local(&client, streams, paths).await,
             // A skew is not an absence either: the roll fallback below would
             // print a listing while hiding why every other verb is refusing.
             Err(code) => code,

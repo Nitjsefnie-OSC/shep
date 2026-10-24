@@ -1,6 +1,7 @@
 //! RPC frames: requests, responses, envelopes, and structured errors
 
 mod config_reply;
+mod dog_access;
 mod dog_source;
 mod envelope;
 mod handshake;
@@ -18,6 +19,7 @@ mod verbs;
 mod reset_field_tests;
 
 pub use config_reply::{SheepApplied, SheepConfigView, SheepDrift, SheepRefusal};
+pub use dog_access::DogAccess;
 pub use dog_source::DogSource;
 pub use envelope::{Envelope, HelloReply, Reply, RpcError, RpcErrorCode};
 pub use handshake::{Hello, HelloAck};

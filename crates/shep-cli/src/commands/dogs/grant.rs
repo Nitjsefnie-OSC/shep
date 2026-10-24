@@ -14,12 +14,13 @@ use shep_core::permissions::{Grants, Permission};
 use shep_core::protocol::{DogSource, Request, Response};
 
 use crate::commands::rpc::{client_error, unexpected_response};
-use crate::commands::shep_toml::{ShepToml, ShepTomlError};
+use crate::commands::shep_toml::{GrantRecord, ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
 use crate::output::{DogActionStatus, Streams};
 
 use super::enable::fail_enable_unknown_dog;
 use super::grants::warn_if_unenforced;
+use super::upgrade::upgrade_one;
 use super::vet::{ManifestRead, VERSION_BUDGET, fail_adopt, read_manifest};
 use super::{connect_or_absent, dog_source, emit_dog_action, fail_config};
 
@@ -50,6 +51,8 @@ struct Applied {
     source: DogSource,
     /// Whether the dog is in `enabled_dogs`.
     enabled: bool,
+    /// What the dog's build asks for that is still not granted.
+    waiting: Vec<String>,
 }
 
 /// [`change`]'s own failure, so its `try_edit` closure can refuse from
@@ -93,46 +96,86 @@ pub(crate) async fn change(
         return fail_enable_unknown_dog(streams, name, &cfg.adopted_dog_names());
     }
     if change == Change::Grant {
-        let declared = match &binary {
+        let manifest = match &binary {
             Some(binary) => match read_manifest(binary, &paths.home, name, VERSION_BUDGET) {
                 Ok(ManifestRead::Unreadable) => {
                     return streams.fail(ExitCode::Usage, &unreadable(name));
                 }
-                Ok(read) => read.manifest().map_or_else(Vec::new, |manifest| {
-                    manifest
-                        .permissions
-                        .iter()
-                        .map(|p| p.name.clone())
-                        .collect()
-                }),
+                Ok(read) => read.manifest().cloned(),
                 Err(refusal) => return fail_adopt(streams, binary, &refusal),
             },
-            None => Vec::new(),
+            None => crate::dog::builtin_manifest(name),
         };
+        let declared = manifest.map_or_else(Vec::new, |manifest| {
+            manifest
+                .permissions
+                .into_iter()
+                .map(|permission| permission.name)
+                .collect()
+        });
         if !declared.contains(&permission) {
             return streams.fail(ExitCode::Usage, &not_declared(name, &permission, &declared));
         }
     }
+    // Before the edit, so a permission the dog's build has just come to ask
+    // for is already waiting when the operator grants it. Only for a dog that
+    // has a record: writing one here would mark a whole declared list
+    // reviewed on the strength of one permission named.
+    if matches!(cfg.grant_record(name), Ok(Some(_)))
+        && let Err(err) = upgrade_one(paths, name)
+    {
+        return fail_config(streams, &err);
+    }
     let applied = ShepToml::try_edit(&paths.daemon_config, |cfg| {
-        let Some(held) = cfg.granted(name)? else {
+        let Some(held) = cfg.grant_record(name)? else {
             return Err(Refusal::Unrecorded);
         };
-        let now = match change {
-            Change::Grant => {
-                Grants::from_names(held.names().map(str::to_owned).chain([permission.clone()]))
-            }
-            Change::Revoke => Grants::from_names(
-                held.names()
+        let without = |grants: &Grants| {
+            Grants::from_names(
+                grants
+                    .names()
                     .filter(|kept| *kept != permission)
                     .map(str::to_owned),
-            ),
+            )
+        };
+        let names = |grants: &Grants| grants.names().any(|held| held == permission);
+        let now = match change {
+            // Naming a permission is the operator looking at the dog, so the
+            // not-reviewed mark goes with it. What else waits stays waiting.
+            Change::Grant => GrantRecord {
+                granted: Grants::from_names(
+                    held.granted
+                        .names()
+                        .map(str::to_owned)
+                        .chain([permission.clone()]),
+                ),
+                waiting: without(&held.waiting),
+                revoked: without(&held.revoked),
+                reviewed: true,
+            },
+            // Nothing to take away: neither held nor waiting.
+            Change::Revoke if !names(&held.granted) && !names(&held.waiting) => held.clone(),
+            // Remembered as revoked, so a build that still declares it is not
+            // read as asking for something new.
+            Change::Revoke => GrantRecord {
+                granted: without(&held.granted),
+                waiting: without(&held.waiting),
+                revoked: Grants::from_names(
+                    held.revoked
+                        .names()
+                        .map(str::to_owned)
+                        .chain([permission.clone()]),
+                ),
+                reviewed: held.reviewed,
+            },
         };
         if now != held {
-            cfg.set_granted(name, &now)?;
+            cfg.set_grant_record(name, &now)?;
         }
         Ok(Applied {
-            source: dog_source(cfg, name, Some(now)),
+            source: dog_source(cfg, name, Some(now.granted.clone())),
             enabled: cfg.enabled_dog_names().iter().any(|dog| dog == name),
+            waiting: now.waiting.names().map(str::to_owned).collect(),
         })
     });
     let applied = match applied {
@@ -150,6 +193,16 @@ pub(crate) async fn change(
     } else {
         None
     };
+    if !applied.waiting.is_empty() {
+        streams.aside(
+            "dog_grants_waiting",
+            &format!(
+                "{name} still waits on {}: `shep dogs grant {name} <permission>` or `shep enable \
+                 {name}` approves",
+                applied.waiting.join(", ")
+            ),
+        );
+    }
     reach_shepherd(streams, change, name, &applied, client.as_ref()).await
 }
 
@@ -224,7 +277,7 @@ fn unreadable(name: &str) -> String {
 fn unrecorded(name: &str) -> String {
     format!(
         "{name} has no recorded grants: it either declares nothing and runs with full access, \
-         or was never asked. Nothing was changed; `shep enable {name}` asks for its \
-         permissions when it is not yet enabled"
+         or was never asked. Nothing was changed; `shep enable {name}` lists its \
+         permissions and asks"
     )
 }

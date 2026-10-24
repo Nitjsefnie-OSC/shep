@@ -58,6 +58,7 @@ mod dogs_grant;
 mod fixtures;
 mod flockfile_disabled;
 mod flockfile_load;
+mod grants_upgrade;
 mod guard;
 mod handover_basic;
 mod handover_clustered;
