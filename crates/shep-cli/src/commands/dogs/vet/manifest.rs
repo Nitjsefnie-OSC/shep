@@ -38,10 +38,9 @@ pub(crate) fn read_manifest(
     let cached = digest
         .as_ref()
         .map(|digest| home.join(CACHE_DIR).join(format!("{digest}.json")));
-    if let Some(manifest) = cached
+    if let Some(manifest) = digest
         .as_deref()
-        .and_then(|file| std::fs::read_to_string(file).ok())
-        .and_then(|text| serde_json::from_str(&text).ok())
+        .and_then(|digest| read_cached(home, digest))
     {
         return Ok(Some(manifest));
     }
@@ -57,6 +56,27 @@ pub(crate) fn read_manifest(
         let _ = store(&file, &text);
     }
     Ok(Some(manifest))
+}
+
+/// What the cache already holds for `path`, and nothing else: this never
+/// probes the binary.
+///
+/// [`read_manifest`] asks a dog that has not been asked before. Nothing here
+/// does, because `shep --help` and `shep completions` run on whatever the
+/// operator already adopted and would otherwise spawn a dog to answer a
+/// question about how to spell its name.
+///
+/// `None` is ordinary: a dog adopted before manifests existed, one that
+/// answers no manifest, one whose recorded binary has since moved, and a
+/// cache file that will not parse all answer it.
+pub(crate) fn cached_manifest(path: &Path, home: &Path) -> Option<Manifest> {
+    read_cached(home, &sha256_hex(path)?)
+}
+
+/// The manifest filed under `digest`, or `None`.
+fn read_cached(home: &Path, digest: &str) -> Option<Manifest> {
+    let file = home.join(CACHE_DIR).join(format!("{digest}.json"));
+    serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()
 }
 
 /// Writes `text` to `file` the way every store under `$SHEP_HOME` is
