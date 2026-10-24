@@ -26,14 +26,14 @@ mod process_runner;
 // that calls one.
 #[cfg(all(test, unix))]
 mod testing;
+#[cfg(unix)]
+pub use dog_link::DogLink;
 /// Named here only so the two test modules that assert on the refusal text
 /// can reach it; the lib build has no other reader and warns on the import,
 /// and both of those modules are unix-gated.
 #[cfg(all(test, unix))]
 pub(crate) use log_path_security::SYMLINK_REFUSED;
 pub(crate) use log_path_security::{check_log_ancestry, open_log_path};
-#[cfg(unix)]
-pub use dog_link::DogLink;
 pub use log_protocol::{ExitOutcome, FlushError, LogCtl, LogLine, ReopenError};
 pub(crate) use path_advisories::{cwd_advisory, log_path_advisory};
 /// Gated with the type: `AdoptSpec` is the handover's, and Windows has no

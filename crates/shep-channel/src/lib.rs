@@ -67,10 +67,10 @@ mod wire;
 pub use channel::Channel;
 #[cfg(feature = "client")]
 pub use dispatch::{ActionHandler, ShutdownHandler};
-#[cfg(feature = "client")]
-pub use endpoint::{Endpoint, FD_VAR, PIPE_VAR, VERSION_VAR, discover};
 #[cfg(all(feature = "client", unix))]
 pub use endpoint::take_inherited_socket;
+#[cfg(feature = "client")]
+pub use endpoint::{Endpoint, FD_VAR, PIPE_VAR, VERSION_VAR, discover};
 #[cfg(feature = "client")]
 pub use error::ChannelError;
 #[cfg(feature = "client")]

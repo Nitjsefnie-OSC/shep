@@ -467,7 +467,6 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         events.subscribe(),
     );
 
-
     // 5. A failure is a `warn!` and the boot continues: only systemd's view
     //    is wrong. Unix only, since `$NOTIFY_SOCKET` is a unix datagram
     //    socket; the field stays on `BootOptions` for both platforms.

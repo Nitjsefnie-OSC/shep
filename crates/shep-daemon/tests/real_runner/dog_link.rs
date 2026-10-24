@@ -74,7 +74,10 @@ async fn a_dog_with_a_channel_holds_both_fd_3_and_fd_4() {
     let mut spec = spec_for(
         &dir,
         "/bin/sh",
-        &["-c", r#"printf '{"kind":"ready"}\n' >&3; printf hi >&4; sleep 5"#],
+        &[
+            "-c",
+            r#"printf '{"kind":"ready"}\n' >&3; printf hi >&4; sleep 5"#,
+        ],
     );
     spec.channel = true;
     spec.dog_link = true;

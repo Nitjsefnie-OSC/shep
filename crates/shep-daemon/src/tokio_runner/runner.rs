@@ -36,13 +36,13 @@ use tokio::sync::mpsc;
 
 use crate::channel::CHANNEL_VERSION;
 #[cfg(unix)]
-use shep_core::dogs::{DOG_LINK_FD, DOG_LINK_FD_VAR};
-#[cfg(unix)]
 use crate::runner::{AdoptSpec, AdoptedReaper, DogLink};
 use crate::runner::{
     ExitOutcome, Preflight, ProcIo, ProcessRunner, RunnerError, RunningProcess, SpawnSpec,
     StopSignal,
 };
+#[cfg(unix)]
+use shep_core::dogs::{DOG_LINK_FD, DOG_LINK_FD_VAR};
 
 use super::CHANNEL_CAPACITY;
 #[cfg(unix)]

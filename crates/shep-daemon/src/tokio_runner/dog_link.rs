@@ -25,9 +25,7 @@ pub(super) fn pair() -> Result<(UnixStream, FdMapping), RunnerError> {
         RunnerError::SpawnFailed(format!("dog connection {step}: {error}"))
     };
     let (daemon_end, child_end) = UnixStream::pair().map_err(|e| failed("socketpair", e))?;
-    let child_end = child_end
-        .into_std()
-        .map_err(|e| failed("into_std", e))?;
+    let child_end = child_end.into_std().map_err(|e| failed("into_std", e))?;
     child_end
         .set_nonblocking(false)
         .map_err(|e| failed("set_nonblocking", e))?;

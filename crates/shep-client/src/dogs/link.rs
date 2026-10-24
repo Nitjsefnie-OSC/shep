@@ -66,8 +66,7 @@ mod tests {
 
     use futures_util::{SinkExt, StreamExt};
     use shep_core::protocol::{
-        Envelope, Hello, HelloReply, Reply, Request, Response, codec, decode_frame,
-        encode_frame,
+        Envelope, Hello, HelloReply, Reply, Request, Response, codec, decode_frame, encode_frame,
     };
     use tokio::net::UnixStream;
     use tokio::task::JoinHandle;

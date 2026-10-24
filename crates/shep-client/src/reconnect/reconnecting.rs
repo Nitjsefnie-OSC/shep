@@ -284,7 +284,12 @@ impl ReconnectingClient {
         Ok(Self::supervised(client, socket, timeout, dog_name))
     }
 
-    fn supervised(client: Client, socket: &Path, timeout: Duration, dog_name: Option<&str>) -> Self {
+    fn supervised(
+        client: Client,
+        socket: &Path,
+        timeout: Duration,
+        dog_name: Option<&str>,
+    ) -> Self {
         let shared = Arc::new(Shared {
             socket: socket.to_path_buf(),
             handshake_timeout: timeout,

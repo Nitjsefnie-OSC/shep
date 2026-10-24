@@ -11,7 +11,10 @@ use super::*;
 /// bytes, then `json`.
 fn send_frame(json: &str) -> String {
     assert!(json.len() < 256, "the script writes one length byte");
-    format!("printf '\\000\\000\\000\\{:03o}%s' '{json}' >&4", json.len())
+    format!(
+        "printf '\\000\\000\\000\\{:03o}%s' '{json}' >&4",
+        json.len()
+    )
 }
 
 /// A shell dog that handshakes on fd 4, pings, records both answers under
