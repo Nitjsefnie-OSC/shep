@@ -339,9 +339,10 @@ pub(super) fn type_label(field: &Field) -> &'static str {
 ///
 /// `●` for a change the running sheep picks up on its own; `▲` for one
 /// that waits on a start the operator has to choose the timing of. Both
-/// are checked against the same East-Asian-width rule `flock.rs:46`
-/// applies to `mark`'s own glyph, in this module's own tests: a
-/// double-width rendering would shift every column after it.
+/// are checked against the same East-Asian-width rule that `mark`, in
+/// `lookout/view/flock/layout.rs`, applies to its own glyph, in this
+/// module's own tests: a double-width rendering would shift every column
+/// after it.
 pub(super) fn impact_tag(group: ApplyGroup) -> (char, &'static str, &'static str) {
     match group {
         ApplyGroup::Live => (
@@ -670,8 +671,10 @@ mod tests {
         assert!(!row.trim_start().starts_with('!'), "{row}");
     }
 
-    /// `▲` and `●` join the vocabulary `flock.rs:46` already checks `mark`
-    /// against: East-Asian Ambiguous width would shift every column after
+    /// `▲` and `●` join the vocabulary `mark`, in
+    /// `lookout/view/flock/layout.rs`, belongs to, which that module's
+    /// `the_marker_is_one_ascii_column_wide_in_both_states` pins to one
+    /// column: East-Asian Ambiguous width would shift every column after
     /// the glyph.
     #[test]
     fn the_impact_glyphs_are_one_column_wide() {

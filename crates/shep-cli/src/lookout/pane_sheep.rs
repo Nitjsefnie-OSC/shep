@@ -213,7 +213,8 @@ mod tests {
     /// [`SheepConfigView`]'s own `Debug` already withholds `args` and `cwd`;
     /// this pins that [`SheepPane`]'s derived one does not undo that by
     /// printing the feed or the viewport instead. Matches the shape
-    /// `ConfigPane`'s own exact-string test uses (`pane.rs:786`).
+    /// `ConfigPane`'s own exact-string test pins,
+    /// [crate::lookout::pane::config_tests::the_panes_debug_names_no_value_it_holds].
     #[test]
     fn the_panes_debug_names_no_field_value() {
         let mut pane = SheepPane::new(RowKey::Sheep(9));

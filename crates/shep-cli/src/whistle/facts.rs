@@ -311,10 +311,9 @@ pub struct MetricsReading {
     /// The shepherd's crate version, from the handshake.
     ///
     /// From [`super::shepherd::Shepherd::call_with_ack`], not from the
-    /// reply: the handshake lives on the `Client` (`Client::daemon() ->
-    /// &HelloAck`, shep-client/src/client.rs:175) and plain `call` drops the
-    /// client before it returns, so `get_metrics` would have no way to fill
-    /// this field.
+    /// reply: the handshake lives on [`shep_client::Client::daemon`] and
+    /// plain `call` drops the client before it returns, so `get_metrics`
+    /// would have no way to fill this field.
     pub daemon_version: String,
     /// The shepherd's pid, from the same handshake and the same call.
     pub daemon_pid: u32,
