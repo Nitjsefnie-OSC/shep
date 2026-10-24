@@ -24,7 +24,7 @@ use shep_core::dogs::validate::{Proposed, VALIDATE_ACTION, Verdict};
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::{ActionOutcome, Request, Response, RpcError, RpcErrorCode, SelectorSpec};
 
-use crate::commands::dogs::{VERSION_BUDGET, read_manifest};
+use crate::commands::dogs::{ManifestRead, VERSION_BUDGET, read_manifest};
 use crate::commands::rpc::deadline_for;
 use crate::commands::settings_write::value::table_json;
 use crate::commands::shep_toml::ShepToml;
@@ -228,9 +228,12 @@ enum Declaration {
 /// A built-in dog has no manifest and is never asked.
 ///
 /// A read that failed is [`Declaration::Unknown`], not [`Declaration::Silent`]:
-/// a corrupt cache file, a binary that will not answer, and a `shep.toml` that
-/// will not parse all leave a dog that declared `validate` unasked, and a check
-/// an operator believes is running would never run.
+/// a corrupt cache file whose replacement probe gave nothing readable, a binary
+/// that will not run at all, and a `shep.toml` that will not parse all leave a
+/// dog that declared `validate` unasked, and a check an operator believes is
+/// running would never run. Only a dog that answered nothing and exited 0, which
+/// is a dog that never heard of `--shep-manifest`, is read as declaring
+/// nothing.
 fn declares_validate(dog: &str, paths: &ShepPaths) -> Declaration {
     let doc = match ShepToml::read_only(&paths.daemon_config) {
         Ok(doc) => doc,
@@ -248,8 +251,27 @@ fn declares_validate(dog: &str, paths: &ShepPaths) -> Declaration {
         return Declaration::Silent;
     };
     match read_manifest(&path, &paths.home, dog, VERSION_BUDGET) {
-        Ok(Some(manifest)) if manifest.validate => Declaration::Declared,
-        Ok(_) => Declaration::Silent,
+        Ok(ManifestRead::Read(manifest)) => {
+            if manifest.validate {
+                Declaration::Declared
+            } else {
+                Declaration::Silent
+            }
+        }
+        // A dog that printed nothing and exited 0 is a dog adopted before
+        // `--shep-manifest` existed. It has no declaration to lose.
+        Ok(ManifestRead::Absent) => Declaration::Silent,
+        // A probe that timed out, failed, or printed something that is not a
+        // manifest says nothing about what the dog wants, and silence here is
+        // not the dog's: the declaration is on that binary, and this read
+        // could not reach it.
+        Ok(ManifestRead::Unreadable) => Declaration::Unknown {
+            reason: format!(
+                "shep cannot tell whether `{dog}` wants to be consulted before this write: its \
+                 manifest at {} gave no answer shep could read",
+                path.display()
+            ),
+        },
         Err(err) => Declaration::Unknown {
             reason: format!(
                 "shep cannot tell whether `{dog}` wants to be consulted before this write: its \

@@ -16,15 +16,51 @@ use super::{AdoptRefusal, DogSchema, ask};
 /// that answered [`MANIFEST_FLAG`].
 const CACHE_DIR: &str = "manifests";
 
+/// What a binary's manifest answered. Three answers, in the shape
+/// [`super::DogSchema`] uses one flag over: the two ways of having no manifest
+/// are different events, and a caller that reads a failed one as an absent
+/// declaration lets a dog that declared `validate` go unasked.
+// `large_enum_variant` allowed, not fixed: clippy's remedy is to box
+// `Manifest`, and that buys nothing. This enum lives for one read of one
+// manifest inside one command, its payload is read field by field and
+// dropped, and nothing here holds a collection of them.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub(crate) enum ManifestRead {
+    /// The manifest, from the cache or from the binary.
+    Read(Manifest),
+    /// The binary ran and answered nothing: empty output from a run that exited
+    /// 0. This is a dog that never heard of [`MANIFEST_FLAG`], which is every
+    /// dog adopted before it existed.
+    Absent,
+    /// There was no answer to read, or what was printed is not a manifest: the
+    /// probe outlasted `budget`, exited with a failure, or printed something
+    /// other than a manifest. A dog that declared `validate` in a manifest this
+    /// read cannot reach still declared it.
+    Unreadable,
+}
+
+impl ManifestRead {
+    /// The manifest, where there is one to read.
+    #[must_use]
+    pub(crate) fn manifest(&self) -> Option<&Manifest> {
+        match self {
+            Self::Read(manifest) => Some(manifest),
+            Self::Absent | Self::Unreadable => None,
+        }
+    }
+}
+
 /// What `path` declares, from the cache when this exact binary has been read
 /// before and from the binary otherwise.
 ///
-/// `Ok(None)` is a dog with no manifest: a non-zero exit, no output, output
-/// that is not a manifest, or a run that outlasted `budget`. That is never a
-/// fault, and is never cached, so a dog that gains a manifest is noticed on
-/// the next call. The cache is derived and safe to delete: one that cannot
-/// be read, parsed or written is skipped, and a binary that changed while it
-/// was probed is not cached.
+/// [`ManifestRead::Absent`] is a dog that answered nothing and exited 0, and
+/// [`ManifestRead::Unreadable`] is a probe that gave nothing readable: a run
+/// that outlasted `budget`, a run that failed, or output that is not a
+/// manifest. Neither is a fault, and neither is cached, so a dog that gains a
+/// manifest is noticed on the next call. The cache is derived and safe to
+/// delete: one that cannot be read, parsed or written is skipped, and a binary
+/// that changed while it was probed is not cached.
 ///
 /// # Errors
 /// [`AdoptRefusal::WillNotExec`], and only that, from the probe.
@@ -33,7 +69,7 @@ pub(crate) fn read_manifest(
     home: &Path,
     name: &str,
     budget: Duration,
-) -> Result<Option<Manifest>, AdoptRefusal> {
+) -> Result<ManifestRead, AdoptRefusal> {
     let digest = sha256_hex(path);
     let cached = digest
         .as_ref()
@@ -42,20 +78,29 @@ pub(crate) fn read_manifest(
         .as_deref()
         .and_then(|digest| read_cached(home, digest))
     {
-        return Ok(Some(manifest));
+        return Ok(ManifestRead::Read(manifest));
     }
     let Some(text) = ask(path, MANIFEST_FLAG, home, name, budget)? else {
-        return Ok(None);
+        // No answer at all: still running when the budget ran out, or a run
+        // that failed. `docs/dogs.md` asks for a manifest on stdout and exit 0,
+        // so a dog that could not answer said nothing about what it wants.
+        return Ok(ManifestRead::Unreadable);
     };
+    // Empty output is a dog with no manifest, not a manifest that failed to
+    // parse: the same guard `ask_schema` makes, so the ordinary case earns no
+    // reading meant for a broken one.
+    if text.trim().is_empty() {
+        return Ok(ManifestRead::Absent);
+    }
     let Ok(manifest) = serde_json::from_str::<Manifest>(&text) else {
-        return Ok(None);
+        return Ok(ManifestRead::Unreadable);
     };
     // A binary swapped while it ran may have answered as the new build, and
     // the old digest would file that answer under the wrong key.
     if let Some(file) = cached.filter(|_| sha256_hex(path) == digest) {
         let _ = store(&file, &text);
     }
-    Ok(Some(manifest))
+    Ok(ManifestRead::Read(manifest))
 }
 
 /// What the cache already holds for `path`, and nothing else: this never

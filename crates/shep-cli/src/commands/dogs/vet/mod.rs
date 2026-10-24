@@ -19,7 +19,7 @@ use crate::output::Streams;
 
 mod manifest;
 
-pub(crate) use manifest::{cached_manifest, read_manifest};
+pub(crate) use manifest::{ManifestRead, cached_manifest, read_manifest};
 
 /// Why a binary cannot be adopted.
 ///
@@ -170,7 +170,14 @@ pub fn vet_binary_within(
         .map(|abs| shep_core::paths::strip_verbatim_prefix(&abs).into_owned())
         .map_err(lookup_refusal)?;
     let group_writable = writability(&canonical)?;
-    let manifest = read_manifest(&canonical, home, name, budget)?;
+    let manifest = match read_manifest(&canonical, home, name, budget)? {
+        ManifestRead::Read(manifest) => Some(manifest),
+        // A dog that answered nothing, and one whose answer could not be read,
+        // are both a dog with no manifest for `adopt` to record. `adopt` has
+        // always gone ahead for either, and nothing here can tell an operator
+        // which one happened.
+        ManifestRead::Absent | ManifestRead::Unreadable => None,
+    };
     let answer = match &manifest {
         Some(manifest) => Some(manifest::version_of(manifest)),
         None => ask_version(&canonical, home, name, budget)?,

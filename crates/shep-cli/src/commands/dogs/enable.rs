@@ -172,10 +172,10 @@ fn ask_before_first_enable(
     if already_decided || cfg.enabled_dog_names().iter().any(|dog| dog == name) {
         return Ok(None);
     }
-    let manifest = read_manifest(&binary, &paths.home, name, VERSION_BUDGET)
+    let read = read_manifest(&binary, &paths.home, name, VERSION_BUDGET)
         .map_err(|refusal| fail_adopt(streams, &binary, &refusal))?;
     let reviewed =
-        review(manifest.as_ref()).map_err(|refusal| refusal.report(streams, name, "enabled"))?;
+        review(read.manifest()).map_err(|refusal| refusal.report(streams, name, "enabled"))?;
     match consent_from(streams, name, "enable", &reviewed, yes, input)? {
         Verdict::Grant(grants) => Ok(grants),
         Verdict::Declined => {
@@ -206,14 +206,16 @@ fn warn_of_unmet_depends_of(
     let DogSource::Adopted { path, .. } = source else {
         return;
     };
-    let Ok(Some(manifest)) = read_manifest(Path::new(path), &paths.home, name, VERSION_BUDGET)
-    else {
+    let Ok(read) = read_manifest(Path::new(path), &paths.home, name, VERSION_BUDGET) else {
+        return;
+    };
+    let Some(manifest) = read.manifest() else {
         return;
     };
     let adopted = ShepToml::read_only(&paths.daemon_config)
         .map(|cfg| cfg.adopted_dog_names())
         .unwrap_or_default();
-    warn_of_unmet_depends(streams, name, &manifest, &adopted);
+    warn_of_unmet_depends(streams, name, manifest, &adopted);
 }
 
 /// Renders [`enable`]'s refusal of a name that names no dog.

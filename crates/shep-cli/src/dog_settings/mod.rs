@@ -46,7 +46,7 @@ pub(crate) mod table;
 mod table_tests;
 pub(crate) mod validate;
 #[cfg(test)]
-mod validate_tests;
+pub(crate) mod validate_tests;
 
 pub use forms::bullets;
 pub use items::item_refusal;

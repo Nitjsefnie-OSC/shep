@@ -20,7 +20,7 @@ use super::*;
 /// The cache is written by hand rather than by probing a binary: this is the
 /// half that decides whether to ask, and a cached manifest is exactly what
 /// `shep set` reads on a dog `shep adopt` already read.
-fn home_with(dir: &Path, manifest: Option<&str>) -> ShepPaths {
+pub(crate) fn home_with(dir: &Path, manifest: Option<&str>) -> ShepPaths {
     let paths = ShepPaths::resolve(&|_| None, dir);
     std::fs::create_dir_all(&paths.home).unwrap();
     let binary = dir.join("shep-kelpie");
@@ -52,7 +52,7 @@ fn home_with(dir: &Path, manifest: Option<&str>) -> ShepPaths {
 }
 
 /// A manifest declaring `validate`, which is the only manifest that gets asked.
-fn validating() -> &'static str {
+pub(crate) fn validating() -> &'static str {
     r#"{"manifest":1,"name":"kelpie","version":"0.2.0","protocol":12,"channel":true,"validate":true}"#
 }
 
@@ -491,5 +491,89 @@ async fn a_dog_that_answers_no_manifest_at_all_is_not_asked() {
         envelopes.try_recv(),
         Err(tokio::sync::mpsc::error::TryRecvError::Empty),
         "a dog that answers no manifest has nowhere to declare validate"
+    );
+}
+
+/// The adopted binary `paths` records for `kelpie`.
+///
+/// `#[cfg(unix)]` with its only caller: the probe it exists to replace runs a
+/// shell script.
+#[cfg(unix)]
+fn adopted_binary(paths: &ShepPaths) -> std::path::PathBuf {
+    ShepToml::read_only(&paths.daemon_config)
+        .unwrap()
+        .adopted_dog_path("kelpie")
+        .expect("the fixture adopted kelpie")
+}
+
+/// Rewrites `kelpie`'s adopted binary to run `body` when asked for its manifest,
+/// and makes it one the kernel will run. The new bytes change the digest the
+/// cache is keyed on, so the cached manifest is missed and the probe is what
+/// answers.
+#[cfg(unix)]
+fn replace_the_dog_with_a_probe(paths: &ShepPaths, body: &str) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let binary = adopted_binary(paths);
+    std::fs::write(&binary, format!("#!/bin/sh\n{body}\nexit 0\n")).unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A dog that declared `validate` in a manifest this read cannot reach is a dog
+/// that still declared it. A probe that prints something that is not a manifest
+/// is not a dog that declared nothing, and reading it that way is the check
+/// going missing with nothing saying so.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_probe_that_prints_no_manifest_refuses_the_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = home_with(dir.path(), Some(validating()));
+    replace_the_dog_with_a_probe(&paths, "echo 'not a manifest'");
+
+    let (client, _envelopes) =
+        shep_client::testing::fake_client_answering_refusals(&control_address(dir.path()), |_| {
+            Ok(Response::Pong)
+        })
+        .await;
+
+    let failure = ask_dog(&client, &paths, "kelpie", &table(&[]), None)
+        .await
+        .expect_err("a probe that answered nothing readable answered nothing");
+    let AskFailure::Unknown { reason } = failure else {
+        panic!("a probe that failed is no dog's refusal: {failure:?}");
+    };
+    assert!(
+        reason.contains("no answer shep could read") && reason.contains("kelpie"),
+        "{reason}"
+    );
+}
+
+/// The same for a probe that was still running when the budget ran out. The
+/// dog is running, which is the case an operator would least expect to lose
+/// its own check.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_probe_that_never_answers_refuses_the_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = home_with(dir.path(), Some(validating()));
+    replace_the_dog_with_a_probe(
+        &paths,
+        r#"if [ "$1" = --shep-manifest ]; then
+  sleep 3
+fi"#,
+    );
+
+    let (client, _envelopes) =
+        shep_client::testing::fake_client_answering_refusals(&control_address(dir.path()), |_| {
+            Ok(Response::Pong)
+        })
+        .await;
+
+    let failure = ask_dog(&client, &paths, "kelpie", &table(&[]), None)
+        .await
+        .expect_err("a probe that outlasted its budget answered nothing");
+    assert!(
+        matches!(&failure, AskFailure::Unknown { reason } if reason.contains("no answer shep could read")),
+        "{failure:?}"
     );
 }
