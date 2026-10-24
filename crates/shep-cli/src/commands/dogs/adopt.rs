@@ -4,10 +4,10 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use shep_client::Client;
+use shep_client::{Client, RequestError};
 use shep_core::paths::{ShepPaths, user_home};
 use shep_core::permissions::Grants;
-use shep_core::protocol::{DogSource, Request, Response};
+use shep_core::protocol::{DogSource, Request, Response, RpcErrorCode};
 
 use crate::cli::AdoptArgs;
 use crate::commands::dog_migration::{
@@ -91,20 +91,26 @@ pub(super) async fn adopt_asking(
         Ok(verdict) => verdict,
         Err(code) => return code,
     };
-    let (adopted, grants) = match ShepToml::try_edit(&paths.daemon_config, |cfg| {
+    let (adopted, grants, declined) = match ShepToml::try_edit(&paths.daemon_config, |cfg| {
         cfg.adopt_dog(&name, &path, channel)?;
         // The answer was asked against a read taken before the question. A
         // grant another shep wrote since was decided by someone with the
         // same say, and stands.
         let decided_meanwhile = cfg.granted(&name)?.is_some();
+        // Whether a no is what this write left: the daemon half follows the
+        // file, not the raw answer, so a dog granted meanwhile is not stopped.
+        let mut declined = false;
         match &verdict {
             Some(_) if decided_meanwhile => {}
             Some(Verdict::Grant(Some(grants))) => cfg.set_granted(&name, grants)?,
             // `adopt_dog` enables; a no leaves the dog adopted and off.
-            Some(Verdict::Declined) => cfg.disable_dog(&name),
+            Some(Verdict::Declined) => {
+                cfg.disable_dog(&name);
+                declined = true;
+            }
             Some(Verdict::Grant(None)) | None => {}
         }
-        Ok((cfg.adopted_dog_names(), cfg.granted(&name)?))
+        Ok((cfg.adopted_dog_names(), cfg.granted(&name)?, declined))
     }) {
         Ok(recorded) => recorded,
         Err(err) => return fail_config(streams, &err),
@@ -149,7 +155,7 @@ pub(super) async fn adopt_asking(
         Ok(client) => client,
         Err(code) => return code,
     };
-    if verdict == Some(Verdict::Declined) {
+    if declined {
         let source = DogSource::Adopted {
             grants: None,
             path: path.display().to_string(),
@@ -180,6 +186,10 @@ pub(super) async fn declined_after_config(
     {
         Ok(Response::Deleted(_ids)) => {
             emit_dog_action(streams, "adopt", name, source, DISABLED_STATUS)
+        }
+        // The shepherd holds no such dog: nothing was running to stop.
+        Err(RequestError::Rpc(rpc)) if rpc.code == RpcErrorCode::NotFound => {
+            emit_dog_action(streams, "adopt", name, source, DECLINED_STATUS)
         }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
