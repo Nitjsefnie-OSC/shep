@@ -51,6 +51,13 @@ impl Origin {
         }
     }
 
+    /// Whether reaching this daemon is the connection arriving, as on the
+    /// socket. A link is opened by the daemon at spawn, so it proves nothing
+    /// about the dog until the dog sends a frame.
+    pub(super) fn contacts_on_open(&self) -> bool {
+        matches!(self, Self::Socket)
+    }
+
     /// Whether the control socket's same-uid check applies. A link needs none:
     /// only the process it was handed to holds the other end.
     #[cfg_attr(

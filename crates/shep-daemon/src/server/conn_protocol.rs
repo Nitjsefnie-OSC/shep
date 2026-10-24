@@ -51,8 +51,11 @@ pub(super) async fn serve_conn(
     #[cfg(not(unix))]
     let peer: Option<u32> = origin.pid(None);
     // Recorded before a byte is read: a peer that connects and then says
-    // nothing at all has still reached this daemon.
-    if let Some(pid) = peer {
+    // nothing at all has still reached this daemon. A link is opened by this
+    // daemon, not by the dog, so its contact waits for a frame in `handshake`.
+    if origin.contacts_on_open()
+        && let Some(pid) = peer
+    {
         ctx.peer_contacts.connected(pid);
     }
     // Minted after the peer check, not before: a connection refused for its
@@ -144,6 +147,11 @@ async fn handshake(
         .await
         .map_err(|_| ConnError::HandshakeTimeout)?
         .ok_or(ConnError::NoHandshake)??;
+    if !origin.contacts_on_open()
+        && let Some(pid) = peer
+    {
+        ctx.peer_contacts.connected(pid);
+    }
     let hello: Hello = decode_frame(&frame).map_err(ConnError::Decode)?;
     // The connection's identity where it has one, else what the peer claimed.
     let dog = origin.dog(hello.dog_name.as_deref());

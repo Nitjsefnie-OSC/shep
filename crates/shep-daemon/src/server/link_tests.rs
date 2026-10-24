@@ -111,3 +111,48 @@ async fn a_refusal_on_a_link_lands_on_the_dog_it_was_opened_for() {
 
     assert_eq!(h.ctx.dog_refusals.restarting(), vec!["metrics".to_string()]);
 }
+
+#[tokio::test]
+async fn a_link_the_dog_never_wrote_to_is_not_contact() {
+    let h = harness(vec![ProcScript::never_exits()]);
+    start_dog(&h.ctx, "metrics").await;
+    h.ctx.peer_contacts.force_warm();
+    let (server, client) = shep_core::transport::connected_pair().await.unwrap();
+    let origin = Origin::Dog {
+        name: "metrics".to_string(),
+        pid: FIRST_SCRIPTED_PID,
+    };
+    let served = tokio::spawn(serve_conn(server, h.ctx.clone(), origin));
+
+    drop(client);
+    let _ = served.await.unwrap();
+
+    assert_eq!(
+        h.ctx.peer_contacts.from_pid(Some(FIRST_SCRIPTED_PID)),
+        Contact::None,
+        "a dog that never reached the shepherd must not read as having connected"
+    );
+}
+
+#[tokio::test]
+async fn a_link_is_contact_once_the_dog_sends_a_frame() {
+    let h = harness(vec![ProcScript::never_exits()]);
+    start_dog(&h.ctx, "metrics").await;
+    h.ctx.peer_contacts.force_warm();
+    let mut client = linked(&h.ctx, "metrics", FIRST_SCRIPTED_PID).await;
+
+    client
+        .send(&Hello {
+            client_version: "0.1.0".to_string(),
+            protocol: PROTOCOL_VERSION,
+            dog_name: None,
+        })
+        .await;
+    let ack: HelloReply = client.recv().await;
+    ack.expect("the handshake is on this daemon's own protocol");
+
+    assert_eq!(
+        h.ctx.peer_contacts.from_pid(Some(FIRST_SCRIPTED_PID)),
+        Contact::Named
+    );
+}
