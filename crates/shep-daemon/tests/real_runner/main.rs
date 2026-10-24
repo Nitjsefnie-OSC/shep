@@ -31,6 +31,7 @@ use shep_daemon::tokio_runner::TokioRunner;
 
 mod adoption;
 mod channel;
+mod dog_link;
 mod environment;
 mod identity;
 mod logs;
