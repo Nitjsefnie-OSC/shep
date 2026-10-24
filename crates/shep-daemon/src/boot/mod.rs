@@ -276,7 +276,6 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
     );
     // Taken before the runner moves into the supervisor. `None` for a runner
     // that opens no dog connections.
-    #[cfg(unix)]
     let dog_links = runner.dog_links();
     // One table, two owners: the server tasks enter every connection they
     // serve and the SIGHUP task reads them out to carry across the exec.
@@ -411,11 +410,11 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         provider_secrets,
         host_environment: host_environment.clone(),
     };
-    #[cfg(unix)]
     if let Some(links) = dog_links {
         tokio::spawn(crate::server::serve_dog_links(
             links,
             ctx.clone(),
+            #[cfg(unix)]
             dog_link_table,
             shutdown.subscribe(),
         ));

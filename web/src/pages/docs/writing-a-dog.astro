@@ -153,9 +153,9 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       <code>$SHEP_HOME</code>, which is how it finds that socket in the first
       place, and <code>$SHEP_DOG_NAME</code>, which is the name to put in
       that request. No <code>[&lt;name&gt;]</code> value rides along
-      beside them. On unix a third, <code>$SHEP_DOG_FD</code>, names a
-      connection already open as descriptor 4, which works before the socket
-      does and survives a shepherd upgrade. Use it first and fall back to the
+      beside them. A third, <code>$SHEP_DOG_FD</code> on unix or{" "}
+      <code>$SHEP_DOG_PIPE</code> on Windows, names a connection open before
+      the socket is, and on unix survives a shepherd upgrade. Use it first and fall back to the
       socket.
       <code>DogRuntime</code> does.
     </p>

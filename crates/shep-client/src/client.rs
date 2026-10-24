@@ -267,9 +267,8 @@ impl Client {
     ///
     /// See [`Self::connect_with_timeout`], bar [`ConnectError::Connect`]:
     /// there is no `connect(2)` to fail.
-    #[cfg(unix)]
     pub(crate) async fn connect_over(
-        stream: tokio::net::UnixStream,
+        stream: shep_core::transport::ClientStream,
         socket: &Path,
         timeout: Duration,
         dog_name: Option<&str>,

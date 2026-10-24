@@ -49,8 +49,19 @@ pub const DOG_NAME_VAR: &str = "SHEP_DOG_NAME";
 ///
 /// Unix only, and set on every supervised dog. A process nothing supervised
 /// has no such variable and connects on the control socket, where it acts as
-/// the operator. See [`DOG_LINK_FD`].
+/// the operator. See [`DOG_LINK_FD`]. Windows has no inherited descriptor and
+/// uses [`DOG_LINK_PIPE_VAR`] instead.
 pub const DOG_LINK_FD_VAR: &str = "SHEP_DOG_FD";
+
+/// The variable that names the pipe a supervised dog on Windows opens to reach
+/// its shepherd, the way `$SHEP_CHANNEL_PIPE` names the channel's.
+///
+/// Windows only, and set on every supervised dog in place of
+/// [`DOG_LINK_FD_VAR`]. The shepherd creates the pipe before the dog starts,
+/// under a security descriptor that admits only its own user, and serves it
+/// from then on. A process nothing supervised has no such variable and
+/// connects on the control pipe, where it acts as the operator.
+pub const DOG_LINK_PIPE_VAR: &str = "SHEP_DOG_PIPE";
 
 /// The descriptor number a dog's connection arrives on, beside the shepherd
 /// channel's fd 3.
