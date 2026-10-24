@@ -163,10 +163,10 @@ pub fn claim(arrival: Arrival<Handover>) -> io::Result<Handover> {
 mod tests {
     use super::*;
     use crate::entry::ProcessEntry;
-    use std::path::PathBuf;
     use crate::handover::fixtures::entry_fixture;
     use crate::handover::{CarriedFds, CarriedSheep};
     use shep_handover::Carried;
+    use std::path::PathBuf;
 
     #[test]
     fn the_exec_target_exists_and_is_a_file() {
