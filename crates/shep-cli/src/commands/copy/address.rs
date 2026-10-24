@@ -178,7 +178,11 @@ impl DogNames {
 }
 
 /// The longest name in `names` that `rest` starts with, `None` when none does.
-fn longest_in(rest: &[String], names: &BTreeSet<String>) -> Option<String> {
+///
+/// `pub(crate)`: `shep get` splits a dog's own name the same way `shep copy`
+/// splits a sheep's, and one rule for "the longest name this address starts
+/// with" is what keeps the two verbs reading `we.b.dogs.kelpie` alike.
+pub(crate) fn longest_in(rest: &[String], names: &BTreeSet<String>) -> Option<String> {
     names
         .iter()
         .filter(|name| {
@@ -359,7 +363,10 @@ fn is_path_root(segment: &&str) -> bool {
 ///
 /// Read off the type rather than a hand-kept list, so a field added to
 /// `AppConfig` is copyable without editing this file.
-fn app_fields() -> impl Iterator<Item = &'static str> {
+///
+/// `pub(crate)`: `shep get` refuses a path that is no field for the same
+/// reason `shep copy` does.
+pub(crate) fn app_fields() -> impl Iterator<Item = &'static str> {
     STATIC_FIELDS.iter().map(String::as_str)
 }
 

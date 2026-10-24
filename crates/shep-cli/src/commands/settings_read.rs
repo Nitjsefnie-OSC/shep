@@ -1,0 +1,934 @@
+//! `shep get <name>[.<path>]`: one read for any settings in the flock.
+//!
+//! A sheep's name addresses its config and the `dogs.<dog>` tables inside it,
+//! and a dog's name addresses its own section of `dogs.toml`. A sheep is
+//! looked for first, among the names of the flock `shep copy` reads its
+//! addresses from. Anything no sheep is goes to `dogs.toml`, where the dog is
+//! the longest run of segments the shepherd answers a section for:
+//! `kelpie.worker` is the `worker` table of the dog `kelpie`, because
+//! `dogs.toml` spells that table as a header path rather than as a name.
+//!
+//! The answer is the TOML the address names, spelled as the file it lives in
+//! spells it: a sheep's fragment carries its `dogs.<dog>` headers, a dog's
+//! carries `[<name>]`. Nothing is rewritten on the way out, so a dog's own
+//! comments inside its section survive the read.
+//!
+//! Two requests do the reading: `Request::SheepConfig` for a sheep, and
+//! `Request::DogConfig` for a dog. The dog read is the unresolved one, so a
+//! `{{secret:...}}` in a dog's section prints as the reference and this verb
+//! never touches the secret store.
+
+use std::fmt;
+
+use serde_json::Value as Json;
+use shep_client::Client;
+use shep_core::protocol::{Request, Response};
+use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, Value as TomlValue};
+
+use crate::cli::{Format, GetArgs};
+use crate::commands::copy::address::FlockNames;
+use crate::commands::copy::{self, address};
+use crate::commands::rpc::{typed_request_error, unexpected_response};
+use crate::exit::ExitCode;
+use crate::output::{SettingsAnswer, Streams, emit, write_outcome};
+
+/// The one path root that is not an `AppConfig` field name.
+const DOGS: &str = "dogs";
+
+/// The one field whose values never reach a client.
+const ENV: &str = "env";
+
+/// Which half of the flock an address named.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Holder {
+    /// A sheep: its config, and the `dogs.<dog>` tables inside it.
+    Sheep,
+    /// A dog: its own section of `dogs.toml`.
+    Dog,
+}
+
+impl Holder {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sheep => "sheep",
+            Self::Dog => "dog",
+        }
+    }
+}
+
+/// An address split into the name it named and the segments after it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Written {
+    holder: Holder,
+    name: String,
+    /// The segments past the name, in order, empty for a read of everything
+    /// that name holds.
+    rest: Vec<String>,
+}
+
+/// Why a read printed nothing.
+///
+/// Every variant carries the sentence the operator reads, because the reason
+/// is the remedy: an unknown name names `shep kv`, `env` names `shep import
+/// env`, and an empty path names the path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReadRefusal {
+    /// No sheep and no dog in this flock answers that name.
+    Unknown(String),
+    /// The address is malformed, or the path is no field and no dog table.
+    Usage(String),
+    /// The holder is known and nothing is set at the path named.
+    Empty(String),
+    /// A key this verb never reads.
+    Refused(String),
+}
+
+impl ReadRefusal {
+    /// The sentence the operator reads.
+    fn message(&self) -> &str {
+        match self {
+            Self::Unknown(message)
+            | Self::Usage(message)
+            | Self::Empty(message)
+            | Self::Refused(message) => message,
+        }
+    }
+
+    /// The code that reports it.
+    ///
+    /// [`ExitCode::NotFound`] for a name the flock does not have and for a
+    /// path nothing is set at: both are "no such setting", which is the code
+    /// `shep kv get` gives a key it does not have.
+    const fn code(&self) -> ExitCode {
+        match self {
+            Self::Unknown(_) | Self::Empty(_) => ExitCode::NotFound,
+            Self::Usage(_) => ExitCode::Usage,
+            Self::Refused(_) => ExitCode::InvalidConfig,
+        }
+    }
+
+    /// Writes the refusal and hands back the code it wrote.
+    fn report(&self, streams: &mut Streams<'_>) -> ExitCode {
+        streams.fail(self.code(), self.message())
+    }
+}
+
+impl fmt::Display for ReadRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+impl core::error::Error for ReadRefusal {}
+
+/// `shep get <name>[.<path>]`.
+///
+/// # Errors
+/// The [`ExitCode`] already reported to `streams`: a name no sheep or dog
+/// answers, a malformed address, a key this verb never reads, a path nothing
+/// is set at, or a shepherd that refused the read.
+pub(crate) async fn get(client: &Client, streams: &mut Streams<'_>, args: &GetArgs) -> ExitCode {
+    let flock = match copy::flock_names(client, streams).await {
+        Ok(names) => names,
+        Err(code) => return code,
+    };
+    let segments = match segments(&args.address) {
+        Ok(segments) => segments,
+        Err(refusal) => return refusal_report(streams, &refusal),
+    };
+    if let Some(name) = address::longest_in(&segments, &flock.sheep) {
+        let depth = name.split('.').count();
+        let written = Written {
+            holder: Holder::Sheep,
+            name,
+            rest: segments[depth..].to_vec(),
+        };
+        return get_sheep(client, streams, &flock, written).await;
+    }
+    get_dog(client, streams, &flock, &segments).await
+}
+
+/// The address split on `.`.
+///
+/// # Errors
+/// [`ReadRefusal::Usage`] for an address with an empty part.
+fn segments(raw: &str) -> Result<Vec<String>, ReadRefusal> {
+    let parts: Vec<String> = raw.split('.').map(str::to_string).collect();
+    if parts.iter().any(|part| part.is_empty()) {
+        return Err(ReadRefusal::Usage(format!(
+            "`{raw}` has an empty part: a name and a path segment are each at least one character"
+        )));
+    }
+    Ok(parts)
+}
+
+/// Reports a refusal, named separately from the refusals themselves so no
+/// arm of `get` has to know which variant it holds.
+fn refusal_report(streams: &mut Streams<'_>, refusal: &ReadRefusal) -> ExitCode {
+    refusal.report(streams)
+}
+
+/// One sheep's config, or the fragment of it the address named.
+async fn get_sheep(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    flock: &FlockNames,
+    written: Written,
+) -> ExitCode {
+    let config = match copy::read_config(client, streams, &written.name).await {
+        Ok(config) => config,
+        Err(code) => return code,
+    };
+    // The target config is `Null`: a read resolves a dotted dog name against
+    // the one sheep it names, where a copy resolves against two.
+    let dogs = address::DogNames::new(flock, &config, &Json::Null);
+    let steps = match sheep_steps(&written.name, &written.rest, &dogs, &config) {
+        Ok(steps) => steps,
+        Err(refusal) => return refusal_report(streams, &refusal),
+    };
+    let toml = match sheep_document(&written, &config, &steps) {
+        Ok(toml) => toml,
+        Err(refusal) => return refusal_report(streams, &refusal),
+    };
+    print(streams, &written, &toml)
+}
+
+/// One dog's own section, or the fragment of it the address named.
+///
+/// The name is the longest run of segments the shepherd answers a section for,
+/// which is what tells `kelpie` and `kelpie.worker` apart: `dogs.toml` spells a
+/// dog's sub-table as `[kelpie.worker]`, a header path rather than a name. A
+/// sheep is already ruled out by the caller, so one read per candidate is the
+/// whole cost, and a flock with no dog and no section pays it for every
+/// candidate it has.
+///
+/// The section is read as a document and re-rooted under the dog's name rather
+/// than re-rendered from a parsed table, which is what keeps the comments the
+/// operator wrote inside it.
+async fn get_dog(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    flock: &FlockNames,
+    segments: &[String],
+) -> ExitCode {
+    // A dog in the flock with nothing written for it is a different answer
+    // from a name nothing in the product knows: the first says the settings
+    // are all defaults, the second says the name is wrong.
+    let mut named_a_dog = false;
+    for name in dog_candidates(segments) {
+        let section = match read_dog_section(client, streams, &name).await {
+            Ok(section) => section,
+            Err(code) => return code,
+        };
+        named_a_dog |= flock.dogs.iter().any(|dog| *dog == name);
+        if section.trim().is_empty() {
+            continue;
+        }
+        let Ok(doc) = section.parse::<DocumentMut>() else {
+            return streams.fail(
+                ExitCode::InvalidConfig,
+                &format!(
+                    "`{name}`'s section of `dogs.toml` does not parse: the shepherd read it, so \
+                     this binary cannot say what it holds",
+                ),
+            );
+        };
+        let depth = name.split('.').count();
+        let written = Written {
+            holder: Holder::Dog,
+            name,
+            rest: segments[depth..].to_vec(),
+        };
+        let steps = dog_steps(doc.as_table(), &written.rest);
+        return match dog_document(&written, &doc, &steps) {
+            Ok(toml) => print(streams, &written, &toml),
+            Err(refusal) => refusal_report(streams, &refusal),
+        };
+    }
+    let refusal = if named_a_dog {
+        ReadRefusal::Empty(all_defaults(segments))
+    } else {
+        ReadRefusal::Unknown(no_such_name(segments))
+    };
+    refusal_report(streams, &refusal)
+}
+
+/// Every name the address could be, longest first.
+///
+/// `kelpie.worker.token` offers `kelpie.worker.token`, `kelpie.worker` and
+/// `kelpie`, in that order: the longest one `dogs.toml` holds a section for is
+/// the dog, and what is left over is its path.
+fn dog_candidates(segments: &[String]) -> Vec<String> {
+    (1..=segments.len())
+        .rev()
+        .map(|len| segments[..len].join("."))
+        .collect()
+}
+
+/// The sentence for a name no sheep in the flock is and no dog has a section
+/// for, which is where the key/value store `shep get` used to read went.
+fn no_such_name(segments: &[String]) -> String {
+    format!(
+        "no sheep or dog named `{}`: `shep flock` lists the flock and `shep dogs` lists the dogs. \
+         The key/value store `shep get` used to read lives at `shep kv get`",
+        segments.join(".")
+    )
+}
+
+/// The sentence for a dog the flock has and `dogs.toml` says nothing about.
+fn all_defaults(segments: &[String]) -> String {
+    format!(
+        "`{}` is a dog with nothing set for it: `dogs.toml` holds no section, so every setting it \
+         runs on is a default. `shep enable {}` writes one",
+        segments.join("."),
+        segments.first().map(String::as_str).unwrap_or_default()
+    )
+}
+
+/// The TOML `shep get` prints for a dog: its whole section re-rooted under
+/// the dog's name, or the fragment of it `steps` names.
+///
+/// # Errors
+/// [`ReadRefusal::Empty`] when `steps` leads nowhere.
+fn dog_document(
+    written: &Written,
+    doc: &DocumentMut,
+    steps: &[String],
+) -> Result<String, ReadRefusal> {
+    let leaf = if steps.is_empty() {
+        let mut root = doc.as_table().clone();
+        // The header this document is about to grow is the dog's own, and a
+        // root table never prints one: `implicit` is what keeps `[kelpie]`
+        // off the page.
+        root.set_implicit(false);
+        clear_decor(Item::Table(root))
+    } else {
+        match walk_toml(doc.as_table(), steps) {
+            Some(item) => clear_decor(item),
+            None => return Err(ReadRefusal::Empty(empty(written))),
+        }
+    };
+    let mut out = DocumentMut::new();
+    let mut spine = vec![written.name.clone()];
+    spine.extend(steps.iter().cloned());
+    attach(&mut out, &spine, leaf);
+    Ok(out.to_string())
+}
+
+/// The key path inside `config` that the segments after a sheep's name name.
+///
+/// An empty `rest` is the whole config, and a bare `dogs` is every dog table
+/// in it: unlike `shep copy`, this verb has nothing to write through, so a
+/// map it can print whole is not a refusal.
+///
+/// # Errors
+/// [`ReadRefusal::Usage`] for a multi-segment path that is not a dog's table,
+/// or a name no field of a sheep's config is. [`ReadRefusal::Refused`] for
+/// `env`.
+fn sheep_steps(
+    sheep: &str,
+    rest: &[String],
+    dogs: &address::DogNames,
+    config: &Json,
+) -> Result<Vec<String>, ReadRefusal> {
+    let Some(first) = rest.first() else {
+        return Ok(Vec::new());
+    };
+
+    if *first == DOGS {
+        let mut steps = vec![DOGS.to_string()];
+        if rest.len() == 1 {
+            return Ok(steps);
+        }
+        let tail = &rest[1..];
+        let dog = dogs.longest(tail);
+        let depth = dog.split('.').count();
+        steps.push(dog.clone());
+        steps.extend(address::resolve_keys(
+            &tail[depth..],
+            address::dog_table(config, &dog),
+            None,
+        ));
+        return Ok(steps);
+    }
+
+    if rest.len() > 1 {
+        return Err(ReadRefusal::Usage(format!(
+            "a path is one field, `{DOGS}.<dog>`, or `{DOGS}.<dog>.<key>`; `{sheep}.{}` is none \
+             of those",
+            rest.join(".")
+        )));
+    }
+    if *first == ENV {
+        return Err(ReadRefusal::Refused(
+            "`env` is not read: a client is never sent a sheep's env values, so there is nothing \
+             here to print. `shep describe {sheep}` lists the keys, and `shep import env` writes \
+             them"
+                .to_string(),
+        ));
+    }
+    if !address::app_fields().any(|name| name == first.as_str()) {
+        return Err(ReadRefusal::Usage(format!(
+            "`{first}` is not a field a sheep's config has; `shep describe {sheep}` shows the \
+             config `shep get` reads"
+        )));
+    }
+    Ok(vec![first.clone()])
+}
+
+/// The key path inside a dog's section that the segments after its name name.
+///
+/// Each step takes the longest run of segments one of the tables actually
+/// holds as one key, the rule [`address::resolve_keys`] applies to a sheep's
+/// dog table: `kelpie.api.token` is the one key `api.token` when the section
+/// holds that key, and `api` then `token` when it holds a table under `api`.
+fn dog_steps(root: &Table, rest: &[String]) -> Vec<String> {
+    let mut steps = Vec::new();
+    let mut current: Option<&dyn toml_edit::TableLike> = Some(root);
+    let mut next = 0;
+    while next < rest.len() {
+        let taken = longest_toml_key(&rest[next..], current);
+        steps.push(taken.join("."));
+        for part in &taken {
+            current = current
+                .and_then(|table| table.get(part.as_str()))
+                .and_then(Item::as_table_like);
+        }
+        next += taken.len();
+    }
+    steps
+}
+
+/// The longest run of `rest` `table` holds as one key, or one segment.
+fn longest_toml_key(rest: &[String], table: Option<&dyn toml_edit::TableLike>) -> Vec<String> {
+    for len in (1..=rest.len()).rev() {
+        let holds = table.is_some_and(|table| table.contains_key(rest[..len].join(".").as_str()));
+        if holds {
+            return rest[..len].to_vec();
+        }
+    }
+    rest[..1].to_vec()
+}
+
+/// The item at `steps` inside `root`, cloned out of the document it came from.
+fn walk_toml(root: &Table, steps: &[String]) -> Option<Item> {
+    let mut current = root.get(steps.first()?.as_str())?;
+    for step in &steps[1..] {
+        current = current.as_table_like()?.get(step.as_str())?;
+    }
+    if current.is_none() {
+        return None;
+    }
+    Some(current.clone())
+}
+
+/// Drops the blank line and the comment a table's header line carries, which
+/// belong to the text around the fragment rather than to the fragment.
+///
+/// Comments inside the table are on its own items and stay.
+fn clear_decor(item: Item) -> Item {
+    match item {
+        Item::Table(mut table) => {
+            *table.decor_mut() = toml_edit::Decor::default();
+            Item::Table(table)
+        }
+        other => other,
+    }
+}
+
+/// The TOML document `shep get` prints for a sheep.
+///
+/// `steps` empty is the whole config, with `env` left out: the shepherd
+/// answers a config with `env` already emptied, so printing its header would
+/// advertise a table this verb can never fill.
+///
+/// # Errors
+/// [`ReadRefusal::Empty`] when nothing is set at `steps`.
+fn sheep_document(
+    written: &Written,
+    config: &Json,
+    steps: &[String],
+) -> Result<String, ReadRefusal> {
+    let mut out = DocumentMut::new();
+    if steps.is_empty() {
+        for (key, value) in config.as_object().into_iter().flatten() {
+            if key == ENV {
+                continue;
+            }
+            if let Some(item) = json_item(value) {
+                out.as_table_mut().insert(key.as_str(), item);
+            }
+        }
+        return Ok(out.to_string());
+    }
+
+    let mut current = config;
+    for step in steps {
+        let Some(next) = current.get(step.as_str()) else {
+            return Err(ReadRefusal::Empty(empty(written)));
+        };
+        current = next;
+    }
+    let Some(item) = json_item(current) else {
+        return Err(ReadRefusal::Empty(empty(written)));
+    };
+    let mut spine = vec![written.name.clone()];
+    spine.extend(steps.iter().cloned());
+    // The sheep's own name is not part of the document a Flockfile holds:
+    // `[dogs.kelpie]` is what the file spells, not `[api.dogs.kelpie]`.
+    spine.remove(0);
+    attach(&mut out, &spine, item);
+    Ok(out.to_string())
+}
+
+/// The refusal sentence for a path nothing is set at.
+fn empty(written: &Written) -> String {
+    format!(
+        "nothing is set at `{}.{}`: the field is unset, or the key is not in the table",
+        written.name,
+        written.rest.join(".")
+    )
+}
+
+/// Writes `leaf` at the end of `spine`, creating the tables above it.
+///
+/// Every table this creates is implicit: it exists to hold what is under it,
+/// and a header for it would name a table the operator never asked for.
+///
+/// # Panics
+/// If `spine` is empty, which no caller here builds.
+#[track_caller]
+fn attach(doc: &mut DocumentMut, spine: &[String], leaf: Item) {
+    let (last, parents) = spine
+        .split_last()
+        .expect("a spine always has its leaf's key");
+    let mut table = doc.as_table_mut();
+    for step in parents {
+        let entry = table.entry(step).or_insert(Item::Table(Table::new()));
+        let step_table = entry
+            .as_table_mut()
+            .expect("a spine step this function created is a table");
+        step_table.set_implicit(true);
+        table = step_table;
+    }
+    table.insert(last, leaf);
+}
+
+/// One `serde_json` value as a table entry.
+///
+/// A `Null` is no entry at all: TOML has no null, and an unset `Option`
+/// field of a sheep's config is a field the operator never wrote.
+fn json_item(value: &Json) -> Option<Item> {
+    Some(match value {
+        Json::Object(map) => {
+            let mut table = Table::new();
+            for (key, entry) in map {
+                if let Some(item) = json_item(entry) {
+                    table.insert(key.as_str(), item);
+                }
+            }
+            // A table with nothing of its own to print is a step on the way
+            // down to one that has something: `[dogs.kelpie]` is the header a
+            // Flockfile spells, `[dogs]` is not.
+            let only_tables = table.iter().all(|(_, item)| item.is_table());
+            table.set_implicit(only_tables);
+            Item::Table(table)
+        }
+        other => Item::Value(json_value(other)?),
+    })
+}
+
+/// One `serde_json` value as a TOML value, for inside an array or an inline
+/// table, where a nested map has no room to become a table of its own.
+fn json_value(value: &Json) -> Option<TomlValue> {
+    Some(match value {
+        Json::Null => return None,
+        Json::Bool(flag) => TomlValue::from(*flag),
+        Json::Number(number) => match number.as_i64() {
+            Some(integer) => TomlValue::from(integer),
+            None => TomlValue::from(number.as_f64()?),
+        },
+        Json::String(text) => TomlValue::from(text.as_str()),
+        Json::Array(list) => {
+            let mut array = Array::new();
+            for element in list {
+                array.push(json_value(element)?);
+            }
+            TomlValue::Array(array)
+        }
+        Json::Object(map) => {
+            let mut inline = InlineTable::new();
+            for (key, entry) in map {
+                inline.insert(key.as_str(), json_value(entry)?);
+            }
+            TomlValue::InlineTable(inline)
+        }
+    })
+}
+
+/// Prints the answer: the TOML text itself, or the one envelope `--format json`
+/// owes.
+fn print(streams: &mut Streams<'_>, written: &Written, toml: &str) -> ExitCode {
+    if streams.fmt == Format::Table {
+        return write_outcome(streams.out.write_all(toml.as_bytes()));
+    }
+    write_outcome(emit(
+        &mut *streams.out,
+        Format::Json,
+        "get",
+        SettingsAnswer {
+            kind: written.holder.as_str(),
+            name: written.name.clone(),
+            path: written.rest.join("."),
+            toml: toml.to_string(),
+        },
+        streams.style,
+    ))
+}
+
+/// One dog's section as the shepherd holds it, `{{secret:...}}` references
+/// still references.
+///
+/// # Errors
+/// The [`ExitCode`] already reported to `streams`.
+async fn read_dog_section(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    name: &str,
+) -> Result<String, ExitCode> {
+    match client
+        .request(Request::DogConfig {
+            name: name.to_string(),
+        })
+        .await
+    {
+        Ok(Response::DogSection { toml }) => Ok(toml.as_str().to_string()),
+        Ok(_other) => Err(unexpected_response(streams)),
+        Err(err) => Err(typed_request_error(streams, &err)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// The flock every test here resolves against: two sheep, one of them
+    /// named with a dot, and two dogs.
+    fn flock() -> FlockNames {
+        FlockNames {
+            sheep: ["api", "we.b", "web"]
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+            dogs: ["metrics", "kelpie"]
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        }
+    }
+
+    /// A sheep's config as `Request::SheepConfig` answers it: `env` emptied,
+    /// every unset `Option` field `null`.
+    fn config() -> Json {
+        json!({
+            "name": "api",
+            "script": "./api.js",
+            "args": ["--port", "8080"],
+            "env": {},
+            "cwd": null,
+            "instances": 2,
+            "autorestart": true,
+            "max_memory": "1G",
+            "restart_delay": null,
+            "watch_paths": ["src/**/*.js"],
+            "probe": {"type": "http", "url": "http://127.0.0.1:8080/healthz"},
+            "dogs": {
+                "kelpie": {
+                    "enabled": true,
+                    "git": {"checkout": "/srv/api", "merging": "ff"},
+                    "api.token": "literal-dotted-key"
+                },
+                "metrics": {"interval": 10}
+            }
+        })
+    }
+
+    /// The written address `raw` names, resolved against [`flock`]'s sheep.
+    fn sheep_written(raw: &str) -> Written {
+        let segments = segments(raw).unwrap_or_else(|err| panic!("{raw}: {err}"));
+        let name = address::longest_in(&segments, &flock().sheep)
+            .unwrap_or_else(|| panic!("{raw}: no sheep in this flock is named by it"));
+        let depth = name.split('.').count();
+        Written {
+            holder: Holder::Sheep,
+            name,
+            rest: segments[depth..].to_vec(),
+        }
+    }
+
+    /// The written address a dog read lands on once [`dog_candidates`] has
+    /// found `name` and the segments left over are its path.
+    fn dog_written(name: &str, path: &[&str]) -> Written {
+        Written {
+            holder: Holder::Dog,
+            name: name.to_string(),
+            rest: path.iter().map(|part| (*part).to_string()).collect(),
+        }
+    }
+
+    /// The TOML `shep get {raw}` prints for [`config`]'s sheep.
+    fn sheep_toml(raw: &str) -> String {
+        let written = sheep_written(raw);
+        let dogs = address::DogNames::new(&flock(), &config(), &Json::Null);
+        let steps = sheep_steps(&written.name, &written.rest, &dogs, &config())
+            .unwrap_or_else(|err| panic!("{raw}: {err}"));
+        sheep_document(&written, &config(), &steps).unwrap_or_else(|err| panic!("{raw}: {err}"))
+    }
+
+    /// `shep get api` prints the config as a Flockfile spells it: the scalars
+    /// first, every dog table under its `dogs.` header, and no `env` header
+    /// for a table the shepherd empties before it answers.
+    /// The config arrives as a JSON map, which this crate's `serde_json` has
+    /// in key order rather than Flockfile order; the tables underneath keep
+    /// the headers a Flockfile spells, and `[dogs]` gets none of its own.
+    #[test]
+    fn a_sheep_name_alone_prints_its_config() {
+        let toml = sheep_toml("api");
+        assert_eq!(
+            toml,
+            "args = [\"--port\", \"8080\"]\n\
+             autorestart = true\n\
+             instances = 2\n\
+             max_memory = \"1G\"\n\
+             name = \"api\"\n\
+             script = \"./api.js\"\n\
+             watch_paths = [\"src/**/*.js\"]\n\
+             \n\
+             [dogs.kelpie]\n\"api.token\" = \"literal-dotted-key\"\nenabled = true\n\
+             \n\
+             [dogs.kelpie.git]\ncheckout = \"/srv/api\"\nmerging = \"ff\"\n\
+             \n\
+             [dogs.metrics]\ninterval = 10\n\
+             \n\
+             [probe]\ntype = \"http\"\nurl = \"http://127.0.0.1:8080/healthz\"\n"
+        );
+    }
+
+    /// An unset field prints nothing: there is no value to print, and a
+    /// `null` is not TOML.
+    #[test]
+    fn an_unset_field_is_left_out_of_a_whole_config() {
+        let toml = sheep_toml("api");
+        assert!(!toml.contains("cwd"), "{toml}");
+        assert!(!toml.contains("restart_delay"), "{toml}");
+        assert!(!toml.contains("[env]"), "{toml}");
+    }
+
+    #[test]
+    fn one_field_prints_one_line() {
+        assert_eq!(sheep_toml("api.max_memory"), "max_memory = \"1G\"\n");
+    }
+
+    /// The header is the one the Flockfile spells, so the answer pastes back
+    /// into the file it came from.
+    #[test]
+    fn a_dogs_table_inside_a_sheep_prints_its_own_header() {
+        assert_eq!(
+            sheep_toml("api.dogs.kelpie.git"),
+            "[dogs.kelpie.git]\ncheckout = \"/srv/api\"\nmerging = \"ff\"\n"
+        );
+    }
+
+    #[test]
+    fn every_dog_table_prints_when_no_dog_is_named() {
+        let toml = sheep_toml("api.dogs");
+        assert!(toml.contains("[dogs.kelpie]"), "{toml}");
+        assert!(toml.contains("[dogs.metrics]"), "{toml}");
+    }
+
+    /// A key inside a dog's table prints beside the table it sits in, which
+    /// is where a reader would go to change it.
+    #[test]
+    fn one_key_of_a_dog_table_prints_under_that_table() {
+        assert_eq!(
+            sheep_toml("api.dogs.kelpie.git.merging"),
+            "[dogs.kelpie.git]\nmerging = \"ff\"\n"
+        );
+    }
+
+    /// A key that itself carries a dot is one key when the table holds it as
+    /// one, and it prints quoted so reading it back gives the same key.
+    #[test]
+    fn a_dotted_key_of_a_dog_table_stays_one_key() {
+        assert_eq!(
+            sheep_toml("api.dogs.kelpie.api.token"),
+            "[dogs.kelpie]\n\"api.token\" = \"literal-dotted-key\"\n"
+        );
+    }
+
+    /// `we.b` is a sheep, so the split lands after it rather than after `we`.
+    #[test]
+    fn a_sheep_name_with_a_dot_is_one_name() {
+        let written = sheep_written("we.b.dogs.kelpie");
+        assert_eq!(written.holder, Holder::Sheep);
+        assert_eq!(written.name, "we.b");
+        assert_eq!(written.rest, ["dogs", "kelpie"]);
+    }
+
+    /// `dogs.toml` spells a dog's sub-table as `[kelpie.worker]`, a header
+    /// path rather than a name, so the dog is the longest candidate the
+    /// shepherd answers a section for.
+    #[test]
+    fn a_dog_address_offers_its_names_longest_first() {
+        assert_eq!(
+            dog_candidates(&segments("kelpie.worker.token").unwrap()),
+            ["kelpie.worker.token", "kelpie.worker", "kelpie"]
+        );
+        assert_eq!(dog_candidates(&segments("kelpie").unwrap()), ["kelpie"]);
+    }
+
+    #[test]
+    fn a_name_neither_a_sheep_nor_a_dog_names_the_store() {
+        let refusal = ReadRefusal::Unknown(no_such_name(&segments("bark.cooldown").unwrap()));
+        assert_eq!(refusal.code(), ExitCode::NotFound);
+        assert!(refusal.message().contains("shep kv get"), "{refusal}");
+        assert!(refusal.message().contains("shep dogs"), "{refusal}");
+    }
+
+    /// A dog the flock runs and `dogs.toml` says nothing about is not a wrong
+    /// name, and the sentence says what is actually true of it.
+    #[test]
+    fn a_dog_with_no_section_says_its_settings_are_defaults() {
+        let refusal = ReadRefusal::Empty(all_defaults(&segments("metrics.bind").unwrap()));
+        assert_eq!(refusal.code(), ExitCode::NotFound);
+        assert!(refusal.message().contains("default"), "{refusal}");
+        assert!(
+            refusal.message().contains("shep enable metrics"),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn an_empty_part_of_an_address_is_a_usage_error() {
+        assert!(matches!(
+            segments("api.dogs..kelpie"),
+            Err(ReadRefusal::Usage(_))
+        ));
+    }
+
+    #[test]
+    fn a_field_no_sheep_has_is_refused_by_name() {
+        let written = sheep_written("api.watchdog");
+        let dogs = address::DogNames::new(&flock(), &config(), &Json::Null);
+        let Err(refusal) = sheep_steps(&written.name, &written.rest, &dogs, &config()) else {
+            panic!("`watchdog` is no field of a sheep's config");
+        };
+        assert_eq!(refusal.code(), ExitCode::Usage);
+        assert!(refusal.message().contains("`watchdog`"), "{refusal}");
+    }
+
+    /// `env` values never reach a client, so the refusal names the two verbs
+    /// that do hold them.
+    #[test]
+    fn env_names_the_verbs_that_hold_a_sheeps_env() {
+        let written = sheep_written("api.env");
+        let dogs = address::DogNames::new(&flock(), &config(), &Json::Null);
+        let Err(refusal) = sheep_steps(&written.name, &written.rest, &dogs, &config()) else {
+            panic!("`env` is a refusal, not a read");
+        };
+        assert_eq!(refusal.code(), ExitCode::InvalidConfig);
+        assert!(refusal.message().contains("shep import env"), "{refusal}");
+        assert!(refusal.message().contains("shep describe"), "{refusal}");
+    }
+
+    #[test]
+    fn a_path_nothing_is_set_at_is_not_found() {
+        let written = sheep_written("api.dogs.kelpie.git.remote");
+        let dogs = address::DogNames::new(&flock(), &config(), &Json::Null);
+        let steps = sheep_steps(&written.name, &written.rest, &dogs, &config()).unwrap();
+        let Err(refusal) = sheep_document(&written, &config(), &steps) else {
+            panic!("nothing holds `api.dogs.kelpie.git.remote`");
+        };
+        assert_eq!(refusal.code(), ExitCode::NotFound);
+        assert!(
+            refusal.message().contains("api.dogs.kelpie.git.remote"),
+            "{refusal}"
+        );
+    }
+
+    /// An `Option` field the operator never wrote is a path nothing is set at.
+    #[test]
+    fn an_unset_field_named_directly_is_not_found() {
+        let written = sheep_written("api.restart_delay");
+        let dogs = address::DogNames::new(&flock(), &config(), &Json::Null);
+        let steps = sheep_steps(&written.name, &written.rest, &dogs, &config()).unwrap();
+        assert!(matches!(
+            sheep_document(&written, &config(), &steps),
+            Err(ReadRefusal::Empty(_))
+        ));
+    }
+
+    /// A dog's section prints under its own name, which is how `dogs.toml`
+    /// spells it, and the comments inside it survive.
+    #[test]
+    fn a_dogs_own_section_prints_under_its_name_and_keeps_its_comments() {
+        let toml = dog_toml("kelpie", &[], SECTION);
+        assert!(toml.starts_with("[kelpie]\n"), "{toml}");
+        assert!(toml.contains("# what it may fetch"), "{toml}");
+        assert!(toml.contains("[kelpie.worker]"), "{toml}");
+    }
+
+    #[test]
+    fn one_key_of_a_dogs_section_prints_under_the_dog() {
+        let toml = dog_toml("kelpie", &["worker"], SECTION);
+        assert_eq!(
+            toml,
+            "[kelpie.worker]\nallowed_domains = [\"github.com\"]\ntimeout = 30\n"
+        );
+    }
+
+    /// A dotted key written `api.token = ...` inside a section is a path
+    /// through a table the file spells with a header, and it reads the same
+    /// either way.
+    #[test]
+    fn a_dotted_key_inside_a_dogs_section_reads_as_a_table() {
+        let toml = dog_toml("kelpie", &["api", "token"], SECTION);
+        assert_eq!(toml, "[kelpie.api]\ntoken = \"literal-dotted-key\"\n");
+    }
+
+    #[test]
+    fn a_key_no_dog_holds_is_not_found() {
+        let written = dog_written("kelpie", &["worker", "nope"]);
+        let doc: DocumentMut = SECTION.parse().unwrap();
+        let steps = dog_steps(doc.as_table(), &written.rest);
+        let Err(refusal) = dog_document(&written, &doc, &steps) else {
+            panic!("nothing holds `kelpie.worker.nope`");
+        };
+        assert_eq!(refusal.code(), ExitCode::NotFound);
+    }
+
+    /// The section `shep adopt` writes for a work-item dog: a scalar, a
+    /// dotted key, and a sub-table with a comment of its own.
+    const SECTION: &str = "\
+# kelpie reads the repo it is adopted into
+repo = \"/srv/project\"
+api.token = \"literal-dotted-key\"
+
+# what it may fetch
+[worker]
+allowed_domains = [\"github.com\"]
+timeout = 30
+";
+
+    /// The TOML `shep get {name}[.{path}]` prints for a dog whose section is
+    /// `section`.
+    fn dog_toml(name: &str, path: &[&str], section: &str) -> String {
+        let written = dog_written(name, path);
+        let doc: DocumentMut = section.parse().unwrap();
+        let steps = dog_steps(doc.as_table(), &written.rest);
+        dog_document(&written, &doc, &steps)
+            .unwrap_or_else(|err| panic!("{name}.{}: {err}", path.join(".")))
+    }
+}
