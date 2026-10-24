@@ -35,6 +35,8 @@ mod remove;
 mod vet;
 
 #[cfg(all(test, unix))]
+mod defaults_adoption_tests;
+#[cfg(all(test, unix))]
 mod emit_dog_action_tests;
 #[cfg(all(test, unix))]
 mod manifest_adoption_tests;
