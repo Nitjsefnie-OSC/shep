@@ -18,7 +18,6 @@ use crate::exit::ExitCode;
 use crate::output::Streams;
 
 mod manifest;
-
 pub(crate) use manifest::read_manifest;
 
 /// Why a binary cannot be adopted.

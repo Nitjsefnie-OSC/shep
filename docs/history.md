@@ -577,6 +577,32 @@ the unresolved one, so a `{{secret:...}}` prints as the reference. Bare
 key/value store that spelling used to read lives at `shep kv get`. No wire
 change: the reads are `Request::SheepConfig` and `Request::DogConfig`.
 
+**One write changes any setting in the flock, so no dog needs its own**
+(issue #1096, under the settings spec #1073). `shep set <address> <value>`
+takes `shep get`'s address and `shep copy`'s flow: resolve against the names
+the running flock carries, read what that address holds, plan, print every key
+the write touches with its old value beside its new one, ask, write. A sheep's
+field, a key inside a sheep's table for a dog, and a key of a dog's own
+section are three shapes of one address, and each goes through the request the
+shepherd already answers, so there is no set request and everything those
+refuse this refuses, with the same reasons. A dog's section is edited in place
+rather than replaced: the text the shepherd answered is parsed, one key is
+changed, and the result is sent back, so a comment the operator wrote inside
+the section survives the write and a `[worker]` header stays a header. The
+value is TOML, and text that is not TOML is the string as typed, which is the
+grammar an operator already writes these settings in. A write carrying a dog's
+table is checked against the schema that dog published, through the same door
+lookout's config pane files a keystroke through, and only for the keys this run
+chose: a value the operator wrote into the file by hand rides along untouched.
+A dog that publishes nothing is asked nothing. A dog the flock has never been
+given a section for gets one. `--dry-run` writes nothing, `--yes` skips the
+question, and `--format json` carries the change list, `written` and `pending`
+in the one envelope. `shep set` stopped being the key/value store's hidden
+spelling at the same time: `shep kv set` is that store's verb, and a name no
+sheep or dog is is refused by name. No wire change: the writes are
+`Request::SetSheepField`, `Request::SetSheepDogSettings` and
+`Request::SetDogConfig`.
+
 **A community dog index lists the dogs others have written, and shep prints
 how to install one without running anything** (2026-08-21 for the index and
 its parser, 2026-08-23 for the verb). `web/public/dogs.json` is a document

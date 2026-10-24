@@ -48,7 +48,9 @@ pub(crate) enum Holder {
 }
 
 impl Holder {
-    const fn as_str(self) -> &'static str {
+    /// `sheep` or `dog`, the word `shep get`'s envelope and `shep set`'s both
+    /// carry for the half of the flock an address named.
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Sheep => "sheep",
             Self::Dog => "dog",
@@ -108,7 +110,10 @@ impl ReadRefusal {
     }
 
     /// Writes the refusal and hands back the code it wrote.
-    fn report(&self, streams: &mut Streams<'_>) -> ExitCode {
+    ///
+    /// `pub(crate)`: `shep set` splits an address with this verb's own
+    /// [`segments`] and refuses what this verb refuses (issue #1096).
+    pub(crate) fn report(&self, streams: &mut Streams<'_>) -> ExitCode {
         streams.fail(self.code(), self.message())
     }
 }
@@ -150,9 +155,13 @@ pub(crate) async fn get(client: &Client, streams: &mut Streams<'_>, args: &GetAr
 
 /// The address split on `.`.
 ///
+/// `pub(crate)`: `shep set` takes the same address (issue #1096), and one
+/// splitter is what keeps `shep get api.dogs.kelpie` and `shep set
+/// api.dogs.kelpie.git` naming the same thing.
+///
 /// # Errors
 /// [`ReadRefusal::Usage`] for an address with an empty part.
-fn segments(raw: &str) -> Result<Vec<String>, ReadRefusal> {
+pub(crate) fn segments(raw: &str) -> Result<Vec<String>, ReadRefusal> {
     let parts: Vec<String> = raw.split('.').map(str::to_string).collect();
     if parts.iter().any(|part| part.is_empty()) {
         return Err(ReadRefusal::Usage(format!(
@@ -258,10 +267,12 @@ async fn get_dog(
 
 /// Every name the address could be, longest first.
 ///
+/// `pub(crate)`: `shep set` resolves a dog's name the same way (issue #1096).
+///
 /// `kelpie.worker.token` offers `kelpie.worker.token`, `kelpie.worker` and
 /// `kelpie`, in that order: the longest one `dogs.toml` holds a section for is
 /// the dog, and what is left over is its path.
-fn dog_candidates(segments: &[String]) -> Vec<String> {
+pub(crate) fn dog_candidates(segments: &[String]) -> Vec<String> {
     (1..=segments.len())
         .rev()
         .map(|len| segments[..len].join("."))
@@ -395,7 +406,10 @@ fn sheep_steps(
 /// holds as one key, the rule [`address::resolve_keys`] applies to a sheep's
 /// dog table: `kelpie.api.token` is the one key `api.token` when the section
 /// holds that key, and `api` then `token` when it holds a table under `api`.
-fn dog_steps(root: &Table, rest: &[String]) -> Vec<String> {
+///
+/// `pub(crate)`: `shep set` writes at the path this names (issue #1096), so
+/// the key it changes is the key `shep get` printed.
+pub(crate) fn dog_steps(root: &Table, rest: &[String]) -> Vec<String> {
     let mut steps = Vec::new();
     let mut current: Option<&dyn toml_edit::TableLike> = Some(root);
     let mut next = 0;
@@ -642,9 +656,13 @@ fn print(streams: &mut Streams<'_>, written: &Written, toml: &str) -> ExitCode {
 /// One dog's section as the shepherd holds it, `{{secret:...}}` references
 /// still references.
 ///
+/// `pub(crate)`: `shep set` reads the same section before it writes it back
+/// (issue #1096), and the unresolved read is what keeps a `{{secret:...}}`
+/// reference out of the text a write would send.
+///
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`.
-async fn read_dog_section(
+pub(crate) async fn read_dog_section(
     client: &Client,
     streams: &mut Streams<'_>,
     name: &str,

@@ -1,9 +1,9 @@
 //! The key/value store through the real binary: `shep kv get`, `shep kv set`
-//! and `shep kv unset`, and the hidden `shep set` and `shep unset` that still
-//! reach it.
+//! and `shep kv unset`, and the hidden `shep unset` that still reaches it.
 //!
-//! `shep get` is not one of them: it reads a sheep's or a dog's settings, and
-//! `settings_get.rs` is where that is driven.
+//! `shep get` and `shep set` are not part of this file: they read and write a
+//! sheep's or a dog's settings, and `settings_get.rs` and `settings_set.rs` are
+//! where those are driven.
 //!
 //! None of these cases starts a shepherd: the store is a file under
 //! `$SHEP_HOME`, and provisioning is exactly the moment nothing is running.
@@ -176,33 +176,24 @@ fn kv_json_envelope_is_an_array_with_the_schema_version() {
     assert_json_error(&bad_key, 2, "usage");
 }
 
-/// The old verbs are hidden, not gone. Each keeps its exit code and its
-/// stdout answer, and says where it moved on stderr, in the format an operator
-/// at a terminal reads. `shep get` is absent here: it is the settings read now
-/// (`settings_get.rs`), and `shep kv get` is the store's spelling.
+/// The old verb is hidden, not gone. It keeps its exit code and its stdout
+/// answer, and says where it moved on stderr, in the format an operator at a
+/// terminal reads. `shep get` and `shep set` are absent here: they are the
+/// settings read and write now (`settings_get.rs`, `settings_set.rs`), and
+/// `shep kv get` and `shep kv set` are the store's spellings.
 #[test]
-fn the_hidden_store_verbs_still_work_and_name_where_they_moved() {
+fn the_hidden_store_verb_still_works_and_names_where_it_moved() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();
 
-    let set = shep(home)
+    let seed = shep(home)
+        .arg("kv")
         .arg("set")
         .arg("bark.cooldown")
         .arg("30s")
         .output()
         .unwrap();
-    assert_success(&set);
-    assert!(
-        String::from_utf8_lossy(&set.stdout).contains("bark.cooldown"),
-        "{}",
-        String::from_utf8_lossy(&set.stdout)
-    );
-    let note = String::from_utf8_lossy(&set.stderr);
-    assert_eq!(
-        note.trim_end(),
-        "notice[moved]: `shep set` moved to `shep kv set`; the old spelling still works",
-        "{note}"
-    );
+    assert_success(&seed);
 
     let unset = shep(home)
         .arg("unset")
@@ -231,35 +222,38 @@ fn a_json_alias_run_prints_one_object_and_no_note() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();
 
-    for (verb, args) in [
-        ("set", vec!["bark.cooldown", "30s"]),
-        ("unset", vec!["bark.cooldown"]),
-    ] {
-        let run = shep(home)
-            .arg("--format")
-            .arg("json")
-            .arg(verb)
-            .args(&args)
-            .output()
-            .unwrap();
-        assert_success(&run);
-        let envelope: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
-        assert_eq!(envelope["command"], verb, "{envelope}");
-        assert!(
-            run.stderr.is_empty(),
-            "{verb}: a JSON run prints its own envelope and nothing else: {}",
-            String::from_utf8_lossy(&run.stderr)
-        );
-    }
+    let seed = shep(home)
+        .arg("kv")
+        .arg("set")
+        .arg("bark.cooldown")
+        .arg("30s")
+        .output()
+        .unwrap();
+    assert_success(&seed);
+
+    let run = shep(home)
+        .arg("--format")
+        .arg("json")
+        .arg("unset")
+        .arg("bark.cooldown")
+        .output()
+        .unwrap();
+    assert_success(&run);
+    let envelope: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    assert_eq!(envelope["command"], "unset", "{envelope}");
+    assert!(
+        run.stderr.is_empty(),
+        "a JSON run prints its own envelope and nothing else: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
 
     // `assert_json_error` parses stderr whole, so a notice riding in front of
     // the failure fails here rather than passing on a substring.
     let bad_key = shep(home)
         .arg("--format")
         .arg("json")
-        .arg("set")
+        .arg("unset")
         .arg("not a key")
-        .arg("1")
         .output()
         .unwrap();
     assert_json_error(&bad_key, 2, "usage");
@@ -275,36 +269,23 @@ fn a_json_alias_run_prints_one_object_and_no_note() {
     assert_json_error(&missing, 3, "not_found");
 }
 
-/// Both spellings reach one store. An operator mid-migration writes with the
+/// Both spellings reach one store. An operator mid-migration removes with the
 /// verb they know and reads with the new one.
 #[test]
 fn the_two_spellings_share_one_store() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();
 
-    let old = shep(home)
+    let seed = shep(home)
+        .arg("kv")
         .arg("set")
         .arg("feature.flag")
         .arg("on")
         .output()
         .unwrap();
-    assert_success(&old);
-
-    let fresh = shep(home)
-        .arg("kv")
-        .arg("get")
-        .arg("feature.flag")
-        .output()
-        .unwrap();
-    assert_success(&fresh);
-    assert!(
-        String::from_utf8_lossy(&fresh.stdout).contains("on"),
-        "{}",
-        String::from_utf8_lossy(&fresh.stdout)
-    );
+    assert_success(&seed);
 
     let gone = shep(home)
-        .arg("kv")
         .arg("unset")
         .arg("feature.flag")
         .output()

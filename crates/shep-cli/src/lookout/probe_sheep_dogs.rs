@@ -56,11 +56,14 @@ pub(super) fn probe_sheep_dogs(
     })
 }
 
+/// `pub(crate)`: `shep set` validates a dog's table on a sheep against the
+/// same schema the pane edits its rows from (issue #1096).
+///
 /// `root`'s `x-shep-sheep` value, with `root`'s own `$defs` attached so each
 /// `$ref` in it resolves where it points. [`None`] when there is no such key,
 /// or when it is not a schema object. A definition the sheep schema carries
 /// itself wins over the root's of the same name.
-pub(super) fn sheep_schema(root: &Value) -> Option<Value> {
+pub(crate) fn sheep_schema(root: &Value) -> Option<Value> {
     let mut sheep = root.get(SHEEP_SCHEMA_KEY)?.as_object()?.clone();
     if let Some(root_defs) = root.get("$defs").and_then(Value::as_object) {
         let defs = sheep

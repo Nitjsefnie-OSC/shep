@@ -513,10 +513,10 @@ pub(crate) async fn run(
             cli::KvCommand::Set(args) => kv::set(&mut streams, &paths, args, kv::KvVia::Kv),
             cli::KvCommand::Unset(args) => kv::unset(&mut streams, &paths, args, kv::KvVia::Kv),
         },
-        // The store's old spellings, hidden from `--help` and kept for the
-        // scripts written against them: same store, same envelope, plus a
-        // notice on stderr naming the verb they moved to.
-        Commands::Set(ref args) => kv::set(&mut streams, &paths, args, kv::KvVia::Alias("set")),
+        // The store's old spelling, hidden from `--help` and kept for the
+        // scripts written against it: same store, same envelope, plus a notice
+        // on stderr naming the verb it moved to. `set` is gone from this arm:
+        // it writes a sheep's or a dog's settings now.
         Commands::Unset(ref args) => {
             kv::unset(&mut streams, &paths, args, kv::KvVia::Alias("unset"))
         }
@@ -537,6 +537,13 @@ pub(crate) async fn run(
         // the shepherd: a Flockfile on disk is not what a sheep is running.
         Commands::Get(ref args) => match connect_client(&mut streams, &link, guard).await {
             Ok(client) => commands::settings_read::get(&client, &mut streams, args).await,
+            Err(code) => code,
+        },
+        // Writes the settings the same read reads, so the same rule: the write
+        // lands on the running flock, and the old value it prints beside the
+        // new one is what that flock holds, not what a file says.
+        Commands::Set(ref args) => match connect_client(&mut streams, &link, guard).await {
+            Ok(client) => commands::settings_write::set(&client, &mut streams, &paths, args).await,
             Err(code) => code,
         },
         // Does its own connecting: `connect_client` reports and gives up,
