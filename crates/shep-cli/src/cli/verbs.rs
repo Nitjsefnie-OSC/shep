@@ -9,8 +9,8 @@
 use super::{
     AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DialStdioArgs,
     DisableArgs, DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, GetArgs, HostArgs,
-    ImportArgs, InitArgs, KvArgs, KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs,
-    SecretArgs, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs,
+    ImportArgs, InitArgs, KvArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs,
+    SelectorArgs, ServeArgs, SetArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs,
     TriggerArgs, WhisperArgs,
 };
 
@@ -376,14 +376,30 @@ pub enum Commands {
     /// starting with a dot. A dot is part of the name. `bark.cooldown` is one
     /// key, not a path into anything.
     Kv(KvArgs),
-    /// Store a value in the key/value store, as `shep kv set`.
+    /// Change one setting of a sheep or a dog: `shep set <address> <value>`.
     ///
-    /// `shep set` is the store's old spelling. It still works, writes the same
-    /// store with the same exit codes, and prints a notice on stderr naming
-    /// `shep kv set`. Under `--format json` it prints no notice: that format is
-    /// one object per invocation.
-    #[command(hide = true)]
-    Set(KvSetArgs),
+    /// The address is `shep get`'s and `shep copy`'s, so one verb reaches a
+    /// sheep's own field, a dog's table on that sheep, and the dog's own
+    /// section of `dogs.toml`. The value is TOML, and text that is not TOML is
+    /// the string as typed: `5` is a number, `true` is a toggle and `3s` stays
+    /// `3s`. TOML's `nan` and `inf` are refused, because the JSON the flock
+    /// carries has no cell for them.
+    ///
+    /// A write that carries a dog's table is checked against the schema that
+    /// dog published, and a value it turns down is refused with the key path it
+    /// sits at. `env`, secrets, `name`, `instances` and the whole `dogs` map are
+    /// refused for the same reason the shepherd refuses them.
+    ///
+    /// Nothing is written until you confirm, and the change list prints first,
+    /// naming every key the write touches with its old and new value. Under
+    /// `--format json` that list prints on stderr, so stdout stays the one
+    /// envelope the run writes after the answer. `--yes` skips the question and
+    /// `--dry-run` prints the list and writes nothing. A write that replaces a
+    /// whole section or a whole dog table re-reads it after your answer, and is
+    /// refused if it changed while you were answering.
+    ///
+    /// The key/value store this verb used to write lives at `shep kv set`.
+    Set(SetArgs),
     /// Remove one key from the store, or every key with --all, as
     /// `shep kv unset`.
     ///
@@ -678,17 +694,10 @@ mod tests {
         let lookout = cmd.find_subcommand("lookout").unwrap();
         assert_eq!(lookout.get_visible_aliases().collect::<Vec<_>>(), ["dash"]);
 
-        // `get` is absent here on purpose: it is the settings verb now, and
-        // only `set` and `unset` remain the store's hidden spellings.
-        for hidden in [
-            "thatlldo",
-            "daemon",
-            "dog",
-            "rehome",
-            "dial-stdio",
-            "set",
-            "unset",
-        ] {
+        // `get` and `set` are absent from the hidden list on purpose: they are
+        // the settings verbs now, and only `unset` remains the store's hidden
+        // spelling.
+        for hidden in ["thatlldo", "daemon", "dog", "rehome", "dial-stdio", "unset"] {
             assert!(
                 cmd.find_subcommand(hidden).unwrap().is_hide_set(),
                 "{hidden} must stay hidden from --help"
@@ -711,6 +720,7 @@ mod tests {
             "adopt",
             "kv",
             "get",
+            "set",
             "ping",
             "kill",
             "save",

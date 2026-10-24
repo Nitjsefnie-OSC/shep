@@ -71,7 +71,10 @@ impl CopyRefusal {
     /// [`ExitCode::InvalidConfig`] for a refused key is the code the shepherd's
     /// own refusal of that key carries, so `copy` and the request it stands in
     /// for exit alike.
-    const fn code(&self) -> ExitCode {
+    ///
+    /// `pub(crate)`: `shep set` refuses the same keys with the same reasons
+    /// (issue #1096).
+    pub(crate) const fn code(&self) -> ExitCode {
         match self {
             Self::Usage(_) => ExitCode::Usage,
             Self::UnknownSheep(_) | Self::MissingSource(_) => ExitCode::NotFound,
@@ -80,7 +83,9 @@ impl CopyRefusal {
     }
 
     /// Writes the refusal and hands back the code it wrote.
-    fn report(&self, streams: &mut Streams<'_>) -> ExitCode {
+    ///
+    /// `pub(crate)`: see [`Self::code`].
+    pub(crate) fn report(&self, streams: &mut Streams<'_>) -> ExitCode {
         streams.fail(self.code(), self.message())
     }
 }

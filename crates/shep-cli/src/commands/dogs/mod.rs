@@ -57,10 +57,6 @@ pub use vet::{DogSchema, warn_of_a_dog_a_restart_would_break};
 // already owns. Both reach this directory's own machinery.
 pub(crate) use adopt::collides_with_a_verb;
 pub(crate) use vet::cached_manifest;
-// Populates the cache `cached_manifest` reads, for the tests in
-// `crate::adopted_help` that want a real probe behind their fixture.
-#[cfg(test)]
-pub(crate) use vet::read_manifest;
 
 // `pub(crate)` re-exports: reached from other modules by their original
 // `dogs::<name>` path, so the split stays invisible to every caller outside
@@ -71,7 +67,7 @@ pub(crate) use vet::read_manifest;
 // `VERSION_BUDGET`.
 pub(crate) use disable::disable_in_config;
 pub(crate) use enable::{EnableRefusal, enable_in_config, join_with_and};
-pub(crate) use vet::{VERSION_BUDGET, ask_schema, dog_env};
+pub(crate) use vet::{VERSION_BUDGET, ask_schema, dog_env, read_manifest};
 
 /// [`DogActionRow`]'s status when
 /// `enable` wrote the config and no shepherd answered. A success outcome:

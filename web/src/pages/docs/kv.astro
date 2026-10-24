@@ -46,10 +46,10 @@ REMOVED
 $ shep kv get
 KEY  VALUE`;
 
-const oldSpelling = `$ shep set bark.cooldown 30s
-notice[moved]: \`shep set\` moved to \`shep kv set\`; the old spelling still works
-KEY            VALUE
-bark.cooldown  30s`;
+const oldSpelling = `$ shep unset bark.cooldown
+notice[moved]: \`shep unset\` moved to \`shep kv unset\`; the old spelling still works
+REMOVED
+1`;
 ---
 
 <DocsLayout
@@ -62,9 +62,9 @@ bark.cooldown  30s`;
       Three files already configure everything shep runs: a Flockfile for a
       sheep, <code>shep.toml</code> for the shepherd, <code>dogs.toml</code>{" "}
       for its dogs. None has a field for "the port the last on-call engineer
-      picked" or a feature flag a provisioning script wants to leave a note
-      about. The KV store is what's left over: a flat, file-locked junk
-      drawer, explicitly not the primary config path.
+      picked" or a feature flag a provisioning script leaves behind. The KV
+      store is what's left over: a flat, file-locked junk drawer, explicitly
+      not the primary config path.
     </p>
 
     <ShortVersion>
@@ -91,10 +91,12 @@ bark.cooldown  30s`;
 
     <h2 id="the-old-spelling">The old spelling</h2>
     <p>
-      <code>shep set</code> and <code>shep unset</code> still work, and print
-      where the verb went on stderr. A <code>--format json</code> run prints no
-      note: that format is one object per invocation. <code>shep get</code> is
-      taken: it reads a sheep's or a dog's settings.
+      <code>shep unset</code> still works, and prints where the verb went on
+      stderr. A <code>--format json</code> run prints no note: that format is
+      one object per invocation. <code>shep get</code> and <code>shep set</code>
+      are taken: they read and write a sheep's or a dog's settings. A
+      <code>shep set feature.flag on</code> is refused as a name no sheep or dog
+      is, and the sentence names <code>shep kv set</code>.
     </p>
     <CodeBlock label="table form">{oldSpelling}</CodeBlock>
 
@@ -113,11 +115,9 @@ bark.cooldown  30s`;
       A key is <code>[A-Za-z0-9._-]</code>, one to 128 bytes, and can't start
       with a dot. <strong>A dot is part of a name, not a path</strong>:{" "}
       <code>bark.cooldown</code> is one flat key, not a nested object, and{" "}
-      <code>shep kv get bark</code> won't find it. A nesting grammar here would
-      be a second config language, with its own quoting rules, for a store
-      that's explicitly not the primary one. The narrow alphabet is
-      also why <code>shep kv get $key</code> never needs quoting in a script. A
-      value is a string, capped at 4&nbsp;KiB: the store is read whole on
+      <code>shep kv get bark</code> won't find it. A nesting grammar here
+      would be a second config language, with its own quoting rules. A value
+      is a string, capped at 4&nbsp;KiB: the store is read whole on
       every access, and the cap keeps <code>kv.json</code> from becoming a blob
       store.
     </p>
@@ -125,7 +125,7 @@ bark.cooldown  30s`;
     <p>
       A sheep's own settings are not in this store: <code>shep copy</code>{" "}
       moves one, over the socket, because it reads what the running flock
-      holds.
+      holds, and <code>shep set</code> changes one the same way.
     </p>
 
     <h2 id="no-shepherd-required">No shepherd required</h2>
@@ -133,11 +133,11 @@ bark.cooldown  30s`;
       <code>shep kv get</code>/<code>set</code>/<code>unset</code> never touch
       the socket: they read and write <code>$SHEP_HOME/kv.json</code>{" "}
       directly, the same way <code>shep enable</code> writes{" "}
-      <code>shep.toml</code> with nothing listening. That is what makes it
-      usable during provisioning, before any shepherd has booted. A dog reads
+      <code>shep.toml</code> with nothing listening. That makes it usable
+      during provisioning, before any shepherd boots. A dog reads
       it the same way, through <code>shep_core::kv</code>: a{" "}
       <code>0600</code> file in a <code>0700</code>{" "}
-      <code>$SHEP_HOME</code>, opened by the same user, already has every
+      <code>$SHEP_HOME</code> already has every
       property a socket round trip would have bought.
     </p>
 
