@@ -508,6 +508,7 @@ impl LogFiles {
                     err_log: self.err.raw_fd(),
                     stdin: self.pipes.stdin,
                     channel: self.pipes.channel,
+                    dog_link: None,
                 });
             }
             // No acknowledgement to send, and nothing to undo but the flag:

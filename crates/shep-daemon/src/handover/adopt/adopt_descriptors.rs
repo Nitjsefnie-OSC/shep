@@ -52,6 +52,14 @@ pub struct AdoptedSheep {
     /// whose app asked for no channel, one that is not running, and one whose
     /// child has already closed fd 3.
     pub channel: Option<tokio::net::UnixStream>,
+    /// The daemon's end of the dog's own connection, whose other end is the
+    /// child's fd 4.
+    ///
+    /// Goes both ways. The successor serves it from the next request when the
+    /// dog had completed its handshake, and from a fresh handshake when it had
+    /// not (the blob's `dog_topics` says which). `None` for a sheep that is not
+    /// a dog, a dog that is not running, and one whose connection had closed.
+    pub dog_link: Option<tokio::net::UnixStream>,
 }
 
 /// Rebuild everything `blob` describes, around descriptors this process
@@ -107,7 +115,7 @@ pub(super) fn adopt_listener(fd: RawFd) -> io::Result<tokio::net::UnixListener> 
     tokio::net::UnixListener::from_std(listener)
 }
 
-/// Rebuild one sheep's six handles.
+/// Rebuild one sheep's seven handles.
 fn adopt_sheep(carried: &CarriedSheep) -> io::Result<AdoptedSheep> {
     let CarriedFds {
         out_pipe,
@@ -116,6 +124,7 @@ fn adopt_sheep(carried: &CarriedSheep) -> io::Result<AdoptedSheep> {
         err_log,
         stdin,
         channel,
+        dog_link,
     } = carried.fds;
     let name = &carried.name;
     Ok(AdoptedSheep {
@@ -125,6 +134,7 @@ fn adopt_sheep(carried: &CarriedSheep) -> io::Result<AdoptedSheep> {
         err_log: adopt_log(err_log, name, "stderr")?,
         stdin_pipe: adopt_stdin(stdin, name)?,
         channel: adopt_channel(channel, name)?,
+        dog_link: adopt_dog_link(dog_link, name)?,
         carried: carried.clone(),
     })
 }
@@ -143,13 +153,34 @@ pub(super) fn adopt_channel(
     fd: Option<RawFd>,
     sheep: &str,
 ) -> io::Result<Option<tokio::net::UnixStream>> {
+    adopt_connected(fd, &format!("sheep '{sheep}' shepherd channel"))
+}
+
+/// Rebuild one dog's own connection as an async socket, if the blob named
+/// one.
+///
+/// Checked as [`adopt_channel`] checks its socket, for the same reason: the
+/// number could name anything this process holds, and a listening socket is
+/// the one most likely to be mistaken for it. Nothing is paired again, and no
+/// handshake is owed: the dog's end of this socketpair is the child's fd 4,
+/// and it spoke its `Hello` to the predecessor.
+pub(super) fn adopt_dog_link(
+    fd: Option<RawFd>,
+    sheep: &str,
+) -> io::Result<Option<tokio::net::UnixStream>> {
+    adopt_connected(fd, &format!("sheep '{sheep}' dog connection"))
+}
+
+/// The one body behind [`adopt_channel`] and [`adopt_dog_link`]: `what` is
+/// how a refusal names the descriptor.
+fn adopt_connected(fd: Option<RawFd>, what: &str) -> io::Result<Option<tokio::net::UnixStream>> {
     let Some(fd) = fd else { return Ok(None) };
-    let file = adopt_fd(fd, &format!("sheep '{sheep}' shepherd channel"))?;
+    let file = adopt_fd(fd, what)?;
     let socket = std::os::unix::net::UnixStream::from(OwnedFd::from(file));
     socket.peer_addr().map_err(|error| {
         io::Error::new(
             error.kind(),
-            format!("sheep '{sheep}' shepherd channel is not a connected socket: {error}"),
+            format!("{what} is not a connected socket: {error}"),
         )
     })?;
     socket.set_nonblocking(true)?;
@@ -259,6 +290,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: None,
+                dog_link: None,
             })],
         );
         blob.sheep[0].fds.out_log = Some(blob.listener_fd);
@@ -291,6 +323,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: None,
+                dog_link: None,
             })],
         );
 
@@ -320,6 +353,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: None,
+                dog_link: None,
             })],
         );
 
@@ -351,6 +385,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: None,
+                dog_link: None,
             })],
         );
         let pidfile_fd = blob.pidfile_fd;
@@ -379,6 +414,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: None,
+                dog_link: None,
             })],
         );
 
@@ -414,6 +450,7 @@ mod tests {
                 err_log: None,
                 stdin: Some(daemon_end.into_raw_fd()),
                 channel: None,
+                dog_link: None,
             })],
         );
 
@@ -449,6 +486,7 @@ mod tests {
                 err_log: None,
                 stdin: Some(reader.into_raw_fd()),
                 channel: None,
+                dog_link: None,
             })],
         );
 
@@ -481,6 +519,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: None,
+                dog_link: None,
             })],
         );
 
@@ -511,6 +550,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: Some(daemon_end.into_raw_fd()),
+                dog_link: None,
             })],
         );
 
@@ -568,6 +608,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: Some(file.into_raw_fd()),
+                dog_link: None,
             })],
         );
 
@@ -603,6 +644,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: Some(listening.into_raw_fd()),
+                dog_link: None,
             })],
         );
 

@@ -22,6 +22,7 @@ fn adopted_child(script: &str) -> std::process::Child {
 /// had failed arrives in. The cases that are about handles fill them in.
 fn adopt_spec(dir: &tempfile::TempDir, pid: u32, reaper: &Arc<AdoptedReaper>) -> AdoptSpec {
     AdoptSpec {
+        name: "web".to_owned(),
         pid,
         out_file: dir.path().join("out.log"),
         err_file: dir.path().join("err.log"),
@@ -32,6 +33,8 @@ fn adopt_spec(dir: &tempfile::TempDir, pid: u32, reaper: &Arc<AdoptedReaper>) ->
         log_timestamps: true,
         stdin_pipe: None,
         channel: None,
+        dog_link: None,
+        dog_topics: None,
         reaper: Arc::clone(reaper),
     }
 }

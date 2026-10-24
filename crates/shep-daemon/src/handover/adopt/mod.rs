@@ -11,6 +11,8 @@
 //! adopted last, so an earlier refusal leaves it open, unowned, and locked.
 
 mod adopt_descriptors;
+#[cfg(test)]
+mod dog_link_tests;
 mod rehearse_blob;
 #[cfg(test)]
 mod testing;
