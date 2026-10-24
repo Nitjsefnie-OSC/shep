@@ -80,6 +80,7 @@ pub fn need<'r>(request: &'r Request, caller: &str) -> Need<'r> {
         | Request::ApplyConfig { .. }
         | Request::Scale { .. }
         | Request::SetSheepField { .. }
+        | Request::ResetSheepField { .. }
         | Request::SetSheepEnv { .. }
         | Request::SetSheepEnvBatch { .. }
         | Request::SetSmit { .. } => one(P::FlockEdit),
