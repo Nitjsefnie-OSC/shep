@@ -193,8 +193,11 @@ pub(crate) fn seed_dog_defaults(
     // The parsed document's root table is implicit, holding the defaults'
     // keys and any sub-tables its own headers spelled. Made explicit and
     // named, it is the section; renumbered like a migrated one, it lands
-    // in one piece at the end.
-    let mut section = parsed.into_table();
+    // in one piece at the end. Cloned through `as_table` rather than taken
+    // through `DocumentMut::into_table`: that method postdates the
+    // `toml_edit` floor this workspace declares, and CI's minimal-versions
+    // job builds at the floor.
+    let mut section = parsed.as_table().clone();
     section.set_implicit(false);
     let mut item = Item::Table(section);
     renumber_tables(&mut item, &mut next);
