@@ -428,12 +428,7 @@ async fn a_load_that_failed_for_another_reason_exits_with_its_own_class() {
     use shep_client::testing::fake_client_answering;
 
     let dir = tempfile::tempdir().unwrap();
-    let flockfile = dir.path().join("Flockfile.toml");
-    std::fs::write(
-        &flockfile,
-        "[[app]]\nname = \"zam\"\nscript = \"./srv\"\nmax_restarts = 99\n",
-    )
-    .unwrap();
+    let flockfile = write_zam_flockfile(dir.path());
     let path = shep_client::testing::control_address(dir.path());
     let flock = a_clustered_flock(&[0, 1, 2]);
     // `Pong` to an `ApplyConfig`. `Response` is `#[non_exhaustive]`, so
