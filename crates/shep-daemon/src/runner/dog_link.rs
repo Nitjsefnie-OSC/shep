@@ -20,4 +20,9 @@ pub struct DogLink {
     pub pid: u32,
     /// The shepherd's end, already connected to the dog's fd 4.
     pub stream: UnixStream,
+    /// `Some` for a connection a predecessor shepherd carried across a
+    /// handover: the dog has already sent its `Hello`, so its next frame is a
+    /// request. Holds the topic patterns it had subscribed to, empty for none.
+    /// `None` for one opened at this spawn.
+    pub resumed: Option<Vec<String>>,
 }

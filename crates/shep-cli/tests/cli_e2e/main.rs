@@ -55,6 +55,7 @@ mod guard;
 mod handover_basic;
 mod handover_clustered;
 mod handover_disabled;
+mod handover_dog_link;
 mod handover_dogs;
 mod handover_extras;
 mod home_and_watch;

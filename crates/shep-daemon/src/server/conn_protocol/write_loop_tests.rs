@@ -14,6 +14,7 @@ use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
+use super::super::origin::Origin;
 use super::super::server_lifecycle::CONN_QUEUE;
 use super::write_loop;
 
@@ -107,7 +108,7 @@ async fn frames_already_queued_share_one_flush_and_keep_their_order() {
     }
     drop(tx);
 
-    write_loop(FramedWrite::new(wire.clone(), codec()), rx).await;
+    write_loop(FramedWrite::new(wire.clone(), codec()), rx, Origin::Socket).await;
 
     assert_eq!(wire.flushes(), 1, "fifty queued frames, one flush");
     assert_eq!(wire.frames().await, sent);
@@ -119,7 +120,11 @@ async fn frames_already_queued_share_one_flush_and_keep_their_order() {
 async fn a_lone_frame_is_flushed_before_the_loop_waits_again() {
     let wire = Wire::default();
     let (tx, rx) = mpsc::channel::<Bytes>(CONN_QUEUE);
-    let writer = tokio::spawn(write_loop(FramedWrite::new(wire.clone(), codec()), rx));
+    let writer = tokio::spawn(write_loop(
+        FramedWrite::new(wire.clone(), codec()),
+        rx,
+        Origin::Socket,
+    ));
 
     tx.send(Bytes::from_static(b"quiet"))
         .await
@@ -141,7 +146,11 @@ async fn a_failed_flush_ends_the_loop_with_the_sender_still_open() {
         ..Wire::default()
     };
     let (tx, rx) = mpsc::channel::<Bytes>(CONN_QUEUE);
-    let writer = tokio::spawn(write_loop(FramedWrite::new(wire, codec()), rx));
+    let writer = tokio::spawn(write_loop(
+        FramedWrite::new(wire, codec()),
+        rx,
+        Origin::Socket,
+    ));
 
     tx.send(Bytes::from_static(b"unheard"))
         .await
@@ -169,7 +178,11 @@ async fn a_queue_that_never_runs_dry_is_flushed_every_conn_queue_frames() {
     for frame in &sent {
         tx.try_send(frame.clone()).expect("the queue has room");
     }
-    let writer = tokio::spawn(write_loop(FramedWrite::new(wire.clone(), codec()), rx));
+    let writer = tokio::spawn(write_loop(
+        FramedWrite::new(wire.clone(), codec()),
+        rx,
+        Origin::Socket,
+    ));
 
     // Returns once the writer has parked on `recv` with the queue empty.
     tokio::time::sleep(Duration::from_millis(1)).await;
@@ -199,7 +212,11 @@ async fn a_failed_feed_mid_batch_ends_the_loop_and_drops_the_queue() {
         tx.try_send(Bytes::from(vec![b'x'; 1000]))
             .expect("the queue has room");
     }
-    let writer = tokio::spawn(write_loop(FramedWrite::new(wire.clone(), codec()), rx));
+    let writer = tokio::spawn(write_loop(
+        FramedWrite::new(wire.clone(), codec()),
+        rx,
+        Origin::Socket,
+    ));
 
     tokio::time::timeout(Duration::from_secs(5), writer)
         .await

@@ -1,10 +1,23 @@
 //! Who a connection is, as far as the daemon knows without asking the peer.
 
 use std::collections::BTreeSet;
+#[cfg(unix)]
+use std::sync::Arc;
 
 use shep_core::protocol::Request;
 
+#[cfg(unix)]
+use super::link_table::Lease;
 use crate::rpc::RpcContext;
+
+/// Which half of a connection a task serves, for a handover that parks both.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Side {
+    /// The task reading frames off the socket.
+    Reader,
+    /// The task writing frames onto it.
+    Writer,
+}
 
 /// How a connection reached the daemon
 ///
@@ -15,16 +28,20 @@ use crate::rpc::RpcContext;
 pub(super) enum Origin {
     /// Accepted on the control socket.
     Socket,
-    /// The connection a dog was spawned holding.
-    #[cfg_attr(
-        not(unix),
-        allow(dead_code, reason = "only unix hands a dog a connection")
-    )]
+    /// The connection a dog was spawned holding. Unix only, as the socketpair
+    /// it is made from is.
+    #[cfg(unix)]
     Dog {
         /// The dog's name, from the spec that spawned it.
         name: String,
         /// The pid it was spawned under.
         pid: u32,
+        /// This connection's row in the table a handover carries from.
+        lease: Arc<Lease>,
+        /// The topics the dog had subscribed to, for a connection a
+        /// predecessor had already greeted and handed over, and `None` for
+        /// one opened at this spawn, whose dog has yet to say `Hello`.
+        resumed: Option<Vec<String>>,
     },
 }
 
@@ -36,6 +53,7 @@ impl Origin {
     pub(super) fn dog<'a>(&'a self, claimed: Option<&'a str>) -> Option<&'a str> {
         match self {
             Self::Socket => claimed,
+            #[cfg(unix)]
             Self::Dog { name, .. } => Some(name),
         }
     }
@@ -47,7 +65,74 @@ impl Origin {
     pub(super) fn pid(&self, reported: Option<u32>) -> Option<u32> {
         match self {
             Self::Socket => reported,
+            #[cfg(unix)]
             Self::Dog { pid, .. } => Some(*pid),
+        }
+    }
+
+    /// The topics to re-subscribe a connection a predecessor handed over, or
+    /// `None` for one that starts with a `Hello`.
+    pub(super) fn resumed(&self) -> Option<&[String]> {
+        match self {
+            Self::Socket => None,
+            #[cfg(unix)]
+            Self::Dog { resumed, .. } => resumed.as_deref(),
+        }
+    }
+
+    /// Notes on the link's row that the dog has said `Hello`. A socket has no
+    /// row.
+    pub(super) async fn greeted(&self) {
+        #[cfg(unix)]
+        if let Self::Dog { lease, .. } = self {
+            lease.greeted().await;
+        }
+    }
+
+    /// Notes on the link's row what the dog now subscribes to. A socket has no
+    /// row.
+    #[cfg_attr(
+        not(unix),
+        allow(unused_variables, reason = "only a unix link has a row to note it on")
+    )]
+    pub(super) async fn subscribed(&self, patterns: &[String]) {
+        #[cfg(unix)]
+        if let Self::Dog { lease, .. } = self {
+            lease.subscribed(patterns).await;
+        }
+    }
+
+    /// Resolves once a handover has frozen this connection's row, and never for
+    /// a connection no handover carries.
+    pub(super) async fn frozen(&self) {
+        #[cfg(unix)]
+        if let Self::Dog { lease, .. } = self {
+            return lease.frozen().await;
+        }
+        core::future::pending::<()>().await;
+    }
+
+    /// Holds `side` of this connection at a frame boundary until the freeze
+    /// ends. A socket has no row to hold.
+    #[cfg_attr(
+        not(unix),
+        allow(unused_variables, reason = "only a unix link has a row to park on")
+    )]
+    pub(super) async fn park(&self, side: Side) {
+        #[cfg(unix)]
+        if let Self::Dog { lease, .. } = self {
+            lease.park(side).await;
+        }
+    }
+
+    /// A link no handover can carry, for a test that serves one.
+    #[cfg(all(test, unix))]
+    pub(super) fn untracked_dog(name: &str, pid: u32) -> Self {
+        Self::Dog {
+            name: name.to_string(),
+            pid,
+            lease: Arc::new(Lease::untracked()),
+            resumed: None,
         }
     }
 
@@ -84,6 +169,7 @@ impl Attribution {
     pub(super) fn new(origin: &Origin) -> Self {
         match origin {
             Origin::Socket => Self::default(),
+            #[cfg(unix)]
             Origin::Dog { name, .. } => Self {
                 dog: Some(name.clone()),
                 seen: BTreeSet::new(),
@@ -121,12 +207,10 @@ fn kind_of(request: &Request) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn a_link_ignores_the_name_the_peer_claims() {
-        let link = Origin::Dog {
-            name: "metrics".to_string(),
-            pid: 7,
-        };
+        let link = Origin::untracked_dog("metrics", 7);
         assert_eq!(link.dog(Some("bark")), Some("metrics"));
         assert_eq!(link.dog(None), Some("metrics"));
     }
@@ -137,26 +221,19 @@ mod tests {
         assert_eq!(Origin::Socket.dog(None), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_link_records_contact_against_its_own_pid() {
-        let link = Origin::Dog {
-            name: "metrics".to_string(),
-            pid: 7,
-        };
+        let link = Origin::untracked_dog("metrics", 7);
         assert_eq!(link.pid(Some(99)), Some(7));
         assert_eq!(Origin::Socket.pid(Some(99)), Some(99));
     }
 
+    #[cfg(unix)]
     #[test]
     fn only_the_socket_checks_its_peer() {
         assert!(Origin::Socket.checks_peer());
-        assert!(
-            !Origin::Dog {
-                name: "metrics".to_string(),
-                pid: 7
-            }
-            .checks_peer()
-        );
+        assert!(!Origin::untracked_dog("metrics", 7).checks_peer());
     }
 
     #[test]

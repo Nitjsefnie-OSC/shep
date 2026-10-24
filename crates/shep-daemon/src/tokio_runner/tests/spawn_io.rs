@@ -382,6 +382,7 @@ fn adopt_spec(
     channel: Option<tokio::net::UnixStream>,
 ) -> AdoptSpec {
     AdoptSpec {
+        name: "web".to_owned(),
         pid: std::process::id(),
         out_file: dir.path().join("out.log"),
         err_file: dir.path().join("err.log"),
@@ -392,6 +393,8 @@ fn adopt_spec(
         log_timestamps: true,
         stdin_pipe,
         channel,
+        dog_link: None,
+        dog_topics: None,
         reaper: Arc::new(crate::runner::AdoptedReaper::new()),
     }
 }

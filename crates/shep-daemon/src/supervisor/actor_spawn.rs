@@ -439,6 +439,7 @@ impl<R: ProcessRunner> Actor<R> {
             err_log,
             stdin_pipe,
             channel,
+            dog_link,
         } = sheep;
         let app = normalize(carried.app().clone()).map_err(|source| AdoptError::Spec {
             sheep: carried.name().to_string(),
@@ -574,6 +575,7 @@ impl<R: ProcessRunner> Actor<R> {
         let (proc, io) = self
             .runner
             .adopt(AdoptSpec {
+                name: carried.name().to_string(),
                 pid,
                 out_file: described.out_file.clone(),
                 err_file: described.err_file.clone(),
@@ -584,6 +586,8 @@ impl<R: ProcessRunner> Actor<R> {
                 log_timestamps: described.log_timestamps,
                 stdin_pipe,
                 channel,
+                dog_link,
+                dog_topics: carried.dog_topics().map(<[String]>::to_vec),
                 reaper: Arc::clone(reaper),
             })
             .map_err(|source| AdoptError::Runner {
