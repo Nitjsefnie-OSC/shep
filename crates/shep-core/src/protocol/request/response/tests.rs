@@ -531,7 +531,7 @@ fn reply_wire_snapshots() {
             result: Ok(Response::SheepDogTable { table: None }),
         },
     ];
-    insta::assert_json_snapshot!("reply_wire_v11", replies);
+    insta::assert_json_snapshot!("reply_wire_v12", replies);
 }
 
 /// The additive claim on `SheepFieldSet::warning` has three halves and

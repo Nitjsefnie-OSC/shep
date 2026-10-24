@@ -86,6 +86,14 @@ pub enum RpcErrorCode {
     /// it. A client built before this code decodes it as
     /// [`Self::Unrecognized`].
     Disabled,
+    /// A dog's request was refused because the dog was not granted the
+    /// permission it needs.
+    ///
+    /// The message names the dog, the request and the permission. Only a
+    /// dog's own connection can draw it: the operator's control socket is
+    /// never checked. A client built before this code decodes it as
+    /// [`Self::Unrecognized`].
+    Forbidden,
     /// A code this build has not been taught.
     ///
     /// Only ever produced by decoding: an unrecognized string falls through
@@ -104,7 +112,7 @@ impl RpcErrorCode {
     /// crate, which would swallow a variant added here and never updated
     /// there (`crates/shep-cli/src/exit.rs` maps every code to an exit
     /// status).
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::NotFound,
         Self::InvalidConfig,
         Self::SpawnFailed,
@@ -113,6 +121,7 @@ impl RpcErrorCode {
         Self::DeadlineExceeded,
         Self::Unsupported,
         Self::Disabled,
+        Self::Forbidden,
     ];
 
     /// The [`crate::exit`] code a process stopping on this refusal exits
@@ -129,6 +138,7 @@ impl RpcErrorCode {
             Self::DeadlineExceeded => exit::DEADLINE_EXCEEDED,
             Self::Unsupported => exit::UNSUPPORTED,
             Self::Disabled => exit::USAGE,
+            Self::Forbidden => exit::FAILURE,
         }
     }
 
@@ -149,6 +159,7 @@ impl RpcErrorCode {
             Self::DeadlineExceeded => Self::ALL[5],
             Self::Unsupported => Self::ALL[6],
             Self::Disabled => Self::ALL[7],
+            Self::Forbidden => Self::ALL[8],
             // `Unrecognized` is decode-only and never appears in `ALL`;
             // treat it as `Internal` would be treated.
             Self::Unrecognized => Self::ALL[4],
@@ -181,10 +192,19 @@ mod tests {
             RpcErrorCode::DeadlineExceeded,
             RpcErrorCode::Unsupported,
             RpcErrorCode::Disabled,
+            RpcErrorCode::Forbidden,
         ] {
             let json = serde_json::to_string(&code).unwrap();
             assert_eq!(serde_json::from_str::<RpcErrorCode>(&json).unwrap(), code);
         }
+    }
+
+    #[test]
+    fn a_forbidden_refusal_is_snake_case_on_the_wire() {
+        assert_eq!(
+            serde_json::to_string(&RpcErrorCode::Forbidden).unwrap(),
+            r#""forbidden""#
+        );
     }
 
     /// This CLI reads the fix as a different verb, so the refusal is a usage

@@ -745,7 +745,7 @@ a signal, adds one line to its `--version` answer:
 
 ```
 shep-otel 0.2.0
-shep-protocol: 11
+shep-protocol: 12
 shep-channel: true
 ```
 
