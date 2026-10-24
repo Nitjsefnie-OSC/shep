@@ -561,14 +561,25 @@ mod tests {
     /// The two handshake fields are the only place a model is told which
     /// shepherd it is looking at, and both come off the `HelloAck` the same
     /// call returns, not off the `Response::Flock`.
+    ///
+    /// The sheep's own pid is deliberately not the ack's: with both at
+    /// 4242, `daemon_pid` taken from the flock instead of the ack would
+    /// read as the handshake. The version half cannot be separated that
+    /// way: `Shepherd::connect` refuses any ack whose version is not this
+    /// binary's (`VersionGuard::Enforce`'s arm in `crate::version_guard`),
+    /// so what this pins for the version is that the field is filled from
+    /// the handshake rather than left at a placeholder, which is what a
+    /// `call` that dropped the ack would get wrong.
     #[tokio::test]
     async fn get_metrics_reports_the_version_and_pid_from_the_handshake() {
         let dir = tempfile::tempdir().unwrap();
         let socket = shep_client::testing::control_address(dir.path());
+        let mut sheep = shep_client::testing::sample_info();
+        sheep.pid = Some(9999);
         let served = shep_client::testing::serve_one_request(
             &socket,
             matching_ack(),
-            Response::Flock(vec![shep_client::testing::sample_info()]),
+            Response::Flock(vec![sheep]),
         )
         .await;
 
@@ -579,15 +590,22 @@ mod tests {
             .expect("a scripted daemon must not produce a tool error");
 
         assert_eq!(
-            result.0.daemon_version,
-            env!("CARGO_PKG_VERSION"),
-            "the version the ack carried, not this binary's own guess: {}",
-            result.0.daemon_version
+            result.0.flock.first().and_then(|row| row.pid),
+            Some(9999),
+            "the sheep's own pid is on the same reply, so the two numbers \
+             are tellable apart there: {:?}",
+            result.0.flock.first().map(|row| row.pid)
         );
         assert_eq!(
             result.0.daemon_pid, 4242,
-            "the ack's pid, which is the shepherd's, not this whistle's: {}",
+            "the ack's pid, not the sheep's 9999: {}",
             result.0.daemon_pid
+        );
+        assert_eq!(
+            result.0.daemon_version,
+            env!("CARGO_PKG_VERSION"),
+            "filled from the handshake, not left at a placeholder: {}",
+            result.0.daemon_version
         );
 
         served.await.expect("the fake daemon task must not panic");
