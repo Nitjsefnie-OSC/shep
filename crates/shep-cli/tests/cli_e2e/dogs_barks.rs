@@ -4,23 +4,23 @@
 use super::*;
 
 #[cfg(unix)]
-/// The only tier that exec's `shep dog metrics`: every other scripts the
-/// runner or fakes the client.
-///
-/// Four things fail here as a refused connection: the dog being spawned, its
-/// reaching the socket from `$SHEP_HOME`, its fetching its own
-/// `[dog.metrics]` section, and its bind.
-#[test]
-fn a_real_shepherd_runs_a_real_metrics_dog_that_answers_a_scrape() {
-    let dir = tempfile::tempdir().unwrap();
+/// The setup the three cases below share: a `$SHEP_HOME` whose
+/// `[dog.metrics]` bind sits on a fresh free port, one sheep named `web`
+/// started and polled to `online`, and the metrics dog enabled with its pid
+/// registered with `guard`. Returns the bind port, the online row, and the
+/// sheep's script; what each case asserts after the start is its own.
+#[track_caller]
+fn start_web_with_metrics_dog(
+    dir: &TempDir,
+    guard: &mut DaemonGuard,
+) -> (u16, serde_json::Value, PathBuf) {
     let home = dir.path();
     let port = free_port();
     write_shep_toml(
-        &dir,
+        dir,
         &format!("[dog.metrics]\nbind = \"127.0.0.1:{port}\"\n"),
     );
-    let script = write_test_script(&dir);
-    let mut guard = DaemonGuard::default();
+    let script = write_test_script(dir);
 
     let started = shep(home)
         .arg("start")
@@ -33,11 +33,6 @@ fn a_real_shepherd_runs_a_real_metrics_dog_that_answers_a_scrape() {
     assert_success(&started);
 
     let online = poll_flock(home, |info| info["status"] == "online");
-    assert_eq!(
-        online["status"], "online",
-        "the sheep must reach online before the dog's own exposition has \
-         anything real to name: {online}"
-    );
 
     let enabled = shep(home)
         .arg("enable")
@@ -47,10 +42,33 @@ fn a_real_shepherd_runs_a_real_metrics_dog_that_answers_a_scrape() {
         .unwrap();
     assert_success(&enabled);
 
-    // Registered before the scrape: one that hangs or panics on an assertion
-    // must not leak the grandchild the daemon just spawned.
+    // Registered before the caller's first assertion: a case that hangs or
+    // panics must not leak the grandchild the daemon just spawned.
     let dog_pid = wait_for_dog_pid(home, "metrics");
     guard.adopt_dog_pid(dog_pid);
+
+    (port, online, script)
+}
+
+#[cfg(unix)]
+/// The only tier that exec's `shep dog metrics`: every other scripts the
+/// runner or fakes the client.
+///
+/// Four things fail here as a refused connection: the dog being spawned, its
+/// reaching the socket from `$SHEP_HOME`, its fetching its own
+/// `[dog.metrics]` section, and its bind.
+#[test]
+fn a_real_shepherd_runs_a_real_metrics_dog_that_answers_a_scrape() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    let mut guard = DaemonGuard::default();
+
+    let (port, online, _script) = start_web_with_metrics_dog(&dir, &mut guard);
+    assert_eq!(
+        online["status"], "online",
+        "the sheep must reach online before the dog's own exposition has \
+         anything real to name: {online}"
+    );
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let body = poll_metrics(addr);
@@ -82,35 +100,13 @@ fn a_real_shepherd_runs_a_real_metrics_dog_that_answers_a_scrape() {
 fn a_carried_dog_answers_a_scrape_after_a_real_reload() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();
-    let port = free_port();
-    write_shep_toml(
-        &dir,
-        &format!("[dog.metrics]\nbind = \"127.0.0.1:{port}\"\n"),
-    );
-    let script = write_test_script(&dir);
     let mut guard = DaemonGuard::default();
 
-    let started = shep(home)
-        .arg("start")
-        .arg(&script)
-        .arg("--name")
-        .arg("web")
-        .output()
-        .unwrap();
-    guard.adopt_home(home);
-    assert_success(&started);
-    let online = poll_flock(home, |info| info["status"] == "online");
+    let (port, online, script) = start_web_with_metrics_dog(&dir, &mut guard);
     let sheep_pid = online["pid"].as_u64().expect("an online sheep has a pid");
-
-    let enabled = shep(home)
-        .arg("enable")
-        .arg("--yes")
-        .arg("metrics")
-        .output()
-        .unwrap();
-    assert_success(&enabled);
+    // The pid the helper already registered with `guard`, read back for the
+    // carried-pid assertion below.
     let dog_pid = wait_for_dog_pid(home, "metrics");
-    guard.adopt_dog_pid(dog_pid);
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let before = poll_metrics(addr);
@@ -255,33 +251,9 @@ fn a_carried_dog_answers_a_scrape_after_a_real_reload() {
 fn dogs_and_flock_render_the_two_populations_the_right_way_round() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();
-    let port = free_port();
-    write_shep_toml(
-        &dir,
-        &format!("[dog.metrics]\nbind = \"127.0.0.1:{port}\"\n"),
-    );
-    let script = write_test_script(&dir);
     let mut guard = DaemonGuard::default();
 
-    let started = shep(home)
-        .arg("start")
-        .arg(&script)
-        .arg("--name")
-        .arg("web")
-        .output()
-        .unwrap();
-    guard.adopt_home(home);
-    assert_success(&started);
-    poll_flock(home, |info| info["status"] == "online");
-
-    let enabled = shep(home)
-        .arg("enable")
-        .arg("--yes")
-        .arg("metrics")
-        .output()
-        .unwrap();
-    assert_success(&enabled);
-    guard.adopt_dog_pid(wait_for_dog_pid(home, "metrics"));
+    start_web_with_metrics_dog(&dir, &mut guard);
 
     let flock_table = String::from_utf8(shep(home).arg("flock").output().unwrap().stdout).unwrap();
     assert!(
