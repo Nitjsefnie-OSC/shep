@@ -64,6 +64,13 @@ const DEFAULT_TAIL: u32 = 50;
 /// are the two tools that could otherwise hand it an unbounded reply.
 const MAX_TAIL: u32 = 200;
 
+/// One requested length, read the tail way: absent is [`DEFAULT_TAIL`],
+/// anything over [`MAX_TAIL`] lands on it, and a requested zero stays
+/// zero. Both log-reading tools take their limit through here.
+fn clamp_len(requested: Option<u32>) -> usize {
+    requested.unwrap_or(DEFAULT_TAIL).min(MAX_TAIL) as usize
+}
+
 // vis = "pub(crate)" is required: the generated fn defaults to private to
 // this module, and `Whistle::new` calls it from the parent module.
 #[tool_router(router = read_only_router, vis = "pub(crate)")]
@@ -130,8 +137,8 @@ impl Whistle {
         &self,
         Parameters(params): Parameters<TailParams>,
     ) -> Result<Json<BleatTail>, CallToolResult> {
-        let limit = (params.lines.unwrap_or(DEFAULT_TAIL).min(MAX_TAIL)) as usize;
-        let selector = SelectorSpec::Name(params.name.clone());
+        let limit = clamp_len(params.lines);
+        let selector = SelectorSpec::Name(params.name);
         let flock = match self.shepherd.call(Request::Describe { selector }).await? {
             Response::Described(flock) => flock,
             _ => return Err(unexpected_response()),
@@ -164,7 +171,7 @@ impl Whistle {
         &self,
         Parameters(params): Parameters<BarksParams>,
     ) -> Result<Json<BarkListing>, CallToolResult> {
-        let limit = (params.tail.unwrap_or(DEFAULT_TAIL).min(MAX_TAIL)) as usize;
+        let limit = clamp_len(params.tail);
         let history = barks::read_last(&self.paths.barks, limit)
             .map_err(|err| shepherd::own_refusal("failure", err.to_string()))?;
         Ok(Json(BarkListing {
@@ -229,9 +236,11 @@ fn tail_stream(
     }
 }
 
-/// A reply shape none of these five tools asked for. `Response` is
+/// A reply shape no whistle tool asked for. `Response` is
 /// `#[non_exhaustive]`, so a variant this client predates, or simply the
 /// wrong one for the request sent, maps here instead of being guessed at.
+///
+/// The one copy, shared with the control tools through `pub(super)`.
 pub(super) fn unexpected_response() -> CallToolResult {
     CallToolResult::structured_error(serde_json::json!({
         "code": "internal",
@@ -353,6 +362,18 @@ mod tests {
             ),
             other => panic!("expected Request::Describe, got {other:?}"),
         }
+    }
+
+    /// The clamp both log-reading tools share, at the one place it now
+    /// lives: absent means 50, a request over the cap lands on 200, a
+    /// request under it is honored as asked, and a model that asked for no
+    /// lines at all gets none rather than the default.
+    #[test]
+    fn the_tail_clamp_defaults_to_fifty_and_caps_at_two_hundred() {
+        assert_eq!(clamp_len(None), 50, "absent means the default");
+        assert_eq!(clamp_len(Some(0)), 0, "an asked-for zero stays zero");
+        assert_eq!(clamp_len(Some(120)), 120, "a sane request passes through");
+        assert_eq!(clamp_len(Some(9999)), 200, "the cap holds");
     }
 
     /// An uncapped reply exhausts a model's context; a capped one that does

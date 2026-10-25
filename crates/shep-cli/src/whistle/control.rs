@@ -16,7 +16,7 @@ use shep_core::status::ProcStatus;
 
 use super::Whistle;
 use super::facts::{FlockListing, SheepRow};
-use super::read::SheepName;
+use super::read::{SheepName, unexpected_response};
 use super::shepherd;
 
 // vis = "pub(crate)": the generated constructor is private by default, but
@@ -162,19 +162,6 @@ impl Whistle {
             _ => Err(unexpected_response()),
         }
     }
-}
-
-/// A reply shape none of these four tools asked for. `Response` is
-/// `#[non_exhaustive]`, so a variant this client predates, or simply the
-/// wrong one for the request sent, maps here instead of being guessed at.
-///
-/// Duplicated rather than shared with `read.rs`'s identical helper: each
-/// stays private to its own module.
-fn unexpected_response() -> CallToolResult {
-    CallToolResult::structured_error(serde_json::json!({
-        "code": "internal",
-        "message": "the shepherd answered with a response this client does not understand",
-    }))
 }
 
 // unix only: these fixtures bind a raw `UnixListener`, though the real
