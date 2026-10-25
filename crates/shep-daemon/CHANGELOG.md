@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Carry a dog's grants on DogSource and map every request to a permission **(BREAKING)**
 - Refuse a dog's request outside its grants
 - Copy one sheep's env onto another's inside the shepherd
+- Serve each Windows dog over its own user-only pipe
+- Add ResetSheepField and an override record's template **(BREAKING)**
+- Drop a sheep field's override with ResetSheepField
+- Enforce a dog's grants on its own connection **(BREAKING)**
+- Drop an override with `shep unset` **(BREAKING)**
+- Add shep dogs grant and revoke to change one permission
 
 ### Changed
 
@@ -47,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build the Windows path advisory through one helper
 - Share one field initialiser between the LogFile constructors
 - Rehydrate returns a named Rehydrated struct and drops its unused paths
+- Build InvalidConfig and no-sheep refusals through two helpers
+- Share the rpc test start, describe, list and push fixtures
+- Share the reload-to-a-shared-path setup in the flush tests
+- One helper for readiness source, credentials and reset
+- Share one name-list helper in the scripted runner
+- Drop a one-use closure and share the failed-exec test setup
+- Project provider cache tables through one helper
+- Rehydrate returns a named Rehydrated struct
 
 ### Fixed
 
@@ -63,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stop a held subscription's events when the dog's grants narrow
 - Refuse an env copy whose reviewed changes no longer hold
 - Seal each env copy change so a swapped literal is refused
+- Test an unset dog pipe with if defined, and fix the pipe-taken comment
+- Copy a sheep env instead of refusing it
 
 ### Performance
 

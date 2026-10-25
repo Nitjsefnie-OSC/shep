@@ -26,10 +26,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Carry a dog's grants from shep.toml and say when a shepherd will not enforce them
 - Ask before granting a dog its declared permissions **(BREAKING)**
 - Add shep dogs grant and revoke to change one permission
+- Move the key/value store under `shep kv` **(BREAKING)**
+- Read a dog's manifest on adopt and cache it by sha256
+- Warn on adopt and enable when a dog's dependencies are unmet
+- List adopted dogs in shep --help, their own help, and completions
+- Carry each dog's connection across a handover **(BREAKING)**
+- Write any setting of a sheep or a dog with `shep set` **(BREAKING)**
+- Write a dog's defaults into dogs.toml on adopt
+- List adopted dogs in shep --help and completions
+- Drop an override or remove a dog's key with `shep unset` **(BREAKING)**
+- Enforce a dog's grants on its own connection **(BREAKING)**
+- Drop an override with `shep unset` **(BREAKING)**
+- Ask a dog before shep writes its settings
+- Gate a lookout settings write through its dog
+- Refuse an adopt that asks to be consulted with no channel
+- Ask before granting metrics and bark what they declare **(BREAKING)**
+- A dog can refuse a settings write before shep makes it
+- Record a dog's waiting, revoked and reviewed grants in shep.toml
+- Plan each dog's grants record from what its build declares
+- Update dogs' recorded grants at daemon boot and reload
+- Put unreviewed and waiting grants to the operator at shep enable
+- Record revoked and waiting grants when shep dogs grant or revoke runs
+- Show a dog's access marks in the dogs table and JSON
+- Mark dogs' access in shep flock and shep dogs from shep.toml
+- Never widen a dog's access silently on upgrade, and mark it in listings
+- Over --host, refuse a write only when the protocol differs
 
 ### Changed
 
 - Give Render a default json_key_for and an empty JSON_ONLY
+- Fold the repeated process-row shapes into toolkit helpers
 
 ### Fixed
 
@@ -59,6 +85,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Read a dog's manifest through ManifestRead in dogs grant
 - Copy a sheep env instead of refusing it
 - Refuse an env copy whose reviewed changes no longer hold
+- Keep a hidden store alias to one JSON object per invocation
+- Keep the manifest cache owner-only and skip a binary that changed mid-probe
+- Print a manifest's verb as one line, not as clap template text
+- Keep names a shell would read as code out of completion scripts
+- Make `shep set` write inline tables and datetimes, and name its refusals
+- Pad the Dogs group by display width, not byte length
+- Count clap's help subcommand as a name a dog cannot take
+- Refuse a value shep set cannot carry, and re-read before it overwrites
+- Plan a change when unset drops a table with nothing in it
+- Stop a settings write shep cannot tell the dog was asked about
+- Tell a manifest probe that failed from one that answered nothing
+- Re-read the settings holder after the dog's answer
+- Read a dog that gave no manifest as a dog that declared nothing
+- Ask the dog before shep copies its table onto another sheep
+- Do not mark a disabled dog undeclared
+- Address review on grant upgrade marks
+- Keep a concurrent grant change when enable records an answer
+- Check a built-in dog's grant against its own manifest
+- Name the side of a protocol gap the fix runs on
 
 ### Performance
 

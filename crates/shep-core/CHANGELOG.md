@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Record waiting, revoked and reviewed beside a dog's grants
 - Show a dog's access marks in the dogs table and JSON
 - Copy one sheep's env onto another's inside the shepherd
+- Take an inherited dog connection socket
+- Answer `--shep-manifest` from `Probe` with manifest v1 **(BREAKING)**
+- Spawn each dog holding a connection to the shepherd **(BREAKING)**
+- Serve each Windows dog over its own user-only pipe
+- Add ResetSheepField and an override record's template **(BREAKING)**
+- Drop a sheep field's override with ResetSheepField
+- Enforce a dog's grants on its own connection **(BREAKING)**
+- Drop an override with `shep unset` **(BREAKING)**
+- A dog can refuse a settings write before shep makes it
+- Never widen a dog's access silently on upgrade, and mark it in listings
 
 ### Fixed
 
@@ -36,11 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Address review on grant upgrade marks
 - Refuse an env copy whose reviewed changes no longer hold
 - Seal each env copy change so a swapped literal is refused
+- Copy a sheep env instead of refusing it
 
 ### Performance
 
 - Check a log stamp's shape instead of parsing it per line
 - Buffer the bark ring rewrite so a full ring costs one write per buffer
+- Buffer the bark ring rewrite to one write per buffer
 
 
 ## [0.16.1] - 2026-10-22

@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A dog connects over the link its shepherd spawned it holding
 - Carry a dog's grants on DogSource and map every request to a permission **(BREAKING)**
 - Answer a validate trigger in one call
+- Resolve secret references in a sheep's per-dog table
+- Answer `--shep-manifest` from `Probe` **(BREAKING)**
+- Answer `--shep-manifest` from `Probe` with manifest v1 **(BREAKING)**
+- Spawn each dog holding a connection to the shepherd **(BREAKING)**
+- Serve each Windows dog over its own user-only pipe
+- Enforce a dog's grants on its own connection **(BREAKING)**
+- A dog can refuse a settings write before shep makes it
 
 ### Fixed
 
@@ -25,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build the dog link types cleanly where only unix hands a dog one
 - A SHEP_DOG_FD naming no usable connection fails the dog's start
 - Make the validate_answer example assert both verdicts
+- Test an unset dog pipe with if defined, and fix the pipe-taken comment
 
 
 ## [0.16.1] - 2026-10-22
