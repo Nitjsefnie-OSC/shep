@@ -1,7 +1,7 @@
 use super::super::process::sample_info;
 use super::super::{
-    ActionOutcome, DogSource, ExitInfo, Lamb, LineOutcome, Reply, Request, RpcError, RpcErrorCode,
-    SignalOutcome,
+    ActionOutcome, DogSource, EnvCopyChange, EnvCopyKind, ExitInfo, Lamb, LineOutcome, Reply,
+    Request, RpcError, RpcErrorCode, SignalOutcome,
 };
 use super::*;
 use crate::config::AppConfig;
@@ -20,6 +20,44 @@ fn sheep_env_batch_response_wire_v8() {
     assert_eq!(
         json,
         r#"{"kind":"sheep_env_batch","data":{"name":"web","set":["A"],"unchanged":["B"],"collisions":[]}}"#
+    );
+    assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+}
+
+/// All three kinds, a reference shown as written and a value redacted.
+#[test]
+fn sheep_env_copied_response_wire_v12() {
+    let response = Response::SheepEnvCopied {
+        from: "web".to_string(),
+        to: "api".to_string(),
+        changes: vec![
+            EnvCopyChange::new(
+                "PADDOCK_KEY",
+                EnvCopyKind::Added,
+                None,
+                Some("{{secret:PADDOCK_KEY}}".to_string()),
+            )
+            .sealed(11),
+            EnvCopyChange::new(
+                "PORT",
+                EnvCopyKind::Changed,
+                Some("<redacted>".to_string()),
+                Some("<redacted>".to_string()),
+            )
+            .sealed(12),
+            EnvCopyChange::new(
+                "OLD",
+                EnvCopyKind::Removed,
+                Some("<redacted>".to_string()),
+                None,
+            )
+            .sealed(13),
+        ],
+    };
+    let json = serde_json::to_string(&response).unwrap();
+    assert_eq!(
+        json,
+        r#"{"kind":"sheep_env_copied","data":{"from":"web","to":"api","changes":[{"key":"PADDOCK_KEY","kind":"added","old":null,"new":"{{secret:PADDOCK_KEY}}","seal":11},{"key":"PORT","kind":"changed","old":"<redacted>","new":"<redacted>","seal":12},{"key":"OLD","kind":"removed","old":"<redacted>","new":null,"seal":13}]}}"#
     );
     assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
 }

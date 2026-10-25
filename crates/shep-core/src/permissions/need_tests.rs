@@ -120,6 +120,14 @@ fn flock_edit_holds_every_request_that_changes_a_sheeps_config() {
             force: false,
             dry_run: true,
         },
+        Request::CopySheepEnv {
+            from: "web".into(),
+            to: "api".into(),
+            replace: false,
+            except: Vec::new(),
+            dry_run: true,
+            expect: None,
+        },
         Request::SetSmit {
             sheep: "web".into(),
             smit: None,

@@ -23,6 +23,7 @@ impl Response {
             Self::SheepConfig(_) => "SheepConfig",
             Self::SheepEnvSet { .. } => "SheepEnvSet",
             Self::SheepEnvBatch { .. } => "SheepEnvBatch",
+            Self::SheepEnvCopied { .. } => "SheepEnvCopied",
             Self::SheepFieldSet { .. } => "SheepFieldSet",
             Self::SheepFieldReset { .. } => "SheepFieldReset",
             Self::DogSheepSettings { .. } => "DogSheepSettings",

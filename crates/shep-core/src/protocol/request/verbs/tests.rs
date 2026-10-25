@@ -155,6 +155,59 @@ fn set_sheep_env_batch_wire_v8() {
     assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
 }
 
+/// The request names two sheep and carries no value: the shepherd reads the
+/// source's env itself.
+#[test]
+fn copy_sheep_env_wire_v12() {
+    let request = Request::CopySheepEnv {
+        from: "web".to_string(),
+        to: "api".to_string(),
+        replace: true,
+        except: vec!["PORT".to_string()],
+        dry_run: false,
+        expect: None,
+    };
+    let json = serde_json::to_string(&request).unwrap();
+    assert_eq!(
+        json,
+        r#"{"kind":"copy_sheep_env","from":"web","to":"api","replace":true,"except":["PORT"],"dry_run":false}"#
+    );
+    assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+}
+
+/// The reviewed change list rides along on a write, and its absence is what
+/// an earlier client's request looks like.
+#[test]
+fn copy_sheep_env_expect_wire_v12() {
+    let request = Request::CopySheepEnv {
+        from: "web".to_string(),
+        to: "api".to_string(),
+        replace: false,
+        except: Vec::new(),
+        dry_run: false,
+        expect: Some(vec![
+            crate::protocol::EnvCopyChange::new(
+                "PADDOCK_KEY",
+                crate::protocol::EnvCopyKind::Added,
+                None,
+                Some("{{secret:PADDOCK_KEY}}".to_string()),
+            )
+            .sealed(7),
+        ]),
+    };
+    let json = serde_json::to_string(&request).unwrap();
+    assert_eq!(
+        json,
+        r#"{"kind":"copy_sheep_env","from":"web","to":"api","replace":false,"except":[],"dry_run":false,"expect":[{"key":"PADDOCK_KEY","kind":"added","old":null,"new":"{{secret:PADDOCK_KEY}}","seal":7}]}"#
+    );
+    assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+    let without = r#"{"kind":"copy_sheep_env","from":"web","to":"api","replace":false,"except":[],"dry_run":false}"#;
+    assert!(matches!(
+        serde_json::from_str::<Request>(without).unwrap(),
+        Request::CopySheepEnv { expect: None, .. }
+    ));
+}
+
 /// Additive, so the floor does not move. Guards against a reflexive
 /// raise. The ceiling is pinned once, by `protocol::tests`, and moves
 /// for reasons unrelated to this variant.

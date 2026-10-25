@@ -7,6 +7,87 @@
 
 use super::*;
 
+/// Records one env edit in `record`: `value` under `key`, or with `None` the
+/// removal of `key`, leaving a tombstone where the removal is the only record
+/// of it.
+///
+/// `was_in_config` is whether the intended config held `key` before the edit,
+/// which a removal needs to know whether there was anything to remove.
+///
+/// # Errors
+///
+/// [`SupervisorError::Overrides`] - the stored `env` override is not an
+/// object.
+pub(super) fn record_env_edit(
+    record: &mut AppOverrides,
+    name: &str,
+    key: &str,
+    value: Option<&str>,
+    was_in_config: bool,
+) -> Result<(), SupervisorError> {
+    // Read before `env_override_map` borrows the record mutably.
+    let file_declares = record.declared_env.contains(key);
+    let map = env_override_map(&mut *record, name)?;
+    let was_overridden = map.contains_key(key);
+    // A tombstone is left alone rather than removed and re-inserted,
+    // which makes a second removal of the same key a no-op instead of
+    // a deletion. Without this, removing an already-removed key drops
+    // the tombstone (there is nothing in the config to remove, so the
+    // re-insert below does not fire) and the next load of a file that
+    // still declares the key puts its value back.
+    let tombstoned = map.get(key).is_some_and(serde_json::Value::is_null);
+    match value {
+        Some(value) => map.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        ),
+        None if tombstoned => None,
+        None => map.remove(key),
+    };
+    // Dropping the operator's own value is only half an answer: for a
+    // key the operator never set, `map.remove` is a no-op, the store
+    // comes back `{}`, and the edit lives only in
+    // `ProcessEntry::pending`, lost to a cold restart and invisible in
+    // the CFG column.
+    //
+    // So a removal leaves a JSON `null` tombstone under the key
+    // whenever the key was in the config and something other than
+    // this store put it there. Three cases fall out of the condition
+    // below:
+    //
+    // - the key came from the app's config and was never overridden:
+    //   tombstone, since the removal is the operator's only record of
+    //   it;
+    // - the key was an operator override the file also declares:
+    //   tombstone, since dropping the override alone would let the
+    //   file's value read as current;
+    // - the key was an operator override and nothing else supplies
+    //   it: plain removal, since the sheep now matches its file. A
+    //   tombstone here would mark a sheep forever for a key that
+    //   exists nowhere.
+    //
+    // A null never becomes a config value: `merge_declared`'s env
+    // branch reads this map for its keys only, so a null just marks
+    // "somebody has spoken for this key" and stops a later plain load
+    // from restoring it. `--reset=env` and `--reset=all` clear it
+    // through `merge_declared`'s own `next.fields.remove("env")`, not
+    // through `establish_env`, which by then has nothing left to find
+    // and deliberately preserves a tombstone it does find.
+    if value.is_none() && was_in_config && (!was_overridden || file_declares) {
+        map.insert(key.to_string(), serde_json::Value::Null);
+    }
+    let emptied = map.is_empty();
+    // A removal that left nothing behind takes the `env` key with it,
+    // for the reason `merge_declared` states where it spends an
+    // override: a field nobody is holding a value for must stop
+    // reporting in `ProcessEntry::overridden`, or the CFG column
+    // marks a sheep that no longer differs from its Flockfile.
+    if emptied {
+        record.fields.remove("env");
+    }
+    Ok(())
+}
+
 impl<R: ProcessRunner> Actor<R> {
     /// Refuse `name` when the slot at `id` is a dog's.
     ///
@@ -178,67 +259,7 @@ impl<R: ProcessRunner> Actor<R> {
             normalize(intended).map_err(|err| SupervisorError::InvalidEnv(err.to_string()))?;
 
         let overridden = self.mutate_override(name, |record| {
-            // Read before `env_override_map` borrows the record mutably.
-            let file_declares = record.declared_env.contains(key);
-            let map = env_override_map(&mut *record, name)?;
-            let was_overridden = map.contains_key(key);
-            // A tombstone is left alone rather than removed and re-inserted,
-            // which makes a second removal of the same key a no-op instead of
-            // a deletion. Without this, removing an already-removed key drops
-            // the tombstone (there is nothing in the config to remove, so the
-            // re-insert below does not fire) and the next load of a file that
-            // still declares the key puts its value back.
-            let tombstoned = map.get(key).is_some_and(serde_json::Value::is_null);
-            match value {
-                Some(value) => map.insert(
-                    key.to_string(),
-                    serde_json::Value::String(value.to_string()),
-                ),
-                None if tombstoned => None,
-                None => map.remove(key),
-            };
-            // Dropping the operator's own value is only half an answer: for a
-            // key the operator never set, `map.remove` is a no-op, the store
-            // comes back `{}`, and the edit lives only in
-            // `ProcessEntry::pending`, lost to a cold restart and invisible in
-            // the CFG column.
-            //
-            // So a removal leaves a JSON `null` tombstone under the key
-            // whenever the key was in the config and something other than
-            // this store put it there. Three cases fall out of the condition
-            // below:
-            //
-            // - the key came from the app's config and was never overridden:
-            //   tombstone, since the removal is the operator's only record of
-            //   it;
-            // - the key was an operator override the file also declares:
-            //   tombstone, since dropping the override alone would let the
-            //   file's value read as current;
-            // - the key was an operator override and nothing else supplies
-            //   it: plain removal, since the sheep now matches its file. A
-            //   tombstone here would mark a sheep forever for a key that
-            //   exists nowhere.
-            //
-            // A null never becomes a config value: `merge_declared`'s env
-            // branch reads this map for its keys only, so a null just marks
-            // "somebody has spoken for this key" and stops a later plain load
-            // from restoring it. `--reset=env` and `--reset=all` clear it
-            // through `merge_declared`'s own `next.fields.remove("env")`, not
-            // through `establish_env`, which by then has nothing left to find
-            // and deliberately preserves a tombstone it does find.
-            if value.is_none() && was_in_config && (!was_overridden || file_declares) {
-                map.insert(key.to_string(), serde_json::Value::Null);
-            }
-            let emptied = map.is_empty();
-            // A removal that left nothing behind takes the `env` key with it,
-            // for the reason `merge_declared` states where it spends an
-            // override: a field nobody is holding a value for must stop
-            // reporting in `ProcessEntry::overridden`, or the CFG column
-            // marks a sheep that no longer differs from its Flockfile.
-            if emptied {
-                record.fields.remove("env");
-            }
-            Ok(())
+            record_env_edit(record, name, key, value, was_in_config)
         })?;
 
         self.park_slots(name, &parked, &overridden);

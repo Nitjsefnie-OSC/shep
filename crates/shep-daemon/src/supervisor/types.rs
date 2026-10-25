@@ -127,6 +127,20 @@ pub(crate) struct EnvBatch {
     pub(crate) collisions: Vec<String>,
 }
 
+/// What a [`Command::CopySheepEnv`] did.
+///
+/// `Debug` is derived: a change carries only what
+/// [`shep_core::secrets::shown_env_value`] allows, and [`ResolvedApp`] wraps
+/// an [`AppConfig`], whose own manual `Debug` redacts `env`.
+#[derive(Debug, Clone)]
+pub(crate) struct EnvCopy {
+    /// The parked config, for `rpc/dispatch.rs` to hand the registry. `None`
+    /// when nothing was written, which is a dry run or a copy with no change.
+    pub(crate) app: Option<ResolvedApp>,
+    /// Every key the copy touches, in key order.
+    pub(crate) changes: Vec<shep_core::protocol::EnvCopyChange>,
+}
+
 /// The environment a shepherd resolves secrets in when nothing says
 /// otherwise, matching `DaemonSection`'s own default.
 pub(crate) const DEFAULT_ENVIRONMENT: &str = "production";
