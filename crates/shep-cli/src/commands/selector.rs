@@ -48,12 +48,7 @@ mod tests {
     fn a_well_formed_selector_parses_without_touching_streams() {
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let selector = parse_selector(&mut streams, "web").unwrap();
         assert!(matches!(selector, ProcessSelector::Name(name) if name == "web"));
         assert!(out.is_empty());
@@ -65,12 +60,7 @@ mod tests {
     fn a_malformed_selector_is_a_local_usage_error() {
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let code = parse_selector(&mut streams, "/[/").unwrap_err();
         assert_eq!(code, ExitCode::Usage);
         assert!(out.is_empty(), "a usage error goes to stderr, not stdout");

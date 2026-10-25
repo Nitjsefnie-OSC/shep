@@ -192,12 +192,7 @@ Getting started
         let mut out = Vec::new();
         let mut err = Vec::new();
         {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, fmt);
             f(&mut streams);
         }
         (
