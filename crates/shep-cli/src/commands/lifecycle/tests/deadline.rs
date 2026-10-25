@@ -56,12 +56,7 @@ async fn a_start_asks_for_a_deadline_its_own_stages_fit_inside() {
         reset: None,
     };
     {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let _ = start(&client, &mut streams, &args, None, &BTreeMap::new()).await;
     }
 
@@ -91,12 +86,7 @@ async fn a_malformed_selector_exits_usage_without_a_round_trip() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         stop(
             &client,
             &mut streams,
@@ -121,12 +111,7 @@ async fn a_not_found_reply_exits_not_found_rather_than_being_swallowed() {
         fake_client_replying_err(&path, RpcErrorCode::NotFound, "no sheep matched").await;
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: crate::style::Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
     let code = stop(
         &client,
         &mut streams,
@@ -151,12 +136,7 @@ async fn start_asks_for_the_longer_deadline() {
     std::fs::write(&srv, "").unwrap();
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: crate::style::Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
 
     let _ = start(
         &client,
@@ -202,12 +182,7 @@ async fn a_stop_that_outlasts_the_default_deadline_still_answers_stopped() {
         fake_client_needing_budget(&path, STOP_NEEDS, Response::Stopped(Vec::new())).await;
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: crate::style::Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
 
     let code = stop(
         &client,

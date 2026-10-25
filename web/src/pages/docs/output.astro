@@ -247,14 +247,14 @@ Dogs
     </p>
     <p>
       Both of them send you to <code>shep bleats &lt;dog&gt;</code>, and that
-      is deliberate. The shepherd writes what it actually saw into the dog's
-      own log at the moment it gives up, and the fix follows from that. A
-      version skew is one cause: <code>cargo install</code> replaced the
-      binary on disk and the process still running is the old one, so a
-      reinstall and a <code>shep restart &lt;dog&gt;</code> fixes it. A dog
-      that reaches the shepherd on every connection and never names itself in
-      its handshake is another, and reinstalling the same build does nothing
-      at all for that one.
+      is deliberate. The shepherd writes what it saw into the dog's own log
+      when it gives up, and the fix follows from that. A version skew on
+      this machine is one cause: <code>cargo install</code> replaced the
+      binary on disk and the old one still runs, so a reinstall and a{" "}
+      <code>shep restart &lt;dog&gt;</code> fixes it. Over <code>--host</code>{" "}
+      only another protocol refuses. A dog that reaches the shepherd on every
+      connection and never names itself in its handshake is the other cause,
+      and reinstalling does nothing for it.
     </p>
     <p class="fine">
       Only <code>online</code> is replaced. <code>starting</code> already

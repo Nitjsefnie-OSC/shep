@@ -122,12 +122,7 @@ async fn a_discovered_flockfile_is_started_when_no_target_was_given() {
         reset: None,
     };
     {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let _ = start(
             &client,
             &mut streams,
@@ -386,12 +381,7 @@ async fn a_target_naming_a_stopped_sheep_is_acted_on_not_resolved_as_a_path() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         start(
             &client,
             &mut streams,

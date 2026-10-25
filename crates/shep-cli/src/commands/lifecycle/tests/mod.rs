@@ -274,12 +274,7 @@ async fn start_against_with_args(client: &Client, args: &StartArgs) -> (ExitCode
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         start(client, &mut streams, args, None, &BTreeMap::new()).await
     };
     (
@@ -311,12 +306,7 @@ async fn restart_against_in(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, fmt);
         restart_within(
             client,
             &mut streams,
@@ -365,12 +355,7 @@ async fn reload_against_in(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, fmt);
         reload(
             client,
             &mut streams,
@@ -494,12 +479,7 @@ async fn add_against_with_args(client: &Client, args: &StartArgs) -> (ExitCode, 
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         add(client, &mut streams, args, None, &BTreeMap::new()).await
     };
     (
