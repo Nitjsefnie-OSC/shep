@@ -25,29 +25,20 @@ pub fn is_name(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
-/// Checks one key against the grammar.
+/// Checks one name against the grammar, building the refusal with `refuse`.
 ///
 /// # Errors
-/// [`SecretError::InvalidKey`]: empty, over [`MAX_KEY_BYTES`], starting with
-/// `.`, or containing anything outside `[A-Za-z0-9._-]`.
-pub(super) fn check_key(key: &str) -> Result<(), SecretError> {
-    if is_name(key) {
+/// Whatever `refuse` builds from the name: it is empty, over
+/// [`MAX_KEY_BYTES`], starts with `.`, or contains anything outside
+/// `[A-Za-z0-9._-]`. A name can never contain a `/`.
+pub(super) fn check_name(
+    value: &str,
+    refuse: impl FnOnce(String) -> SecretError,
+) -> Result<(), SecretError> {
+    if is_name(value) {
         Ok(())
     } else {
-        Err(SecretError::InvalidKey(key.to_string()))
-    }
-}
-
-/// Checks one environment name against the grammar.
-///
-/// # Errors
-/// [`SecretError::InvalidEnvironment`]: the same conditions [`check_key`]
-/// refuses, so a name can never contain a `/`.
-pub(super) fn check_environment(environment: &str) -> Result<(), SecretError> {
-    if is_name(environment) {
-        Ok(())
-    } else {
-        Err(SecretError::InvalidEnvironment(environment.to_string()))
+        Err(refuse(value.to_string()))
     }
 }
 
@@ -97,8 +88,8 @@ pub fn all(path: &Path) -> Result<BTreeMap<String, BTreeMap<String, String>>, Se
 /// malformed name never creates one), plus `Io`, `Decode` and
 /// `FutureVersion` exactly as [`all`] returns them.
 pub fn get(path: &Path, key: &str, environment: &str) -> Result<Option<String>, SecretError> {
-    check_key(key)?;
-    check_environment(environment)?;
+    check_name(key, SecretError::InvalidKey)?;
+    check_name(environment, SecretError::InvalidEnvironment)?;
     Ok(all(path)?
         .remove(key)
         .and_then(|mut by_environment| by_environment.remove(environment)))
@@ -119,8 +110,8 @@ pub fn get(path: &Path, key: &str, environment: &str) -> Result<Option<String>, 
 /// - [`SecretError::Io`]: the lock, the temp file, the `fsync` or the
 ///   `rename` failed.
 pub fn set(path: &Path, key: &str, environment: &str, value: &str) -> Result<(), SecretError> {
-    check_key(key)?;
-    check_environment(environment)?;
+    check_name(key, SecretError::InvalidKey)?;
+    check_name(environment, SecretError::InvalidEnvironment)?;
     if value.len() > MAX_VALUE_BYTES {
         return Err(SecretError::ValueTooLong {
             key: key.to_string(),
@@ -148,8 +139,8 @@ pub fn set(path: &Path, key: &str, environment: &str, value: &str) -> Result<(),
 /// The same set [`set`] returns, minus [`SecretError::ValueTooLong`]:
 /// `InvalidKey`, `InvalidEnvironment`, `FutureVersion`, `Decode`, `Io`.
 pub fn unset(path: &Path, key: &str, environment: &str) -> Result<bool, SecretError> {
-    check_key(key)?;
-    check_environment(environment)?;
+    check_name(key, SecretError::InvalidKey)?;
+    check_name(environment, SecretError::InvalidEnvironment)?;
 
     let _lock = FileLock::acquire(path)?;
     let mut file = read_file(path)?;
@@ -227,6 +218,54 @@ mod tests {
             );
         }
         assert!(!path.exists(), "a refused set must not create the store");
+    }
+
+    #[test]
+    fn a_key_and_an_environment_share_one_grammar() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secrets.json");
+        let longest = "a".repeat(MAX_KEY_BYTES);
+        let too_long = "a".repeat(MAX_KEY_BYTES + 1);
+        let refused = [
+            "",
+            ".hidden",
+            "has space",
+            "has/slash",
+            "has:colon",
+            too_long.as_str(),
+        ];
+        for name in refused {
+            let as_key = [
+                get(&path, name, "production").unwrap_err(),
+                set(&path, name, "production", "v").unwrap_err(),
+                unset(&path, name, "production").unwrap_err(),
+            ];
+            for err in as_key {
+                assert!(
+                    matches!(&err, SecretError::InvalidKey(k) if k == name),
+                    "{name:?} as a key: {err:?}"
+                );
+            }
+            let as_environment = [
+                get(&path, "K", name).unwrap_err(),
+                set(&path, "K", name, "v").unwrap_err(),
+                unset(&path, "K", name).unwrap_err(),
+            ];
+            for err in as_environment {
+                assert!(
+                    matches!(&err, SecretError::InvalidEnvironment(e) if e == name),
+                    "{name:?} as an environment: {err:?}"
+                );
+            }
+        }
+        assert!(!path.exists(), "a refused name must not create the store");
+
+        set(&path, &longest, &longest, "v").unwrap();
+        assert_eq!(
+            get(&path, &longest, &longest).unwrap().as_deref(),
+            Some("v")
+        );
+        assert!(unset(&path, &longest, &longest).unwrap());
     }
 
     #[test]
