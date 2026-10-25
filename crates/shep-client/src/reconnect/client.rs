@@ -67,17 +67,15 @@ impl Client {
         budget: Duration,
     ) -> Result<Reconnected, ConnectError> {
         let started = Instant::now();
-        let dial = self.dial().clone();
-        let dog_name = self.dog_name().map(str::to_owned);
         let predecessor = self.daemon().pid;
         let mut delay = RECONNECT_MIN_DELAY;
 
         loop {
             let left = budget.saturating_sub(started.elapsed());
             let attempt = Client::connect_dial(
-                &dial,
+                self.dial(),
                 Some(left.min(HANDSHAKE_TIMEOUT)),
-                dog_name.as_deref(),
+                self.dog_name(),
             )
             .await;
 

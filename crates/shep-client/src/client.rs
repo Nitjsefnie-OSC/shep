@@ -462,6 +462,14 @@ impl Client {
         }
     }
 
+    /// Hands `command` to the actor task behind this handle.
+    async fn send_command(&self, command: Command) -> Result<(), RequestError> {
+        self.commands
+            .send(command)
+            .await
+            .map_err(|_send_error| RequestError::Closed)
+    }
+
     /// Sends `body` with [`DEFAULT_DEADLINE`].
     ///
     /// Shorthand for [`Self::request_with_deadline`]`(body, None)`.
@@ -490,14 +498,12 @@ impl Client {
     ) -> Result<Response, RequestError> {
         let deadline = deadline.unwrap_or(DEFAULT_DEADLINE);
         let (reply_to, reply_rx) = oneshot::channel();
-        self.commands
-            .send(Command::Request {
-                body,
-                deadline_ms: Some(millis(deadline)),
-                reply_to,
-            })
-            .await
-            .map_err(|_send_error| RequestError::Closed)?;
+        self.send_command(Command::Request {
+            body,
+            deadline_ms: Some(millis(deadline)),
+            reply_to,
+        })
+        .await?;
 
         // Saturating: `deadline` is the caller's, and `Duration`'s `Add`
         // panics rather than saturating on overflow.
@@ -523,10 +529,7 @@ impl Client {
     /// Same as [`Self::request`].
     pub async fn subscribe(&self, topics: Vec<String>) -> Result<EventStream, RequestError> {
         let (reply_to, reply_rx) = oneshot::channel();
-        self.commands
-            .send(Command::Subscribe { reply_to })
-            .await
-            .map_err(|_send_error| RequestError::Closed)?;
+        self.send_command(Command::Subscribe { reply_to }).await?;
         let receiver = reply_rx.await.map_err(|_recv_error| RequestError::Closed)?;
 
         // reply is `Response::Subscribed`; unchecked, since interpreting
