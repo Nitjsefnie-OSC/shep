@@ -357,29 +357,18 @@ pub(crate) fn table_of<T: Render>(data: &T, presentation: Presentation) -> Strin
     .rendered
 }
 
-/// The terminal's width, or 80 when there is not one.
+/// The terminal's width, or 80 when there is not one
 ///
-/// `crossterm` is a `shep-cli` dependency only inside its `cfg(unix)`
-/// block, so a Windows build does not link a terminal stack it can never
-/// use. A width of `0`, which some terminals and CI harnesses report, is
-/// treated the same as absent: `render_boxed` would otherwise read it as
-/// drop every droppable column.
+/// A width of `0`, which some terminals and CI harnesses report, counts as
+/// absent: `render_boxed` would otherwise drop every droppable column.
 ///
-/// `pub(crate)` rather than private: its one caller, `lib.rs`'s
-/// `run_argv`, resolves [`crate::style::Presentation::width`] once at the
-/// seam, never [`table_of`] itself.
+/// `pub(crate)` for its one caller, `entry.rs`, which resolves
+/// [`crate::style::Presentation::width`] once rather than per table.
 pub(crate) fn terminal_width() -> usize {
-    #[cfg(unix)]
-    {
-        crossterm::terminal::size().map_or(80, |(w, _)| match w {
-            0 => 80,
-            w => usize::from(w),
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        80
-    }
+    crossterm::terminal::size().map_or(80, |(w, _)| match w {
+        0 => 80,
+        w => usize::from(w),
+    })
 }
 
 /// The `--format json` envelope for a verb that did part of what it was

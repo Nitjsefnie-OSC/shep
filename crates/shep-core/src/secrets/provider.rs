@@ -198,7 +198,7 @@ mod tests {
     /// IR-41 for the type the two halves travel in together.
     #[test]
     fn a_provider_cache_debug_never_prints_a_value() {
-        let cache = vercel_production();
+        let cache = vercel_env("production");
         assert_eq!(
             format!("{cache:?}"),
             "ProviderCache { namespaces: 1, pushed: 1 }"
