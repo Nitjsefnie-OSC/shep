@@ -39,6 +39,7 @@ pub use schema::{printed_keys, schema_keys};
 pub use scripted::FakeDaemon;
 use scripted::{SCRIPT_CHANNEL_CAPACITY, ScriptCommand, serve_scripted};
 use shared::{
-    bind, handshake, read_envelope, send_sample_event, write_err, write_event, write_reply,
+    accept_handshaked, bind, handshake, read_envelope, send_sample_event, write_err, write_event,
+    write_reply,
 };
 pub use shared::{control_address, sample_ack, sample_info};
