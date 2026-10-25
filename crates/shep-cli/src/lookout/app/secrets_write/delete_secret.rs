@@ -14,12 +14,11 @@ impl App {
         let Some(pane) = self.secrets_pane_mut() else {
             return Effect::None;
         };
-        if !pane.visible_row_indices().contains(&pane.selected) {
-            return Effect::None;
-        }
-        let Some(row) = pane.model.rows.get(pane.selected).cloned() else {
+        let Some(row) = pane.selected_visible_row() else {
             return Effect::None;
         };
+        // Arming tolerates a missing tab: the confirm re-reads it and
+        // refuses there, and a tab move disarms before then.
         let environment = pane.environment().map(str::to_string);
         if self.refuse_provider_row(&row) {
             return Effect::None;
