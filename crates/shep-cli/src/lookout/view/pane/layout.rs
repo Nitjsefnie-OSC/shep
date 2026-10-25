@@ -10,6 +10,7 @@ use ratatui::text::Line;
 use shep_core::config::ApplyGroup;
 
 use super::super::flock::{GUTTER, take_columns};
+use crate::lookout::pane::UNSET;
 use crate::output::width::{char_columns, text_columns};
 
 /// The close dialog's own interior width, once it is boxed: what
@@ -153,7 +154,7 @@ pub(super) fn widths(width: u16, show_lands: bool) -> (u16, u16, u16) {
     }
 }
 
-/// Masks a secret field's rendered value: `(unset)` passes through, since
+/// Masks a secret field's rendered value: [`UNSET`] passes through, since
 /// there is nothing to hide, and anything else becomes `<set>`.
 ///
 /// The one rule every render path in this file applies to a secret before
@@ -164,7 +165,7 @@ pub(super) fn widths(width: u16, show_lands: bool) -> (u16, u16, u16) {
 /// until they were routed through here, which is the state a fifth call
 /// site would have had to keep up.
 pub(super) fn mask_secret(secret: bool, raw: String) -> String {
-    if secret && raw != "(unset)" {
+    if secret && raw != UNSET {
         "<set>".to_owned()
     } else {
         raw

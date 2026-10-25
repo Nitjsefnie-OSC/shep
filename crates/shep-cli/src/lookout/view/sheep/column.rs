@@ -158,7 +158,7 @@ fn field_row_line(
     };
     let value_style = if pending {
         palette.attention()
-    } else if matches!(raw.as_str(), "(unset)" | "(default)") {
+    } else if matches!(raw.as_str(), pane::UNSET | pane::DEFAULT) {
         palette.muted()
     } else {
         Style::default()
@@ -180,8 +180,8 @@ fn field_row_line(
 /// `field`'s current value, the way this column shows it: `<set>` for a
 /// [`Field::secret`] one (never the value, the same guard
 /// [`ConfigPane::field_line`](crate::lookout::pane::ConfigPane) draws its own
-/// row through), `(unset)` for a JSON `null` or a key the config never
-/// carried, `(default)` when what is there is exactly the schema's own
+/// row through), [`pane::UNSET`] for a JSON `null` or a key the config never
+/// carried, [`pane::DEFAULT`] when what is there is exactly the schema's own
 /// default, else [`pane::resolved_display`]'s answer: a bare
 /// `MemSize`/`UpDuration` number annotated with its unit, the same as
 /// [`ConfigPane::display_value`](crate::lookout::pane::ConfigPane::display_value)
@@ -197,7 +197,7 @@ fn field_value_text(fields: &FieldSet, field: &Field, values: &Map<String, Value
         return pane::dog_names(dogs);
     }
     let raw = match values.get(&field.key) {
-        None | Some(Value::Null) => return "(unset)".to_owned(),
+        None | Some(Value::Null) => return pane::UNSET.to_owned(),
         Some(Value::String(text)) => text.clone(),
         Some(Value::Bool(flag)) => flag.to_string(),
         Some(Value::Number(number)) => number.to_string(),
@@ -206,7 +206,7 @@ fn field_value_text(fields: &FieldSet, field: &Field, values: &Map<String, Value
     if field.secret {
         "<set>".to_owned()
     } else if field.default.as_deref() == Some(raw.as_str()) {
-        "(default)".to_owned()
+        pane::DEFAULT.to_owned()
     } else {
         pane::resolved_display(fields, &field.key, &raw)
     }

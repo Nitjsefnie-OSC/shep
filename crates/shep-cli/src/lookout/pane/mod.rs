@@ -55,6 +55,7 @@ pub use dogs::{DogTableState, DogsPane, SheepDogEntry};
 pub use edit::PaneTyping;
 pub(in crate::lookout) use entries::EntryBody;
 pub use env::EnvTyping;
+pub(in crate::lookout) use fields::{DEFAULT, UNSET};
 pub(crate) use fields::{resolved_display, sheep_fields};
 pub use list::{ListPane, ListRow};
 pub(in crate::lookout) use tree::TreeRow;
