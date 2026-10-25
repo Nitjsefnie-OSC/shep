@@ -15,8 +15,20 @@ use super::super::field::{FieldSet, ValueKind};
 #[cfg(doc)]
 use super::ConfigPane;
 
+/// The text a config row shows for a value the config never carried, or
+/// carries as `null`: what [`render_json`] mints for a `null`, and the text
+/// every call site that has to tell an unset row from a set one matches on.
+/// One name for both, so a rendering change cannot leave a call site seeding
+/// an editor with the word `(unset)`.
+pub(in crate::lookout) const UNSET: &str = "(unset)";
+
+/// The text a row shows for a value equal to the schema's own default. The
+/// sheep pane's read-only config column mints it, being the one screen that
+/// compares a stored value against a default.
+pub(in crate::lookout) const DEFAULT: &str = "(default)";
+
 /// A JSON value rendered the way a config row draws it: a scalar shows
-/// bare, `null` shows `(unset)`, anything else shows compact JSON.
+/// bare, `null` shows [`UNSET`], anything else shows compact JSON.
 ///
 /// Shared by [`ConfigPane::value`], reading the stored value, and
 /// [`ConfigPane::edited_value`], reading a filed one, so the two sides of
@@ -24,7 +36,7 @@ use super::ConfigPane;
 /// drift.
 pub(super) fn render_json(value: &Value) -> String {
     match value {
-        Value::Null => "(unset)".to_owned(),
+        Value::Null => UNSET.to_owned(),
         Value::String(text) => text.clone(),
         Value::Bool(flag) => flag.to_string(),
         Value::Number(number) => number.to_string(),
@@ -33,7 +45,7 @@ pub(super) fn render_json(value: &Value) -> String {
 }
 
 /// How many entries an array or map of tables holds, the whole of what its
-/// row says: `3 entries`, `1 entry`, `0 entries`, or `(unset)` for an absent
+/// row says: `3 entries`, `1 entry`, `0 entries`, or [`UNSET`] for an absent
 /// or `null` value, or one that is neither an array nor an object.
 pub(super) fn entries_text(value: Option<&Value>) -> String {
     let count = match value {
@@ -133,5 +145,18 @@ pub(super) fn resolved_by_kind(kind: Option<ValueKind>, raw: &str) -> String {
             .parse::<UpDuration>()
             .map_or_else(|_| raw.to_owned(), |_| format!("{raw}ms")),
         None => raw.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The name every comparison reads is the name the row draws: a null
+    /// renders as [`UNSET`], so a call site that matches on the text cannot
+    /// drift from the text a row shows.
+    #[test]
+    fn the_unset_text_is_what_a_null_renders_as() {
+        assert_eq!(render_json(&Value::Null), UNSET);
     }
 }

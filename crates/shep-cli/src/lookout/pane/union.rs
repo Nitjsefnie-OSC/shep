@@ -16,11 +16,8 @@ use serde_json::{Map, Value};
 
 use super::super::edits::EditKey;
 use super::super::field::{Bounds, Field, FieldKind, FieldSet, KEY_SEP as SEP, Union};
-use super::fields::render_json;
+use super::fields::{UNSET, render_json};
 use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
-
-/// What a union row says when it holds nothing.
-const UNSET: &str = "(unset)";
 
 /// The edit key of the `kind` row of the union filed under `union`.
 fn tag_key(union: &str, tag: &str) -> String {

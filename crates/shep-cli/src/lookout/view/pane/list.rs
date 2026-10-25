@@ -6,7 +6,7 @@
 
 use ratatui::text::{Line, Span};
 
-use super::super::super::pane::{ConfigPane, ListPane, ListRow};
+use super::super::super::pane::{ConfigPane, ListPane, ListRow, UNSET};
 use super::super::super::theme::Palette;
 use super::super::flock::{fit, mark};
 use super::super::scroll::{self, Attempt};
@@ -86,7 +86,7 @@ pub(super) fn list_line(
                         .elements()
                         .get(item)
                         .cloned()
-                        .unwrap_or_else(|| "(unset)".to_owned());
+                        .unwrap_or_else(|| UNSET.to_owned());
                     mask_secret(secret, raw)
                 },
                 |buffer| buffer.drawn(value_w),

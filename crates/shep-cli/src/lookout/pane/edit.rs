@@ -11,7 +11,7 @@ use serde_json::Value;
 use super::super::edits::{EditKey, Edits};
 use super::super::field::{Field, FieldKind};
 use super::super::textbox::{TextBox, TextEdit};
-use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget};
+use super::{ConfigPane, PaneEdit, PaneRow, PaneTarget, UNSET};
 use crate::dog_settings::{self as validation, Refusal};
 
 // Link-only (IR-32): the env editor this one is never open beside, and
@@ -348,7 +348,7 @@ impl ConfigPane {
             String::new()
         } else {
             match self.value(&field.key) {
-                unset if unset == "(unset)" => String::new(),
+                unset if unset == UNSET => String::new(),
                 value => value,
             }
         };
