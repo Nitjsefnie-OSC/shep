@@ -169,12 +169,18 @@ async fn rearm_name_leaves_another_apps_group_alone() {
 
     let web_entry = armed_entry(0, 0, 1000, web.clone(), &fixture.paths);
     let worker_entry = armed_entry(1, 0, 1001, worker.clone(), &fixture.paths);
-    fixture
-        .registry
-        .arm(&web_entry, idle_prober(), &fixture.rig.extras, &fixture.handle);
-    fixture
-        .registry
-        .arm(&worker_entry, idle_prober(), &fixture.rig.extras, &fixture.handle);
+    fixture.registry.arm(
+        &web_entry,
+        idle_prober(),
+        &fixture.rig.extras,
+        &fixture.handle,
+    );
+    fixture.registry.arm(
+        &worker_entry,
+        idle_prober(),
+        &fixture.rig.extras,
+        &fixture.handle,
+    );
     tokio::task::yield_now().await;
 
     let worker_watch_before = fixture.registry.groups["worker"]
@@ -221,12 +227,18 @@ async fn rearm_name_rebuilds_a_multi_instance_group_exactly_once() {
 
     let entry_a = armed_entry(0, 0, 1000, app.clone(), &fixture.paths);
     let entry_b = armed_entry(1, 1, 1001, app.clone(), &fixture.paths);
-    fixture
-        .registry
-        .arm(&entry_a, idle_prober(), &fixture.rig.extras, &fixture.handle);
-    fixture
-        .registry
-        .arm(&entry_b, idle_prober(), &fixture.rig.extras, &fixture.handle);
+    fixture.registry.arm(
+        &entry_a,
+        idle_prober(),
+        &fixture.rig.extras,
+        &fixture.handle,
+    );
+    fixture.registry.arm(
+        &entry_b,
+        idle_prober(),
+        &fixture.rig.extras,
+        &fixture.handle,
+    );
     tokio::task::yield_now().await;
 
     let before_cron = fixture.registry.groups["web"]
