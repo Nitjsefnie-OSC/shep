@@ -153,12 +153,7 @@ mod tests {
     use crate::cli::Format;
 
     fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Json,
-        }
+        Streams::bare(out, err, Format::Json)
     }
 
     /// `$SHEP_HOME` is `dir` itself, so `paths.kv`'s parent exists:
