@@ -221,6 +221,90 @@ mod tests {
         )
     }
 
+    /// The workspace root, only when this build really sits inside this
+    /// repo's checkout.
+    ///
+    /// Two ancestors up is not proof of that on its own: a crate extracted
+    /// from a registry or from a `cargo vendor` tree has two ancestors too,
+    /// and the one that exists there is a crates.io source index or a vendor
+    /// directory rather than this repo. The marker is the root `Cargo.toml`
+    /// this checkout writes, the one that opens a `[workspace]` table and
+    /// names `crates/shep-cli` among its members. A foreign workspace that
+    /// vendors this crate names its own paths there instead, and a registry
+    /// or vendor root names no manifest at all. The one layout it cannot
+    /// tell apart is a foreign checkout that copies this crate to this same
+    /// `crates/shep-cli` member path: there the assertion fires and names
+    /// the README it compared.
+    fn workspace_root() -> Option<PathBuf> {
+        let dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+        let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
+        (manifest.contains("[workspace]") && manifest.contains("crates/shep-cli"))
+            .then(|| dir.to_path_buf())
+    }
+
+    /// Reads the workspace root's `README.md`, or `None` outside the
+    /// workspace checkout -- see [`workspace_root`] for what counts as one.
+    ///
+    /// # Panics
+    /// Inside the workspace, if the file cannot be read.
+    fn read_workspace_readme() -> Option<String> {
+        let dir = workspace_root()?;
+        Some(
+            std::fs::read_to_string(dir.join("README.md")).unwrap_or_else(|err| {
+                panic!("README.md exists in the workspace but could not be read: {err}")
+            }),
+        )
+    }
+
+    /// The grouped verb listing [`HELP_TEMPLATE`] renders, verbatim: the
+    /// lines from `Run things` through the last `HELP_GROUPS` heading,
+    /// stopping short of the blank line before `Aliases`.
+    fn help_template_group_block() -> &'static str {
+        let start = HELP_TEMPLATE
+            .find("Run things")
+            .expect("HELP_TEMPLATE opens its group listing with `Run things`");
+        let tail = &HELP_TEMPLATE[start..];
+        let end = tail
+            .find("\n\nAliases")
+            .expect("the group listing ends before the blank line above `Aliases`");
+        &tail[..end]
+    }
+
+    /// fails when the README's own copy of the grouped verb listing --
+    /// under "Everything else" -- drifts from what `shep --help` actually
+    /// renders.
+    ///
+    /// Nothing else reads that block: it is prose the generator does not
+    /// touch, so a verb move that updates [`HELP_GROUPS`] and
+    /// [`HELP_TEMPLATE`] leaves the README as a plausible-looking lie until
+    /// something reads it back.
+    ///
+    /// Skips outside the workspace checkout -- see
+    /// [`read_workspace_readme`] and [`workspace_root`].
+    #[test]
+    fn the_readme_names_the_same_verb_groups_as_help_does() {
+        let Some(readme) = read_workspace_readme() else {
+            return;
+        };
+
+        let fence_start = readme
+            .find("```text\n")
+            .expect("the README has a fenced verb-grouping block")
+            + "```text\n".len();
+        let fence_end = readme[fence_start..]
+            .find("```")
+            .expect("the fenced block closes");
+        let readme_block = readme[fence_start..fence_start + fence_end].trim_end();
+
+        assert_eq!(
+            readme_block,
+            help_template_group_block(),
+            "README.md's verb grouping has drifted from HELP_TEMPLATE's; \
+             copy the `Run things` .. `Help` lines from help.rs into README.md's \
+             \"Everything else\" block"
+        );
+    }
+
     #[test]
     fn the_command_tree_parses_and_is_internally_consistent() {
         use clap::CommandFactory;
