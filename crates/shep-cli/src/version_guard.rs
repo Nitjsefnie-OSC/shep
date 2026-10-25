@@ -110,16 +110,26 @@ const VERSION_SKEW_CAUSE: [&str; 2] = [
     "shepherd, which is still running the old code.",
 ];
 
-/// Why a skew happens when the shepherd is on another host, as the two lines
-/// the table form prints.
+/// Why a host refuses when its install is the older side of the protocol
+/// gap, as the two lines the table form prints.
 ///
 /// Not [`VERSION_SKEW_CAUSE`]: `cargo install` on this machine says nothing
 /// about a shepherd that lives elsewhere. And it names the wire, not the
 /// version, because over `--host` a version difference alone is a notice and
-/// never reaches this cause: see [`skew_of`].
-const VERSION_SKEW_HOST_CAUSE: [&str; 2] = [
-    "The shep installed on that host speaks a different wire protocol.",
+/// never reaches a cause: see [`skew_of`].
+const HOST_BEHIND_CAUSE: [&str; 2] = [
+    "The shep installed on that host speaks an older wire protocol.",
     "A reload runs the shep installed there; install this version there if they still differ.",
+];
+
+/// Why a host refuses when its install is the newer side of the gap: the fix
+/// runs here, and a reload there changes nothing, since that host already
+/// runs the newer install. Sending the operator after a reload instead
+/// downgrades the host that is up to date, which is the state a fleet is in
+/// while it upgrades one host at a time.
+const HOST_AHEAD_CAUSE: [&str; 2] = [
+    "The shep installed on that host speaks a newer wire protocol.",
+    "That host runs its own install, and it is this machine that is behind.",
 ];
 
 /// What a tolerated skew adds after the two builds are named, one per kind of
@@ -141,6 +151,10 @@ const PROTOCOL_NOTICE: &str = "Read verbs go ahead, but verbs that change the fl
 /// guard itself refused would be a dead end.
 pub(crate) const VERSION_SKEW_REMEDY: &str = RECOVERY_VERBS[1];
 
+/// The command that replaces this machine's shep, spelled as the help's
+/// Upgrading line and [`VERSION_SKEW_CAUSE`] spell it.
+const UPGRADE_COMMAND: &str = "cargo install shep";
+
 /// The command that fixes a skew, spelled for where the shepherd is.
 ///
 /// With a `host` it runs over ssh: the bare [`VERSION_SKEW_REMEDY`] would
@@ -152,14 +166,27 @@ fn version_skew_command(host: Option<&str>) -> String {
     }
 }
 
-/// The imperative naming [`version_skew_command`], in the two shapes the
-/// formats need.
+/// The command that fixes a protocol gap, spelled for the side of the gap it
+/// runs on.
+///
+/// Which side is behind decides it. A host behind this build is fixed there,
+/// over ssh. A host ahead of it is fixed here: reloading a host that already
+/// runs the newer install changes nothing, and installing this build there
+/// takes that host down with it.
+fn protocol_fix(host: Option<&str>, host_ahead: bool) -> String {
+    if host_ahead {
+        UPGRADE_COMMAND.to_owned()
+    } else {
+        version_skew_command(host)
+    }
+}
+
+/// The imperative naming a fix's command, in the two shapes the formats need.
 ///
 /// A `--format json` consumer gets a single-line message with the command
 /// inside it. The table form has layout, and its label carries no blank line
 /// after it: it sits directly on the command so the two read as one thing.
-fn version_skew_instruction(fmt: Format, host: Option<&str>) -> String {
-    let command = version_skew_command(host);
+fn version_skew_instruction(fmt: Format, command: &str) -> String {
     match fmt {
         Format::Json => format!("Run `{command}`."),
         // Two spaces of its own, on top of the indent `safe_message` gives
@@ -190,9 +217,9 @@ fn version_skew_summary(running: &str, host: Option<&str>) -> String {
 /// The opening clause of a refusal for a shepherd on another protocol: both
 /// protocol numbers, and both crate versions.
 ///
-/// The versions travel with the numbers because the remedy differs: a reload
-/// fixes a shepherd that is older than the shep installed beside it, and
-/// nothing but an install fixes a host whose install is.
+/// The versions travel with the numbers because the fix runs on whichever
+/// side of the gap is behind, and an operator who has both numbers can tell
+/// which side that is before upgrading anything.
 fn protocol_skew_summary(running: &str, peer: u32, host: Option<&str>) -> String {
     format!(
         "this shep is {} speaking protocol {PROTOCOL_VERSION}, {} is {running} speaking protocol {peer}",
@@ -202,9 +229,8 @@ fn protocol_skew_summary(running: &str, peer: u32, host: Option<&str>) -> String
 }
 
 /// The one line a tolerated skew prints: the two builds, what the operator
-/// may still do, and where the remedy runs.
-fn notice_line(summary: &str, tail: &str, host: Option<&str>) -> String {
-    let command = version_skew_command(host);
+/// may still do, and where the fix runs.
+fn notice_line(summary: &str, tail: &str, command: &str) -> String {
     let sentence = format!("{summary}. {tail} Run `{command}`.");
     // `daemon_version` arrives over the socket, so the sentence is
     // collapsed as the table refusal's is.
@@ -215,13 +241,14 @@ fn notice_line(summary: &str, tail: &str, host: Option<&str>) -> String {
 struct Refusal {
     /// The opening clause naming both builds.
     summary: String,
+    /// The command that fixes it, spelled for the machine it runs on.
+    command: String,
     /// Why it happened, as the two lines the table form prints.
     cause: [&'static str; 2],
 }
 
 /// The refusal as the one line a caller that lays out no table needs.
-fn one_line_refusal(summary: &str, host: Option<&str>) -> String {
-    let command = version_skew_command(host);
+fn one_line_refusal(summary: &str, command: &str) -> String {
     crate::terminal_safe::sanitise(&format!("{summary}. Run `{command}`.")).0
 }
 
@@ -249,28 +276,40 @@ fn skew_of(client: &Client) -> Skew {
     let running = ack.daemon_version.as_str();
     if host.is_some() {
         if ack.protocol != PROTOCOL_VERSION {
+            // The direction of the gap is the direction of the fix: a host
+            // behind this build is reloaded, a host ahead of it is not.
+            let ahead = ack.protocol > PROTOCOL_VERSION;
             let summary = protocol_skew_summary(running, ack.protocol, host);
+            let command = protocol_fix(host, ahead);
             return Skew {
-                notice: Some(notice_line(&summary, PROTOCOL_NOTICE, host)),
+                notice: Some(notice_line(&summary, PROTOCOL_NOTICE, &command)),
                 refusal: Some(Refusal {
                     summary,
-                    cause: VERSION_SKEW_HOST_CAUSE,
+                    command,
+                    cause: if ahead {
+                        HOST_AHEAD_CAUSE
+                    } else {
+                        HOST_BEHIND_CAUSE
+                    },
                 }),
             };
         }
         if running != env!("CARGO_PKG_VERSION") {
             let summary = version_skew_summary(running, host);
+            let command = version_skew_command(host);
             return Skew {
-                notice: Some(notice_line(&summary, HOST_CRATE_NOTICE, host)),
+                notice: Some(notice_line(&summary, HOST_CRATE_NOTICE, &command)),
                 refusal: None,
             };
         }
     } else if running != env!("CARGO_PKG_VERSION") {
         let summary = version_skew_summary(running, None);
+        let command = version_skew_command(None);
         return Skew {
-            notice: Some(notice_line(&summary, LOCAL_CRATE_NOTICE, None)),
+            notice: Some(notice_line(&summary, LOCAL_CRATE_NOTICE, &command)),
             refusal: Some(Refusal {
                 summary,
+                command,
                 cause: VERSION_SKEW_CAUSE,
             }),
         };
@@ -297,10 +336,10 @@ struct Skew {
 /// each answers.
 ///
 /// # Errors
-/// The one-line refusal, with the remedy that runs over ssh, when `guard` is
-/// [`VersionGuard::Enforce`] and that host's shepherd speaks a protocol other
-/// than [`PROTOCOL_VERSION`]. Otherwise the notice to print, if there is one:
-/// none for [`VersionGuard::Exempt`].
+/// The one-line refusal, with the fix spelled for the side of the gap that is
+/// behind, when `guard` is [`VersionGuard::Enforce`] and that host's shepherd
+/// speaks a protocol other than [`PROTOCOL_VERSION`]. Otherwise the notice to
+/// print, if there is one: none for [`VersionGuard::Exempt`].
 pub(crate) fn host_skew(client: &Client, guard: VersionGuard) -> Result<Option<String>, String> {
     let skew = skew_of(client);
     match (guard, skew.refusal) {
@@ -308,7 +347,7 @@ pub(crate) fn host_skew(client: &Client, guard: VersionGuard) -> Result<Option<S
         (VersionGuard::Warn, _) => Ok(skew.notice),
         (VersionGuard::Enforce, None) => Ok(skew.notice),
         (VersionGuard::Enforce, Some(refusal)) => {
-            Err(one_line_refusal(&refusal.summary, client.host()))
+            Err(one_line_refusal(&refusal.summary, &refusal.command))
         }
     }
 }
@@ -329,8 +368,9 @@ pub(crate) fn host_skew(client: &Client, guard: VersionGuard) -> Result<Option<S
 /// `guard` is [`VersionGuard::Enforce`] and this link refuses the difference.
 /// A [`VersionGuard::Exempt`] or [`VersionGuard::Warn`] verb is always `Ok`.
 ///
-/// A client reached over ssh gets a refusal or a notice that names its host
-/// and a remedy that runs there.
+/// A client reached over ssh gets a refusal or a notice that names its host,
+/// and a fix on whichever side of the gap is behind: over ssh for a host on
+/// an older protocol, on this machine for one on a newer protocol.
 pub(crate) fn refuse_version_skew(
     streams: &mut Streams<'_>,
     client: &Client,
@@ -348,24 +388,27 @@ pub(crate) fn refuse_version_skew(
         (VersionGuard::Enforce, Some(refusal)) => refusal,
     };
     let code = ExitCode::VersionSkew;
-    let host = client.host();
-    let Refusal { summary, cause } = refusal;
+    let Refusal {
+        summary,
+        command,
+        cause,
+    } = refusal;
     match streams.fmt {
         // One line, one envelope. A `--format json` consumer has no use for
         // the layout below, and it still gets every fact in `error.message`.
         Format::Json => {
             let cause = cause.join(" ");
-            let instruction = version_skew_instruction(Format::Json, host);
+            let instruction = version_skew_instruction(Format::Json, &command);
             streams.fail(code, &format!("{summary}. {cause} {instruction}"));
         }
-        // The remedy has to sit on a line of its own to be copied.
+        // The fix has to sit on a line of its own to be copied.
         Format::Table => {
             let cause = cause.join("\n");
             // `daemon_version` arrives over the socket, and the table
             // emitter keeps line breaks, so this collapses the one fragment
             // a peer worded before it joins prose that does not.
             let summary = crate::terminal_safe::sanitise(&summary).0;
-            let instruction = version_skew_instruction(Format::Table, host);
+            let instruction = version_skew_instruction(Format::Table, &command);
             streams.fail(code, &format!("{summary}\n\n{cause}\n\n{instruction}"));
         }
     }

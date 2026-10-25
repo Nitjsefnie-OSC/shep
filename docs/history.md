@@ -287,8 +287,11 @@ crate-version difference refuses nothing. `skew_of` compares
 install: the half-replaced machine the crate comparison exists for cannot
 exist across ssh, and a fleet upgrades one host at a time. Same protocol and
 a different version: the verb runs, and one `version_skew` notice goes to
-stderr. Another protocol: exit 12, both numbers named, remedy
-`ssh <dest> shep daemon reload`. The local socket is unchanged, and so are
+stderr. Another protocol: exit 12, both numbers named, and the fix on
+whichever side of the gap is behind: `ssh <dest> shep daemon reload` for a
+host on an older protocol, `cargo install shep` on this machine for one on a
+newer protocol, since a half-upgraded fleet has hosts running ahead of the
+operator's laptop. The local socket is unchanged, and so are
 `Exempt` and `Warn`. `version_guard/tests.rs` pins each side of the table and
 `fleet/tests.rs` pins it across a `hosts` list.
 

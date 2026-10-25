@@ -316,7 +316,9 @@ async fn follow_refuses_json_and_a_pipe_for_different_reasons() {
 /// which is not the one in skew.
 ///
 /// The skew here is the protocol, because over `--host` that is the only
-/// difference that refuses: see
+/// difference that refuses, and the host is the side behind it, which is why
+/// the fix runs there: see
+/// [`a_host_on_a_newer_protocol_is_refused_naming_the_local_upgrade`] and
 /// [`a_host_on_another_version_but_the_same_protocol_is_written_to_and_warns`].
 #[cfg(unix)]
 #[tokio::test]
@@ -494,6 +496,76 @@ async fn a_host_skew_under_an_enforcing_guard_is_one_line_naming_both_protocols(
         "{message}"
     );
     assert!(message.contains("ssh amp2 shep daemon reload"), "{message}");
+}
+
+/// The other side of the gap, which is what a fleet looks like halfway
+/// through a host-by-host upgrade: `amp2` is already on the newer shep and
+/// this machine is not. A reload there runs the newer install that is already
+/// running, so the refusal has to send the operator the other way.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_host_on_a_newer_protocol_is_refused_naming_the_local_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let peer = PROTOCOL_VERSION + 1;
+    let client = client_over_host(dir.path(), "0.99.0", peer).await;
+
+    for fmt in [Format::Table, Format::Json] {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = {
+            let mut streams = buffered_streams(&mut out, &mut err);
+            streams.fmt = fmt;
+            refuse_version_skew(&mut streams, &client, VersionGuard::Enforce)
+                .expect_err("a shepherd on another protocol is not writable")
+        };
+
+        assert_eq!(code, ExitCode::VersionSkew, "{fmt:?}");
+        let text = String::from_utf8(err).unwrap();
+        assert!(
+            text.contains(&format!(
+                "the shepherd on amp2 is 0.99.0 speaking protocol {peer}"
+            )),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("speaking protocol {PROTOCOL_VERSION}")),
+            "{text}"
+        );
+        assert!(text.contains("newer wire protocol"), "{text}");
+        assert!(text.contains("cargo install shep"), "{text}");
+        assert!(
+            !text.contains("ssh amp2 shep daemon reload"),
+            "a reload on a host that is already ahead changes nothing: {text}"
+        );
+        assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
+    }
+}
+
+/// A fleet caller flattens the refusal to one line, so the fix has to survive
+/// on it too: the one line for a host this build is behind names the upgrade
+/// that runs here and no ssh command at all.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_host_ahead_of_this_build_is_one_line_naming_the_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let peer = PROTOCOL_VERSION + 1;
+    let client = client_over_host(dir.path(), "0.99.0", peer).await;
+
+    let message = host_skew(&client, VersionGuard::Enforce)
+        .expect_err("a host on another protocol is a failure of its own");
+    assert_eq!(message.lines().count(), 1, "{message}");
+    assert!(message.contains("cargo install shep"), "{message}");
+    assert!(
+        !message.contains("ssh amp2"),
+        "the ssh reload is the fix for the other direction: {message}"
+    );
+    // A read verb over the same host is told the same fix, so a listing and
+    // a write cannot point an operator at two different machines.
+    let notice = host_skew(&client, VersionGuard::Warn)
+        .unwrap()
+        .expect("a refused protocol is still worth naming to a read verb");
+    assert!(notice.contains("cargo install shep"), "{notice}");
+    assert!(!notice.contains("ssh amp2"), "{notice}");
 }
 
 /// The roll is this machine's `flock.json`. A dead host that printed it
