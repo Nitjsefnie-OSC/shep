@@ -12,19 +12,11 @@ use shep_core::paths::ShepPaths;
 use super::*;
 use crate::cli::AdoptArgs;
 use crate::commands::dogs::adopt;
+use crate::commands::dogs::test_support::streams;
 
 /// A budget for tests that are not about the budget: the probe spawns a real
 /// child and bounds its wait on a wall clock.
 const BUDGET: Duration = Duration::from_secs(30);
-
-fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-    Streams {
-        out,
-        err,
-        style: crate::style::Presentation::BARE,
-        fmt: crate::cli::Format::Table,
-    }
-}
 
 /// A dog that answers [`MANIFEST_FLAG`](shep_core::dogs::MANIFEST_FLAG) with
 /// `manifest` and nothing to the other two probes.

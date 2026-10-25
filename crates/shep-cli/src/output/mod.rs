@@ -83,11 +83,12 @@ pub struct OutputEnvelope<'a, T> {
 
 /// The two streams a command writes to.
 ///
-/// Production wires the process's own; tests wire a pair of `Vec<u8>`, which
-/// is what makes every renderer assertion hermetic and safe under the
-/// parallel `cargo test` gate. `&mut dyn Write` has no `Debug`, so this needs
-/// a manual one: print `Streams { .. }` and nothing else (pinned by this
-/// module's own `streams_debug_is_the_redacted_placeholder` test).
+/// Production wires the process's own; tests build a pair of `Vec<u8>`
+/// through `Streams::bare`, which is what makes every renderer assertion
+/// hermetic and safe under the parallel `cargo test` gate. `&mut dyn Write`
+/// has no `Debug`, so this needs a manual one: print `Streams { .. }` and
+/// nothing else (pinned by this module's own
+/// `streams_debug_is_the_redacted_placeholder` test).
 pub struct Streams<'a> {
     /// Rendered command output: what `emit` writes to.
     ///
@@ -161,6 +162,36 @@ impl Streams<'_> {
     /// does.
     pub fn aside(&mut self, code: &str, message: &str) {
         let _ = emit_notice(&mut *self.err, self.fmt, code, message);
+    }
+}
+
+/// The constructor the command tests build their streams from, test-only
+/// because production has no reason to want a fixed presentation: it wires
+/// the process's own streams and the level the operator resolved, in
+/// `dispatch.rs`.
+///
+/// `BARE` because these tests assert on words, not colour: a fixture that
+/// carried a real presentation would pin escape bytes into assertions meant
+/// to survive a style change.
+///
+/// Takes `&mut dyn io::Write` rather than `&mut Vec<u8>` so a test can hand
+/// it a writer that fails, or one that discards, as well as a buffer; a
+/// `Vec<u8>` coerces at the call site.
+#[cfg(test)]
+impl<'a> Streams<'a> {
+    /// A `Streams` that writes to `out` and `err` exactly as given, at
+    /// [`Presentation::BARE`] and format `fmt`.
+    pub(crate) fn bare(
+        out: &'a mut dyn io::Write,
+        err: &'a mut dyn io::Write,
+        fmt: Format,
+    ) -> Self {
+        Self {
+            out,
+            err,
+            style: Presentation::BARE,
+            fmt,
+        }
     }
 }
 
@@ -544,6 +575,36 @@ pub(crate) mod tests {
             fmt: Format::Table,
         };
         assert_eq!(format!("{streams:?}"), "Streams { .. }");
+    }
+
+    /// `Streams::bare` is what every command test builds its streams from,
+    /// so it must hand each buffer to the field the caller named: a test
+    /// that reads `out` would otherwise pass on what the command wrote to
+    /// `err`. Both writes go through the struct's own methods, so this
+    /// pins the fields and not just the constructor.
+    #[test]
+    fn bare_streams_write_to_the_buffers_given_and_carry_their_format() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let (fmt, style) = {
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
+            streams.note("OUT", "to-out");
+            streams.aside("ERR", "to-err");
+            (streams.fmt, streams.style)
+        };
+
+        let out_text = String::from_utf8(out).unwrap();
+        let err_text = String::from_utf8(err).unwrap();
+        assert!(
+            out_text.contains("to-out") && !out_text.contains("to-err"),
+            "`out` must hold only what the command wrote to stdout: {out_text:?}"
+        );
+        assert!(
+            err_text.contains("to-err") && !err_text.contains("to-out"),
+            "`err` must hold only what the command wrote to stderr: {err_text:?}"
+        );
+        assert_eq!(fmt, Format::Json);
+        assert_eq!(style, Presentation::BARE);
     }
 
     #[test]

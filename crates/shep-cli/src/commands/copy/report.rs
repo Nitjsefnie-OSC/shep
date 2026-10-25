@@ -119,16 +119,6 @@ mod tests {
         )
     }
 
-    /// A stream pair in one output form, bare so a test reads what was painted.
-    fn streams<'a>(fmt: Format, out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        }
-    }
-
     /// A report prints its changes and its verdict.
     #[test]
     fn a_report_prints_its_changes_and_its_verdict() {
@@ -184,7 +174,7 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = streams(Format::Json, &mut out, &mut err);
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
         let plan = Plan {
             changes: vec![
                 Change {
@@ -235,7 +225,7 @@ mod tests {
     fn the_table_form_keeps_the_change_list_on_stdout() {
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = streams(Format::Table, &mut out, &mut err);
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let plan = Plan {
             changes: vec![Change {
                 key: "restart_delay".to_string(),

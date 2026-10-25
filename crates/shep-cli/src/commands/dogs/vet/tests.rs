@@ -4,16 +4,7 @@ use shep_core::protocol::MIN_SUPPORTED;
 use super::*;
 use crate::cli::AdoptArgs;
 use crate::commands::dogs::adopt;
-
-/// Every test here drives a dog verb under `--format table`.
-fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-    Streams {
-        out,
-        err,
-        style: crate::style::Presentation::BARE,
-        fmt: crate::cli::Format::Table,
-    }
-}
+use crate::commands::dogs::test_support::streams;
 
 fn chmod(path: &Path, mode: u32) {
     let mut perms = std::fs::metadata(path).unwrap().permissions();

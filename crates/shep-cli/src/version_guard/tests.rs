@@ -6,17 +6,11 @@ use shep_core::protocol::{Request, Response};
 use shep_core::status::ProcStatus;
 
 use super::*;
-use crate::style;
 
 /// A [`Streams`] over two byte buffers, so a refusal's exact text can be
-/// read back. `BARE` because these tests assert on words, not colour.
+/// read back, in the table form these tests drive.
 fn buffered_streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-    Streams {
-        out,
-        err,
-        style: style::Presentation::BARE,
-        fmt: Format::Table,
-    }
+    Streams::bare(out, err, Format::Table)
 }
 
 /// A real [`Client`], past a real handshake, whose peer announced

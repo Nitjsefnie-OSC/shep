@@ -227,15 +227,9 @@ mod tests {
     use crate::cli::Format;
     use crate::exit::ExitCode;
     use crate::output::Streams;
-    use crate::style;
 
     fn buffered_streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: style::Presentation::BARE,
-            fmt: Format::Table,
-        }
+        Streams::bare(out, err, Format::Table)
     }
 
     /// Drives the guard against a client from a fake shepherd: `run` itself
