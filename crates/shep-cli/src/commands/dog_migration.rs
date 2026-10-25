@@ -805,10 +805,10 @@ mod tests {
     /// race has to be to be worth having.
     const ROUNDS_OF_CONTENTION: u32 = 20;
 
-    /// The pair this module's own doc comment names as `dogs.toml`'s two
-    /// writers: [`migrate_dog_sections`], which runs at
-    /// `commands/daemon/lifecycle.rs:150` (boot) and again at
-    /// `commands/daemon/reload.rs:148` (reload), and
+    /// The two `dogs.toml` writers this test races, both named in this
+    /// module's own doc comment: [`migrate_dog_sections`], which runs at
+    /// `commands/daemon/lifecycle.rs` (boot) and again at
+    /// `commands/daemon/reload.rs` (reload), and
     /// [`shep_daemon::dogs::set_dog_section`], which a running shepherd
     /// calls from behind `Request::SetDogConfig` whenever the config pane
     /// edits a dog's section. Both are reachable at once: a `shep reload`
