@@ -2,6 +2,8 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::versioned_file::Versioned;
+
 /// The on-disk format's version.
 ///
 /// A store carrying a higher version is refused rather than read or
@@ -41,6 +43,12 @@ impl fmt::Debug for SecretFile {
             .field("version", &self.version)
             .field("keys", &self.entries.len())
             .finish()
+    }
+}
+
+impl Versioned for SecretFile {
+    fn version(&self) -> u32 {
+        self.version
     }
 }
 

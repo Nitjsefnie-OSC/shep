@@ -1,6 +1,7 @@
 use super::error::SecretError;
 use super::format::{MAX_KEY_BYTES, MAX_VALUE_BYTES, SECRETS_VERSION, SecretFile};
 use crate::file_lock::FileLock;
+use crate::versioned_file;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -50,22 +51,10 @@ pub(super) fn check_environment(environment: &str) -> Result<(), SecretError> {
     }
 }
 
-/// Reads whichever version of the store `path` currently names.
-///
-/// A missing file reads as an empty, current-version store: reading against
-/// a fresh `$SHEP_HOME` should not fail with `ENOENT`. Any other
-/// `io::Error` propagates.
+/// Reads whichever version of the store `path` currently names: shorthand
+/// for [`crate::versioned_file::read_versioned`] at [`SECRETS_VERSION`].
 pub(super) fn read_file(path: &Path) -> Result<SecretFile, SecretError> {
-    let raw = match std::fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(SecretFile::default()),
-        Err(err) => return Err(SecretError::Io(err)),
-    };
-    let file: SecretFile = serde_json::from_str(&raw)?;
-    if file.version > SECRETS_VERSION {
-        return Err(SecretError::FutureVersion(file.version));
-    }
-    Ok(file)
+    versioned_file::read_versioned(path, SECRETS_VERSION).map_err(SecretError::from)
 }
 
 /// Rewrites `path` to hold exactly `file`.

@@ -62,6 +62,10 @@ pub mod status;
 // above it needs a `cfg`.
 pub mod transport;
 pub mod values;
+// The read shared by `kv.json`, `overrides.json` and `secrets.json`: a
+// missing file is the empty store, a newer `version` is refused. Private to
+// this crate: the three stores keep their own public error enums.
+mod versioned_file;
 
 /// One-import surface for downstream crates
 pub mod prelude {
