@@ -24,7 +24,9 @@ use tokio::task::JoinHandle;
 /// forever, so every arm above the heartbeat is disabled once it runs dry;
 /// arm 4's is live, since an empty `FuturesUnordered` fills again. The redraw
 /// runs after the `select!`, gated on `dirty` and [`MIN_REDRAW`]; the feed
-/// and the lamb fetch ride that same gate.
+/// and the lamb fetch ride that same gate. Eight arguments, hence the
+/// `#[allow]`.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_ui<B: Backend, S, L>(
     mut app: App,
     mut terminal: Terminal<B>,
