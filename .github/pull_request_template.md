@@ -32,6 +32,6 @@ it closes: "Closes #N". -->
 ## Before you ask for review
 
 - [ ] Every commit subject is a conventional one, `type(scope): summary`. release-plz reads individual commits and silently drops what it cannot parse, so an unreadable subject contributes nothing to the changelog and nothing to the version bump. Accepted types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `chore`, `style`.
-- [ ] Anything that breaks a caller carries a `!`, on the commit that breaks it, in the crate that breaks. A `!` on this title is read by nobody.
+- [ ] Anything that breaks a caller carries a `!`, on the commit that breaks it, in the crate that breaks. The title becomes the merge commit's subject, which release-plz reads too, so a `!` there has to match the commits.
 - [ ] If this changes anything an operator types or sees, `web/` says so too. Regenerate with `./web/scripts/generate-cli-reference.sh`, then read the hand-written pages under `web/src/pages/docs/`.
 - [ ] I can explain every line of this. Using an AI to write it is fine and common here. Opening a pull request you cannot answer questions about is not, whoever or whatever wrote it.
