@@ -20,7 +20,7 @@ use nix::fcntl::OFlag;
 /// server: `contain` does the `eprintln!`, this only builds the string.
 fn symlink_refusal_notice(path: &Path) -> String {
     format!(
-        "shep serve: refused {} — a symlink is not permitted in the docroot; \
+        "shep serve: refused {}: a symlink is not permitted in the docroot; \
          pass --follow-symlinks to allow it (this reopens the check-then-open \
          race refusing symlinks closes)",
         path.display(),

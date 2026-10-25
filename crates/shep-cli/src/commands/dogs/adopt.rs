@@ -4,21 +4,31 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use shep_client::Client;
+use shep_client::{Client, RequestError};
 use shep_core::paths::{ShepPaths, user_home};
-use shep_core::protocol::{DogSource, Request, Response};
+use shep_core::permissions::Grants;
+use shep_core::protocol::{DogSource, Request, Response, RpcErrorCode};
 
 use crate::cli::AdoptArgs;
+use crate::commands::dog_migration::{
+    DefaultsOutcome, DogMigrationError, migrate_dog_sections, seed_dog_defaults,
+};
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::shep_toml::ShepToml;
 use crate::exit::ExitCode;
-use crate::output::{DogActionRow, Streams, emit, write_outcome};
+use crate::output::{DogActionStatus, Streams};
 
+use super::consent::{Input, Review, Verdict, consent_from, review};
+use super::depends::warn_of_unmet_depends;
+use super::grants::warn_if_unenforced;
 use super::vet::{
-    DogSchema, fail_adopt, report_dog_version, vet_binary, warn_group_writable,
+    DogSchema, fail_adopt, report_channel_ask, report_dog_version, vet_binary, warn_group_writable,
     warn_unreadable_schema,
 };
-use super::{NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, fail_config};
+use super::{
+    DECLINED_STATUS, DISABLED_STATUS, NO_SHEPHERD_ENABLE_STATUS, connect_or_absent,
+    emit_dog_action, fail_config,
+};
 
 /// `shep adopt <path> [--name <name>]`: vets a binary shep has never seen,
 /// records it, and starts it if a shepherd is running.
@@ -28,6 +38,16 @@ use super::{NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, fail_config};
 /// defaulted name goes through the same [`collides_with_a_verb`] refusal an
 /// explicit `--name` would.
 pub async fn adopt(streams: &mut Streams<'_>, paths: &ShepPaths, args: &AdoptArgs) -> ExitCode {
+    adopt_asking(streams, paths, args, &mut Input::stdin()).await
+}
+
+/// [`adopt`], asking at `input` rather than at this process's stdin.
+pub(super) async fn adopt_asking(
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    args: &AdoptArgs,
+    input: &mut Input,
+) -> ExitCode {
     let home = user_home(&|key| std::env::var_os(key));
     let path_var = std::env::var_os("PATH");
     let candidate = resolve_adopt_path(&args.path, home.as_deref(), path_var.as_deref());
@@ -44,33 +64,176 @@ pub async fn adopt(streams: &mut Streams<'_>, paths: &ShepPaths, args: &AdoptArg
         Ok(vetted) => vetted,
         Err(refusal) => return fail_adopt(streams, &candidate, &refusal),
     };
-    let path = vetted.path;
+    let path = vetted.path.clone();
     for writable in &vetted.group_writable {
         warn_group_writable(streams, writable);
     }
     if let Some(answer) = &vetted.answer {
         report_dog_version(streams, &name, answer);
     }
+    let channel = vetted.answer.as_ref().is_some_and(|answer| answer.channel);
+    if channel {
+        report_channel_ask(streams, &name);
+    }
     // The schema is stored by nothing and asked fresh where it is needed,
     // so the only thing to report is the one answer that is a bug.
     if vetted.schema == DogSchema::Unreadable {
         warn_unreadable_schema(streams, &name);
     }
-    if let Err(err) = ShepToml::try_edit(&paths.daemon_config, |cfg| cfg.adopt_dog(&name, &path)) {
-        return fail_config(streams, &err);
+    // Before anything is written: a refusal here, for a dog that requires
+    // what this shep does not know or for want of a terminal, leaves
+    // `shep.toml` as it was.
+    let reviewed = match review(vetted.manifest.as_ref()) {
+        Ok(reviewed) => reviewed,
+        Err(refusal) => return refusal.report(streams, &name, "adopted"),
+    };
+    let verdict = match ask_before_adopting(streams, paths, &name, &reviewed, args.yes, input) {
+        Ok(verdict) => verdict,
+        Err(code) => return code,
+    };
+    let (adopted, grants, declined) = match ShepToml::try_edit(&paths.daemon_config, |cfg| {
+        cfg.adopt_dog(&name, &path, channel)?;
+        // The answer was asked against a read taken before the question. A
+        // grant another shep wrote since was decided by someone with the
+        // same say, and stands.
+        let decided_meanwhile = cfg.granted(&name)?.is_some();
+        // Whether a no is what this write left: the daemon half follows the
+        // file, not the raw answer, so a dog granted meanwhile is not stopped.
+        let mut declined = false;
+        match &verdict {
+            Some(_) if decided_meanwhile => {}
+            Some(Verdict::Grant(Some(grants))) => cfg.set_granted(&name, grants)?,
+            // `adopt_dog` enables; a no leaves the dog adopted and off.
+            Some(Verdict::Declined) => {
+                cfg.disable_dog(&name);
+                declined = true;
+            }
+            Some(Verdict::Grant(None)) | None => {}
+        }
+        Ok((cfg.adopted_dog_names(), cfg.granted(&name)?, declined))
+    }) {
+        Ok(recorded) => recorded,
+        Err(err) => return fail_config(streams, &err),
+    };
+    // The registration is in, so the defaults half is the last config write
+    // `adopt` makes and it still precedes any socket: a dog adopted against
+    // no shepherd gets its section too.
+    if let Some(defaults) = vetted
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.defaults.as_deref())
+    {
+        // A home that still holds `[dog.<name>]` values in `shep.toml` must
+        // move them before a seeded section could sit beside them: seeding
+        // first would write a second copy of a section the boot's migration
+        // then refuses to move for holding values in both files. The
+        // migration is what the next boot runs anyway, and it is idempotent,
+        // so running it here only moves that boot's work earlier, where the
+        // operator is watching. Same report as `shep reload` gives.
+        match migrate_dog_sections(paths) {
+            Ok(moved) if moved.is_empty() => {}
+            Ok(moved) => streams.aside(
+                "adopt",
+                &format!(
+                    "moved dog config out of shep.toml and into dogs.toml: {}",
+                    moved.join(", ")
+                ),
+            ),
+            Err(err) => return fail_dogs_config(streams, &err),
+        }
+        match seed_dog_defaults(paths, &name, defaults) {
+            Ok(DefaultsOutcome::Written) => report_defaults_written(streams, &name),
+            Ok(DefaultsOutcome::Kept | DefaultsOutcome::Empty) => {}
+            Ok(DefaultsOutcome::Unreadable) => warn_unreadable_defaults(streams, &name),
+            Err(err) => return fail_dogs_config(streams, &err),
+        }
+    }
+    if let Some(manifest) = &vetted.manifest {
+        warn_of_unmet_depends(streams, &name, manifest, &adopted);
     }
     let client = match connect_or_absent(paths, streams).await {
         Ok(client) => client,
         Err(code) => return code,
     };
-    adopt_after_config(streams, &name, &path, client.as_ref()).await
+    if declined {
+        let source = DogSource::Adopted {
+            grants: None,
+            path: path.display().to_string(),
+            channel,
+        };
+        return declined_after_config(streams, &name, source, client.as_ref()).await;
+    }
+    adopt_after_config(streams, &name, &path, channel, grants, client.as_ref()).await
+}
+
+/// A declined adopt's daemon half: the config now has the dog disabled, so a
+/// shepherd already running it (a re-adopt of a dog from before grants) is told
+/// to stop it. With no shepherd there is nothing running to stop.
+pub(super) async fn declined_after_config(
+    streams: &mut Streams<'_>,
+    name: &str,
+    source: DogSource,
+    client: Option<&Client>,
+) -> ExitCode {
+    let Some(client) = client else {
+        return emit_dog_action(streams, "adopt", name, source, DECLINED_STATUS);
+    };
+    match client
+        .request(Request::DisableDog {
+            name: name.to_string(),
+        })
+        .await
+    {
+        Ok(Response::Deleted(_ids)) => {
+            emit_dog_action(streams, "adopt", name, source, DISABLED_STATUS)
+        }
+        // The shepherd holds no such dog: nothing was running to stop.
+        Err(RequestError::Rpc(rpc)) if rpc.code == RpcErrorCode::NotFound => {
+            emit_dog_action(streams, "adopt", name, source, DECLINED_STATUS)
+        }
+        Ok(_unrecognised) => unexpected_response(streams),
+        Err(err) => client_error(streams, &err),
+    }
+}
+
+/// Asks whether to grant `name` what it declares, unless `shep.toml` already
+/// holds a decision for it.
+///
+/// `None` is that earlier decision standing: a re-adopt of a dog that was
+/// granted something keeps it, and the answer to a changed declaration is a
+/// later step's. `Some` is this run's answer.
+///
+/// # Errors
+/// The [`ExitCode`] already reported to `streams`.
+fn ask_before_adopting(
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    name: &str,
+    reviewed: &Review,
+    yes: bool,
+    input: &mut Input,
+) -> Result<Option<Verdict>, ExitCode> {
+    let cfg =
+        ShepToml::read_only(&paths.daemon_config).map_err(|err| fail_config(streams, &err))?;
+    if cfg
+        .granted(name)
+        .map_err(|err| fail_config(streams, &err))?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    consent_from(streams, name, "adopt", reviewed, yes, input).map(Some)
 }
 
 /// Resolves `raw`, `shep adopt`'s own path argument, before it reaches
 /// [`vet_binary`]: as given, with a leading `~/` expanded against `home`,
-/// then looked up on `path_var`. First hit wins; if none finds anything,
-/// `raw` comes back unchanged so `vet_binary` reports the same
-/// [`AdoptRefusal::Missing`](super::vet::AdoptRefusal::Missing) it always has.
+/// then looked up on `path_var`. First hit wins. A step moves on only when
+/// its lookup proves the path absent: one that fails, an unsearchable
+/// directory say, counts as a hit, so `vet_binary` reports it as
+/// [`AdoptRefusal::Inaccessible`](super::vet::AdoptRefusal::Inaccessible).
+/// If no step finds anything, `raw` comes back unchanged and `vet_binary`
+/// reports the same [`AdoptRefusal::Missing`](super::vet::AdoptRefusal::Missing)
+/// it always has.
 ///
 /// `home` and `path_var` are parameters, read once by [`adopt`], so this
 /// stays a pure function of its inputs: this crate forbids `unsafe`, and a
@@ -78,13 +241,16 @@ pub async fn adopt(streams: &mut Streams<'_>, paths: &ShepPaths, args: &AdoptArg
 /// one [`vet_binary`] call, so this changes what `adopt` can find, never
 /// what it vets.
 fn resolve_adopt_path(raw: &Path, home: Option<&Path>, path_var: Option<&OsStr>) -> PathBuf {
-    if raw.exists() {
+    // Only a lookup that proves absence moves on: one that fails, an
+    // unsearchable directory say, leaves `vet_binary` to report why.
+    let not_absent = |path: &Path| !matches!(path.try_exists(), Ok(false));
+    if not_absent(raw) {
         return raw.to_path_buf();
     }
     if let Some(expanded) = raw
         .to_str()
         .and_then(|value| expand_tilde_candidate(value, home))
-        && expanded.exists()
+        && not_absent(&expanded)
     {
         return expanded;
     }
@@ -197,10 +363,15 @@ fn default_dog_name(path: &Path) -> String {
 /// <name>` dispatches to the built-in verb first.
 ///
 /// Read off the real `clap::Command` tree rather than a hand-copied list, so
-/// a verb added later is refused automatically.
-fn collides_with_a_verb(name: &str) -> bool {
+/// a verb added later is refused automatically. The tree is built first
+/// because clap generates its `help` subcommand at build time: an unbuilt
+/// `Cli::command()` holds no `help`, and `shep help` prints shep's own help
+/// rather than reaching a dog.
+pub(crate) fn collides_with_a_verb(name: &str) -> bool {
     use clap::CommandFactory as _;
-    crate::cli::Cli::command()
+    let mut command = crate::cli::Cli::command();
+    command.build();
+    command
         .get_subcommands()
         .any(|sub| sub.get_name() == name || sub.get_all_aliases().any(|alias| alias == name))
 }
@@ -216,26 +387,77 @@ fn fail_adopt_name_collision(streams: &mut Streams<'_>, name: &str) -> ExitCode 
     streams.fail(code, &message)
 }
 
+/// [`emit_notice`](crate::output::emit_notice) code for the report that a
+/// manifest's defaults became the dog's section; not a failure.
+const DOG_DEFAULTS_WRITTEN_NOTICE: &str = "dog_defaults_written";
+
+/// Tells the operator that the dog's own defaults are now its section in
+/// `dogs.toml`.
+///
+/// The whole point of writing them is that the operator now has the knobs
+/// where they can edit them, and this is the one line saying where that is.
+fn report_defaults_written(streams: &mut Streams<'_>, name: &str) {
+    let message = format!(
+        "{name}'s manifest defaults are now its `[{name}]` section in dogs.toml, where \
+         you can edit them"
+    );
+    streams.aside(DOG_DEFAULTS_WRITTEN_NOTICE, &message);
+}
+
+/// [`emit_notice`](crate::output::emit_notice) code for the unreadable-
+/// defaults warning; not a failure.
+const DOG_DEFAULTS_UNREADABLE_NOTICE: &str = "dog_defaults_unreadable";
+
+/// Warns that `name` shipped a manifest whose `defaults` is not valid
+/// TOML, and lets the adopt proceed.
+///
+/// The dog's bug, told the same way an unreadable schema is told: the dog
+/// is adopted, its section is not written, and the one who wrote the dog
+/// is the one to fix it.
+fn warn_unreadable_defaults(streams: &mut Streams<'_>, name: &str) {
+    let message = format!(
+        "{name} shipped a manifest whose `defaults` is not valid TOML, so nothing was \
+         added to dogs.toml for it. The dog is adopted and runs normally; this is a bug to \
+         report to whoever wrote it"
+    );
+    streams.aside(DOG_DEFAULTS_UNREADABLE_NOTICE, &message);
+}
+
+/// Renders a `dogs.toml` or migration failure and returns its exit code.
+///
+/// A `dogs.toml` that is not valid TOML is the operator's broken config, so
+/// [`ExitCode::InvalidConfig`] like a broken `shep.toml`, and so are the
+/// migration's two refusals: a name holding values in both files, and a
+/// `[dog]` whose names did not come back as sections. The I/O modes have no
+/// more specific code than [`ExitCode::Failure`].
+fn fail_dogs_config(streams: &mut Streams<'_>, err: &DogMigrationError) -> ExitCode {
+    let code = match err {
+        DogMigrationError::Parse(_)
+        | DogMigrationError::WouldOverwrite { .. }
+        | DogMigrationError::SectionsUnreadable { .. } => ExitCode::InvalidConfig,
+        _ => ExitCode::Failure,
+    };
+    streams.fail(code, &err.to_string())
+}
+
 /// `adopt`'s daemon half; see enable_after_config for the split and for
-/// what `client: None` means.
+/// what `client: None` means. `channel` is the binary's own ask and `grants`
+/// what `shep.toml` records for the dog.
 async fn adopt_after_config(
     streams: &mut Streams<'_>,
     name: &str,
     path: &Path,
+    channel: bool,
+    grants: Option<Grants>,
     client: Option<&Client>,
 ) -> ExitCode {
     let source = DogSource::Adopted {
+        grants,
         path: path.display().to_string(),
+        channel,
     };
     let Some(client) = client else {
-        let row = DogActionRow::new(name, source, NO_SHEPHERD_ENABLE_STATUS, false);
-        return write_outcome(emit(
-            &mut *streams.out,
-            streams.fmt,
-            "adopt",
-            row,
-            streams.style,
-        ));
+        return emit_dog_action(streams, "adopt", name, source, NO_SHEPHERD_ENABLE_STATUS);
     };
     let request = Request::EnableDog {
         name: name.to_string(),
@@ -243,14 +465,14 @@ async fn adopt_after_config(
     };
     match client.request(request).await {
         Ok(Response::DogStarted(info)) => {
-            let row = DogActionRow::new(name, source, info.status, true);
-            write_outcome(emit(
-                &mut *streams.out,
-                streams.fmt,
+            warn_if_unenforced(streams, name, &source, client.daemon().protocol);
+            emit_dog_action(
+                streams,
                 "adopt",
-                row,
-                streams.style,
-            ))
+                name,
+                source,
+                DogActionStatus::Acted(info.status.into()),
+            )
         }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
@@ -263,17 +485,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Format;
-
-    /// A dog verb's streams under `--format table`; a test reading a
-    /// JSON field sets `fmt` itself.
-    fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        }
-    }
+    use crate::commands::dogs::test_support::streams;
 
     /// `adopt`'s own report is the only place an operator learns which
     /// refusal mode it was.
@@ -284,6 +496,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let args = AdoptArgs {
+            yes: true,
             name: Some("otel".to_string()),
             path: dir.path().join("nope"),
         };
@@ -299,36 +512,92 @@ mod tests {
 
     #[tokio::test]
     async fn adopt_asks_the_shepherd_to_start_that_dog_with_its_adopted_source() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = shep_client::testing::control_address(dir.path());
-        let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let binary = PathBuf::from("/usr/local/bin/shep-otel");
-        let _ = adopt_after_config(
-            &mut streams(&mut out, &mut err),
-            "otel",
-            &binary,
-            Some(&client),
-        )
-        .await;
+        for channel in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = shep_client::testing::control_address(dir.path());
+            let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            let binary = PathBuf::from("/usr/local/bin/shep-otel");
+            let _ = adopt_after_config(
+                &mut streams(&mut out, &mut err),
+                "otel",
+                &binary,
+                channel,
+                None,
+                Some(&client),
+            )
+            .await;
 
-        let sent = envelopes.recv().await.unwrap();
-        assert_eq!(
-            sent.body,
-            Request::EnableDog {
-                name: "otel".to_string(),
-                source: DogSource::Adopted {
-                    path: "/usr/local/bin/shep-otel".to_string(),
-                },
-            }
-        );
+            let sent = envelopes.recv().await.unwrap();
+            assert_eq!(
+                sent.body,
+                Request::EnableDog {
+                    name: "otel".to_string(),
+                    source: DogSource::Adopted {
+                        grants: None,
+                        path: "/usr/local/bin/shep-otel".to_string(),
+                        channel,
+                    },
+                }
+            );
+        }
     }
 
-    /// `shepherd_acted` separates "only the config changed" from "a shepherd
-    /// acted", and this verb's two branches differ in little else. The pair
-    /// is the guard: either case alone passes while the other branch carries
-    /// the wrong flag.
+    /// Writes an executable `/bin/sh` dog that answers `--version` with
+    /// `answer` and exits 0 on any other run.
+    fn write_dog(dir: &Path, answer: &str) -> PathBuf {
+        let binary = dir.join("shep-otel");
+        let script =
+            format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '{answer}'; fi\nexit 0\n");
+        std::fs::write(&binary, script).unwrap();
+        let mut mode = std::fs::metadata(&binary).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
+        std::fs::set_permissions(&binary, mode).unwrap();
+        binary
+    }
+
+    /// Through `adopt` itself, so the ask travels from a real probe answer
+    /// to `shep.toml`. A dog that does not ask is the control.
+    #[tokio::test]
+    async fn adopt_records_a_channel_ask_only_when_the_dog_makes_one() {
+        for (answer, asked) in [
+            (r"shep-otel 0.1.0\nshep-channel: true\n", true),
+            (r"shep-otel 0.1.0\n", false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = ShepPaths::resolve(&|_| None, dir.path());
+            let args = AdoptArgs {
+                yes: true,
+                name: Some("otel".to_string()),
+                path: write_dog(dir.path(), answer),
+            };
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+
+            let code = adopt(&mut streams(&mut out, &mut err), &paths, &args).await;
+
+            assert_eq!(code, ExitCode::Success);
+            let written = std::fs::read_to_string(&paths.daemon_config).unwrap();
+            let cfg = shep_core::config::DaemonConfig::load(Some(&written), &|_| None).unwrap();
+            assert_eq!(
+                cfg.daemon.channel_dogs.contains(&"otel".to_string()),
+                asked,
+                "{written}"
+            );
+            let notices = String::from_utf8(err).unwrap();
+            assert_eq!(
+                notices.contains("asked for the shepherd channel"),
+                asked,
+                "the operator hears what the dog asked for: {notices}"
+            );
+        }
+    }
+
+    /// `shepherd_acted` and `status` together separate "only the config
+    /// changed" from "a shepherd acted", and this verb's two branches differ
+    /// in little else. The pair is the guard: either field alone passes while
+    /// the other branch carries the wrong one.
     #[tokio::test]
     async fn adopt_reports_whether_a_shepherd_acted() {
         let dir = tempfile::tempdir().unwrap();
@@ -339,21 +608,30 @@ mod tests {
         .await;
         let binary = PathBuf::from("/usr/local/bin/shep-otel");
 
-        for (client, expected) in [(Some(&client), true), (None, false)] {
+        for (client, expected) in [
+            (Some(&client), DogActionStatus::Acted("online")),
+            (None, NO_SHEPHERD_ENABLE_STATUS),
+        ] {
             let mut out = Vec::new();
             let mut err = Vec::new();
             let mut streams = streams(&mut out, &mut err);
             streams.fmt = Format::Json;
 
-            let code = adopt_after_config(&mut streams, "otel", &binary, client).await;
+            let code = adopt_after_config(&mut streams, "otel", &binary, false, None, client).await;
 
             assert_eq!(code, ExitCode::Success);
             let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
             assert_eq!(
                 json["data"]["shepherd_acted"],
-                serde_json::json!(expected),
+                serde_json::json!(expected.shepherd_acted()),
                 "client present: {}, payload: {}",
                 client.is_some(),
+                String::from_utf8_lossy(&out)
+            );
+            assert_eq!(
+                json["data"]["status"],
+                expected.text(),
+                "payload: {}",
                 String::from_utf8_lossy(&out)
             );
         }
@@ -372,6 +650,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let args = AdoptArgs {
+            yes: true,
             name: Some("otel".to_string()),
             path: binary,
         };
@@ -403,6 +682,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let args = AdoptArgs {
+            yes: true,
             path: binary,
             name: None,
         };
@@ -435,6 +715,7 @@ mod tests {
         // "stop" is a real verb; "ls" is `flock`'s own visible alias.
         for reserved in ["stop", "ls"] {
             let args = AdoptArgs {
+                yes: true,
                 path: binary.clone(),
                 name: Some(reserved.to_string()),
             };
@@ -463,6 +744,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let args = AdoptArgs {
+            yes: true,
             path: dir.path().join("nope"),
             name: Some("stop".to_string()),
         };
@@ -501,6 +783,34 @@ mod tests {
         let raw = Path::new("~/.cargo/bin/shep-log-rotate");
         let resolved = resolve_adopt_path(raw, Some(home.path()), None);
         assert_eq!(resolved, binary);
+    }
+
+    /// `exists` answers `false` for a path it cannot search, which would hand
+    /// `vet_binary` the unexpanded `~/…` and a "no file exists" for a file
+    /// that is there.
+    #[test]
+    fn resolve_adopt_path_expands_a_tilde_path_it_cannot_search() {
+        let home = tempfile::tempdir().unwrap();
+        let sealed = home.path().join("sealed");
+        std::fs::create_dir(&sealed).unwrap();
+        std::fs::write(sealed.join("dog"), "").unwrap();
+        let mut mode = std::fs::metadata(&sealed).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o000);
+        std::fs::set_permissions(&sealed, mode.clone()).unwrap();
+
+        // A process that bypasses mode bits (root) can still search the
+        // directory, so the lookup never fails and nothing is under test.
+        let hidden = std::fs::metadata(sealed.join("dog")).is_err();
+        let raw = Path::new("~/sealed/dog");
+        let resolved = resolve_adopt_path(raw, Some(home.path()), None);
+
+        // Restored before any assert so the tempdir can be removed.
+        std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o700);
+        std::fs::set_permissions(&sealed, mode).unwrap();
+        if !hidden {
+            return;
+        }
+        assert_eq!(resolved, sealed.join("dog"));
     }
 
     /// `cargo install shep-log-rotate` puts the binary on `$PATH` under its
@@ -566,6 +876,13 @@ mod tests {
     fn collides_with_a_verb_covers_names_and_visible_aliases() {
         assert!(collides_with_a_verb("stop"), "a real verb must collide");
         assert!(collides_with_a_verb("ls"), "flock's own alias must collide");
+        // clap generates the `help` subcommand when it builds a command, so
+        // it is missing until `Cli::command()` is built. `shep help` prints
+        // shep's own help and never reaches a dog.
+        assert!(
+            collides_with_a_verb("help"),
+            "clap's generated help subcommand is a name a dog can never take"
+        );
         assert!(
             !collides_with_a_verb("watchdog"),
             "an arbitrary name must not collide"

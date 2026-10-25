@@ -1,8 +1,7 @@
 //! Fixtures and helpers shared by this module's tests.
 
-use super::super::{CarriedFds, CarriedSheep, Handover, fds};
+use super::super::{CarriedFds, CarriedSheep, Counters, DaemonFds, Handover};
 use super::adopt_descriptors::adopt;
-use crate::handover::VERSION;
 use crate::privilege::SpawnIdentity;
 use shep_core::status::ProcStatus;
 use std::io;
@@ -13,6 +12,17 @@ use std::path::Path;
 /// A number this process will never own, the same floor `sys`'s own
 /// refusal tests use.
 pub(super) const NEVER_OPEN: RawFd = 4096;
+
+/// The counters every fixture blob in this module names.
+///
+/// Deliberately nonzero: a successor that ignored them would reissue an id
+/// or a stamp a caller still holds, which is what the real counters guard
+/// against.
+pub(super) const TEST_COUNTERS: Counters = Counters {
+    next_id: 9,
+    next_deadline: 5,
+    next_action_stamp: 2,
+};
 
 /// One carried sheep named `web`, whose descriptors are `fds`.
 pub(super) fn carried(fds: CarriedFds) -> CarriedSheep {
@@ -35,6 +45,7 @@ pub(super) fn carried_slot(instance: u32, fds: CarriedFds) -> CarriedSheep {
         last_exit: None,
         credentials: SpawnIdentity::Resolved(None),
         fds,
+        dog_topics: None,
         pending_delete: Some(false),
         manual: None,
         reload: Some(crate::entry::ReloadState::None),
@@ -43,6 +54,7 @@ pub(super) fn carried_slot(instance: u32, fds: CarriedFds) -> CarriedSheep {
         pending_reidentifies: Some(false),
         ready_failed: Some(false),
         restart_due: None,
+        disabled: None,
         app: crate::testing::app_with("web", |_| {}).into_config(),
     }
 }
@@ -55,16 +67,15 @@ pub(super) fn carried_slot(instance: u32, fds: CarriedFds) -> CarriedSheep {
 pub(super) fn blob_with(socket: &Path, sheep: Vec<CarriedSheep>) -> Handover {
     let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
     let pidfile = tempfile::tempfile().unwrap();
-    Handover {
-        version: VERSION,
+    Handover::new(
         sheep,
-        listener_fd: listener.into_raw_fd(),
-        pidfile_fd: pidfile.into_raw_fd(),
-        next_id: 9,
-        next_deadline: 5,
-        next_action_stamp: 2,
-        reloads: Some(Vec::new()),
-    }
+        DaemonFds {
+            listener: listener.into_raw_fd(),
+            pidfile: pidfile.into_raw_fd(),
+        },
+        TEST_COUNTERS,
+        Vec::new(),
+    )
 }
 
 /// A predecessor's live descriptors: one of everything a blob names,
@@ -86,6 +97,8 @@ pub(super) struct Predecessor {
     pub(super) stdin_write: std::io::PipeWriter,
     pub(super) channel: std::os::unix::net::UnixStream,
     pub(super) child_channel: std::os::unix::net::UnixStream,
+    pub(super) dog_link: std::os::unix::net::UnixStream,
+    pub(super) child_dog_link: std::os::unix::net::UnixStream,
 }
 
 impl Predecessor {
@@ -95,6 +108,7 @@ impl Predecessor {
         let (out_read, out_write) = std::io::pipe().unwrap();
         let (stdin_read, stdin_write) = std::io::pipe().unwrap();
         let (channel, child_channel) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (dog_link, child_dog_link) = std::os::unix::net::UnixStream::pair().unwrap();
         Self {
             listener: std::os::unix::net::UnixListener::bind(dir.path().join("shep.sock")).unwrap(),
             pidfile: tempfile::tempfile().unwrap(),
@@ -105,6 +119,8 @@ impl Predecessor {
             stdin_write,
             channel,
             child_channel,
+            dog_link,
+            child_dog_link,
             dir,
         }
     }
@@ -114,26 +130,35 @@ impl Predecessor {
         self.dir.path().join("shep.sock")
     }
 
+    /// [`Self::blob`], for a sheep that is a dog holding its own connection.
+    pub(super) fn blob_with_dog_link(&self) -> Handover {
+        use std::os::fd::AsRawFd as _;
+        let mut blob = self.blob();
+        blob.sheep[0].fds.dog_link = Some(self.dog_link.as_raw_fd());
+        blob.sheep[0].dog_topics = Some(vec!["process.*".to_owned()]);
+        blob
+    }
+
     /// A blob naming every one of them, for one sheep called `web`.
     pub(super) fn blob(&self) -> Handover {
         use std::os::fd::AsRawFd as _;
-        Handover {
-            version: VERSION,
-            sheep: vec![carried(CarriedFds {
+        Handover::new(
+            vec![carried(CarriedFds {
                 out_pipe: Some(self.out_read.as_raw_fd()),
                 err_pipe: None,
                 out_log: Some(self.out_log.as_raw_fd()),
                 err_log: None,
                 stdin: Some(self.stdin_write.as_raw_fd()),
                 channel: Some(self.channel.as_raw_fd()),
+                dog_link: None,
             })],
-            listener_fd: self.listener.as_raw_fd(),
-            pidfile_fd: self.pidfile.as_raw_fd(),
-            next_id: 9,
-            next_deadline: 5,
-            next_action_stamp: 2,
-            reloads: Some(Vec::new()),
-        }
+            DaemonFds {
+                listener: self.listener.as_raw_fd(),
+                pidfile: self.pidfile.as_raw_fd(),
+            },
+            TEST_COUNTERS,
+            Vec::new(),
+        )
     }
 }
 
@@ -156,13 +181,13 @@ pub(super) fn open_fd_count() -> usize {
 /// naming one descriptor twice stops naming it twice here.
 ///
 /// Closes every duplicate it holds, unless [`Self::release`] is called
-/// first: `fds::duplicate_raw` hands back a bare number with no owner,
+/// first: `sys::duplicate_fd` hands back a bare number with no owner,
 /// and a `Handover` holding it closes nothing on drop.
 struct Duplicates(Vec<RawFd>);
 
 impl Duplicates {
     fn of(&mut self, fd: RawFd) -> io::Result<RawFd> {
-        let duplicate = fds::duplicate_raw(fd)?;
+        let duplicate = crate::sys::duplicate_fd(fd)?;
         self.0.push(duplicate);
         Ok(duplicate)
     }
@@ -181,6 +206,13 @@ impl Drop for Duplicates {
 }
 
 pub(super) fn adopt_a_copy(blob: &Handover) -> io::Result<()> {
+    adopt_a_copy_keeping(blob).map(drop)
+}
+
+/// [`adopt_a_copy`], handing back what was adopted so a case can use it.
+pub(super) fn adopt_a_copy_keeping(
+    blob: &Handover,
+) -> io::Result<super::adopt_descriptors::Adopted> {
     // Propagated, never `unwrap_or(fd)`: falling back to the original
     // hands `adopt` the fixture's own live descriptor to close.
     let mut dups = Duplicates(Vec::new());
@@ -195,11 +227,12 @@ pub(super) fn adopt_a_copy(blob: &Handover) -> io::Result<()> {
             err_log: sheep.fds.err_log.map(|fd| dups.of(fd)).transpose()?,
             stdin: sheep.fds.stdin.map(|fd| dups.of(fd)).transpose()?,
             channel: sheep.fds.channel.map(|fd| dups.of(fd)).transpose()?,
+            dog_link: sheep.fds.dog_link.map(|fd| dups.of(fd)).transpose()?,
         };
     }
     // Released before the fallible call: `adopt` consumes the numbers it
     // reaches and says nothing about which, so holding the guard across it
     // would close some twice. A leak bounded by a test binary is better.
     dups.release();
-    adopt(&copy).map(drop)
+    adopt(&copy)
 }

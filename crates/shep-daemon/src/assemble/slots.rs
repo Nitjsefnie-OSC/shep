@@ -18,7 +18,9 @@ pub fn instance_slots(existing: &[u32], count: u32) -> Vec<u32> {
     let mut candidate = 0u32;
 
     for _ in 0..count {
-        while existing.contains(&candidate) || result.contains(&candidate) {
+        // No check against `result` is needed: `candidate` only moves forward,
+        // so it is always past every slot already pushed.
+        while existing.contains(&candidate) {
             candidate += 1;
         }
         result.push(candidate);
@@ -43,5 +45,11 @@ mod tests {
     fn slots_skip_occupied() {
         let result = instance_slots(&[0, 2], 2);
         assert_eq!(result, vec![1, 3]);
+    }
+
+    #[test]
+    fn slots_fill_gaps_before_extending() {
+        let result = instance_slots(&[1, 3], 3);
+        assert_eq!(result, vec![0, 2, 4]);
     }
 }

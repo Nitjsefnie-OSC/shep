@@ -7,17 +7,12 @@
 
 use serde_json::Value;
 
-use super::Neighbour;
+use super::{Neighbour, all_strings};
 
 /// The `init.suggest` values, when every entry is a string.
 pub(super) fn suggestions(init: Option<&Value>) -> Option<Vec<String>> {
     let values = init?.get("suggest")?.as_array()?;
-    let names: Vec<String> = values
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect();
-    (names.len() == values.len()).then_some(names)
+    all_strings(values, Value::as_str)
 }
 
 /// The `init.<key>` values, when every entry is a string. Empty (not
@@ -27,16 +22,7 @@ pub(super) fn strings(init: Option<&Value>, key: &str) -> Vec<String> {
     let Some(values) = init.and_then(|i| i.get(key)).and_then(Value::as_array) else {
         return Vec::new();
     };
-    let names: Vec<String> = values
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect();
-    if names.len() == values.len() {
-        names
-    } else {
-        Vec::new()
-    }
+    all_strings(values, Value::as_str).unwrap_or_default()
 }
 
 /// The `init.neighbours` entries that carry both `field` and `note` as
@@ -63,6 +49,7 @@ pub(super) fn neighbours(init: Option<&Value>) -> Vec<Neighbour> {
 mod tests {
     use super::super::fixtures::{props, real_field_set};
     use super::super::{FieldKind, FieldSet, field_from};
+    use super::{strings, suggestions};
     use serde_json::Map;
     use serde_json::json;
 
@@ -171,5 +158,19 @@ mod tests {
         assert!(field.accepts.is_empty());
         assert!(field.refuses.is_empty());
         assert!(field.neighbours.is_empty());
+    }
+
+    /// One entry that is not a string rejects the whole list, rather than
+    /// leaving the strings around it.
+    #[test]
+    fn a_suggest_list_with_a_non_string_entry_is_rejected() {
+        let init = json!({ "suggest": ["a", 1] });
+        assert_eq!(suggestions(Some(&init)), None);
+    }
+
+    #[test]
+    fn an_accepts_list_with_a_non_string_entry_is_empty() {
+        let init = json!({ "accepts": ["a", 1] });
+        assert_eq!(strings(Some(&init), "accepts"), Vec::<String>::new());
     }
 }

@@ -2,15 +2,17 @@
 //! sheep alive across the exec.
 //!
 //! [`CarriedSheep`] is one row of the blob, holding both what the sheep is
-//! and what it is currently doing. [`CarriedFds`] is the six descriptor
-//! numbers its output, input and shepherd channel travel on, and [`SheepFd`]
-//! says which of the six a number is, since the adoption path refuses a pipe
-//! and a log handle by opposite checks.
+//! and what it is currently doing. [`CarriedFds`] is the seven descriptor
+//! numbers its output, input, shepherd channel and, for a dog, its own
+//! connection travel on, and [`SheepFd`] says which of the seven a number is,
+//! since the adoption path refuses a pipe and a log handle by opposite
+//! checks.
 
 use std::os::fd::RawFd;
 use std::time::SystemTime;
 
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 use shep_core::config::AppConfig;
 use shep_core::protocol::{DogSource, ExitInfo};
 use shep_core::status::ProcStatus;
@@ -18,6 +20,33 @@ use shep_core::status::ProcStatus;
 use crate::entry::{ProcessEntry, ReloadState};
 use crate::privilege::SpawnIdentity;
 use crate::supervisor::PendingManual;
+
+/// Refuses the decode-only `Unrecognized` fallback in a blob.
+///
+/// A blob is read back into live supervisor state, which no code path
+/// handles an unreadable status in: adopting one would leave a sheep that
+/// `stop` silently ignores and that every client is sent as `"unrecognized"`.
+/// Failing the load keeps the handover's rollback, as it did before the wire
+/// enum grew a fallback.
+fn known_status<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ProcStatus, D::Error> {
+    match ProcStatus::deserialize(deserializer)? {
+        ProcStatus::Unrecognized => Err(D::Error::custom(
+            "a carried sheep's status is not one this build knows",
+        )),
+        status => Ok(status),
+    }
+}
+
+/// [`known_status`] for [`CarriedSheep::dog`]: an unreadable source would
+/// lose the marker `shep dogs` and the dog watch read.
+fn known_dog<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<DogSource>, D::Error> {
+    match Option::<DogSource>::deserialize(deserializer)? {
+        Some(DogSource::Unrecognized) => Err(D::Error::custom(
+            "a carried dog's source is not one this build knows",
+        )),
+        source => Ok(source),
+    }
+}
 
 /// One sheep, as the successor will find it.
 ///
@@ -45,6 +74,9 @@ pub struct CarriedSheep {
     /// is still recognised as stale afterwards.
     pub(super) epoch: u64,
     /// The instance's lifecycle status.
+    ///
+    /// A status this build cannot read fails the load, see [`known_status`].
+    #[serde(deserialize_with = "known_status")]
     pub(super) status: ProcStatus,
     /// How this instance most recently stopped existing, if it has.
     pub(super) last_exit: Option<ExitInfo>,
@@ -56,6 +88,17 @@ pub struct CarriedSheep {
     pub(super) credentials: SpawnIdentity,
     /// The descriptor numbers this instance's output travels on.
     pub(super) fds: CarriedFds,
+    /// What the dog's carried connection had said by the time the predecessor
+    /// handed over, or `None` for an instance without one
+    /// ([`CarriedFds::dog_link`]) and for one whose dog had not yet sent its
+    /// `Hello`.
+    ///
+    /// `Some` is the topic patterns it had subscribed to, empty for none: the
+    /// dog has shaken hands, so its next frame is a request. The subscription
+    /// itself lives in the predecessor's memory and dies at the exec, while
+    /// the connection it rode on does not, so the dog would never hear that it
+    /// had stopped. An absent key reads as a connection still to be greeted.
+    pub(super) dog_topics: Option<Vec<String>>,
     /// Whether an operator's `delete` targeted this instance before the
     /// exec. An absent key means "no".
     pub(super) pending_delete: Option<bool>,
@@ -96,6 +139,7 @@ pub struct CarriedSheep {
     ///
     /// Losing the marker is invisible to a pid check: `Actor::matching_ids`,
     /// `dogs::spawn_dog_watch` and `rpc::dog_staleness` all read it.
+    #[serde(default, deserialize_with = "known_dog")]
     pub(super) dog: Option<DogSource>,
     /// The config a load parked for this instance's next spawn, or `None`
     /// for an instance nothing is owed.
@@ -113,6 +157,13 @@ pub struct CarriedSheep {
     /// Carried with [`Self::pending`] and never without it: the load that
     /// parks the config decides this, and a later diff cannot recompute it.
     pub(super) pending_reidentifies: Option<bool>,
+    /// Whether an operator disabled this instance's app. An absent key reads
+    /// as "no".
+    ///
+    /// The mark belongs to the app, so every instance of a disabled app
+    /// carries it. Without it the successor starts with nothing disabled and
+    /// its first roll write erases the mark from disk.
+    pub(super) disabled: Option<bool>,
     /// The resolved config this instance runs under, environment included.
     ///
     /// The `AppConfig` beneath [`ProcessEntry::spec`]'s `ResolvedApp`, not the
@@ -149,6 +200,7 @@ impl CarriedSheep {
             last_exit: entry.last_exit,
             credentials: entry.credentials,
             fds,
+            dog_topics: None,
             pending_delete: Some(pending_delete),
             manual,
             reload: Some(entry.reload),
@@ -166,8 +218,30 @@ impl CarriedSheep {
             restart_due: (entry.status == ProcStatus::WaitingRestart)
                 .then_some(restart_due)
                 .flatten(),
+            disabled: None,
             app: entry.spec.config().clone(),
         }
+    }
+
+    /// This row, carrying whether its app is disabled.
+    ///
+    /// Separate from [`Self::from_entry`] because the mark lives on the
+    /// supervisor's app set and not on the entry.
+    #[must_use]
+    pub fn with_disabled(mut self, disabled: bool) -> Self {
+        self.disabled = Some(disabled);
+        self
+    }
+
+    /// Has this row carry the dog's own connection.
+    ///
+    /// Separate from [`Self::from_entry`] because the connection is held by
+    /// the server that serves it and not by the log pump `fds` is reported
+    /// from. `topics` is what the connection had subscribed to, or `None` if
+    /// the dog had not yet sent its `Hello`.
+    pub(super) fn carry_dog_link(&mut self, fd: RawFd, topics: Option<Vec<String>>) {
+        self.fds.dog_link = Some(fd);
+        self.dog_topics = topics;
     }
 
     /// The descriptor numbers this instance's output travels on.
@@ -175,6 +249,13 @@ impl CarriedSheep {
     #[allow(dead_code, reason = "read by this crate's own tests")]
     pub const fn fds(&self) -> CarriedFds {
         self.fds
+    }
+
+    /// The topic patterns this dog's carried connection had subscribed to, or
+    /// `None` for a connection whose dog had not yet said `Hello`.
+    #[must_use]
+    pub fn dog_topics(&self) -> Option<&[String]> {
+        self.dog_topics.as_deref()
     }
 
     /// Whether an operator's `delete` targeted this instance before the
@@ -226,6 +307,13 @@ impl CarriedSheep {
     #[must_use]
     pub const fn ready_failed(&self) -> Option<bool> {
         self.ready_failed
+    }
+
+    /// Whether an operator disabled this instance's app, or `None`, which
+    /// means "no".
+    #[must_use]
+    pub const fn disabled(&self) -> Option<bool> {
+        self.disabled
     }
 
     /// When this instance's owed respawn falls due, or `None` for one that is
@@ -303,14 +391,37 @@ impl CarriedSheep {
     }
 }
 
+/// The shepherd's end of one dog's own connection, held for the exec.
+///
+/// Owns a duplicate of the descriptor the server task is reading, so the
+/// number [`Handover::carry_dog_links`](super::Handover::carry_dog_links)
+/// writes into the blob cannot name a different file if that task ends first.
+/// Both are one open file description, so the dup is the same connection.
+///
+/// `Debug` is derived: a name, a pid, a descriptor number and topic patterns
+/// are all in `shep flock` already, and no env value reaches this type.
+#[derive(Debug)]
+pub struct DogConnection {
+    /// The dog's name, as its sheep is named.
+    pub name: String,
+    /// The pid the dog was spawned under, which tells an instance that has
+    /// since respawned from the one this connection belongs to.
+    pub pid: u32,
+    /// The duplicate to carry.
+    pub fd: std::os::fd::OwnedFd,
+    /// What the dog had subscribed to, or `None` if it had not yet said
+    /// `Hello`; see [`CarriedSheep::dog_topics`].
+    pub topics: Option<Vec<String>>,
+}
+
 /// The descriptor numbers one sheep's output travels on, the one its input
-/// travels back through, and the one carrying both directions of its
-/// shepherd channel.
+/// travels back through, the one carrying both directions of its shepherd
+/// channel, and for a dog the one carrying its own connection.
 ///
 /// `None` on the four output fields means the instance is registered and not
 /// running; losing a sheep's stdout read end blocks the child on `write()`
-/// once the 64KiB pipe buffer fills. [`Self::stdin`] and [`Self::channel`] are
-/// present only for a running sheep whose app asked for one.
+/// once the 64KiB pipe buffer fills. [`Self::stdin`], [`Self::channel`] and
+/// [`Self::dog_link`] are present only for a running sheep that has one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CarriedFds {
     /// The read end of the sheep's stdout pipe.
@@ -337,9 +448,17 @@ pub struct CarriedFds {
     /// `shutdown_with_message`, for a sheep that is not running, and for one
     /// whose child has closed its fd 3. An absent field loads as `None`.
     pub channel: Option<RawFd>,
+    /// The daemon's end of the dog's own connection, whose other end is the
+    /// child's fd 4.
+    ///
+    /// One number for both directions, served by the same task that served it
+    /// before the exec. `None` for a sheep that is not a dog, for a dog
+    /// that is not running, and for one whose connection had already closed.
+    /// An absent field loads as `None`.
+    pub dog_link: Option<RawFd>,
 }
 
-/// Which of a sheep's six descriptors a number is. A stdout pipe and a stdin
+/// Which of a sheep's seven descriptors a number is. A stdout pipe and a stdin
 /// pipe are both pipes and are refused by opposite checks, so the slot has to
 /// travel with the number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -356,6 +475,8 @@ pub(crate) enum SheepFd {
     Stdin,
     /// The daemon's end of its shepherd channel ([`CarriedFds::channel`]).
     Channel,
+    /// The daemon's end of the dog's own connection ([`CarriedFds::dog_link`]).
+    DogLink,
 }
 
 impl SheepFd {
@@ -369,15 +490,17 @@ impl SheepFd {
             Self::ErrLog => "stderr log",
             Self::Stdin => "stdin pipe",
             Self::Channel => "shepherd channel",
+            Self::DogLink => "dog connection",
         }
     }
 }
 
 impl CarriedFds {
-    /// The six numbers in a fixed order: stdout's pipe, stderr's pipe,
-    /// stdout's log, stderr's log, stdin's pipe, the shepherd channel.
+    /// The seven numbers in a fixed order: stdout's pipe, stderr's pipe,
+    /// stdout's log, stderr's log, stdin's pipe, the shepherd channel, the
+    /// dog's connection.
     #[must_use]
-    pub const fn all(&self) -> [Option<RawFd>; 6] {
+    pub const fn all(&self) -> [Option<RawFd>; 7] {
         [
             self.out_pipe,
             self.err_pipe,
@@ -385,15 +508,16 @@ impl CarriedFds {
             self.err_log,
             self.stdin,
             self.channel,
+            self.dog_link,
         ]
     }
 
-    /// [`Self::all`], with each number labelled by which of the six it is.
+    /// [`Self::all`], with each number labelled by which of the seven it is.
     ///
     /// [`adopt`](super::adopt::adopt) and [`dry_run`](super::adopt::dry_run)
     /// must agree on the kinds: a number rehearsed as the wrong kind is a
     /// rehearsal that passes and a boot that still fails.
-    pub(crate) const fn all_kinded(&self) -> [(Option<RawFd>, SheepFd); 6] {
+    pub(crate) const fn all_kinded(&self) -> [(Option<RawFd>, SheepFd); 7] {
         [
             (self.out_pipe, SheepFd::OutPipe),
             (self.err_pipe, SheepFd::ErrPipe),
@@ -401,6 +525,7 @@ impl CarriedFds {
             (self.err_log, SheepFd::ErrLog),
             (self.stdin, SheepFd::Stdin),
             (self.channel, SheepFd::Channel),
+            (self.dog_link, SheepFd::DogLink),
         ]
     }
 
@@ -415,6 +540,7 @@ impl CarriedFds {
             err_log: None,
             stdin: None,
             channel: None,
+            dog_link: None,
         }
     }
 }
@@ -538,7 +664,7 @@ mod tests {
         );
     }
 
-    /// Six distinct numbers, so the equality below is about the pairing
+    /// Seven distinct numbers, so the equality below is about the pairing
     /// rather than the length.
     #[test]
     fn every_carried_number_is_kinded_in_the_same_order() {
@@ -549,6 +675,7 @@ mod tests {
             err_log: Some(13),
             stdin: Some(14),
             channel: Some(15),
+            dog_link: Some(16),
         };
 
         assert_eq!(
@@ -559,6 +686,6 @@ mod tests {
 
         let slots: std::collections::HashSet<SheepFd> =
             fds.all_kinded().iter().map(|(_, slot)| *slot).collect();
-        assert_eq!(slots.len(), 6, "each slot must appear exactly once");
+        assert_eq!(slots.len(), 7, "each slot must appear exactly once");
     }
 }

@@ -20,29 +20,24 @@ const MOST: usize = 5;
 const GAP: &str = "   ";
 
 /// Every status, in the order a flourish shows them: the reassuring one
-/// first, then the transient ones, then rest, then the bad one.
+/// first, then the transient ones, then rest, then the bad one, then one this
+/// build cannot read.
 /// [`mustered_faces`] and [`mustered_caption`] both walk this order, so a
 /// mixed muster's row and its caption name statuses in the same order.
-const STATUS_ORDER: [ProcStatus; 6] = [
+const STATUS_ORDER: [ProcStatus; 7] = [
     ProcStatus::Online,
     ProcStatus::Starting,
     ProcStatus::WaitingRestart,
     ProcStatus::Stopping,
     ProcStatus::Stopped,
     ProcStatus::Errored,
+    ProcStatus::Unrecognized,
 ];
 
 /// Joins already-resolved `faces` into one row, indented five columns to
 /// match `welcome.rs`'s own face row, each face separated by [`GAP`].
 fn faces_row(faces: &[&'static str]) -> String {
-    let mut line = String::from("     ");
-    for (i, face) in faces.iter().enumerate() {
-        if i > 0 {
-            line.push_str(GAP);
-        }
-        line.push_str(face);
-    }
-    line
+    format!("     {}", faces.join(GAP))
 }
 
 /// A row of `count` faces, all one `status` (at least one, capped at
@@ -128,6 +123,7 @@ fn mustered_caption(counts: &[(ProcStatus, usize)], total: usize) -> String {
             ProcStatus::WaitingRestart => format!("{total} restored, waiting to restart"),
             ProcStatus::Stopping => format!("{total} restored, still shutting down"),
             ProcStatus::Errored => format!("{total} restored, errored"),
+            _ => format!("{total} restored, status unrecognized"),
         };
     }
     let breakdown: Vec<String> = counts
@@ -234,6 +230,18 @@ mod tests {
             "must not draw a sleeping face nothing here has:\n{art}"
         );
         assert!(art.contains("back on their feet"), "{art}");
+    }
+
+    #[test]
+    fn a_muster_with_an_unrecognized_status_counts_it_and_draws_its_face() {
+        let art = mustered(&[ProcStatus::Unrecognized]);
+        assert!(art.contains(face(ProcStatus::Unrecognized)), "{art}");
+        assert!(art.contains("1 restored, status unrecognized"), "{art}");
+
+        let art = mustered(&[ProcStatus::Online, ProcStatus::Unrecognized]);
+        assert!(art.contains(face(ProcStatus::Unrecognized)), "{art}");
+        assert!(art.contains("1 online"), "{art}");
+        assert!(art.contains("1 unrecognized"), "{art}");
     }
 
     #[test]

@@ -307,7 +307,9 @@ fn a_blob_written_before_ready_failed_was_carried_still_loads() {
 fn a_dogs_marker_crosses_the_blob() {
     let mut entry = entry_fixture(|_| {});
     entry.dog = Some(DogSource::Adopted {
+        grants: None,
         path: "/opt/bin/shep-log-rotate".to_string(),
+        channel: false,
     });
     let mut blob = sample_handover();
     blob.sheep[0] = CarriedSheep::from_entry(&entry, 7, fds_at(11), false, None, false, None);
@@ -318,10 +320,33 @@ fn a_dogs_marker_crosses_the_blob() {
     assert_eq!(
         loaded.sheep[0].dog(),
         Some(&DogSource::Adopted {
+            grants: None,
             path: "/opt/bin/shep-log-rotate".to_string(),
+            channel: false,
         }),
         "a dog that crossed the exec as an ordinary sheep is one `shep dogs` has lost"
     );
+}
+
+/// A status or dog kind this build cannot read must fail the load, as it
+/// did before the wire enums grew a decode-only fallback: adopting it would
+/// supervise a sheep in a state the shepherd cannot act on, and send
+/// `"unrecognized"` to every client.
+#[test]
+fn a_blob_row_this_build_cannot_read_refuses_the_handover() {
+    let mut entry = entry_fixture(|_| {});
+    entry.dog = Some(DogSource::BuiltIn { grants: None });
+    let mut blob = sample_handover();
+    blob.sheep[0] = CarriedSheep::from_entry(&entry, 7, fds_at(11), false, None, false, None);
+    let wire = serde_json::to_value(&blob).unwrap();
+
+    let mut future_status = wire.clone();
+    future_status["sheep"][0]["status"] = serde_json::json!("invented_next_year");
+    assert!(Handover::load_value(future_status).is_err());
+
+    let mut future_dog = wire;
+    future_dog["sheep"][0]["dog"] = serde_json::json!({"kind": "invented_next_year"});
+    assert!(Handover::load_value(future_dog).is_err());
 }
 
 /// Not implied by the case above: a `from_entry` that hardcoded a source
@@ -348,7 +373,7 @@ fn a_plain_sheep_crosses_the_blob_without_one() {
 #[test]
 fn a_blob_written_before_a_dog_was_carried_still_loads() {
     let mut entry = entry_fixture(|_| {});
-    entry.dog = Some(DogSource::BuiltIn);
+    entry.dog = Some(DogSource::BuiltIn { grants: None });
     let mut blob = sample_handover();
     blob.sheep[0] = CarriedSheep::from_entry(&entry, 7, fds_at(11), false, None, false, None);
     let value = serde_json::to_value(&blob).unwrap();
@@ -358,7 +383,7 @@ fn a_blob_written_before_a_dog_was_carried_still_loads() {
             .expect("a current blob loads")
             .sheep[0]
             .dog(),
-        Some(&DogSource::BuiltIn),
+        Some(&DogSource::BuiltIn { grants: None }),
         "a marker on the wire must come back as one"
     );
 

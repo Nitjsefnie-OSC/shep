@@ -327,6 +327,65 @@ async fn a_partly_refused_reload_prints_one_json_envelope_carrying_both_halves()
     );
 }
 
+/// fails if a JSON walk whose envelope never printed drops the refused
+/// app's name with it
+///
+/// The nearest existing test is
+/// [`a_partly_refused_reload_prints_one_json_envelope_carrying_both_halves`],
+/// the other side of `carried`: there the envelope printed, so stderr stayed
+/// silent. Here one selector answers a refusal with no accepted row and the
+/// next answers a response this client cannot read (`Response` is
+/// `#[non_exhaustive]`, so this is the shape a newer daemon produces), which
+/// makes `carried` false: no envelope prints, and stderr is the only stream
+/// left to name `db` on.
+#[tokio::test]
+async fn a_json_walk_whose_envelope_never_printed_names_the_refused_apps_on_stderr() {
+    use shep_client::testing::fake_client_answering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, _envelopes) = fake_client_answering(&path, move |request| match request {
+        Request::Reload {
+            selector: SelectorSpec::Name(name),
+        } if name == "db" => Response::Reloading {
+            accepted: Vec::new(),
+            refused: vec![SheepRefusal::new("db", "db is already being reloaded")],
+        },
+        _ => Response::Pong,
+    })
+    .await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let code = {
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
+        reload(
+            &client,
+            &mut streams,
+            &SelectorArgs {
+                selectors: vec!["api".to_string(), "db".to_string()],
+            },
+        )
+        .await
+    };
+    let printed = String::from_utf8(out).unwrap();
+    let said = String::from_utf8(err).unwrap();
+
+    assert_eq!(
+        code,
+        ExitCode::Internal,
+        "the unreadable response keeps its own class, as in a load: {said}"
+    );
+    assert!(
+        printed.is_empty(),
+        "no envelope printed, so none can be read: {printed}"
+    );
+    assert!(
+        said.contains("db") && said.contains("already being reloaded"),
+        "stderr is the only stream left, and it names the refused app: {said}"
+    );
+}
+
 /// fails if an ordinary reload's envelope grows a key: `refused` is
 /// carried only by a run that had something to refuse, so every
 /// existing consumer reads the same three fields it always did.
@@ -364,12 +423,7 @@ async fn a_load_that_failed_for_another_reason_exits_with_its_own_class() {
     use shep_client::testing::fake_client_answering;
 
     let dir = tempfile::tempdir().unwrap();
-    let flockfile = dir.path().join("Flockfile.toml");
-    std::fs::write(
-        &flockfile,
-        "[[app]]\nname = \"zam\"\nscript = \"./srv\"\nmax_restarts = 99\n",
-    )
-    .unwrap();
+    let flockfile = write_zam_flockfile(dir.path());
     let path = shep_client::testing::control_address(dir.path());
     let flock = a_clustered_flock(&[0, 1, 2]);
     // `Pong` to an `ApplyConfig`. `Response` is `#[non_exhaustive]`, so
@@ -407,5 +461,48 @@ fn a_load_that_did_nothing_to_an_app_says_nothing_about_it() {
     assert_eq!(
         applied_line(&refused).as_deref(),
         Some("zam: zam is not registered")
+    );
+}
+
+/// fails if a restart over `--host` reads this machine's dog config: the dog
+/// here is adopted locally, its binary would warn, and the restart goes to a
+/// shepherd that has never heard of it.
+// Unix only for the reason `slow`'s fixture is: `adopted_dog` writes a
+// `#!/bin/sh` script, and on Windows the probe this guards would answer
+// unknown anyway.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_restart_over_a_host_probes_no_local_dog() {
+    let dir = tempfile::tempdir().unwrap();
+    let _local = adopted_dog(dir.path(), "log-rotate", &below_floor_answer());
+    let sock = shep_client::testing::control_address(dir.path());
+    let (client, _daemon) =
+        shep_client::testing::fake_client_answering(&sock, |request| match request {
+            Request::Restart { .. } => Response::Restarted {
+                accepted: Vec::new(),
+                refused: Vec::new(),
+            },
+            _ => Response::Flock(Vec::new()),
+        })
+        .await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    {
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
+        let args = SelectorArgs {
+            selectors: vec!["log-rotate".into()],
+        };
+        // Long enough that a probe cannot run out of budget and pass for
+        // silence.
+        let code =
+            restart_within(&client, &mut streams, None, &args, Duration::from_secs(30)).await;
+        assert_eq!(code, ExitCode::Success);
+    }
+
+    let said = String::from_utf8(err).unwrap();
+    assert!(
+        !said.contains("dog_binary_skew") && !said.contains("log-rotate"),
+        "no local dog is warned about on a restart that goes to a host: {said}"
     );
 }

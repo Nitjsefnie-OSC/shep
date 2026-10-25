@@ -29,6 +29,10 @@ pub enum ActionOutcome {
     /// The daemon delivered the action, but no reply arrived before the
     /// app's configured action timeout elapsed.
     TimedOut,
+    /// The sheep is a dog spawned without a shepherd channel, because its
+    /// `--version` answer did not ask for one when it was adopted. No config
+    /// key gives a dog the channel: only the dog can ask.
+    DogNoChannel,
 }
 
 /// One matched sheep's row in a `Trigger` reply.
@@ -151,6 +155,7 @@ mod tests {
             (ActionOutcome::NoChannel, r#"{"kind":"no_channel"}"#),
             (ActionOutcome::Skipped, r#"{"kind":"skipped"}"#),
             (ActionOutcome::TimedOut, r#"{"kind":"timed_out"}"#),
+            (ActionOutcome::DogNoChannel, r#"{"kind":"dog_no_channel"}"#),
         ];
         for (outcome, wire) in cases {
             assert_eq!(

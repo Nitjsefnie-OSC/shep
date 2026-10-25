@@ -13,15 +13,26 @@ mod fixtures;
 mod flatten;
 mod init;
 mod schema;
+mod union;
 
 pub use bounds::Bounds;
-pub(crate) use flatten::{Flattened, flatten_values, flattened};
+pub(crate) use flatten::{Child, Flattened, Outline, flatten_values, flattened, segment};
+pub(crate) use union::KEY_SEP;
+pub use union::Union;
 
 use serde_json::{Map, Value};
 
 use bounds::bounds_of;
 use init::{neighbours, strings, suggestions};
 use schema::{holds_secret, kind_of, render_default, value_kind_of};
+
+/// Each of `values` read through `pick`, when `pick` finds a string in every
+/// one. A single entry it cannot read rejects the list, since a list with
+/// holes in it is worse than none.
+fn all_strings(values: &[Value], pick: impl Fn(&Value) -> Option<&str>) -> Option<Vec<String>> {
+    let names: Vec<String> = values.iter().filter_map(pick).map(str::to_owned).collect();
+    (names.len() == values.len()).then_some(names)
+}
 
 /// What the widget for one field is.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +41,10 @@ pub enum FieldKind {
     Bool,
     /// `type: integer`. Typed.
     Integer,
+    /// `type: number`, `format: double` or not. Typed, and filed as a float:
+    /// the dog reads the type its own schema names. A whole number typed into
+    /// one is filed as a float for the same reason.
+    Number,
     /// `type: string`, or a `$ref` that resolves to one. Typed.
     Text,
     /// A closed set: `enum`, or `oneOf` of `const`s. Cycles.
@@ -41,19 +56,39 @@ pub enum FieldKind {
     /// `type: object` with `additionalProperties`. Opens a sub-screen.
     Map,
     /// `type: array` of a shape the editor can parse back. Opens a list
-    /// sub-screen.
+    /// sub-screen, or for [`ListItem::Choice`] a checklist under its row.
     List(ListItem),
+    /// An array or a map of tables with named properties. Read-only: the
+    /// row reads as a count and opens to its entries.
+    Entries(Entries),
+    /// A `oneOf` of objects that share a required `const` tag. The row reads
+    /// as the tag and opens to a choice of tag and the chosen arm's fields.
+    Union(Union),
     /// Anything else, including a nested object. Read-only, shown as JSON.
     Opaque,
 }
 
-/// What an array's elements are, so the editor can parse one back.
+/// What holds the tables of a [`FieldKind::Entries`] field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Entries {
+    /// `type: array` whose `items` resolve to an object with `properties`.
+    /// Entries are told apart by position.
+    Array,
+    /// `type: object` whose `additionalProperties` resolve to an object with
+    /// `properties`. Entries are told apart by key.
+    Map,
+}
+
+/// What an array's elements are, so the editor can parse one back.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListItem {
     /// `items: {type: string}`. Each element is typed as written.
     Text,
     /// `items: {type: integer}`. Each element is parsed back to a number.
     Integer,
+    /// `items` a closed set of strings, as [`FieldKind::Choice`] reads one.
+    /// Drawn as a checklist of the names in the set, in the schema's order.
+    Choice(Vec<String>),
 }
 
 /// Which of shep-core's own string grammars a [`FieldKind::Text`] field
@@ -123,7 +158,7 @@ pub struct Field {
     pub example: Option<String>,
     /// `init.accepts`, the forms this field takes, in the operator's
     /// words. Empty when the field carries none, in which case
-    /// [`super::validation::bullets`] falls back to the type table.
+    /// [`crate::dog_settings::bullets`] falls back to the type table.
     pub accepts: Vec<String>,
     /// `init.refuses`, the forms it turns down. Empty is the common case.
     pub refuses: Vec<String>,
@@ -132,7 +167,7 @@ pub struct Field {
     pub neighbours: Vec<Neighbour>,
     /// What the schema says the value must satisfy, beyond its type.
     /// Checked on the keystroke that applies an edit, by
-    /// [`super::validation::refusal`].
+    /// [`crate::dog_settings::refusal`].
     pub bounds: Bounds,
 }
 
@@ -237,20 +272,14 @@ impl FieldSet {
     pub fn len(&self) -> usize {
         self.fields.len()
     }
-
-    /// Whether there are none.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
-    }
 }
 
 fn field_from(key: &str, schema: &Value, defs: &Map<String, Value>) -> Field {
     let init = schema.get("init");
     let help = init
         .and_then(|i| i.get("blurb"))
-        .or_else(|| schema.get("description"))
         .and_then(Value::as_str)
+        .or_else(|| schema.get("description").and_then(Value::as_str))
         .map_or_else(|| key.to_owned(), str::to_owned);
     let group = init
         .and_then(|i| i.get("group"))
@@ -264,7 +293,7 @@ fn field_from(key: &str, schema: &Value, defs: &Map<String, Value>) -> Field {
         (FieldKind::Text, Some(names)) if !names.is_empty() => FieldKind::Suggested(names),
         (kind, _) => kind,
     };
-    let editable = kind != FieldKind::Opaque;
+    let editable = !matches!(kind, FieldKind::Opaque | FieldKind::Entries(_));
     let example = init
         .and_then(|i| i.get("example"))
         .and_then(Value::as_str)
@@ -322,11 +351,17 @@ mod tests {
             "a": { "type": "boolean", "description": "desc", "init": { "blurb": "blurb" } },
             "b": { "type": "boolean", "description": "desc" },
             "c": { "type": "boolean" },
+            "d": { "type": "boolean", "description": "desc", "init": { "blurb": 7 } },
+            "e": { "type": "boolean", "init": { "blurb": null } },
+            "f": { "type": "boolean", "description": 7, "init": { "blurb": 7 } },
         }));
         let set = FieldSet::from_properties(&p, &Default::default(), &[]);
         assert_eq!(set.by_key("a").unwrap().help, "blurb");
         assert_eq!(set.by_key("b").unwrap().help, "desc");
         assert_eq!(set.by_key("c").unwrap().help, "c");
+        assert_eq!(set.by_key("d").unwrap().help, "desc");
+        assert_eq!(set.by_key("e").unwrap().help, "e");
+        assert_eq!(set.by_key("f").unwrap().help, "f");
     }
 
     /// They all rank equal, so a stable sort leaves them exactly where the
@@ -416,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn the_real_flockfile_schema_yields_forty_four_fields_in_eight_groups() {
+    fn the_real_flockfile_schema_yields_forty_four_fields_in_nine_groups() {
         let set = real_field_set();
         assert_eq!(set.len(), 44);
         assert_eq!(
@@ -429,7 +464,8 @@ mod tests {
                 "readiness",
                 "shutdown",
                 "watch",
-                "cron"
+                "cron",
+                "dogs"
             ]
         );
         assert!(

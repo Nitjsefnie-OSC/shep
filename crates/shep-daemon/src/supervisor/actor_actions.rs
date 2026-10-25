@@ -18,8 +18,9 @@ impl<R: ProcessRunner> Actor<R> {
     ///
     /// Both refusals are decided ahead of the wait, since a sheep refused
     /// after one was armed would leave a wait nothing drives home: no open
-    /// [`SheepSlot::open_channel`] is [`ActionOutcome::NoChannel`], a drainee
-    /// is [`ActionOutcome::Skipped`]. A replacement is not skipped.
+    /// [`SheepSlot::open_channel`] is [`ActionOutcome::NoChannel`], or
+    /// [`ActionOutcome::DogNoChannel`] for a dog spawned without one, and a
+    /// drainee is [`ActionOutcome::Skipped`]. A replacement is not skipped.
     pub(super) fn begin_action(
         &mut self,
         selector: &ProcessSelector,
@@ -56,11 +57,14 @@ impl<R: ProcessRunner> Actor<R> {
                 continue;
             }
             let Some(to_child) = slot.open_channel().cloned() else {
-                refused.push(ActionReply {
-                    id,
-                    name,
-                    outcome: ActionOutcome::NoChannel,
-                });
+                // A dog has no Flockfile key to set, so its row names the dog
+                // as the one that has to ask.
+                let outcome = if slot.entry.dog.is_some() && !config.channel {
+                    ActionOutcome::DogNoChannel
+                } else {
+                    ActionOutcome::NoChannel
+                };
+                refused.push(ActionReply { id, name, outcome });
                 continue;
             };
             let answer =
@@ -333,10 +337,13 @@ impl<R: ProcessRunner> Actor<R> {
     /// One sheep's transition to `Online`: emits the event, then arms every
     /// lifecycle extra its configuration asks for.
     ///
-    /// The single arming site, reached by all three transitions. Arming
-    /// happens at the transition, not the spawn: a liveness probe armed
-    /// against an app that has not finished starting fails its threshold and
-    /// restarts the app before it ever comes up.
+    /// The arming site for every ordinary transition, reached by all three.
+    /// Arming happens at the transition, not the spawn: a liveness probe
+    /// armed against an app that has not finished starting fails its
+    /// threshold and restarts the app before it ever comes up. An abandoned
+    /// reload's replacement is the one instance armed without going through
+    /// here: it never becomes `Online`, so [`Actor::reload_ready_result`] and
+    /// [`Actor::handle_reload_verified`] call [`Self::arm_extras`] directly.
     pub(super) fn went_online(&mut self, id: u32, info: ProcessInfo, manually: bool) {
         // Whatever an earlier reload concluded about this instance, it is
         // serving now. See `SheepSlot::ready_failed`.
@@ -350,11 +357,11 @@ impl<R: ProcessRunner> Actor<R> {
     /// Arms `id`'s lifecycle extras, rebuilding the spec the running process
     /// was spawned from.
     ///
-    /// Rebuilding is what makes one arming site possible:
-    /// `handle_ready_result` holds an id and nothing else, and `describe` is
-    /// pure over a `spec`, `instance` and `credentials` that never change.
-    /// The store it reads can move under a running sheep, which is why this
-    /// is [`describe`] and not [`assemble`].
+    /// Rebuilding is what makes a shared arming body possible: a caller holds
+    /// an id and nothing else, and `describe` is pure over a `spec`,
+    /// `instance` and `credentials` that never change. The store it reads can
+    /// move under a running sheep, which is why this is [`describe`] and not
+    /// [`assemble`].
     pub(super) fn arm_extras(&mut self, id: u32) {
         let Some(extras) = self.extras.as_ref() else {
             return;
@@ -368,11 +375,8 @@ impl<R: ProcessRunner> Actor<R> {
         // Rebuilt for the prober's sake alone, as `spawn_verify_task` does:
         // nothing spawns this sheep's own program from it. Extras are armed
         // only for a process already running, which resolved its identity to
-        // start, so the unresolved arm below cannot be reached from here.
-        let credentials = match slot.entry.credentials {
-            SpawnIdentity::Resolved(creds) => creds,
-            SpawnIdentity::Unresolved => None,
-        };
+        // start.
+        let credentials = slot.entry.credentials.credentials();
         let described = describe(
             &slot.entry.spec,
             slot.entry.instance,
@@ -467,7 +471,7 @@ impl<R: ProcessRunner> Actor<R> {
         let mut listing: Vec<ProcessInfo> = self
             .sheep
             .values()
-            .map(|slot| to_info(&slot.entry, &self.smits))
+            .map(|slot| self.with_mark(to_info(&slot.entry, &self.smits)))
             .collect();
         sort_flock(&mut listing);
         listing

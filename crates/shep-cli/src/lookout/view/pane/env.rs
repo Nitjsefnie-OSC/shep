@@ -112,7 +112,14 @@ pub(super) fn cursor_env_row_line(
             env_row_line(pane, name, true, width, palette, show_lands)
         }
         Some(PaneRow::AddEnv) => add_env_row_line(pane, true, width, palette, show_lands),
-        Some(PaneRow::Field(_)) | None => {
+        Some(
+            PaneRow::Field(_)
+            | PaneRow::Table(_)
+            | PaneRow::Entry(_)
+            | PaneRow::Choice { .. }
+            | PaneRow::Arm { .. },
+        )
+        | None => {
             unreachable!("callers check the cursor is on an env row first")
         }
     }
@@ -137,7 +144,7 @@ pub(super) fn env_row_line(
         .flatten()
         .filter(|typing| typing.key() == Some(name))
         .map(EnvTyping::buffer);
-    let value = typing.map_or_else(|| "(set)".to_owned(), |buffer| format!("{buffer}\u{258f}"));
+    let value = typing.map_or_else(|| "(set)".to_owned(), |buffer| buffer.drawn(value_w));
     let ground = if selected {
         palette.ground()
     } else {
@@ -195,7 +202,7 @@ pub(super) fn add_env_row_line(
     };
     let mark_span = Span::styled(mark(selected), mark_style);
     let (caption, muted) = match typing {
-        Some(buffer) => (format!("{buffer}\u{258f}"), false),
+        Some(buffer) => (buffer.drawn(key_w.saturating_sub(1)), false),
         None => ("+ add a key".to_owned(), true),
     };
     // Same key-cell reservation as [`env_row_line`]: a leading space stands

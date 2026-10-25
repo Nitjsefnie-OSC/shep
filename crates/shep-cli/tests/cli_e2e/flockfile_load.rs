@@ -194,8 +194,8 @@ fn one_absent_script_refuses_the_whole_flockfile_and_registers_nothing() {
     assert_success(&flock);
     let envelope: serde_json::Value = serde_json::from_slice(&flock.stdout).unwrap();
     assert_eq!(
-        envelope["data"].as_array().map(Vec::len),
-        Some(0),
+        sheep_rows(&envelope["data"]).len(),
+        0,
         "a Flockfile refused as a whole must leave NOTHING registered: {}",
         envelope
     );

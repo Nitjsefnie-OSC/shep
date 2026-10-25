@@ -142,15 +142,14 @@ pub enum ResetMode {
     All,
 }
 
-impl ResetMode {
+impl From<ResetMode> for ResetDepth {
     /// Maps to the wire type `Request::ApplyConfig` actually carries.
-    #[must_use]
-    pub fn to_depth(self) -> ResetDepth {
-        match self {
-            Self::File => ResetDepth::File,
-            Self::Policy => ResetDepth::Policy,
-            Self::Env => ResetDepth::Env,
-            Self::All => ResetDepth::All,
+    fn from(mode: ResetMode) -> Self {
+        match mode {
+            ResetMode::File => Self::File,
+            ResetMode::Policy => Self::Policy,
+            ResetMode::Env => Self::Env,
+            ResetMode::All => Self::All,
         }
     }
 }
@@ -304,10 +303,84 @@ pub struct WhisperArgs {
     pub line: String,
 }
 
+/// Arguments to `shep copy`.
+///
+/// Not [`SelectorArgs`]: a copy names two sheep, and each one is an address
+/// rather than a selector. No `all`, no glob, no `fold:` and no id: a copy has
+/// one source and one target, and a selector matching three sheep would have
+/// to guess which pair the path belongs to.
+#[derive(Debug, clap::Args)]
+pub struct CopyArgs {
+    /// The sheep and the path to copy from, such as `web.restart_delay`,
+    /// `web.dogs.kelpie`, `web.dogs.kelpie.rulings`, or `web.env`
+    pub from: String,
+    /// The sheep and the same path to copy onto, such as `api.restart_delay` or `api.env`
+    pub to: String,
+    /// Make the target exactly the source at that path, instead of merging
+    /// into it
+    #[arg(long)]
+    pub replace: bool,
+    /// Leave this key out, named under the path you are copying; repeat it
+    /// for more than one
+    #[arg(long = "except", value_name = "KEY")]
+    pub except: Vec<String>,
+    /// Print what would change and write nothing
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Write without asking
+    #[arg(long)]
+    pub yes: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cli::{Cli, Commands};
+
+    /// fails if `copy` stops taking two addresses, or one of its four flags
+    /// stops reaching its field.
+    #[test]
+    fn copy_takes_two_addresses_and_four_flags() {
+        use clap::Parser;
+        let parse = |argv: &[&str]| match Cli::try_parse_from(argv).unwrap().command {
+            Commands::Copy(args) => args,
+            other => panic!("expected copy, got {other:?}"),
+        };
+
+        let plain = parse(&["shep", "copy", "web.dogs.kelpie", "api.dogs.kelpie"]);
+        assert_eq!(plain.from, "web.dogs.kelpie");
+        assert_eq!(plain.to, "api.dogs.kelpie");
+        assert!(!plain.replace);
+        assert!(!plain.dry_run);
+        assert!(!plain.yes);
+        assert!(plain.except.is_empty());
+
+        let flagged = parse(&[
+            "shep",
+            "copy",
+            "web.dogs.kelpie",
+            "api.dogs.kelpie",
+            "--replace",
+            "--dry-run",
+            "--yes",
+            "--except",
+            "git.checkout",
+            "--except",
+            "rulings.panel",
+        ]);
+        assert!(flagged.replace);
+        assert!(flagged.dry_run);
+        assert!(flagged.yes);
+        assert_eq!(
+            flagged.except,
+            vec!["git.checkout".to_string(), "rulings.panel".to_string()]
+        );
+
+        assert!(
+            Cli::try_parse_from(["shep", "copy", "web.dogs.kelpie"]).is_err(),
+            "a copy with one side named is a usage error"
+        );
+    }
 
     #[test]
     fn start_takes_a_flockfile_flag_and_defaults_it_off() {

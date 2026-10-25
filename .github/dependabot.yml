@@ -2,6 +2,9 @@
 # monthly. Subjects carry `ci(deps):` / `chore(deps):` so commits.yml
 # accepts them; release-plz skips both, so a bump alone makes no changelog
 # entry and release-plz-pr.yml's no-op guard holds that release open.
+#
+# `cooldown` holds a release back a week before it is proposed, so a broken
+# one is usually fixed or yanked first. Security updates skip the wait.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -15,6 +18,8 @@ updates:
       prefix: ci
       include: scope
     labels: [dependencies]
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: cargo
     directory: /
@@ -27,6 +32,8 @@ updates:
       prefix: chore
       include: scope
     labels: [dependencies]
+    cooldown:
+      default-days: 7
 
   # benches/ is its own workspace with its own lockfile, excluded from the
   # root one so a bench-only dependency can never reach a shipped binary,
@@ -42,6 +49,8 @@ updates:
       prefix: chore
       include: scope
     labels: [dependencies]
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: npm
     directory: /web
@@ -54,6 +63,8 @@ updates:
       prefix: chore
       include: scope
     labels: [dependencies]
+    cooldown:
+      default-days: 7
     # `@astrojs/check` peers on `typescript@^5 || ^6`, so a major bump here
     # makes `npm ci` fail to resolve and takes the Pages deploy with it.
     # Drop this once that peer range covers 7.

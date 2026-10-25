@@ -8,7 +8,9 @@ use serde::Serialize;
 use shep_core::protocol::{Hello, HelloReply, MIN_SUPPORTED, codec, decode_frame, encode_frame};
 
 use serde::de::DeserializeOwned;
-use shep_core::protocol::{DogSource, ProcessInfo};
+use shep_core::protocol::{
+    DogSource, Envelope, PROTOCOL_VERSION, ProcessInfo, Request, Response, ServerFrame,
+};
 use tokio_util::codec::Framed;
 
 const RECV_TIMEOUT: Duration = Duration::from_secs(5);
@@ -33,6 +35,42 @@ impl Client {
             .expect("connection closed early")
             .unwrap();
         decode_frame(&frame).unwrap()
+    }
+
+    /// Handshake on this daemon's own protocol and take the ack it earns.
+    ///
+    /// A test that is not about the handshake itself has no use for the
+    /// ack's fields, and asserting the ack here keeps a refusal from
+    /// surfacing later as an unrelated frame.
+    pub(super) async fn handshake(&mut self) {
+        self.send(&Hello {
+            client_version: "0.1.0".to_string(),
+            protocol: PROTOCOL_VERSION,
+            dog_name: None,
+        })
+        .await;
+        let ack: HelloReply = self.recv().await;
+        ack.expect("the fixture handshakes on this daemon's own protocol");
+    }
+
+    /// Subscribe to `topics` and assert the `Subscribed` reply arrives.
+    ///
+    /// Reading subscribed events alone would report a subscription the
+    /// daemon never took as a recv timeout.
+    pub(super) async fn subscribe(&mut self, topics: &[&str]) {
+        self.send(&Envelope {
+            id: 1,
+            deadline_ms: None,
+            body: Request::Subscribe {
+                topics: topics.iter().map(|t| t.to_string()).collect(),
+            },
+        })
+        .await;
+        let frame: ServerFrame = self.recv().await;
+        assert!(
+            matches!(&frame, ServerFrame::Reply(reply) if reply.result == Ok(Response::Subscribed)),
+            "a Subscribe must be answered with Subscribed: {frame:?}"
+        );
     }
 
     pub(super) async fn closed(&mut self) -> bool {
@@ -71,11 +109,11 @@ pub(super) async fn connected(ctx: RpcContext) -> Client {
 pub(super) async fn start_dog(ctx: &RpcContext, name: &str) -> ProcessInfo {
     let spec = crate::dogs::DogSpec {
         name: name.to_string(),
-        source: DogSource::BuiltIn,
+        source: DogSource::BuiltIn { grants: None },
     };
     let app = crate::dogs::dog_app(&spec, &ctx.paths).expect("the dog fixture must assemble");
     ctx.supervisor
-        .start_dog(app, DogSource::BuiltIn)
+        .start_dog(app, DogSource::BuiltIn { grants: None })
         .await
         .expect("the dog fixture must start")
 }

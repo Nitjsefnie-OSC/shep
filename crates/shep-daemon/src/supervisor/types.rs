@@ -82,16 +82,32 @@ impl Registration {
 /// operator-facing string with no value from a live flock in it.
 #[derive(Debug, Clone)]
 pub(crate) struct FieldSet {
-    /// The app as it now stands, for `rpc.rs` to hand the registry: the
+    /// The app as it now stands, for `rpc/dispatch.rs` to hand the registry: the
     /// parked config when the field parked, the stored spec's when it
     /// reached. `Command::SetSheepEnv` answers with the same thing and for
     /// the same reason: the muster roll is written from the registry.
     pub(crate) app: ResolvedApp,
+    /// The value the field holds now: what a set wrote, or what a reset
+    /// put back.
+    pub(crate) value: serde_json::Value,
     /// `true` when the running child does not have the value yet.
     pub(crate) pending: bool,
     /// The `warning` [`shep_core::protocol::Response::SheepFieldSet`]
     /// answers with, computed here where the filesystem is in reach.
     pub(crate) warning: Option<String>,
+}
+
+/// One sheep's table for one dog, with the environment its references
+/// resolve in.
+///
+/// `Debug` is derived (IR-41): [`DogTable`]'s own manual `Debug` prints a key
+/// count and never a value.
+#[derive(Debug, Clone)]
+pub(crate) struct SheepDogRead {
+    /// The sheep's table for the dog, `None` when it carries none.
+    pub(crate) table: Option<DogTable>,
+    /// The sheep's own `environment`, or the shepherd's when it sets none.
+    pub(crate) environment: String,
 }
 
 /// What a [`Command::SetSheepEnvBatch`] did.
@@ -100,7 +116,7 @@ pub(crate) struct FieldSet {
 /// an [`AppConfig`], whose own manual `Debug` redacts `env`.
 #[derive(Debug, Clone)]
 pub(crate) struct EnvBatch {
-    /// The parked config, for `rpc.rs` to hand the registry. `None` when
+    /// The parked config, for `rpc/dispatch.rs` to hand the registry. `None` when
     /// nothing was written, which is a dry run or an unforced collision.
     pub(crate) app: Option<ResolvedApp>,
     /// Keys written.
@@ -109,6 +125,20 @@ pub(crate) struct EnvBatch {
     pub(crate) unchanged: Vec<String>,
     /// Keys that held a different value.
     pub(crate) collisions: Vec<String>,
+}
+
+/// What a [`Command::CopySheepEnv`] did.
+///
+/// `Debug` is derived: a change carries only what
+/// [`shep_core::secrets::shown_env_value`] allows, and [`ResolvedApp`] wraps
+/// an [`AppConfig`], whose own manual `Debug` redacts `env`.
+#[derive(Debug, Clone)]
+pub(crate) struct EnvCopy {
+    /// The parked config, for `rpc/dispatch.rs` to hand the registry. `None`
+    /// when nothing was written, which is a dry run or a copy with no change.
+    pub(crate) app: Option<ResolvedApp>,
+    /// Every key the copy touches, in key order.
+    pub(crate) changes: Vec<shep_core::protocol::EnvCopyChange>,
 }
 
 /// The environment a shepherd resolves secrets in when nothing says
@@ -192,7 +222,7 @@ pub(crate) struct Applied {
     /// though: a later refusal produces the same shape, and only the message
     /// tells them apart.
     pub(crate) refused: Option<String>,
-    /// The merged, normalized app. `rpc.rs` hands this to
+    /// The merged, normalized app. `rpc/dispatch.rs` hands this to
     /// `FlockRegistry::record`, so a reboot comes up on the applied config.
     /// The full merge, `NeedsRespawn` fields included, since a reboot spawns
     /// every process afresh.

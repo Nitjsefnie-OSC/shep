@@ -28,7 +28,7 @@ pub async fn whisper(client: &Client, streams: &mut Streams<'_>, args: &WhisperA
     };
 
     if args.line.contains('\n') || args.line.contains('\r') {
-        let message = "the line must be one line — an embedded newline or carriage return \
+        let message = "the line must be one line. An embedded newline or carriage return \
                         would deliver two commands where you typed one; shep adds the \
                         terminator itself";
         return streams.fail(ExitCode::Usage, message);

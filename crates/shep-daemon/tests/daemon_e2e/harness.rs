@@ -239,6 +239,60 @@ impl Client {
         reply
     }
 
+    /// Starts one `app` and hands back its row, failing at the call site.
+    ///
+    /// A plain `fn` reading [`Location::caller`] before it builds the future:
+    /// `#[track_caller]` is a no-op on an `async fn`, so a failure names the
+    /// test rather than this file. One app, one row: a case starting a
+    /// multi-instance app sends [`Request::Start`] itself and reads the whole
+    /// `Started`.
+    ///
+    /// # Panics
+    ///
+    /// If the daemon refuses the start, answers anything but `Started`, or
+    /// answers `Started` with a row count other than one. The reply rides on
+    /// the message.
+    #[track_caller]
+    pub(crate) fn start_first(&mut self, app: AppConfig) -> impl Future<Output = ProcessInfo> + '_ {
+        let site = Location::caller();
+        async move {
+            let reply = self.request(Request::Start { apps: vec![app] }).await;
+            let Response::Started(infos) = reply
+                .result
+                .unwrap_or_else(|error| panic!("the sheep must start: {error:?} (at {site})"))
+            else {
+                panic!("expected a started reply (at {site})");
+            };
+            let [info] = infos.as_slice() else {
+                panic!(
+                    "one app, one row: a started reply carries {} rows (at {site})",
+                    infos.len()
+                );
+            };
+            info.clone()
+        }
+    }
+
+    /// Subscribes this connection to one `topic`, failing at the call site.
+    ///
+    /// # Panics
+    ///
+    /// If the daemon answers anything but `Subscribed`.
+    #[track_caller]
+    pub(crate) fn subscribe(&mut self, topic: &str) -> impl Future<Output = ()> + '_ {
+        let site = Location::caller();
+        let topics = vec![topic.to_string()];
+        async move {
+            let reply = self.request(Request::Subscribe { topics }).await;
+            let Response::Subscribed = reply
+                .result
+                .unwrap_or_else(|error| panic!("the subscribe failed: {error:?} (at {site})"))
+            else {
+                panic!("expected a subscribed reply (at {site})");
+            };
+        }
+    }
+
     /// Reads frames until a `Process` event of `kind` for `id` arrives,
     /// re-queueing everything else.
     pub(crate) async fn await_process_event(

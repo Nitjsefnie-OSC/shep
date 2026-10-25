@@ -296,9 +296,36 @@ mod tests {
     /// which names nothing.
     const BOUND: Duration = Duration::from_secs(30);
 
-    /// Short enough that the timing test costs a second, long enough that a
-    /// `/bin/sh` fixture on a loaded runner is never killed mid-print.
-    const TEST_BUDGET: Duration = Duration::from_secs(2);
+    /// The budget for the tests that wait for the dog to reach some point
+    /// in its script. Those tests assert what the dog did, not how fast,
+    /// so the budget is only the forcing mechanism for a deadlock and must
+    /// never be what ends a green run. A contended runner spends seconds
+    /// just reaching a `/bin/sh` fixture's first command — a shared 2s
+    /// budget killed these fixtures mid-print (#651) — so this is generous
+    /// against the 30s [`BOUND`], which stays the arm that fires on a true
+    /// hang.
+    const RUN_BUDGET: Duration = Duration::from_secs(20);
+
+    /// The budget for the fork sweep test. It waits for two things: the
+    /// dog to fork its grandchild, which a contended runner still does
+    /// in tens of milliseconds (measured 20-47ms announcing at load
+    /// average 50), and the budget itself to fire the sweep. The fork
+    /// wait gets the repo's generous 5s style so the announcement
+    /// assertion never races the runner.
+    const SWEEP_BUDGET: Duration = Duration::from_secs(5);
+
+    /// How long the fork sweep test keeps watching for a grandchild that
+    /// outlived the sweep. A miss is caught the moment its file appears,
+    /// however long a contended runner takes to notice the dog's death,
+    /// so no fixed grace can be the reason a miss slips through; absence
+    /// at the bound is the sweep.
+    const SURVIVOR_BOUND: Duration = Duration::from_secs(5);
+
+    /// The budget for the test that waits for the budget itself: the
+    /// wedged dog asserts [`HookOutcome::TimedOut`], which fires on the
+    /// budget rather than on the machine's speed, so a short budget is the
+    /// event being waited for, not a race with the runner.
+    const SHORT_BUDGET: Duration = Duration::from_secs(1);
 
     /// Writes an executable `/bin/sh` script at `dir/name`.
     fn dog(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
@@ -313,8 +340,8 @@ mod tests {
     }
 
     /// Runs the hook under [`BOUND`], so a deadlock is a named failure.
-    async fn run(binary: &Path, home: &Path) -> HookOutcome {
-        tokio::time::timeout(BOUND, run_on_remove(binary, home, "watchdog", TEST_BUDGET))
+    async fn run(binary: &Path, home: &Path, budget: Duration) -> HookOutcome {
+        tokio::time::timeout(BOUND, run_on_remove(binary, home, "watchdog", budget))
             .await
             .expect("the hook runner must not outlive its own budget")
     }
@@ -341,7 +368,7 @@ mod tests {
              done",
         );
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Ran { output } = &outcome else {
             panic!("a dog that exits 0 after writing both pipes ran its hook, got {outcome:?}");
@@ -369,7 +396,7 @@ mod tests {
             "printf 'unrecognized subcommand: %s\\n' \"$1\" >&2\nexit 2",
         );
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Refused { code, output } = &outcome else {
             panic!("a non-zero exit is a refusal, got {outcome:?}");
@@ -389,7 +416,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let binary = dog(dir.path(), "echoing", "printf '%s|%s' \"$#\" \"$*\"");
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         assert_eq!(
             outcome,
@@ -417,7 +444,7 @@ mod tests {
             "printf '%s|%s|%s' \"$SHEP_HOME\" \"$SHEP_DOG_NAME\" \"${CARGO:-cleared}\"",
         );
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Ran { output } = &outcome else {
             panic!("expected a clean run, got {outcome:?}");
@@ -438,9 +465,14 @@ mod tests {
         let binary = dog(dir.path(), "wedged", "sleep 600");
 
         let started = std::time::Instant::now();
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), SHORT_BUDGET).await;
 
-        assert_eq!(outcome, HookOutcome::TimedOut { after: TEST_BUDGET });
+        assert_eq!(
+            outcome,
+            HookOutcome::TimedOut {
+                after: SHORT_BUDGET
+            }
+        );
         assert!(
             started.elapsed() < BOUND,
             "the budget, not the test's own bound, is what ended it"
@@ -451,26 +483,60 @@ mod tests {
     /// forked. `kill_on_drop` signals the leader alone, so a dog that
     /// backgrounded any work leaves it running with nobody left to reap it.
     ///
-    /// The grandchild writes its file after the budget has already expired,
-    /// so its absence is the sweep and not a race with it.
+    /// The grandchild announces itself before it waits, so the test fails
+    /// outright when the runner was too slow to fork it inside the budget:
+    /// the sweep must have had a fork to reach, not pass on one that never
+    /// existed. It then writes its file only once the dog is dead, which
+    /// only a missing sweep allows, and the test watches for that file up
+    /// to [`SURVIVOR_BOUND`] rather than checking once after a fixed
+    /// grace.
     #[tokio::test]
     async fn a_fork_the_dog_left_behind_is_swept_with_it() {
         let dir = tempfile::tempdir().unwrap();
         let binary = dog(
             dir.path(),
             "forking",
-            "( sleep 4; : > \"$SHEP_HOME/grandchild\" ) &\n\
+            "( : > \"$SHEP_HOME/grandchild-started\"\n\
+             while kill -0 $$ 2>/dev/null; do sleep 0.1; done\n\
+             : > \"$SHEP_HOME/grandchild\" ) &\n\
              sleep 600",
         );
+        let announced = dir.path().join("grandchild-started");
         let survivor = dir.path().join("grandchild");
 
-        let outcome = run(&binary, dir.path()).await;
-        assert_eq!(outcome, HookOutcome::TimedOut { after: TEST_BUDGET });
+        let outcome = run(&binary, dir.path(), SWEEP_BUDGET).await;
+        assert_eq!(
+            outcome,
+            HookOutcome::TimedOut {
+                after: SWEEP_BUDGET
+            }
+        );
 
-        // Past the grandchild's own 4s, so a survivor has had its chance.
-        tokio::time::sleep(Duration::from_secs(4)).await;
+        // The fork happened inside the budget, so the sweep had a grandchild
+        // to catch or to miss: a runner too slow to start `/bin/sh` fails
+        // here rather than passing on a fork that never existed.
         assert!(
-            !survivor.exists(),
+            announced.exists(),
+            "the dog never forked the grandchild inside the budget, so the sweep was never tested"
+        );
+
+        // Watch for the survivor under a generous bound rather than check
+        // once past a fixed grace: a contended runner can take longer than
+        // any fixed grace to wake the grandchild, notice the dog is gone
+        // and write, and the sweep must be caught however slow that notice
+        // is. The timeout is the forcing mechanism for the watch; timing
+        // out is absence, and absence is the sweep.
+        let survivor_seen = async {
+            loop {
+                if survivor.exists() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        };
+        let survivor_written = tokio::time::timeout(SURVIVOR_BOUND, survivor_seen).await;
+        assert!(
+            survivor_written.is_err(),
             "a fork outliving the dog kept running after the budget killed it"
         );
     }
@@ -483,7 +549,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let binary = dog(dir.path(), "escaping", "printf 'clean\\033[2Jgone'");
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Ran { output } = &outcome else {
             panic!("expected a clean run, got {outcome:?}");
@@ -510,7 +576,7 @@ mod tests {
         // sometimes reproduces what it claims.
         let binary = dog(dir.path(), "crashing", "printf 'dying' >&2\nkill -ABRT $$");
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Refused { code, output } = &outcome else {
             panic!("a signalled dog is a refusal, got {outcome:?}");
@@ -529,7 +595,7 @@ mod tests {
     async fn a_binary_that_is_not_there_is_not_a_refusal() {
         let dir = tempfile::tempdir().unwrap();
 
-        let outcome = run(&dir.path().join("never-installed"), dir.path()).await;
+        let outcome = run(&dir.path().join("never-installed"), dir.path(), RUN_BUDGET).await;
 
         assert!(
             matches!(outcome, HookOutcome::NotSpawned { .. }),
@@ -550,7 +616,7 @@ mod tests {
              printf 'err-marker' >&2",
         );
 
-        let outcome = run(&binary, dir.path()).await;
+        let outcome = run(&binary, dir.path(), RUN_BUDGET).await;
 
         let HookOutcome::Ran { output } = &outcome else {
             panic!("expected a clean run, got {outcome:?}");

@@ -10,6 +10,8 @@
 //! Pins the wire shapes only. See `docs/shepherd-channel.md` for reply and
 //! correlation semantics.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// The value the shepherd exports as `SHEP_CHANNEL_VERSION` to every child
@@ -19,6 +21,22 @@ use serde::{Deserialize, Serialize};
 /// seen. `docs/shepherd-channel.md` defines what `"1"` means.
 pub const CHANNEL_VERSION: &str = "1";
 
+/// What kind of number a [`ChildMessage::Metric`] sample is
+///
+/// Wire spellings are `"gauge"` and `"counter"`. Absent on the wire means
+/// gauge. Exhaustive on purpose, like the two message enums: a new kind
+/// is a wire change announced out of band, and an exhaustive match
+/// forces every call site to react to it.
+// wire format: changing these strings is a breaking change
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MetricType {
+    /// A value that can go up and down
+    Gauge,
+    /// A value that only accumulates
+    Counter,
+}
+
 /// Child -> daemon shepherd-channel message (spec §7, kebab-case kinds)
 // wire format: changing these strings is a breaking change
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,11 +45,29 @@ pub enum ChildMessage {
     /// `{"kind":"ready"}`: readiness signal (`wait_ready` gate)
     Ready,
     /// Custom metric sample
+    ///
+    /// Names and labels carry no grammar check here: the metrics dog
+    /// enforces that when it reads them. Do not add a half check to this
+    /// crate.
     Metric {
         /// Metric name
         name: String,
         /// Metric value
         value: f64,
+        /// What kind of number this is. Absent on the wire means gauge.
+        ///
+        /// Wire key `type`: a Rust field named `kind` would collide with
+        /// the tag. An unknown string fails to decode, so the shepherd
+        /// drops the frame as malformed rather than guessing a kind.
+        #[serde(rename = "type", skip_serializing_if = "Option::is_none", default)]
+        metric_type: Option<MetricType>,
+        /// Labels for the sample. An absent key and an empty map are the
+        /// same message.
+        #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+        labels: BTreeMap<String, String>,
+        /// Free-text help for the sample
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        help: Option<String>,
     },
     /// Reply to a daemon-initiated action
     ActionReply {
@@ -54,6 +90,16 @@ pub enum ChildMessage {
         pid: u32,
         /// What `describe` shows beside the lamb's executable name
         label: LambLabel,
+    },
+    /// A name and a number for a dog, published as `channel.note`
+    ///
+    /// Not a metric sample: the metrics dog never reads one. No grammar
+    /// check on `name`, no labels and no help.
+    Note {
+        /// Whatever the app and the dog agree on
+        name: String,
+        /// The number that goes with `name`
+        value: f64,
     },
 }
 
@@ -211,9 +257,58 @@ mod tests {
         let msg = ChildMessage::Metric {
             name: "rps".to_string(),
             value: 42.0,
+            metric_type: None,
+            labels: BTreeMap::new(),
+            help: None,
         };
         assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
         assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+    }
+
+    /// Field order on the wire is `name, value, type, labels, help`.
+    #[test]
+    fn a_metric_with_type_labels_and_help_round_trips() {
+        let fixture = concat!(
+            r#"{"kind":"metric","name":"queue_depth","value":3.0,"type":"counter","#,
+            r#""labels":{"model":"qwen"},"help":"Requests waiting for the lease."}"#,
+        );
+        let msg = ChildMessage::Metric {
+            name: "queue_depth".to_string(),
+            value: 3.0,
+            metric_type: Some(MetricType::Counter),
+            labels: [("model".to_string(), "qwen".to_string())].into(),
+            help: Some("Requests waiting for the lease.".to_string()),
+        };
+        assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
+        assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+    }
+
+    #[test]
+    fn a_gauge_type_round_trips_as_its_own_spelling() {
+        let fixture = r#"{"kind":"metric","name":"rps","value":1.0,"type":"gauge"}"#;
+        let msg = ChildMessage::Metric {
+            name: "rps".to_string(),
+            value: 1.0,
+            metric_type: Some(MetricType::Gauge),
+            labels: BTreeMap::new(),
+            help: None,
+        };
+        assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
+        assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+    }
+
+    /// No fallback to gauge: the daemon drops the line as malformed.
+    #[test]
+    fn an_unknown_metric_type_fails_to_decode() {
+        for frame in [
+            r#"{"kind":"metric","name":"rps","value":1.0,"type":"histogram"}"#,
+            r#"{"kind":"metric","name":"rps","value":1.0,"type":"Counter"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<ChildMessage>(frame).is_err(),
+                "{frame} decoded"
+            );
+        }
     }
 
     #[test]
@@ -308,6 +403,23 @@ mod tests {
         assert!(
             serde_json::from_str::<ChildMessage>(r#"{"kind":"lamb-label","pid":4312}"#).is_err()
         );
+    }
+
+    /// A name the metrics grammar would refuse goes through untouched.
+    #[test]
+    fn a_note_round_trips_with_any_name() {
+        let fixture = r#"{"kind":"note","name":"lease.web.want.1760500000","value":1.0}"#;
+        let msg = ChildMessage::Note {
+            name: "lease.web.want.1760500000".to_string(),
+            value: 1.0,
+        };
+        assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
+        assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+    }
+
+    #[test]
+    fn a_note_without_a_value_fails_to_decode() {
+        assert!(serde_json::from_str::<ChildMessage>(r#"{"kind":"note","name":"x"}"#).is_err());
     }
 
     #[test]

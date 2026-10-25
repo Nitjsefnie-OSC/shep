@@ -15,10 +15,13 @@ use core::future::Future;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use shep_client::{Client, ConnectError, EventStream, Lagged, RequestError};
+use shep_client::{Client, ConnectError, EventStream, Lagged, RequestError, SshOptions};
+use shep_core::paths::ShepPaths;
 use shep_core::protocol::{BusEvent, ProcessInfo, Request, Response};
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
 
+use crate::commands::rpc::deadline_for;
+use crate::dog_settings::{ask_dog, dog_write};
 use crate::exit::ExitCode;
 
 /// The topics lookout subscribes to.
@@ -139,7 +142,17 @@ impl From<ConnectError> for LinkError {
 
 /// The request half of a live connection.
 #[derive(Debug)]
-pub struct ClientFlock(Client);
+pub struct ClientFlock {
+    client: Client,
+    /// This machine's `$SHEP_HOME`, or `None` for a shepherd on another one.
+    ///
+    /// The manifest cache under that home is what says which dogs want to be
+    /// asked before a write to their settings lands, and this binary holds
+    /// manifests only for the dogs it has adopted here. A dog on a watched
+    /// host is not this machine's to ask, and its own `shep set` on that host
+    /// is where its checks run.
+    home: Option<ShepPaths>,
+}
 
 impl ClientFlock {
     /// The wrapped connection, for [`super::lookout`]'s version guard.
@@ -149,23 +162,35 @@ impl ClientFlock {
     /// whole reconnect ladder as `'static`. A borrowed `Streams` crosses
     /// neither bound.
     pub(crate) fn client(&self) -> &Client {
-        &self.0
+        &self.client
     }
 }
 
 impl FlockSource for ClientFlock {
     async fn flock(&self) -> Result<Vec<ProcessInfo>, RequestError> {
-        match self.0.request(Request::ListFlock).await? {
-            Response::Flock(flock) => Ok(flock),
+        match self.client.list_flock().await {
             // `Response` is `#[non_exhaustive]`; the next poll asks again.
-            _unrecognised => Ok(Vec::new()),
+            Err(RequestError::UnexpectedReply { .. }) => Ok(Vec::new()),
+            answer => answer,
         }
     }
 
+    /// Sends `request`, asking the dog first when the request writes a dog's
+    /// settings and this machine has a manifest saying it wants to be asked.
+    ///
+    /// A refusal comes back as the same [`RequestError::Rpc`] the shepherd
+    /// would have answered a refused write with, so the pane reports a dog's
+    /// "no" and a shepherd's alike, and nothing is written either way.
     async fn send(&self, request: Request) -> Result<Response, RequestError> {
-        // The client's own default deadline, the same one `commands::lifecycle`
-        // passes for stop, restart and reload.
-        self.0.request(request).await
+        if let Some(write) = dog_write(&request)
+            && let Some(paths) = &self.home
+        {
+            ask_dog(&self.client, paths, write.dog, &write.table, write.sheep)
+                .await
+                .map_err(|failure| failure.request_error())?;
+        }
+        let deadline = deadline_for(&request);
+        self.client.request_with_deadline(request, deadline).await
     }
 }
 
@@ -179,14 +204,17 @@ impl EventSource for EventStream {
 #[derive(Debug)]
 pub struct UnixShepherd {
     socket: PathBuf,
+    home: ShepPaths,
 }
 
 impl UnixShepherd {
-    /// Watches the shepherd listening at `socket`.
+    /// Watches the shepherd listening at `socket`, with `paths` as this
+    /// machine's `$SHEP_HOME`.
     #[must_use]
-    pub fn new(socket: &Path) -> Self {
+    pub fn new(socket: &Path, paths: &ShepPaths) -> Self {
         Self {
             socket: socket.to_path_buf(),
+            home: paths.clone(),
         }
     }
 }
@@ -200,13 +228,63 @@ impl Shepherd for UnixShepherd {
         // reconnecting one, must not start a shepherd, and a reconnect that
         // did would resurrect one the operator may have just killed.
         let client = Client::connect(&self.socket).await?;
-        let topics = TOPICS.iter().map(|topic| (*topic).to_string()).collect();
-        let stream = client
-            .subscribe(topics)
-            .await
-            .map_err(|err| LinkError::Refused(err.to_string()))?;
-        Ok((ClientFlock(client), stream))
+        subscribed(client, Some(self.home.clone())).await
     }
+}
+
+/// A shepherd on another machine, dialled through ssh.
+///
+/// The first [`Shepherd::link`] runs `options` as given, so `lookout` can make
+/// it before raw mode and ssh may prompt, as a single `--host` verb does. Every
+/// later one is a redial on [`super::link::run_link`]'s ladder, inside the
+/// alternate screen, where a prompt would land unseen: those run batch mode.
+#[derive(Debug)]
+pub struct HostShepherd {
+    dest: String,
+    options: SshOptions,
+    dialled: bool,
+}
+
+impl HostShepherd {
+    /// Watches the shepherd on `dest`, dialled through `options`.
+    #[must_use]
+    pub fn new(dest: &str, options: SshOptions) -> Self {
+        Self {
+            dest: dest.to_owned(),
+            options,
+            dialled: false,
+        }
+    }
+}
+
+impl Shepherd for HostShepherd {
+    type Flock = ClientFlock;
+    type Events = EventStream;
+
+    async fn link(&mut self) -> Result<(Self::Flock, Self::Events), LinkError> {
+        // Set before the dial, so a first dial that fails still makes the next
+        // one a redial.
+        let options = if core::mem::replace(&mut self.dialled, true) {
+            self.options.clone().batch_mode(true)
+        } else {
+            self.options.clone()
+        };
+        let client = Client::connect_ssh_with(&self.dest, &options).await?;
+        subscribed(client, None).await
+    }
+}
+
+/// Subscribes `client` to [`TOPICS`] and pairs the two halves.
+async fn subscribed(
+    client: Client,
+    home: Option<ShepPaths>,
+) -> Result<(ClientFlock, EventStream), LinkError> {
+    let topics = TOPICS.iter().map(|topic| (*topic).to_string()).collect();
+    let stream = client
+        .subscribe(topics)
+        .await
+        .map_err(|err| LinkError::Refused(err.to_string()))?;
+    Ok((ClientFlock { client, home }, stream))
 }
 
 /// One reading of the machine this lookout is running on.
@@ -321,6 +399,29 @@ impl Local for LocalReader {
     }
 }
 
+/// What a lookout over `--host` reads in place of this machine: nothing.
+///
+/// A backstop. The host's rows name log files on the host, and reading those
+/// paths here would show this machine's files under the host's name. The UI
+/// says so in words before it gets this far, since an empty tail reads as a
+/// sheep that wrote nothing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoLocal;
+
+impl Local for NoLocal {
+    fn host(&mut self) -> Option<HostSample> {
+        None
+    }
+
+    fn tail(&mut self, _out: Option<&Path>, _err: Option<&Path>) -> super::tail::Tail {
+        super::tail::Tail::default()
+    }
+
+    fn log_sizes(&mut self, _out: Option<&Path>, _err: Option<&Path>) -> Option<u64> {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,16 +497,12 @@ mod tests {
             min_supported: None,
         };
         let (client, _fake) = shep_client::testing::fake_client_with_ack(&addr, ack).await;
-        let flock = ClientFlock(client);
+        let flock = ClientFlock { client, home: None };
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = crate::output::Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: crate::cli::Format::Table,
-        };
+        let mut streams =
+            crate::output::Streams::bare(&mut out, &mut err, crate::cli::Format::Table);
         let code = crate::version_guard::refuse_version_skew(
             &mut streams,
             flock.client(),
@@ -426,22 +523,41 @@ mod tests {
             min_supported: None,
         };
         let (client, _fake) = shep_client::testing::fake_client_with_ack(&addr, ack).await;
-        let flock = ClientFlock(client);
+        let flock = ClientFlock { client, home: None };
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = crate::output::Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: crate::cli::Format::Table,
-        };
+        let mut streams =
+            crate::output::Streams::bare(&mut out, &mut err, crate::cli::Format::Table);
         crate::version_guard::refuse_version_skew(
             &mut streams,
             flock.client(),
             crate::version_guard::VersionGuard::Enforce,
         )
         .expect("a matching version is not a skew");
+    }
+
+    /// Fails if lookout's stop goes out on the client's 5s default, which a
+    /// kill ladder plus a lamb sweep can outlast.
+    #[tokio::test]
+    async fn a_stop_sent_through_client_flock_asks_for_the_stop_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let addr = shep_client::testing::control_address(dir.path());
+        let (client, _fake) = shep_client::testing::fake_client_needing_budget(
+            &addr,
+            std::time::Duration::from_secs(7),
+            Response::Stopped(Vec::new()),
+        )
+        .await;
+        let flock = ClientFlock { client, home: None };
+
+        let answer = flock
+            .send(Request::Stop {
+                selector: shep_core::protocol::SelectorSpec::All,
+            })
+            .await;
+
+        assert_eq!(answer, Ok(Response::Stopped(Vec::new())));
     }
 
     /// The two files together, since the detail pane's cell says "on disk"
@@ -491,4 +607,135 @@ mod tests {
         let mut local = LocalReader::new();
         assert_eq!(local.log_sizes(None, None), None);
     }
+
+    /// Stand-in `ssh` for [`HostShepherd`], unix only. It appends its argv to
+    /// `argv`, one line per dial, then answers like a shepherd: it reads a
+    /// frame and replies, twice over (the handshake, then the subscribe as
+    /// request 1), from the canned `hello` and `subscribed` files.
+    #[cfg(unix)]
+    mod stand_in {
+        use std::os::unix::fs::PermissionsExt as _;
+        use std::path::{Path, PathBuf};
+
+        use shep_core::protocol::{
+            HelloAck, HelloReply, PROTOCOL_VERSION, Reply, Response, ServerFrame, encode_frame,
+        };
+
+        /// `payload` behind the four-byte length every frame carries.
+        fn framed(payload: &impl serde::Serialize) -> Vec<u8> {
+            let payload = encode_frame(payload).unwrap();
+            let mut bytes = u32::try_from(payload.len()).unwrap().to_be_bytes().to_vec();
+            bytes.extend_from_slice(&payload);
+            bytes
+        }
+
+        pub(super) fn write(dir: &Path) -> PathBuf {
+            let ack: HelloReply = Ok(HelloAck {
+                daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
+                protocol: PROTOCOL_VERSION,
+                pid: 4242,
+                min_supported: None,
+            });
+            let subscribed = ServerFrame::Reply(Reply {
+                id: 1,
+                result: Ok(Response::Subscribed),
+            });
+            std::fs::write(dir.join("hello"), framed(&ack)).unwrap();
+            std::fs::write(dir.join("subscribed"), framed(&subscribed)).unwrap();
+            let program = dir.join("ssh");
+            std::fs::write(
+                &program,
+                r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "$@" >> "$dir/argv"
+skip() {
+  n=0
+  for b in $(dd bs=1 count=4 2>/dev/null | od -An -v -tu1); do n=$((n * 256 + b)); done
+  [ "$n" -eq 0 ] || dd bs=1 count="$n" of=/dev/null 2>/dev/null
 }
+skip; cat "$dir/hello"
+skip; cat "$dir/subscribed"
+cat >/dev/null
+"#,
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            program
+        }
+
+        /// One line per dial, as the stand-in was called.
+        pub(super) fn dials(dir: &Path) -> Vec<String> {
+            std::fs::read_to_string(dir.join("argv"))
+                .unwrap()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn host_shepherd_dials_a_stand_in_and_subscribes() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = stand_in::write(dir.path());
+        let mut shepherd = HostShepherd::new("build-01", SshOptions::default().program(program));
+
+        let (flock, _events) = shepherd
+            .link()
+            .await
+            .expect("the stand-in answers the handshake and the subscribe");
+
+        assert_eq!(flock.client().host(), Some("build-01"));
+        assert_eq!(
+            stand_in::dials(dir.path()),
+            ["-T -- build-01 shep dial-stdio"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_second_dial_is_batch_mode_and_the_first_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = stand_in::write(dir.path());
+        let mut shepherd = HostShepherd::new("build-01", SshOptions::default().program(program));
+
+        let _first = shepherd.link().await.expect("the first dial");
+        let _second = shepherd.link().await.expect("the redial");
+
+        assert_eq!(
+            stand_in::dials(dir.path()),
+            [
+                "-T -- build-01 shep dial-stdio",
+                "-T -o BatchMode=yes -- build-01 shep dial-stdio",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_host_that_cannot_be_dialled_is_unreachable() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("no-such-ssh");
+        let mut shepherd = HostShepherd::new("build-01", SshOptions::default().program(program));
+
+        let err = shepherd.link().await.expect_err("there is no ssh to run");
+
+        assert!(matches!(err, LinkError::Unreachable(_)), "{err:?}");
+    }
+
+    #[test]
+    fn no_local_reads_nothing_of_this_machine() {
+        let log = Path::new(file!());
+        let mut local = NoLocal;
+        assert_eq!(local.host(), None);
+        assert_eq!(
+            local.tail(Some(log), Some(log)),
+            crate::lookout::tail::Tail::default()
+        );
+        assert_eq!(local.log_sizes(Some(log), Some(log)), None);
+    }
+}
+
+/// The gate every dashboard write to a dog's settings passes through, against
+/// a shepherd that answers the ask.
+#[cfg(test)]
+mod validate_tests;

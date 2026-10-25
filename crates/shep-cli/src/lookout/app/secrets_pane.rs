@@ -7,6 +7,21 @@ use super::*;
 /// this operator's to set.
 pub(super) const PROVIDER_ROW_REFUSAL: &str = "read-only: pushed by a dog, not set here";
 
+impl App {
+    /// Refuse `row` when a provider pushed it: raise the grave
+    /// [`PROVIDER_ROW_REFUSAL`] notice, and report whether it did.
+    ///
+    /// The check [`Self::secrets_confirm`] and [`Self::arm_secret_delete`]
+    /// share, so the sentence is raised from one place.
+    pub(super) fn refuse_provider_row(&mut self, row: &SecretRow) -> bool {
+        if matches!(row.source, Source::Namespace(_)) {
+            self.notice = Some(Notice::grave(PROVIDER_ROW_REFUSAL.to_string()));
+            return true;
+        }
+        false
+    }
+}
+
 /// `D`'s refusal on a row whose value comes from the `all` slot while a
 /// named environment's tab is open.
 ///
@@ -130,6 +145,21 @@ impl SecretsPane {
             .filter(|(_, row)| !self.is_collapsed(&row.source))
             .map(|(index, _)| index)
             .collect()
+    }
+
+    /// The selected row as an owned [`SecretRow`], but only when the pane
+    /// currently draws it: `None` for the `+ new key` affordance, for a row
+    /// a standing fold hides, and for a `selected` past the rows.
+    ///
+    /// Both halves of the check every write path needs, in one call: that
+    /// `selected` names a row on screen, and that the row exists. Owned
+    /// rather than borrowed, so a caller can hold the row while it reaches
+    /// back into the pane.
+    pub(super) fn selected_visible_row(&self) -> Option<SecretRow> {
+        if !self.visible_row_indices().contains(&self.selected) {
+            return None;
+        }
+        self.model.rows.get(self.selected).cloned()
     }
 
     /// Whether `selected` names the `+ new key` row rather than a real one:
@@ -347,7 +377,7 @@ pub(crate) struct Typing {
     /// What is being typed: a new key's name, or a value for a key.
     pub what: TypingWhat,
     /// The buffer.
-    pub buffer: String,
+    pub buffer: TextBox,
 }
 
 /// Redacted (IR-41): a value buffer is the secret being typed.
@@ -355,7 +385,10 @@ impl fmt::Debug for Typing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Typing")
             .field("what", &self.what)
-            .field("buffer", &format_args!("<{} bytes>", self.buffer.len()))
+            .field(
+                "buffer",
+                &format_args!("<{} bytes>", self.buffer.as_str().len()),
+            )
             .finish()
     }
 }

@@ -232,19 +232,7 @@ async fn an_out_file_whose_directory_is_missing_warns() {
 async fn a_live_field_whose_subset_will_not_normalize_parks_instead() {
     let h = harness(vec![ProcScript::never_exits()]);
     // No `cwd`, which is what makes `watch` refusable on its own.
-    let started = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::Start {
-                    apps: vec![AppConfig::minimal("web", "./srv")],
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    assert!(started.result.is_ok(), "{:?}", started.result);
+    start_web(&h).await;
 
     // `cwd` is NeedsRespawn, so this parks and the running spec still
     // has none.
@@ -444,7 +432,7 @@ async fn an_unreadable_store_is_internal_for_a_field_edit_too() {
     );
 }
 
-/// The muster roll is a registry record `rpc.rs` writes, not
+/// The muster roll is a registry record `rpc/dispatch.rs` writes, not
 /// something the supervisor does. Nothing on the restore path reads
 /// the override store, so an edit that skipped it would survive a
 /// `shep daemon reload` and vanish on a cold restart.
@@ -502,6 +490,14 @@ async fn every_new_variant_reaches_an_arm_and_not_the_wildcard() {
             entries: BTreeMap::new(),
             force: false,
             dry_run: true,
+        },
+        Request::CopySheepEnv {
+            from: "ghost".to_string(),
+            to: "ghost".to_string(),
+            replace: false,
+            except: Vec::new(),
+            dry_run: true,
+            expect: None,
         },
         Request::DogSheepSettings {
             dog: "ghost".to_string(),

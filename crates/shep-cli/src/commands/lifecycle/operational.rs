@@ -47,7 +47,9 @@ pub async fn stop(client: &Client, streams: &mut Streams<'_>, args: &SelectorArg
 /// Restarts the sheep matching `args.selector`
 ///
 /// `paths` is here so a restart that names a dog is warned about before the
-/// request goes out. See [`dogs::warn_of_a_dog_a_restart_would_break`].
+/// request goes out. See [`dogs::warn_of_a_dog_a_restart_would_break`]. It is
+/// `None` over a host: the dogs it would probe are this machine's, and the
+/// restart goes to another one.
 ///
 /// Sent with [`START_DEADLINE`] rather than the client's 5s default. A
 /// restart matching several sheep now walks the dependency stages INSIDE the
@@ -70,7 +72,7 @@ pub async fn stop(client: &Client, streams: &mut Streams<'_>, args: &SelectorArg
 pub async fn restart(
     client: &Client,
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    paths: Option<&ShepPaths>,
     args: &SelectorArgs,
 ) -> ExitCode {
     restart_within(client, streams, paths, args, dogs::VERSION_BUDGET).await
@@ -83,7 +85,7 @@ pub async fn restart(
 pub async fn restart_within(
     client: &Client,
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    paths: Option<&ShepPaths>,
     args: &SelectorArgs,
     probe: Duration,
 ) -> ExitCode {
@@ -93,7 +95,9 @@ pub async fn restart_within(
     };
     // Before `request_each`: a warning that arrives after the restart is a
     // description of a state the operator is already in.
-    dogs::warn_of_a_dog_a_restart_would_break(streams, paths, &selectors, probe);
+    if let Some(paths) = paths {
+        dogs::warn_of_a_dog_a_restart_would_break(streams, paths, &selectors, probe);
+    }
     let mut refused: Vec<SheepRefusal> = Vec::new();
     let (procs, failure) = request_each(
         client,
@@ -153,17 +157,7 @@ pub async fn restart_within(
         return streams.fail(ExitCode::SpawnFailed, &message);
     }
 
-    // Under `--format json` the refusals rode out in the envelope above, so
-    // saying them again on stderr is the second top-level object that guard
-    // exists to stop; `reload` carries the same one and for the same reason.
-    let refusal = refused_line("restart", &refused).map(|message| {
-        if streams.fmt == Format::Json && carried {
-            WALK_REFUSED_EXIT
-        } else {
-            streams.fail(WALK_REFUSED_EXIT, &message)
-        }
-    });
-    failure.or(refusal).unwrap_or(ExitCode::Success)
+    finish_walk(streams, "restart", &refused, carried, failure)
 }
 
 /// Reloads the sheep matching `args.selector`, replacing each instance with
@@ -219,19 +213,7 @@ pub async fn reload(client: &Client, streams: &mut Streams<'_>, args: &SelectorA
             return wrote;
         }
     }
-    // Under `--format json` the refusals rode out in the envelope above, so
-    // saying them again on stderr is the second top-level object this guard
-    // exists to stop. `carried` is the condition and not the format alone:
-    // an envelope that never printed took the names with it, and stderr is
-    // the only stream left to name them on.
-    let refusal = refused_line("reload", &refused).map(|message| {
-        if streams.fmt == Format::Json && carried {
-            WALK_REFUSED_EXIT
-        } else {
-            streams.fail(WALK_REFUSED_EXIT, &message)
-        }
-    });
-    failure.or(refusal).unwrap_or(ExitCode::Success)
+    finish_walk(streams, "reload", &refused, carried, failure)
 }
 
 /// [`render_outcome`] for a staged walk, which can have both halves of an
@@ -269,6 +251,35 @@ async fn render_partial(
 /// reloaded around one busy app.
 const WALK_REFUSED_EXIT: ExitCode = ExitCode::Failure;
 
+/// The tail `restart` and `reload` share: what a walk that refused part of
+/// its work prints, and what it exits with
+///
+/// Under `--format json` the refusals rode out in the envelope
+/// [`render_partial`] printed, so saying them again on stderr is the second
+/// top-level object that guard exists to stop. `carried` is the condition
+/// and not the format alone: an envelope that never printed took the names
+/// with it, and stderr is the only stream left to name them on.
+///
+/// `failure` is the first per-selector failure `request_each` reported, if
+/// any. It outranks the refusal, as a verb's own failure class outranks
+/// [`WALK_REFUSED_EXIT`] everywhere else in this file.
+fn finish_walk(
+    streams: &mut Streams<'_>,
+    verb: &str,
+    refused: &[SheepRefusal],
+    carried: bool,
+    failure: Option<ExitCode>,
+) -> ExitCode {
+    let refusal = refused_line(verb, refused).map(|message| {
+        if streams.fmt == Format::Json && carried {
+            WALK_REFUSED_EXIT
+        } else {
+            streams.fail(WALK_REFUSED_EXIT, &message)
+        }
+    });
+    failure.or(refusal).unwrap_or(ExitCode::Success)
+}
+
 /// One line for the apps `verb` could not reach, or `None` when it reached
 /// every one it named
 ///
@@ -288,8 +299,15 @@ pub(crate) fn refused_line(verb: &str, refused: &[SheepRefusal]) -> Option<Strin
     Some(format!("did not {verb}: {}", listed.join("; ")))
 }
 
-/// Deletes (stops and deregisters) the sheep matching `args.selector`.
-pub async fn delete(client: &Client, streams: &mut Streams<'_>, args: &SelectorArgs) -> ExitCode {
+/// Deletes (stops and deregisters) the sheep matching `args.selectors`
+///
+/// The sheep half of `shep delete`; see [`super::remove::delete`] for the
+/// verb an operator types, which sends a dog's name elsewhere.
+pub async fn delete_sheep(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    args: &SelectorArgs,
+) -> ExitCode {
     let selectors = match parse_selectors(streams, &args.selectors) {
         Ok(selectors) => selectors,
         Err(code) => return code,

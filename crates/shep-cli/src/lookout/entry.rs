@@ -1,10 +1,13 @@
 use super::app::{App, Control};
-use super::source::Shepherd;
+use super::source::{
+    ClientFlock, HostShepherd, Local, LocalReader, NoLocal, Shepherd, UnixShepherd,
+};
 use super::theme::Palette;
 use super::ui_event_loop::run_ui;
 use crate::cli::LookoutArgs;
 use crate::exit::ExitCode;
 use crate::output::Streams;
+use crate::remote::Link;
 use crate::style::{StyleLevel, StyleSource};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -25,8 +28,15 @@ use tokio::sync::mpsc;
 ///
 /// `style` is `run_argv`'s already-resolved pair, handed to `App::set_style`
 /// so the settings screen reports the layer that actually won.
+///
+/// Over a [`Link::Host`] the dashboard watches that host's shepherd through
+/// [`HostShepherd`] and reads no log, host sample, settings or secrets from this
+/// machine: [`NoLocal`] is the backstop for what [`App`] already declines to
+/// ask for. Only the operator's own `lookout.allow_control` gate, in
+/// `paths.kv`, is still read here.
 pub async fn lookout(
     streams: &mut Streams<'_>,
+    link: &Link<'_>,
     paths: &ShepPaths,
     args: &LookoutArgs,
     style: (StyleLevel, StyleSource),
@@ -40,11 +50,47 @@ pub async fn lookout(
         );
     }
 
+    match link {
+        Link::Local(_) => {
+            let shepherd = UnixShepherd::new(&paths.socket, paths);
+            watch(
+                streams,
+                shepherd,
+                LocalReader::new(),
+                None,
+                paths,
+                args,
+                style,
+            )
+            .await
+        }
+        Link::Host { dest, options } => {
+            let shepherd = HostShepherd::new(dest, options.clone());
+            watch(streams, shepherd, NoLocal, Some(dest), paths, args, style).await
+        }
+    }
+}
+
+/// [`lookout`] once the shepherd and the reader of this machine are chosen:
+/// `host` is the ssh destination being watched, or `None` for this machine's
+/// own.
+async fn watch<S, L>(
+    streams: &mut Streams<'_>,
+    mut shepherd: S,
+    local: L,
+    host: Option<&str>,
+    paths: &ShepPaths,
+    args: &LookoutArgs,
+    style: (StyleLevel, StyleSource),
+) -> ExitCode
+where
+    S: Shepherd<Flock = ClientFlock> + 'static,
+    L: Local,
+{
     // The first dial, before the palette, the panic hook, raw mode, or
     // anything drawn: a shepherd that was never running gets the same refusal
     // `shep flock` gets. Everything after this point is the running-dashboard
     // case, which is the one the ladder is for.
-    let mut shepherd = super::source::UnixShepherd::new(&paths.socket);
     let opened = match shepherd.link().await {
         Ok(opened) => opened,
         Err(err) => {
@@ -77,6 +123,9 @@ pub async fn lookout(
         Instant::now(),
     );
     app.set_style(style);
+    if let Some(dest) = host {
+        app.set_remote_host(dest);
+    }
 
     // Hook first, then the guard, then raw mode, then the alternate screen,
     // with nothing that can panic in between.
@@ -137,7 +186,7 @@ pub async fn lookout(
         paths.home.clone(),
         paths.daemon_config.clone(),
         paths.socket.clone(),
-        super::source::LocalReader::new(),
+        local,
     )
     .await;
     link.abort();
@@ -147,7 +196,7 @@ pub async fn lookout(
 /// Whether this lookout may act, from `--read-only` or from the KV store.
 ///
 /// Control is on by default. `--read-only` closes it outright; short of
-/// that, `shep set lookout.allow_control false` closes it too. The store is
+/// that, `shep kv set lookout.allow_control false` closes it too. The store is
 /// `$SHEP_HOME/kv.json` rather than a `shep.toml` section, since this gate is
 /// the operator's own, and unreadable it leaves control on: the gate stops
 /// an accident, not an attacker.

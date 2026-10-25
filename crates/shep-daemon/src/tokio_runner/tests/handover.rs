@@ -11,12 +11,10 @@ use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::time::Duration;
 
 use tokio::io::DuplexStream;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use shep_core::logstamp::LOG_STAMP_BYTES;
-
-use crate::runner::LogCtl;
 
 use super::super::log_file::{LogSink, PipeFds};
 use super::super::pump::spawn_log_pump;
@@ -143,12 +141,7 @@ async fn two_pumps_on_one_log_path_report_different_numbers() {
             ctl_rx,
             pipes,
         );
-        let (done, ack) = oneshot::channel();
-        ctl.send(LogCtl::ReportFds { done }).await.unwrap();
-        let fds = timeout(PUMP_DEADLINE, ack)
-            .await
-            .expect("a descriptor report must be acknowledged")
-            .expect("the pump must answer rather than drop the acknowledgement");
+        let fds = request_fds(&ctl).await;
         // `_logs` and `ctl` are kept alive alongside the writers: a pump
         // whose control channel closed would end and close the very
         // handles whose numbers are being compared.
@@ -193,25 +186,20 @@ async fn two_pumps_on_one_log_path_report_different_numbers() {
 /// stale report risks the successor adopting an unrelated file as this
 /// sheep's stdout. `err_pipe` staying at its own number is what keeps
 /// this a case about the ended stream, not a dead pump.
+///
+/// Settles on the report's own `out_pipe` rather than on the number going
+/// closed: the same number is open again the moment any other test in this
+/// process opens a file.
 #[tokio::test]
 async fn a_report_after_a_stream_ends_names_no_descriptor_for_it() {
     let mut pump = PumpHarness::start_over_pipes();
     pump.feed(false, "before-the-eof").await;
 
     drop(pump.out_writer);
-    let_the_pump_settle().await;
 
     // Sent through the field, not `report_fds`: dropping the writer
     // above moves out of the harness, so `&self` cannot be called.
-    let (done, ack) = oneshot::channel();
-    pump.ctl
-        .send(LogCtl::ReportFds { done })
-        .await
-        .expect("a pump with one live stream still reads its control channel");
-    let fds = timeout(PUMP_DEADLINE, ack)
-        .await
-        .expect("a descriptor report must be acknowledged")
-        .expect("the pump must answer rather than drop the acknowledgement");
+    let fds = report_fds_until(&pump.ctl, |fds| fds.out_pipe.is_none()).await;
 
     assert_eq!(
         fds.out_pipe, None,
@@ -301,6 +289,17 @@ async fn a_report_lands_what_the_reader_was_holding() {
     );
 }
 
+/// The run the two drain cases write: three quarters of the smallest
+/// pipe, in whole [`RUN_LINE`]-byte lines.
+///
+/// Each caller asserts the size it needs for its own message: over
+/// [`READ_BUFFER`] is what puts a pump at the bound, and under
+/// [`SMALLEST_PIPE`] is what keeps the writing side from parking.
+fn sized_run() -> String {
+    let lines = u32::try_from(SMALLEST_PIPE * 3 / 4 / RUN_LINE).unwrap();
+    (1..=lines).map(|n| format!("{n:07}\n")).collect()
+}
+
 /// Fails if a report takes bytes off a pipe that it does not write.
 ///
 /// Every byte the sheep wrote must be in the log file or still in the
@@ -311,8 +310,8 @@ async fn a_report_lands_what_the_reader_was_holding() {
 /// description with the reader, so it sees what the successor would.
 ///
 /// `drain_ready`'s documented residual is the one line of slack: a
-/// part-way line splits between the reader's buffer and `Lines`'
-/// accumulator, unreachable here. Fails at two lines lost, not one.
+/// part-way line splits between the reader's buffer and its scratch buffer,
+/// unreachable here. Fails at two lines lost, not one.
 #[tokio::test]
 async fn a_report_leaves_in_the_pipe_everything_it_did_not_write() {
     let dir = tempfile::tempdir().unwrap();
@@ -340,21 +339,12 @@ async fn a_report_leaves_in_the_pipe_everything_it_did_not_write() {
         pipes,
     );
 
-    // More than one `READ_BUFFER`, so the reader is full and the pipe
-    // still holds the rest; under `SMALLEST_PIPE`, so this write does
-    // not park against a pump that has stopped draining.
-    let lines = u32::try_from(SMALLEST_PIPE * 3 / 4 / RUN_LINE).unwrap();
-    let run: String = (1..=lines).map(|n| format!("{n:07}\n")).collect();
+    let run = sized_run();
     assert!(run.len() > READ_BUFFER, "the reader must fill");
     std::io::Write::write_all(&mut writer, run.as_bytes()).unwrap();
     wait_for_a_full_logs_channel(&logs).await;
 
-    let (done, ack) = oneshot::channel();
-    ctl.send(LogCtl::ReportFds { done }).await.unwrap();
-    timeout(PUMP_DEADLINE, ack)
-        .await
-        .expect("a descriptor report must be acknowledged")
-        .expect("the pump must answer rather than drop the acknowledgement");
+    let _ = request_fds(&ctl).await;
 
     // The sheep goes quiet, so the inherited handle reaches EOF rather
     // than waiting for a writer that outlives the test.
@@ -386,16 +376,12 @@ async fn a_report_leaves_in_the_pipe_everything_it_did_not_write() {
 /// A reader can strand at most one [`super::super::READ_BUFFER`], and
 /// the drain writes whole lines out of that buffer without reading the
 /// pipe behind it, so it cannot write more than the buffer held however
-/// fast the sheep is writing. The slack is one line: `tokio::io::Lines`
+/// fast the sheep is writing. The slack is one line: the `LineReader`
 /// may have been part-way through one before the buffer was filled.
 #[tokio::test]
 async fn a_report_drains_at_most_one_bufferful() {
     let mut pump = PumpHarness::start_over_pipes();
-    // Three quarters of the smallest pipe: over `MAX_DRAIN`, so the
-    // bound is really reached, and under the pipe, so the writer never
-    // parks.
-    let lines = u32::try_from(SMALLEST_PIPE * 3 / 4 / RUN_LINE).unwrap();
-    let run: String = (1..=lines).map(|n| format!("{n:07}\n")).collect();
+    let run = sized_run();
     assert!(run.len() > READ_BUFFER, "the run must reach the bound");
     pump.out_writer.write_all(run.as_bytes()).await.unwrap();
     wait_for_a_full_logs_channel(&pump.logs).await;

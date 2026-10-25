@@ -21,6 +21,7 @@ use std::path::Path;
 use std::process::Stdio;
 #[cfg(unix)]
 use std::sync::Arc;
+use std::sync::{Mutex, PoisonError};
 
 #[cfg(unix)]
 use command_fds::{CommandFdExt, FdMapping};
@@ -38,19 +39,38 @@ use crate::channel::CHANNEL_VERSION;
 #[cfg(unix)]
 use crate::runner::{AdoptSpec, AdoptedReaper};
 use crate::runner::{
-    ExitOutcome, Preflight, ProcIo, ProcessRunner, RunnerError, RunningProcess, SpawnSpec,
+    DogLink, ExitOutcome, Preflight, ProcIo, ProcessRunner, RunnerError, RunningProcess, SpawnSpec,
     StopSignal,
 };
+#[cfg(windows)]
+use shep_core::dogs::DOG_LINK_PIPE_VAR;
+#[cfg(unix)]
+use shep_core::dogs::{DOG_LINK_FD, DOG_LINK_FD_VAR};
 
 use super::CHANNEL_CAPACITY;
+#[cfg(unix)]
+use super::dog_link;
 #[cfg(unix)]
 use super::log_file::carried_sink;
 use super::log_file::{LogSink, PipeFds};
 use super::pump::{spawn_channel_pumps, spawn_log_pump, spawn_stdin_pump};
+#[cfg(windows)]
+use super::windows_pipe;
 
 /// Real [`crate::runner::ProcessRunner`] over actual OS processes.
-#[derive(Debug, Default)]
-pub struct TokioRunner;
+#[derive(Debug)]
+pub struct TokioRunner {
+    /// Where each dog's connection goes once its child has a pid.
+    links: mpsc::UnboundedSender<DogLink>,
+    /// The other end of `links`, until [`ProcessRunner::dog_links`] takes it.
+    links_rx: Mutex<Option<mpsc::UnboundedReceiver<DogLink>>>,
+}
+
+impl Default for TokioRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// The exit code [`TokioProc::kill_tree`] terminates a job with.
 ///
@@ -61,20 +81,15 @@ pub struct TokioRunner;
 #[cfg(windows)]
 const KILL_TREE_EXIT_CODE: u32 = 137;
 
-/// Distinguishes one spawn's shepherd-channel pipe from every other's.
-///
-/// The pipe namespace is machine-global, so a name must be unique across this
-/// daemon's flock and any other daemon on the host: process id plus this
-/// counter, never the sheep's name, which two `$SHEP_HOME`s could share.
-/// Monotonic, so a restarted sheep never inherits a dying predecessor's name.
-#[cfg(windows)]
-static NEXT_CHANNEL_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-
 impl TokioRunner {
     /// Builds a runner that spawns real OS child processes.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        let (links, links_rx) = mpsc::unbounded_channel();
+        Self {
+            links,
+            links_rx: Mutex::new(Some(links_rx)),
+        }
     }
 }
 
@@ -196,9 +211,10 @@ impl RunningProcess for TokioProc {
     /// Terminates the sheep's whole job: every process it spawned, however
     /// deeply nested.
     ///
-    /// Stronger than the unix rung: a grandchild that calls `setsid` escapes
-    /// its process group, while a job member cannot leave its job or spawn
-    /// outside it, since `sys_windows::Job::create` grants no breakaway.
+    /// Stronger than the unix rung, which a grandchild escapes by calling
+    /// `setsid` and leaves to the lamb sweep. A job member cannot leave its
+    /// job or spawn outside it, since `sys_windows::Job::create` grants no
+    /// breakaway.
     #[cfg(windows)]
     fn kill_tree(&mut self) -> Result<(), RunnerError> {
         self.job
@@ -235,18 +251,29 @@ impl RunningProcess for TokioProc {
     fn signal_process(&mut self, sig: OperatorSignal) -> Result<(), RunnerError> {
         // Positive pid, unlike `signal_group`'s negative one: this reaches the
         // sheep alone, that one reaches its whole group.
-        let pid = i32::try_from(self.pid)
-            .ok()
-            .filter(|pid| *pid > 0)
-            .ok_or_else(|| {
-                RunnerError::SignalFailed(format!(
-                    "pid {} is not a signallable process id",
-                    self.pid
-                ))
-            })?;
+        let pid = signallable_pid(self.pid)?;
         signal::kill(Pid::from_raw(pid), to_nix_operator_signal(sig))
             .map_err(|error| RunnerError::SignalFailed(error.to_string()))
     }
+}
+
+/// Narrows a spawn's pid to the `i32` form `kill(2)` takes, refusing one it
+/// cannot take.
+///
+/// A zero pid must never reach the syscall: `-0` is `0`, and `kill(0, ..)`
+/// signals the daemon's own group. A pid above `i32::MAX` has no `i32` form.
+///
+/// # Errors
+///
+/// [`RunnerError::SignalFailed`] if `pid` is 0 or above `i32::MAX`.
+#[cfg(unix)]
+pub(super) fn signallable_pid(pid: u32) -> Result<i32, RunnerError> {
+    i32::try_from(pid)
+        .ok()
+        .filter(|pid| *pid > 0)
+        .ok_or_else(|| {
+            RunnerError::SignalFailed(format!("pid {pid} is not a signallable process id"))
+        })
 }
 
 // Group-wide for both stop rungs and for the exec prober's timeout path
@@ -256,8 +283,9 @@ impl RunningProcess for TokioProc {
 /// Sends `sig` to the whole process group led by `pid`.
 ///
 /// `-pid` names the group `spawn`'s `process_group(0)` establishes. A
-/// descendant that forks and then calls `setsid` lands in its own session,
-/// which neither stop rung reaches.
+/// descendant that calls `setsid` lands in its own session, which this
+/// misses. A sheep's lamb sweep ends it after the leader exits; a probe's
+/// child has no sweep.
 ///
 /// # Errors
 ///
@@ -265,14 +293,7 @@ impl RunningProcess for TokioProc {
 /// the `kill(2)` itself failed (typically `ESRCH`: no group led by `pid`).
 #[cfg(unix)]
 pub(crate) fn signal_group(pid: u32, sig: Signal) -> Result<(), RunnerError> {
-    // `-0` is `0`, and `kill(0, ..)` means the daemon's own group: a zero pid
-    // must never reach the syscall.
-    let pid = i32::try_from(pid)
-        .ok()
-        .filter(|pid| *pid > 0)
-        .ok_or_else(|| {
-            RunnerError::SignalFailed(format!("pid {pid} is not a signallable process id"))
-        })?;
+    let pid = signallable_pid(pid)?;
     signal::kill(Pid::from_raw(-pid), sig)
         .map_err(|error| RunnerError::SignalFailed(error.to_string()))
 }
@@ -435,10 +456,13 @@ impl ProcessRunner for TokioRunner {
     /// Stdin and the shepherd channel are both carried, so `shep whisper`
     /// reaches the same fd 0 and the child's fd 3 is undisturbed. What a blob
     /// named neither of is closed here rather than left dangling, so a
-    /// caller's `is_closed()` says so at once.
+    /// caller's `is_closed()` says so at once. A dog's own connection is
+    /// handed to whatever serves [`ProcessRunner::dog_links`], to be served
+    /// as it was.
     #[cfg(unix)]
     fn adopt(&self, spec: AdoptSpec) -> Result<(Self::Proc, ProcIo), RunnerError> {
         let AdoptSpec {
+            name,
             pid,
             out_file,
             err_file,
@@ -449,6 +473,8 @@ impl ProcessRunner for TokioRunner {
             log_timestamps,
             stdin_pipe,
             channel,
+            dog_link,
+            dog_topics,
             reaper,
         } = spec;
 
@@ -472,6 +498,18 @@ impl ProcessRunner for TokioRunner {
             log_ctl_rx,
             pipes,
         );
+
+        // Served by the same task that served it before the exec, which is
+        // not this runner's to start: it is handed over, and a send that fails
+        // means nothing is serving links, as at a spawn.
+        if let Some(stream) = dog_link {
+            let _ = self.links.send(DogLink {
+                name,
+                pid,
+                stream,
+                resumed: dog_topics,
+            });
+        }
 
         let (from_child_tx, from_child) = mpsc::channel(CHANNEL_CAPACITY);
         let (to_child, to_child_rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -501,6 +539,13 @@ impl ProcessRunner for TokioRunner {
                 to_stdin,
             },
         ))
+    }
+
+    fn dog_links(&self) -> Option<mpsc::UnboundedReceiver<DogLink>> {
+        self.links_rx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     fn spawn(&self, spec: &SpawnSpec) -> Result<(Self::Proc, ProcIo), RunnerError> {
@@ -571,25 +616,11 @@ impl ProcessRunner for TokioRunner {
         // `SHEP_CHANNEL_FD` is not, so an app branches on the variable.
         #[cfg(windows)]
         if spec.channel {
-            use shep_core::transport;
-
             // Unique per spawn, so two instances cannot share a channel. The
-            // nonce closes prediction, not observation: the pipe namespace
-            // lists to any local user and the `accept` below authenticates
-            // nobody. A restrictive DACL needs unsafe; see deferred.md.
-            let mut nonce = [0_u8; 16];
-            getrandom::fill(&mut nonce).map_err(|error| {
-                RunnerError::SpawnFailed(format!("shepherd channel pipe name: {error}"))
-            })?;
-            let pipe = std::path::PathBuf::from(format!(
-                r"\\.\pipe\shep-channel-{}-{}-{:032x}",
-                std::process::id(),
-                NEXT_CHANNEL_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed),
-                u128::from_ne_bytes(nonce)
-            ));
-            let mut listener = transport::Listener::bind(&pipe).map_err(|error| {
-                RunnerError::SpawnFailed(format!("shepherd channel pipe: {error}"))
-            })?;
+            // pipe admits only the shepherd's own user: the namespace lists to
+            // any local account and the `accept` below authenticates nobody,
+            // so the descriptor is what refuses a second account (#350).
+            let (pipe, mut listener) = windows_pipe::bind("channel", "shepherd channel pipe")?;
             command.env("SHEP_CHANNEL_PIPE", &pipe);
             command.env("SHEP_CHANNEL_VERSION", CHANNEL_VERSION);
 
@@ -616,10 +647,25 @@ impl ProcessRunner for TokioRunner {
             drop(to_child_rx);
         }
 
+        // The dog's own connection on Windows: a pipe the dog opens by the name
+        // in its environment, as the channel's is. Served once it has a pid.
+        #[cfg(windows)]
+        let mut dog_pipe = None;
+        #[cfg(windows)]
+        if spec.dog_link {
+            let (pipe, listener) = windows_pipe::bind("dog", "dog connection pipe")?;
+            command.env(DOG_LINK_PIPE_VAR, &pipe);
+            dog_pipe = Some(listener);
+        }
+
         // The block below moves `daemon_end` into its pumps, and `PipeFds` is
         // assembled after the spawn: the number is in reach only here.
         #[cfg(unix)]
         let mut channel_fd: Option<RawFd> = None;
+        // `fd_mappings` installs a pre-exec hook each call, and its own docs
+        // warn against calling it twice on one command.
+        #[cfg(unix)]
+        let mut mappings: Vec<FdMapping> = Vec::new();
         #[cfg(unix)]
         if spec.channel {
             command.env("SHEP_CHANNEL_FD", "3");
@@ -640,15 +686,10 @@ impl ProcessRunner for TokioRunner {
                 RunnerError::SpawnFailed(format!("shepherd channel set_nonblocking: {error}"))
             })?;
             let child_fd = OwnedFd::from(std_child_end);
-            command
-                .as_std_mut()
-                .fd_mappings(vec![FdMapping {
-                    parent_fd: child_fd,
-                    child_fd: 3,
-                }])
-                .map_err(|error| {
-                    RunnerError::SpawnFailed(format!("shepherd channel fd mapping: {error}"))
-                })?;
+            mappings.push(FdMapping {
+                parent_fd: child_fd,
+                child_fd: 3,
+            });
             channel_fd = Some(daemon_end.as_raw_fd());
             spawn_channel_pumps(daemon_end, from_child_tx, to_child_rx);
         } else {
@@ -656,6 +697,25 @@ impl ProcessRunner for TokioRunner {
             // reports closed at once and a stray send fails fast.
             drop(from_child_tx);
             drop(to_child_rx);
+        }
+
+        // Held until the child has a pid: the server that serves it records
+        // contact by that pid.
+        #[cfg(unix)]
+        let mut dog_end = None;
+        #[cfg(unix)]
+        if spec.dog_link {
+            let (daemon_end, mapping) = dog_link::pair()?;
+            command.env(DOG_LINK_FD_VAR, DOG_LINK_FD.to_string());
+            mappings.push(mapping);
+            dog_end = Some(daemon_end);
+        }
+        #[cfg(unix)]
+        if !mappings.is_empty() {
+            command
+                .as_std_mut()
+                .fd_mappings(mappings)
+                .map_err(|error| RunnerError::SpawnFailed(format!("fd mapping: {error}")))?;
         }
 
         let mut child = command
@@ -668,6 +728,17 @@ impl ProcessRunner for TokioRunner {
         let pid = child.id().ok_or_else(|| {
             RunnerError::SpawnFailed("child exited before its pid could be read".to_string())
         })?;
+        // A send that fails means nothing is serving links, and the dog falls
+        // back to the control socket.
+        #[cfg(unix)]
+        if let Some(stream) = dog_end {
+            let _ = self.links.send(DogLink {
+                name: spec.name.clone(),
+                pid,
+                stream,
+                resumed: None,
+            });
+        }
 
         // As early as containment can happen: the child exists and everything
         // it spawns from here inherits the job. Fatal on failure, because a
@@ -695,6 +766,19 @@ impl ProcessRunner for TokioRunner {
 
         let (logs_tx, logs_rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (log_ctl_tx, log_ctl_rx) = mpsc::channel(CHANNEL_CAPACITY);
+        // After the job, which can still fail the spawn: a dog nothing is
+        // contained for must not leave a listener behind. Bounded by the log
+        // pump, which ends with the dog.
+        #[cfg(windows)]
+        if let Some(listener) = dog_pipe {
+            windows_pipe::serve_dog_link(
+                listener,
+                spec.name.clone(),
+                pid,
+                self.links.clone(),
+                log_ctl_tx.clone(),
+            );
+        }
         // Before the `take`s below move the handles: the only place the
         // numbers a handover carries are known.
         #[cfg(unix)]

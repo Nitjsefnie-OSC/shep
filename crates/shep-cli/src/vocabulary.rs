@@ -40,6 +40,9 @@ pub(crate) const fn role_of(status: ProcStatus) -> Role {
         ProcStatus::Starting | ProcStatus::WaitingRestart => Role::Butter,
         ProcStatus::Errored => Role::Bark,
         ProcStatus::Stopping | ProcStatus::Stopped => Role::Ink3,
+        // `Unrecognized`, and any status added after this build: neither
+        // healthy nor known to be wrong.
+        _ => Role::Butter,
     }
 }
 
@@ -62,6 +65,8 @@ pub(crate) const fn face(status: ProcStatus) -> &'static str {
         ProcStatus::WaitingRestart => "(>_<)",
         ProcStatus::Stopping | ProcStatus::Stopped => "(-.-)",
         ProcStatus::Errored => "(x.x)",
+        // A question mark, and not `Reported::Silent`'s `(?_?)`.
+        _ => "(?.?)",
     }
 }
 
@@ -73,7 +78,7 @@ pub(crate) const fn face(status: ProcStatus) -> &'static str {
 /// never completed a handshake is not doing its job however alive it is.
 /// [`Self::Silent`] is that fact.
 ///
-/// Not a seventh `ProcStatus` variant: `ProcStatus` is the wire contract
+/// Not a `ProcStatus` variant: `ProcStatus` is the wire contract
 /// for what the supervisor knows about a process, and silence is a fact
 /// about a connection that only a reader joining two fields can see.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +88,9 @@ pub(crate) enum Reported {
     /// A dog whose process is up and which has never answered this
     /// shepherd.
     Silent,
+    /// A stopped sheep whose app an operator disabled. A fact about the
+    /// shepherd's refusal to spawn it, which `ProcStatus` does not carry.
+    Disabled,
 }
 
 impl Reported {
@@ -115,6 +123,7 @@ impl Reported {
             // Matches `dogs.rs`'s own `silent_dogs` population name, so
             // a reload's report and a flock listing agree.
             Self::Silent => "silent".to_string(),
+            Self::Disabled => "disabled".to_string(),
         }
     }
 
@@ -126,6 +135,8 @@ impl Reported {
             // Not `(x.x)` either: this process has not failed, only gone
             // unheard.
             Self::Silent => "(?_?)",
+            // The stopped face: it is stopped, and the word says the rest.
+            Self::Disabled => face(ProcStatus::Stopped),
         }
     }
 
@@ -137,6 +148,7 @@ impl Reported {
             // the same red as a crash would send an operator looking for
             // one.
             Self::Silent => Role::Butter,
+            Self::Disabled => role_of(ProcStatus::Stopped),
         }
     }
 }
@@ -186,8 +198,9 @@ pub(crate) fn silence_note(
             "silent  `{name}`'s process is up and it has never answered this shepherd. The \
              shepherd answering this listing is too old to say whether it has given up on the \
              dog or is still waiting for it -- run `shep bleats {name}` for the dog's own \
-             account, and `shep daemon reload` to bring the running shepherd up to the shep \
-             that is installed, which can answer."
+             account, and `shep {remedy}` to bring the running shepherd up to the shep \
+             that is installed, which can answer.",
+            remedy = crate::version_guard::VERSION_SKEW_REMEDY,
         ),
     })
 }
@@ -208,6 +221,7 @@ mod tests {
             ProcStatus::Stopping,
             ProcStatus::Stopped,
             ProcStatus::Errored,
+            ProcStatus::Unrecognized,
         ] {
             let face = Reported::Live(status).face();
             assert_eq!(
@@ -229,6 +243,29 @@ mod tests {
         let silent = Reported::Silent.face();
         assert_eq!(silent.chars().count(), 5, "silent face {silent:?}");
         assert!(silent.is_ascii(), "silent face {silent:?}");
+    }
+
+    /// An unreadable status must not pass for a known one, nor for a dog's
+    /// silence, in the face or in the word.
+    #[test]
+    fn an_unrecognized_status_looks_like_no_other() {
+        let unrecognized = Reported::Live(ProcStatus::Unrecognized);
+        let others = [
+            Reported::Live(ProcStatus::Online),
+            Reported::Live(ProcStatus::Starting),
+            Reported::Live(ProcStatus::WaitingRestart),
+            Reported::Live(ProcStatus::Stopping),
+            Reported::Live(ProcStatus::Stopped),
+            Reported::Live(ProcStatus::Errored),
+            Reported::Silent,
+            Reported::Disabled,
+        ];
+        for other in others {
+            assert_ne!(unrecognized.face(), other.face(), "{other:?} face");
+            assert_ne!(unrecognized.word(), other.word(), "{other:?} word");
+        }
+        assert_eq!(unrecognized.face(), "(?.?)");
+        assert_eq!(unrecognized.word(), "unrecognized");
     }
 
     /// fails if a silence stops overriding `online`, or starts overriding a
@@ -327,6 +364,16 @@ mod tests {
             distinct.len(),
             notes.len(),
             "three states, three sentences: {notes:?}"
+        );
+
+        // The stale-shepherd arm's remedy must come from the same constant
+        // the version guard speaks, so the guard can never refuse the
+        // command this note recommends.
+        let remedy = format!("`shep {}`", crate::version_guard::VERSION_SKEW_REMEDY);
+        assert!(
+            notes[0].contains(&remedy),
+            "the None arm names the guard's own remedy {remedy:?}: {}",
+            notes[0]
         );
     }
 

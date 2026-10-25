@@ -95,7 +95,7 @@ pub(super) fn stale_verdict(name: &str, evidence: Silence) -> String {
              reports the package already installed, builds nothing, and exits 0"
         ),
         Silence::Anonymous { pid } => format!(
-            "{seen}, but its process (pid {pid}) HAS connected to this shepherd — every time without \
+            "{seen}, but its process (pid {pid}) HAS connected to this shepherd: every time without \
              naming a dog in its handshake, which is the only thing this shepherd waits for. The dog \
              is reaching shep and may be serving every request it is asked; reinstalling the same \
              build will NOT change that. It is built against shep-client older than 0.1.23, or it \
@@ -108,7 +108,7 @@ pub(super) fn stale_verdict(name: &str, evidence: Silence) -> String {
         Silence::Unattributed => format!(
             "{seen}, and this shepherd could not tell which process opened its connections, so it \
              cannot say which of two things is wrong. Either the dog is not reaching the socket at \
-             all — rebuild or reinstall it — or it is reaching it and never names itself in the \
+             all (rebuild or reinstall it), or it is reaching it and never names itself in the \
              handshake, which means a build against shep-client older than 0.1.23 and which \
              reinstalling the same build will not fix. Run `shep bleats {name}` to tell them apart: \
              a dog that cannot reach the socket says so in its own log, and one that is connected \

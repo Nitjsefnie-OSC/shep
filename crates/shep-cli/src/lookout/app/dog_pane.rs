@@ -4,6 +4,13 @@
 use super::*;
 
 impl App {
+    /// Whether the open pane draws its rows as a tree of tables, which is
+    /// what the keymap overlay reads to caption `←/→`.
+    #[must_use]
+    pub(in crate::lookout) fn over_a_tree(&self) -> bool {
+        self.config_pane().is_some_and(ConfigPane::is_tree)
+    }
+
     /// A dog's schema probe answered. `Ok` parks the schema and asks the
     /// shepherd for the section; the pane is built once that lands. `Err`
     /// gets no pane, and the refusal names the file to edit instead. The
@@ -24,10 +31,7 @@ impl App {
                 Effect::Send(Sent::DogSection { name })
             }
             Err(message) => {
-                self.notice = Some(Notice {
-                    text: message,
-                    grave: true,
-                });
+                self.notice = Some(Notice::grave(message));
                 Effect::None
             }
         }
@@ -58,59 +62,63 @@ impl App {
         }
         match result {
             Ok(Response::DogSection { toml }) => {
-                // Everything a refresh has to carry across, read before the
-                // rebuild replaces the pane: see `Self::on_sheep_config`,
-                // which states the argument for each. A dog pane has no env
-                // sub-screen or list sub-screen, so only its view and its
-                // edits carry across.
-                let carried = self.config_pane().map(|pane| pane.view().clone());
-                let carried_edits = self
-                    .config_pane()
-                    .map(|pane| pane.edits().clone())
-                    .unwrap_or_default();
-                let mut pane = ConfigPane::dog(
-                    probe.name,
-                    probe.adopted_path,
-                    probe.schema,
-                    toml.as_str().to_owned(),
-                );
-                pane.adopt_edits(carried_edits);
-                if let Some(carried) = carried {
-                    pane.adopt_view(carried);
+                let dropped = self.rebuild_dog_pane(probe, toml.as_str());
+                if dropped > 0 {
+                    self.notice =
+                        Some(Notice::grave(format!("{name}: {}", moved_entries(dropped))));
                 }
-                // The settings screen is what a dog pane opens over, and this
-                // one assignment is what closes it: `Body` holds one
-                // variant, so the pane replaces it once there is something
-                // to look at.
-                self.body = Body::ConfigPane(pane);
-                self.release_text_mode_if_unowned();
-                // Same as `Self::open_or_refresh_config_pane`: an overlay
-                // open when this reply landed must not survive the body
-                // change under it.
-                self.keymap_open = false;
             }
-            Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{name}: the shepherd answered something this lookout does not understand"
-                    ),
-                    grave: true,
-                });
-            }
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {}", err.message),
-                    grave: true,
-                });
-            }
-            Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {other}"),
-                    grave: true,
-                });
+            other => {
+                self.notice = Some(Notice::grave(format!("{name}: {}", failed_reply(other))));
             }
         }
         Effect::None
+    }
+
+    /// Replaces the open pane with one over `toml`, and returns how many of
+    /// its edits the new section took no further. See
+    /// [`ConfigPane::adopt_edits_from`].
+    ///
+    /// Everything a refresh has to carry across is read before the rebuild
+    /// replaces the pane: see `Self::on_sheep_config`, which states the
+    /// argument for each. A dog pane has no env sub-screen, so its view, its
+    /// open tables, its list sub-screen and its edits carry across.
+    pub(super) fn rebuild_dog_pane(&mut self, probe: DogProbe, toml: &str) -> usize {
+        let carried = self.config_pane().map(|pane| pane.view().clone());
+        let carried_list = self
+            .config_pane()
+            .and_then(ConfigPane::list)
+            .map(|list| (list.key().to_owned(), list.view().clone()));
+        // The tables the operator opened or closed ride along with the
+        // cursor, which is an index into the rows they shape.
+        let carried_open = self.config_pane().map(|pane| pane.open_tables().clone());
+        let mut pane = ConfigPane::dog(
+            probe.name,
+            probe.adopted_path,
+            probe.schema,
+            toml.to_owned(),
+        );
+        let dropped = self
+            .config_pane()
+            .map_or(0, |previous| pane.adopt_edits_from(previous));
+        if let Some(open) = carried_open {
+            pane.adopt_open_tables(&open);
+        }
+        if let Some(carried) = carried {
+            pane.adopt_view(carried);
+        }
+        if let Some((key, carried)) = carried_list {
+            pane.adopt_list_view(&key, carried);
+        }
+        // The settings screen is what a dog pane opens over, and this one
+        // assignment is what closes it: `Body` holds one variant, so the pane
+        // replaces it once there is something to look at.
+        self.body = Body::ConfigPane(pane);
+        self.release_text_mode_if_unowned();
+        // Same as `Self::open_or_refresh_config_pane`: an overlay open when
+        // this reply landed must not survive the body change under it.
+        self.keymap_open = false;
+        dropped
     }
 
     /// One `Request::SetDogConfig` reply.
@@ -131,38 +139,27 @@ impl App {
     ) -> Effect {
         match result {
             Ok(Response::DogConfigSet { .. }) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: its config is written, and {name} is told"),
-                    grave: false,
-                });
+                self.notice = Some(Notice::info(format!(
+                    "{name}: its config is written, and {name} is told"
+                )));
                 Effect::Send(Sent::DogSection {
                     name: name.to_owned(),
                 })
             }
-            Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{name}: the shepherd answered something this lookout does not understand"
-                    ),
-                    grave: true,
-                });
-                Effect::None
-            }
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {}", err.message),
-                    grave: true,
-                });
-                Effect::None
-            }
-            Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{name}: {other}"),
-                    grave: true,
-                });
+            other => {
+                self.notice = Some(Notice::grave(format!("{name}: {}", failed_reply(other))));
                 Effect::None
             }
         }
+    }
+}
+
+/// What the notice says of edits a refresh dropped.
+pub(super) fn moved_entries(dropped: usize) -> String {
+    if dropped == 1 {
+        "1 edit under an entry that moved in the file was dropped".to_owned()
+    } else {
+        format!("{dropped} edits under entries that moved in the file were dropped")
     }
 }
 
@@ -546,5 +543,142 @@ mod tests {
                 name: "bark".to_string()
             })
         );
+    }
+
+    /// Walks the nested fixture's pane onto its `row`th row.
+    fn nested_cursor_to(app: &mut App, row: usize) {
+        app.update(Msg::Key(KeyPress::SelectFirst));
+        for _ in 0..row {
+            app.update(Msg::Key(KeyPress::SelectDown));
+        }
+    }
+
+    fn nested_rows(app: &App) -> usize {
+        app.config_pane().expect("the pane is open").rows().len()
+    }
+
+    /// `models` is row 0 and open, `worker` row 1 and closed, `name` row 2.
+    #[test]
+    fn right_and_left_open_and_close_the_table_under_the_cursor() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        assert_eq!(nested_rows(&app), 3);
+        nested_cursor_to(&mut app, 1);
+        app.update(Msg::Key(KeyPress::TabNext));
+        assert_eq!(nested_rows(&app), 5, "worker opened onto model and token");
+        app.update(Msg::Key(KeyPress::TabPrev));
+        assert_eq!(nested_rows(&app), 3);
+        app.update(Msg::Key(KeyPress::Confirm));
+        assert_eq!(nested_rows(&app), 5, "enter toggles it open");
+        app.update(Msg::Key(KeyPress::Confirm));
+        assert_eq!(nested_rows(&app), 3, "and closed");
+    }
+
+    /// `e`, space and `d` on a table row file nothing and open nothing.
+    #[test]
+    fn e_space_and_d_on_a_table_row_do_nothing() {
+        for key in [KeyPress::Edit, KeyPress::Cycle, KeyPress::Remove] {
+            let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+            nested_cursor_to(&mut app, 1);
+            let before = app.config_pane().expect("the pane is open").cursor();
+            assert!(matches!(before, Some(PaneRow::Table(_))), "{before:?}");
+            let effect = app.update(Msg::Key(key));
+            assert_eq!(effect, Effect::None, "{key:?}");
+            let pane = app.config_pane().expect("the pane is open");
+            assert!(pane.edits().is_empty(), "{key:?} filed something");
+            assert!(pane.typing().is_none(), "{key:?} opened an editor");
+            assert_eq!(pane.cursor(), before, "{key:?}");
+            assert_eq!(pane.rows().len(), 3, "{key:?} toggled the table");
+        }
+    }
+
+    /// `u` drops the newest edit in the pane, wherever the cursor stands, so
+    /// it still works after `←` has climbed onto a table's row.
+    #[test]
+    fn u_on_a_table_row_undoes_the_newest_edit() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        nested_cursor_to(&mut app, 2);
+        app.update(Msg::Key(KeyPress::Edit));
+        app.update(Msg::Key(KeyPress::TextChar('x')));
+        app.update(Msg::Key(KeyPress::TextApply));
+        assert!(!app.config_pane().expect("open").edits().is_empty());
+        app.update(Msg::Key(KeyPress::SelectUp));
+        let on = app.config_pane().expect("open").cursor();
+        assert!(matches!(on, Some(PaneRow::Table(_))), "{on:?}");
+        app.update(Msg::Key(KeyPress::Undo));
+        assert!(app.config_pane().expect("open").edits().is_empty());
+    }
+
+    /// `r` re-reads the section and the pane that comes back has the same
+    /// tables open, with the cursor where it was.
+    #[test]
+    fn a_re_read_keeps_the_open_tables_and_the_cursor() {
+        let mut app = fixtures::app_in_dog_pane_with_a_nested_table();
+        nested_cursor_to(&mut app, 1);
+        app.update(Msg::Key(KeyPress::TabNext));
+        app.update(Msg::Key(KeyPress::SelectDown));
+        let cursor = app.config_pane().expect("the pane is open").cursor();
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Refresh)) else {
+            panic!("r re-reads the section");
+        };
+        app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: fixtures::nested_dog_section().into(),
+            }),
+        });
+        let pane = app.config_pane().expect("still open");
+        assert_eq!(pane.rows().len(), 5);
+        assert!(pane.open_tables().contains("models.worker"));
+        assert_eq!(pane.cursor(), cursor);
+    }
+
+    /// `←` and `→` mean nothing on a sheep's own pane.
+    #[test]
+    fn left_and_right_do_nothing_on_a_sheep_pane() {
+        let mut app = fixtures::app_in_sheep_pane();
+        let before = app.config_pane().expect("the pane is open").cursor();
+        let effect = app.update(Msg::Key(KeyPress::TabNext));
+        assert_eq!(effect, Effect::None);
+        let effect = app.update(Msg::Key(KeyPress::TabPrev));
+        assert_eq!(effect, Effect::None);
+        assert_eq!(app.config_pane().expect("open").cursor(), before);
+    }
+
+    /// `r` re-reads the section and the sub-screen comes back over the
+    /// refreshed pane at the cursor it had, showing what the operator has
+    /// filed rather than what the section holds.
+    #[test]
+    fn a_re_read_keeps_an_open_list_at_its_cursor_with_the_filed_elements() {
+        let mut app = fixtures::app_in_dog_pane_with_lists();
+        pane_to(&mut app, "hosts");
+        app.update(Msg::Key(KeyPress::Confirm));
+        app.update(Msg::Key(KeyPress::SelectLast));
+        app.update(Msg::Key(KeyPress::Edit));
+        for typed in "c.example".chars() {
+            app.update(Msg::Key(KeyPress::TextChar(typed)));
+        }
+        app.update(Msg::Key(KeyPress::TextApply));
+        app.update(Msg::Key(KeyPress::SelectUp));
+        let Effect::Send(sent) = app.update(Msg::Key(KeyPress::Refresh)) else {
+            panic!("r re-reads the section");
+        };
+        app.update(Msg::Replied {
+            sent,
+            result: Ok(Response::DogSection {
+                toml: fixtures::list_dog_section().into(),
+            }),
+        });
+        let list = app
+            .config_pane()
+            .expect("still open")
+            .list()
+            .expect("the sub-screen rides across the refresh");
+        assert_eq!(list.key(), "hosts");
+        assert_eq!(
+            list.elements(),
+            ["a.example", "b.example", "c.example"],
+            "the filed array, not the section's"
+        );
+        assert_eq!(list.cursor(), Some(crate::lookout::pane::ListRow::Item(1)));
     }
 }

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KelpieConfig",
+  "type": "object",
+  "properties": {
+    "poll": { "type": "string", "default": "30s" }
+  },
+  "x-shep-sheep": { "$ref": "#/$defs/ProjectSettings" },
+  "$defs": {
+    "ProjectSettings": {
+      "type": "object",
+      "properties": {
+        "skills": { "$ref": "#/$defs/Skills" }
+      }
+    },
+    "Skills": {
+      "description": "The skill each step of a work item runs.",
+      "type": "object",
+      "properties": {
+        "implement": { "$ref": "#/$defs/SkillSource" },
+        "review": { "$ref": "#/$defs/SkillSource" },
+        "retro": {
+          "anyOf": [{ "$ref": "#/$defs/SkillSource" }, { "type": "null" }]
+        }
+      }
+    },
+    "SkillSource": {
+      "description": "Where a step finds its skill.",
+      "oneOf": [
+        {
+          "description": "Run no skill for this step.",
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "const": "none" }
+          },
+          "required": ["kind"]
+        },
+        {
+          "description": "A skill kept in the repo.",
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "const": "path" },
+            "path": {
+              "description": "The skill folder, from the repo root.",
+              "type": "string"
+            }
+          },
+          "required": ["kind", "path"]
+        },
+        {
+          "description": "A skill an installed plugin ships.",
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "const": "plugin" },
+            "plugin": {
+              "description": "The plugin's name.",
+              "type": "string"
+            },
+            "skill": {
+              "description": "The skill in it.",
+              "type": "string"
+            }
+          },
+          "required": ["kind", "plugin", "skill"]
+        }
+      ]
+    }
+  }
+}

@@ -5,13 +5,14 @@
 //! same daemon fixture or wire helper.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use shep_client::testing::{
-    fake_client_answering, fake_client_capturing_envelopes, fake_client_replying_err,
+    FakeDaemon, fake_client_answering, fake_client_capturing_envelopes, fake_client_needing_budget,
+    fake_client_on, fake_client_replying_err,
 };
-use shep_client::{Client, DEFAULT_DEADLINE, RELOAD_DEADLINE, START_DEADLINE};
+use shep_client::{Client, RELOAD_DEADLINE, START_DEADLINE, STOP_DEADLINE};
 use shep_core::config::{AppConfig, FlockFormat, Flockfile, ResetDepth};
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::{
@@ -21,6 +22,7 @@ use shep_core::selector::ProcessSelector;
 
 use crate::cli::{Format, ResetMode, SelectorArgs, StartArgs, StockArgs};
 use crate::commands::lifecycle::configure::{applied_line, mapped_interpreter};
+use crate::commands::lifecycle::operational::delete_sheep;
 use crate::commands::lifecycle::operational::restart_within;
 use crate::commands::lifecycle::resolve::{TargetError, evaluate_js_flockfile, split_assignments};
 use crate::commands::lifecycle::respawn::unique_names;
@@ -34,12 +36,17 @@ use crate::output::{FlockRows, Streams};
 mod add;
 mod configure;
 mod deadline;
+mod disabled_selectors;
 mod dogs;
 mod interpreters_stock;
 mod operational;
 mod resolve;
 mod selectors;
 mod start;
+mod start_disabled;
+mod start_named;
+mod toggle;
+mod toggle_unknown;
 
 /// The first envelope that is not a `ListFlock`.
 async fn next_start(
@@ -53,6 +60,23 @@ async fn next_start(
         if envelope.body != Request::ListFlock {
             return envelope;
         }
+    }
+}
+
+/// The apps inside the envelope [`next_start`] handed back
+///
+/// Takes the envelope rather than the receiver: `#[track_caller]` is a
+/// no-op on an `async fn`, and a panic from here has to name the site that
+/// asked for a `Start`.
+///
+/// # Panics
+///
+/// If `envelope` is not a `Request::Start`.
+#[track_caller]
+fn start_apps(envelope: shep_core::protocol::Envelope) -> Vec<AppConfig> {
+    match envelope.body {
+        Request::Start { apps } => apps,
+        other => panic!("expected a Start request, got {other:?}"),
     }
 }
 
@@ -90,6 +114,33 @@ fn node_available() -> bool {
     ok
 }
 
+/// A tempdir, a scripted fake daemon listening on its control address, and
+/// a client connected to that address
+///
+/// The `TempDir` comes back beside the pair: the socket lives inside it, so
+/// a caller that dropped it here would unlink a live listener's address.
+async fn a_daemon_on_a_tempdir() -> (tempfile::TempDir, Client, FakeDaemon) {
+    let dir = tempfile::tempdir().unwrap();
+    let address = shep_client::testing::control_address(dir.path());
+    let (client, daemon) = fake_client_on(&address).await;
+    (dir, client, daemon)
+}
+
+/// `dir`'s `Flockfile.toml`: one app named `zam`, with the one key these
+/// cases watch land on the wire
+///
+/// `max_restarts` is the declared key an `ApplyConfig` assertion reads, so
+/// the cases that need an app the flock already has share this literal.
+fn write_zam_flockfile(dir: &Path) -> PathBuf {
+    let path = dir.join("Flockfile.toml");
+    std::fs::write(
+        &path,
+        "[[app]]\nname = \"zam\"\nscript = \"./srv\"\nmax_restarts = 99\n",
+    )
+    .unwrap();
+    path
+}
+
 /// The flock a `render_outcome` test hands the fake: two sheep the verb
 /// did not touch, one it did, and a dog
 fn a_flock_with_a_dog() -> Vec<shep_core::protocol::ProcessInfo> {
@@ -101,7 +152,9 @@ fn a_flock_with_a_dog() -> Vec<shep_core::protocol::ProcessInfo> {
         ProcessInfo::builder(2, "rotom", ProcStatus::Online).build(),
         ProcessInfo::builder(3, "log-rotate", ProcStatus::Online)
             .dog(Some(DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
+                channel: false,
             }))
             .build(),
     ]
@@ -123,7 +176,7 @@ fn a_foldable_flock() -> Vec<shep_core::protocol::ProcessInfo> {
             .build(),
         ProcessInfo::builder(2, "rotom", ProcStatus::Stopped).build(),
         ProcessInfo::builder(3, "log-rotate", ProcStatus::Online)
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .build(),
     ]
 }
@@ -221,12 +274,7 @@ async fn start_against_with_args(client: &Client, args: &StartArgs) -> (ExitCode
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         start(client, &mut streams, args, None, &BTreeMap::new()).await
     };
     (
@@ -258,16 +306,11 @@ async fn restart_against_in(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, fmt);
         restart_within(
             client,
             &mut streams,
-            &paths,
+            Some(&paths),
             &SelectorArgs {
                 selectors: vec![selector.to_string()],
             },
@@ -312,12 +355,7 @@ async fn reload_against_in(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, fmt);
         reload(
             client,
             &mut streams,
@@ -362,10 +400,26 @@ fn adopted_dog(dir: &Path, name: &str, answer: &str) -> ShepPaths {
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     crate::commands::shep_toml::ShepToml::edit(&paths.daemon_config, |cfg| {
-        cfg.adopt_dog(name, &binary).unwrap();
+        cfg.adopt_dog(name, &binary, false).unwrap();
     })
     .unwrap();
     paths
+}
+
+/// The answer a dog gives when its binary was built against a
+/// protocol below the floor this shep's handshake still accepts.
+///
+/// Was `PROTOCOL_VERSION + 1` under the name `stale_answer`, back
+/// when the restart check compared for exact equality. The
+/// handshake now accepts anything at or above
+/// [`shep_core::protocol::MIN_SUPPORTED`], so a newer protocol is
+/// no longer stale; only one below the floor is.
+#[cfg(unix)]
+fn below_floor_answer() -> String {
+    format!(
+        "echo 'shep-log-rotate 0.1.3'\necho 'shep-protocol: {}'",
+        shep_core::protocol::MIN_SUPPORTED.saturating_sub(1)
+    )
 }
 
 /// A daemon that registers what it is asked to: an `Add` answers one
@@ -418,17 +472,15 @@ fn sent(
 
 /// Runs `shep add` against `target` and hands back its code and streams.
 async fn add_against(client: &Client, target: &str) -> (ExitCode, String, String) {
-    let args = start_args(target);
+    add_against_with_args(client, &start_args(target)).await
+}
+
+async fn add_against_with_args(client: &Client, args: &StartArgs) -> (ExitCode, String, String) {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        add(client, &mut streams, &args, None, &BTreeMap::new()).await
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
+        add(client, &mut streams, args, None, &BTreeMap::new()).await
     };
     (
         code,

@@ -5,6 +5,7 @@
 //! stop or restart is in flight against a set of ids, so the exits it causes
 //! are read as that command finishing rather than as fresh crashes.
 
+use super::actor_disable::Sweep;
 use super::*;
 
 impl<R: ProcessRunner> Actor<R> {
@@ -87,6 +88,29 @@ impl<R: ProcessRunner> Actor<R> {
     /// `Restart`, `false` for the crash loop and every restart the daemon
     /// raised itself. Callers pass `origin == CommandOrigin::Operator`.
     pub(super) fn respawn(&mut self, id: u32, manually: bool) -> ProcessInfo {
+        // The last word on the mark, under every door that reaches a respawn:
+        // the crash ladder's timer, an extra's report, a manual restart's
+        // exit. The doors that can tell an operator from the daemon answer
+        // before this (`restart_unless_disabled`), so what arrives here is
+        // dropped whoever asked, and left stopped.
+        if self.is_disabled_id(id) {
+            let slot = self.sheep.get(&id).expect("respawn: unknown id");
+            tracing::info!(
+                id,
+                sheep = %slot.entry.spec.config().name,
+                manually,
+                "respawn dropped: the app is disabled"
+            );
+            // A ladder timer that fires for it leaves nothing waiting behind.
+            if slot.entry.status == ProcStatus::WaitingRestart
+                && let Some(info) =
+                    self.apply_immediate(id, ManualKind::Stop, CommandOrigin::Automatic)
+            {
+                return info;
+            }
+            let slot = self.sheep.get(&id).expect("respawn: unknown id");
+            return to_info(&slot.entry, &self.smits);
+        }
         // Before the identity below is read, since a promoted `user` or `group`
         // is what clears it. Here rather than in the `Restart` arms: every door
         // a replacement child comes through passes through this one.
@@ -102,6 +126,7 @@ impl<R: ProcessRunner> Actor<R> {
         let slot = self.sheep.get(&id).expect("respawn: unknown id");
         let app = slot.entry.spec.clone();
         let instance = slot.entry.instance;
+        let dog_link = slot.entry.dog.is_some();
         // Computed ahead of the mutable borrow below.
         let next_epoch = slot.epoch + 1;
         let spec = match assemble(
@@ -111,11 +136,10 @@ impl<R: ProcessRunner> Actor<R> {
             credentials,
             &self.secret_view(&app),
         ) {
-            Ok(spec) => spec,
+            Ok(spec) => SpawnSpec { dog_link, ..spec },
             Err(err) => return self.refuse_spawn(id, manually, &err),
         };
-        let source = ReadinessSource::of(app.config())
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(app.config());
         let gated = !matches!(source, ReadinessSource::Heuristic);
         // Read before the move below: a gated app's readiness task wants the
         // same timeout the spawn just used, and `app` is what hands it over.
@@ -137,6 +161,7 @@ impl<R: ProcessRunner> Actor<R> {
                     app,
                     self.events.clone(),
                     self.tx.clone(),
+                    self.lamb_sweep(),
                 );
                 let ready_tx = if gated {
                     Some(spawn_readiness_task(
@@ -217,20 +242,7 @@ impl<R: ProcessRunner> Actor<R> {
             .sheep
             .get_mut(&id)
             .expect("respawn: entry vanished mid-respawn");
-        slot.entry.status = ProcStatus::Errored;
-        slot.entry.pid = None;
-        slot.entry.started_at = None;
-        // Cleared, because nothing exited here: leaving the previous process's
-        // code would show a sheep that once crashed with 1 as still crashing
-        // with 1 while it is failing to start at all.
-        slot.entry.last_exit = None;
-        slot.ctl = None;
-        // Already `None` on every route into a respawn, written anyway so that
-        // "these two go together" is visible at each site.
-        slot.to_child = None;
-        slot.signals = None;
-        slot.to_stdin = None;
-        slot.ready_tx = None;
+        slot.clear_lifecycle(ProcStatus::Errored);
         let info = to_info(&slot.entry, &self.smits);
         self.emit(ProcessEventKind::Errored, info.clone(), manually);
         // The same terminal status `Decision::Errored` reaches, and it needs
@@ -279,18 +291,7 @@ impl<R: ProcessRunner> Actor<R> {
         }
         tracing::warn!(id, %err, "spawn refused; waiting to try again");
         let epoch = slot.epoch;
-        slot.entry.status = ProcStatus::WaitingRestart;
-        slot.entry.pid = None;
-        slot.entry.started_at = None;
-        // Nothing exited here, so the previous process's code would read as
-        // a crash this sheep is still repeating; `respawn_failed` clears it
-        // for the same reason.
-        slot.entry.last_exit = None;
-        slot.ctl = None;
-        slot.to_child = None;
-        slot.signals = None;
-        slot.to_stdin = None;
-        slot.ready_tx = None;
+        slot.clear_lifecycle(ProcStatus::WaitingRestart);
         // The wall-clock half of the timer below, which is what a handover
         // successor re-arms from.
         slot.restart_due = SystemTime::now()
@@ -348,16 +349,26 @@ impl<R: ProcessRunner> Actor<R> {
 
     /// Every registered id `selector` names, in id order.
     ///
-    /// The one place selection happens. A dog is included only for a selector
-    /// that named it ([`ProcessSelector::is_exact`]), so `stop all`, `reload
-    /// all`, `delete all` and a `/regex/` sweep pass every dog by while `shep
-    /// restart bark` still reaches one.
+    /// The one place selection happens. A wildcard reaches a sheep that is
+    /// neither a dog nor disabled, so `stop all`, `reload all`, `delete all`
+    /// and a `/regex/` sweep pass every dog and every parked app by, while
+    /// `shep restart bark` and `shep stop api` still reach one that was named
+    /// ([`ProcessSelector::is_exact`]).
     pub(super) fn matching_ids(&self, selector: &ProcessSelector) -> Vec<u32> {
+        self.reached_ids(selector, Sweep::Enabled)
+    }
+
+    /// [`Self::matching_ids`] with the sweep's side of the disabled mark
+    /// chosen: `enable` is the one verb whose wildcard wants the parked apps
+    /// and nothing else, and the log verbs want both kinds.
+    pub(super) fn reached_ids(&self, selector: &ProcessSelector, sweep: Sweep) -> Vec<u32> {
         let exact = selector.is_exact();
         let mut ids: Vec<u32> = self
             .sheep
             .iter()
-            .filter(|(_, slot)| exact || slot.entry.dog.is_none())
+            .filter(|(id, slot)| {
+                exact || (slot.entry.dog.is_none() && sweep.reaches(self.is_disabled_id(**id)))
+            })
             .filter_map(|(id, slot)| {
                 let config = slot.entry.spec.config();
                 selector
@@ -380,6 +391,11 @@ impl<R: ProcessRunner> Actor<R> {
     /// Immediate results are collected up front and folded into the same
     /// `PendingReply` as the deferred ids, so a mixed selector's reply carries
     /// every match and fires once the last running one goes terminal.
+    ///
+    /// A `Delete` that reaches a built-in dog is refused whole, before any id
+    /// is claimed: the dog has no registration to forget, and a command that
+    /// took the sheep beside it and refused the dog would leave the operator
+    /// reading a listing rather than a refusal.
     pub(super) fn begin_manual(
         &mut self,
         selector: ProcessSelector,
@@ -394,7 +410,31 @@ impl<R: ProcessRunner> Actor<R> {
             return;
         }
 
+        if kind == ManualKind::Delete
+            && let Some(name) = matched.iter().find_map(|id| self.built_in_dog_name(*id))
+        {
+            send_reply(
+                reply,
+                Err(SupervisorError::IsADog(crate::dogs::built_in_dog_refusal(
+                    &name,
+                ))),
+            );
+            return;
+        }
+
         self.begin_manual_ids(matched, kind, origin, reply);
+    }
+
+    /// `id`'s name, when the entry behind it is a built-in dog, and `None`
+    /// for a sheep or an adopted dog.
+    ///
+    /// Read off the entry's own [`DogSource`], not off the name: a saved
+    /// sheep that kept the name `metrics` on an upgrade is deletable, and a
+    /// name is the only thing the two have in common.
+    fn built_in_dog_name(&self, id: u32) -> Option<String> {
+        let slot = self.sheep.get(&id)?;
+        matches!(slot.entry.dog, Some(DogSource::BuiltIn { .. }))
+            .then(|| slot.entry.spec.config().name.clone())
     }
 
     /// [`Self::begin_manual`]'s per-id aggregation, taking the matched ids

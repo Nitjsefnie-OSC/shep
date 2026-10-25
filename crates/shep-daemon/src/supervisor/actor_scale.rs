@@ -75,16 +75,15 @@ impl<R: ProcessRunner> Actor<R> {
         // Re-normalized rather than mutated in place: holding a `ResolvedApp`
         // proves it passed `normalize`, and editing the field behind that door
         // would be the one place in the tree holding one that had not.
-        let mut config = self
-            .sheep
-            .get(&slots[0].1)
-            .expect("handle_scale: id read off this map a moment ago")
-            .entry
-            .spec
-            .config()
-            .clone();
-        config.instances = count;
-        let rescaled = match normalize(config) {
+        let rescaled = match try_with_count(
+            &self
+                .sheep
+                .get(&slots[0].1)
+                .expect("handle_scale: id read off this map a moment ago")
+                .entry
+                .spec,
+            count,
+        ) {
             Ok(app) => app,
             Err(err) => {
                 let _ = reply.send(Err(SupervisorError::InvalidScale(err.to_string())));
@@ -104,6 +103,10 @@ impl<R: ProcessRunner> Actor<R> {
         let survivors: Vec<u32> = match count.cmp(&current) {
             Ordering::Equal => slots.iter().map(|(_, id)| *id).collect(),
             Ordering::Greater => {
+                if let Err(err) = self.refuse_disabled([name]) {
+                    let _ = reply.send(Err(err));
+                    return;
+                }
                 // Inside this arm, since it is the only one that spawns:
                 // resolving an identity for `Equal` or `Less` meant a lookup
                 // that could refuse a call using no credentials at all.
@@ -118,10 +121,19 @@ impl<R: ProcessRunner> Actor<R> {
                 };
                 let existing: Vec<u32> = slots.iter().map(|(instance, _)| *instance).collect();
                 let mut ids: Vec<u32> = slots.iter().map(|(_, id)| *id).collect();
+                // One read for the whole batch: every instance this scale-up
+                // adds resolves against the same store.
+                let secrets = self.secret_view(&rescaled);
                 for instance in instance_slots(&existing, count - current) {
                     let attempted_id = self.next_id;
-                    match self.spawn_fresh(&rescaled, instance, credentials, None, &BTreeSet::new())
-                    {
+                    match self.spawn_fresh(
+                        &rescaled,
+                        instance,
+                        credentials,
+                        &secrets,
+                        None,
+                        &BTreeSet::new(),
+                    ) {
                         Ok(info) => ids.push(info.id),
                         Err(message) => {
                             // Partial, and said so: the instances already
@@ -155,17 +167,11 @@ impl<R: ProcessRunner> Actor<R> {
         // scale-up. Re-normalized rather than assigned, for the same reason
         // `rescaled` was: a `ResolvedApp` is a proof token.
         let achieved = u32::try_from(survivors.len()).unwrap_or(u32::MAX);
-        let stored = if achieved == count {
-            rescaled
-        } else {
-            let mut config = rescaled.config().clone();
-            config.instances = achieved;
-            match normalize(config) {
-                Ok(app) => app,
-                Err(err) => {
-                    let _ = reply.send(Err(SupervisorError::InvalidScale(err.to_string())));
-                    return;
-                }
+        let stored = match try_with_count(&rescaled, achieved) {
+            Ok(app) => app,
+            Err(err) => {
+                let _ = reply.send(Err(SupervisorError::InvalidScale(err.to_string())));
+                return;
             }
         };
 

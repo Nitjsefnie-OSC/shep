@@ -4,29 +4,27 @@
 
 use super::*;
 
-/// A handler that answered `Deleted(vec![])` without stopping anything
-/// passes every type-level test and leaves the dog running after `shep
-/// disable` reported success.
-#[tokio::test(start_paused = true)]
-async fn disabling_a_dog_stops_it_and_takes_it_off_the_listing() {
-    let h = harness(vec![ProcScript::never_exits()]);
-    let info = enable_dog(&h.ctx, 1, "bark").await;
-    assert_eq!(info.dog, Some(DogSource::BuiltIn));
-
-    let disabled = reply_of(
+/// Sends one `SetDogConfig` and hands back the reply.
+async fn set_dog_config(
+    ctx: &RpcContext,
+    id: u64,
+    name: &str,
+    toml: &str,
+) -> Result<Response, RpcError> {
+    reply_of(
         dispatch(
             envelope(
-                2,
-                Request::DisableDog {
-                    name: "bark".to_string(),
+                id,
+                Request::SetDogConfig {
+                    name: name.to_string(),
+                    toml: toml.to_string().into(),
                 },
             ),
-            &h.ctx,
+            ctx,
         )
         .await,
-    );
-    assert_eq!(disabled.result.unwrap(), Response::Deleted(vec![info.id]));
-    assert!(h.ctx.supervisor.list().await.is_empty());
+    )
+    .result
 }
 
 /// The file is written after the harness built its context, so a reader
@@ -65,21 +63,9 @@ async fn set_dog_config_writes_the_file_and_a_subscriber_hears_about_it() {
     enable_dog(&h.ctx, 1, "bark").await;
     let mut sub = h.ctx.events.subscribe();
 
-    let reply = reply_of(
-        dispatch(
-            envelope(
-                2,
-                Request::SetDogConfig {
-                    name: "bark".to_string(),
-                    toml: "poll = \"30s\"\n".to_string().into(),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
+    let reply = set_dog_config(&h.ctx, 2, "bark", "poll = \"30s\"\n").await;
     assert_eq!(
-        reply.result.unwrap(),
+        reply.unwrap(),
         Response::DogConfigSet {
             name: "bark".to_string()
         }
@@ -115,22 +101,10 @@ async fn a_dog_that_is_adopted_and_never_started_can_still_be_configured() {
     let mut h = harness(vec![]);
     h.ctx.known_dogs = KnownDogs::new(["otel".to_string()].into_iter().collect());
 
-    let reply = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::SetDogConfig {
-                    name: "otel".to_string(),
-                    toml: "endpoint = \"http://127.0.0.1:4317\"\n".to_string().into(),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
+    let reply = set_dog_config(&h.ctx, 1, "otel", "endpoint = \"http://127.0.0.1:4317\"\n").await;
 
     assert_eq!(
-        reply.result.unwrap(),
+        reply.unwrap(),
         Response::DogConfigSet {
             name: "otel".to_string()
         }
@@ -148,22 +122,10 @@ async fn a_dog_that_is_enabled_but_not_running_can_still_be_configured() {
     let h = harness(vec![]);
     assert!(h.ctx.supervisor.list().await.is_empty());
 
-    let reply = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::SetDogConfig {
-                    name: "bark".to_string(),
-                    toml: "poll = \"30s\"\n".to_string().into(),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
+    let reply = set_dog_config(&h.ctx, 1, "bark", "poll = \"30s\"\n").await;
 
     assert_eq!(
-        reply.result.unwrap(),
+        reply.unwrap(),
         Response::DogConfigSet {
             name: "bark".to_string()
         }
@@ -180,22 +142,10 @@ async fn a_dog_adopted_since_boot_is_reached_through_the_running_flock() {
     h.ctx.known_dogs = KnownDogs::new(BTreeSet::new());
     enable_dog(&h.ctx, 1, "bark").await;
 
-    let reply = reply_of(
-        dispatch(
-            envelope(
-                2,
-                Request::SetDogConfig {
-                    name: "bark".to_string(),
-                    toml: "poll = \"30s\"\n".to_string().into(),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
+    let reply = set_dog_config(&h.ctx, 2, "bark", "poll = \"30s\"\n").await;
 
     assert_eq!(
-        reply.result.unwrap(),
+        reply.unwrap(),
         Response::DogConfigSet {
             name: "bark".to_string()
         }
@@ -203,14 +153,15 @@ async fn a_dog_adopted_since_boot_is_reached_through_the_running_flock() {
 }
 
 /// The boot-time list is a snapshot, so a dog adopted against a running
-/// shepherd is in neither half of the old guard once it is off the
-/// flock, and both of these were refused:
+/// shepherd is in neither half of the old guard unless the running flock
+/// answers for it, and both of these were refused:
 ///
 /// - adopt, disable, configure, enable
 /// - adopt, the dog crashes for want of config, configure
 ///
 /// The second is bark's own situation on a fresh install, and
-/// `docs/dogs.md` promises configure-then-enable works.
+/// `docs/dogs.md` promises configure-then-enable works. A disabled dog
+/// stays in the flock, so it is that entry that answers for the first.
 #[tokio::test(start_paused = true)]
 async fn a_dog_adopted_since_boot_stays_configurable_once_it_is_disabled() {
     let mut h = harness(vec![ProcScript::never_exits()]);
@@ -229,32 +180,11 @@ async fn a_dog_adopted_since_boot_stays_configurable_once_it_is_disabled() {
         .await,
     );
     assert!(disabled.result.is_ok(), "{:?}", disabled.result);
-    assert!(
-        !h.ctx
-            .supervisor
-            .list()
-            .await
-            .iter()
-            .any(|info| info.name == "bark"),
-        "the flock must not hold it, or the widening answers and the test means nothing"
-    );
 
-    let reply = reply_of(
-        dispatch(
-            envelope(
-                3,
-                Request::SetDogConfig {
-                    name: "bark".to_string(),
-                    toml: "poll = \"30s\"\n".to_string().into(),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
+    let reply = set_dog_config(&h.ctx, 3, "bark", "poll = \"30s\"\n").await;
 
     assert_eq!(
-        reply.result.unwrap(),
+        reply.unwrap(),
         Response::DogConfigSet {
             name: "bark".to_string()
         }
@@ -269,36 +199,12 @@ async fn a_dog_adopted_since_boot_stays_configurable_once_it_is_disabled() {
 #[tokio::test(start_paused = true)]
 async fn setting_a_dogs_config_over_a_sheeps_name_is_refused_and_writes_nothing() {
     let h = harness(vec![ProcScript::never_exits()]);
-    let started = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::Start {
-                    apps: vec![AppConfig::minimal("web", "./srv")],
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    assert!(started.result.is_ok(), "{:?}", started.result);
+    start_web(&h).await;
     std::fs::write(&h.ctx.dogs_config, "[bark]\npoll = \"60s\"\n").unwrap();
 
     for (id, name) in [(2, "web"), (3, "ghost")] {
-        let reply = reply_of(
-            dispatch(
-                envelope(
-                    id,
-                    Request::SetDogConfig {
-                        name: name.to_string(),
-                        toml: "poll = \"30s\"\n".to_string().into(),
-                    },
-                ),
-                &h.ctx,
-            )
-            .await,
-        );
-        let Err(err) = reply.result else {
+        let reply = set_dog_config(&h.ctx, id, name, "poll = \"30s\"\n").await;
+        let Err(err) = reply else {
             panic!("{name} is not a dog and must be refused")
         };
         assert_eq!(err.code, RpcErrorCode::NotFound, "{err:?}");
@@ -319,21 +225,9 @@ async fn setting_a_dogs_config_against_a_stopped_engine_is_refused_not_a_panic()
     let h = harness(vec![]);
     h.ctx.supervisor.shutdown().await;
 
-    let reply = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::SetDogConfig {
-                    name: "otel".to_string(),
-                    toml: "poll = \"30s\"\n".to_string().into(),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
+    let reply = set_dog_config(&h.ctx, 1, "otel", "poll = \"30s\"\n").await;
 
-    let Err(err) = reply.result else {
+    let Err(err) = reply else {
         panic!("otel is not a known dog and must be refused")
     };
     assert_eq!(err.code, RpcErrorCode::NotFound, "{err:?}");

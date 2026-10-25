@@ -83,11 +83,15 @@ pub struct WatchFilter {
 
 /// Compiles `patterns` into one [`GlobSet`], attributing a rejected pattern
 /// to itself rather than reporting globset's own aggregate failure.
-fn build_glob_set(patterns: &[String]) -> Result<GlobSet, WatchFilterError> {
+///
+/// Borrows the patterns: [`Glob::new`] needs a `&str`, so a build that
+/// succeeds allocates nothing for them, and only the arm that reports a
+/// rejected pattern pays for an owned copy of it.
+fn build_glob_set(patterns: &[&str]) -> Result<GlobSet, WatchFilterError> {
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
         let glob = Glob::new(pattern).map_err(|err| WatchFilterError::Glob {
-            pattern: pattern.clone(),
+            pattern: (*pattern).to_string(),
             reason: err.to_string(),
         })?;
         builder.add(glob);
@@ -175,15 +179,18 @@ impl WatchFilter {
         watch_options: &[String],
         ignore_watch: &[String],
     ) -> Result<Self, WatchFilterError> {
-        let include_patterns: Vec<String> = if watch_options.is_empty() {
-            vec![MATCH_EVERYTHING.to_string()]
+        // Borrowed views of the caller's patterns, so a watch setup copies
+        // none of them: the defaults are `&'static str` already and the
+        // configured ones are read out of their `String`s in place.
+        let include_patterns: Vec<&str> = if watch_options.is_empty() {
+            vec![MATCH_EVERYTHING]
         } else {
-            watch_options.to_vec()
+            watch_options.iter().map(String::as_str).collect()
         };
-        let ignore_patterns: Vec<String> = DEFAULT_IGNORE_GLOBS
+        let ignore_patterns: Vec<&str> = DEFAULT_IGNORE_GLOBS
             .iter()
-            .map(|pattern| (*pattern).to_string())
-            .chain(ignore_watch.iter().cloned())
+            .copied()
+            .chain(ignore_watch.iter().map(String::as_str))
             .collect();
 
         Ok(Self {

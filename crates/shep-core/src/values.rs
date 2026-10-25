@@ -35,7 +35,7 @@ const MS_PER_H: u64 = 60 * MS_PER_MIN;
 /// ```
 // wire format: changing this is a breaking change (serialized as its string
 // form inside AppConfig, which travels over the client<->daemon socket)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct MemSize(u64);
 
 impl MemSize {
@@ -200,7 +200,7 @@ impl schemars::JsonSchema for MemSize {
 /// # Ok::<(), shep_core::values::ParseUpDurationError>(())
 /// ```
 // wire format: changing this is a breaking change (string form in AppConfig)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct UpDuration(core::time::Duration);
 
 impl UpDuration {

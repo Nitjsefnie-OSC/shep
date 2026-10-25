@@ -40,33 +40,35 @@ pub(super) fn parse_into_ignoring<T: serde::de::DeserializeOwned>(
         FlockFormat::Toml => serde_ignored::deserialize(toml::Deserializer::new(source), |path| {
             on_ignored(&path.to_string());
         })
-        .map_err(|e| FlockfileError::Toml(e.to_string())),
+        .map_err(|e| FlockfileError::backend(FlockFormat::Toml, e)),
         // Default options, so YAML 1.1 resolution stays on for the whole
         // document: `autorestart: yes` is a bool, and an unquoted `yes` under
         // `env` is the string "true". Quote an env value whose text matters.
         FlockFormat::Yaml => serde_saphyr::with_deserializer_from_str(source, |de| {
             serde_ignored::deserialize(de, |path| on_ignored(&path.to_string()))
         })
-        .map_err(|e| FlockfileError::Yaml(e.to_string())),
+        .map_err(|e| FlockfileError::backend(FlockFormat::Yaml, e)),
         FlockFormat::Json => {
             let mut de = serde_json::Deserializer::from_str(source);
             let value = serde_ignored::deserialize(&mut de, |path| on_ignored(&path.to_string()))
-                .map_err(|e| FlockfileError::Json(e.to_string()))?;
+                .map_err(|e| FlockfileError::backend(FlockFormat::Json, e))?;
             // `serde_json::from_str` checks this too, to catch trailing
             // garbage after a value that otherwise parsed fine.
-            de.end().map_err(|e| FlockfileError::Json(e.to_string()))?;
+            de.end()
+                .map_err(|e| FlockfileError::backend(FlockFormat::Json, e))?;
             Ok(value)
         }
         FlockFormat::Json5 => {
             if json5_nesting_depth(source) > MAX_JSON5_NESTING_DEPTH {
-                return Err(FlockfileError::Json5(
-                    "nesting depth exceeds 64".to_string(),
+                return Err(FlockfileError::backend(
+                    FlockFormat::Json5,
+                    "nesting depth exceeds 64",
                 ));
             }
             let mut de = json5::Deserializer::from_str(source)
-                .map_err(|e| FlockfileError::Json5(e.to_string()))?;
+                .map_err(|e| FlockfileError::backend(FlockFormat::Json5, e))?;
             serde_ignored::deserialize(&mut de, |path| on_ignored(&path.to_string()))
-                .map_err(|e| FlockfileError::Json5(e.to_string()))
+                .map_err(|e| FlockfileError::backend(FlockFormat::Json5, e))
         }
     }
 }

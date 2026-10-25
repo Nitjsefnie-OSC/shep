@@ -129,6 +129,25 @@ fn drain(supervisor: i32) -> Option<u8> {
     }
 }
 
+/// `$SHEP_FORCE_INIT`, read by the caller
+///
+/// A type rather than a bare bool so it cannot land in `should_split`'s
+/// `supervise` slot, which is the one pair of arguments a transposition
+/// would move silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForceInit {
+    /// The variable is set, so the split is reachable outside PID 1.
+    Set,
+    /// The variable is absent, so only PID 1 splits.
+    Absent,
+}
+
+impl From<bool> for ForceInit {
+    fn from(forced: bool) -> Self {
+        if forced { Self::Set } else { Self::Absent }
+    }
+}
+
 /// Whether this process should become the PID-1 init and re-exec itself as
 /// the supervisor
 ///
@@ -137,8 +156,8 @@ fn drain(supervisor: i32) -> Option<u8> {
 /// child inherits the environment, so a `forced` that could override it
 /// would split again at every level.
 #[must_use]
-pub const fn should_split(pid: u32, supervise: bool, forced: bool) -> bool {
-    !supervise && (pid == 1 || forced)
+pub const fn should_split(pid: u32, supervise: bool, forced: ForceInit) -> bool {
+    !supervise && (pid == 1 || matches!(forced, ForceInit::Set))
 }
 
 /// Builds (but does not spawn) the supervisor half's command
@@ -284,23 +303,26 @@ mod tests {
     #[test]
     fn the_init_split_does_not_fire_outside_pid_one() {
         assert_ne!(std::process::id(), 1, "a test harness is never PID 1");
-        assert!(!should_split(std::process::id(), false, false));
+        assert!(!should_split(std::process::id(), false, ForceInit::Absent));
     }
 
     #[test]
     fn supervise_disables_the_split_whatever_the_pid_and_the_switch_say() {
-        assert!(should_split(1, false, false));
-        assert!(!should_split(1, true, false));
-        assert!(!should_split(4242, false, false));
+        assert!(should_split(1, false, ForceInit::Absent));
+        assert!(!should_split(1, true, ForceInit::Absent));
+        assert!(!should_split(4242, false, ForceInit::Absent));
         assert!(
-            should_split(4242, false, true),
+            should_split(4242, false, ForceInit::Set),
             "the test switch reaches the init"
         );
         assert!(
-            !should_split(4242, true, true),
+            !should_split(4242, true, ForceInit::Set),
             "and --supervise still wins"
         );
-        assert!(!should_split(1, true, true), "and it still wins at PID 1");
+        assert!(
+            !should_split(1, true, ForceInit::Set),
+            "and it still wins at PID 1"
+        );
     }
 
     /// Lives here rather than in `tests/init.rs` because `drain` is private

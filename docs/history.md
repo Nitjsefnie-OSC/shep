@@ -134,14 +134,28 @@ One thing it deliberately does not do, argued at its call site: a
 DAEMON-initiated restart gets no warning, since the check is CLI-side, so a
 crash or an autorestart respawn still walks into G12 row 5 unannounced.
 
+**A sheep's lambs are swept after it exits, on unix (#688).** A stop
+used to reach the sheep's process group and nothing else, so a lamb that
+called `setsid`, every lamb under `shutdown_with_message`, and any lamb
+that outlived the leader kept running, reparented to init. A crash
+touched none of them. `sweep/` now signals the pids a walk of the sheep's
+ppid tree saw, after the leader is reaped and before `Msg::Exited` is
+sent: SIGTERM, up to `kill_timeout`, then SIGKILL, walking from the
+survivors on every look so what they start meanwhile goes too. A stop walks fresh
+before the first rung and merges the last 15-second stats tick's walk; a
+crash has only the tick's. Each pid is dated by the walk that saw it and
+signalled only if its process started no later, which is what keeps a
+recycled pid safe without storing start times. shep-kelpie motivated it:
+a runner SIGKILLed or panicking left its Claude Code sessions working.
+
 **A probe's descendants are contained on unix now.** This paragraph used to
 say `Child::kill` does not reach them and that closing it needed a process
 group rather than a patch, which was right about the mechanism. `ask` in
 `crates/shep-cli/src/commands/dogs.rs` spawns with `process_group(0)` and
 `kill_probe_tree` sweeps `-pid`, the same shape `probes/os.rs` already used
 for the exec prober. Two holes stay open and are documented rather than
-closed. A descendant that calls `setsid` leaves the group, as `kill.rs`
-records for a sheep. And Windows has no process group, so the probe there
+closed. A descendant that calls `setsid` leaves the group, and a probe
+has no lamb sweep to catch it the way a sheep now does (#688). And Windows has no process group, so the probe there
 still kills only the binary it spawned; containment would mean reaching the
 `pub(crate)` job object in `sys_windows.rs`.
 
@@ -255,6 +269,32 @@ where an operator reads. `every_exempt_verb_is_one_of_the_documented_recovery_ve
 pins `add` at `Enforce`, since it reaches that through the `_` arm rather
 than by being named.
 
+**This paragraph said the guard "refuses every verb but the three in
+`RECOVERY_VERBS`", and that is wrong now: three read verbs warn instead.**
+`VersionGuard::Warn` is a third guard beside `Enforce` and `Exempt`, and
+`read_verb` gives it to `flock`, `describe` and `bleats`, all of `bleats`
+and not only `--follow`, since both forms send one `ListFlock` and then
+read. `refuse_version_skew` writes one `version_skew` notice to stderr for
+them and proceeds, so a fleet upgraded one host at a time can still be
+listed. Every other verb, `lookout` and `whistle` included, stays at
+`Enforce`: a pane and a tool can write. `every_exempt_verb_is_one_of_the_documented_recovery_verbs`
+now pins `flock` at `Warn`, and `add` is still `Enforce`.
+
+**And the guard stopped being one rule for both links.** Over `--host` a
+crate-version difference refuses nothing. `skew_of` compares
+`HelloAck::protocol` against `PROTOCOL_VERSION`, equal rather than against
+`MIN_SUPPORTED`, because the host at the other end of the link has its own
+install: the half-replaced machine the crate comparison exists for cannot
+exist across ssh, and a fleet upgrades one host at a time. Same protocol and
+a different version: the verb runs, and one `version_skew` notice goes to
+stderr. Another protocol: exit 12, both numbers named, and the fix on
+whichever side of the gap is behind: `ssh <dest> shep daemon reload` for a
+host on an older protocol, `cargo install shep` on this machine for one on a
+newer protocol, since a half-upgraded fleet has hosts running ahead of the
+operator's laptop. The local socket is unchanged, and so are
+`Exempt` and `Warn`. `version_guard/tests/` pins each side of the table and
+`fleet/tests.rs` pins it across a `hosts` list.
+
 **`PROTOCOL_VERSION` and `MIN_SUPPORTED` moved to 8 on 2026-09-07, for
 `AppConfig::environment`.** Not for `Request::PutSecrets` and
 `Response::SecretsPut`, which arrived on the same branch and moved nothing.
@@ -346,8 +386,10 @@ What that means for anyone editing this workspace:
   platform gate at all. Adding one back is a design decision, not a shrug.
 - **A per-sheep job object replaces the process group.** `sys_windows.rs` is
   the crate's only unsafe on that platform, mirroring `sys.rs`'s rule. It is
-  stronger than the unix design: `kill.rs` documents an escaped-`setsid`
-  hole that a job simply does not have.
+  stronger than the unix design on a stop: a `setsid` lamb escapes the
+  unix process group and is left to the lamb sweep, while a job member
+  cannot leave its job. The sweep is unix only, so a crash on Windows
+  still leaves the job's other processes running.
 - **Three refusals are permanent and deliberate**, each argued at its own
   call site: no graceful signal outside the shepherd channel, no
   `shep startup` (that is Tier B — an SCM service), and no `user`/`group`.
@@ -453,6 +495,205 @@ for its `[app.dogs.<name>]` table with `probe_with_sheep`, under the
 or read-only, and Enter on a set or unset one opens a pane over it, a
 nested table flattened into dotted rows and a secret drawn `<set>`. No
 wire change: `PROTOCOL_VERSION` stays at 10.
+
+**The dog's own pane flattens the same way.** `e` on a dog row now shows a
+nested table in its `dogs.toml` section as dotted rows, `models.worker.model`
+and its like, each editable by its own type, and a credential inside one drawn
+`<set>` with its editor opening empty. The write walks that path into the
+section, so a `[models.worker]` header, dotted keys and an inline table each
+take the set where they are, comments and key order intact. A list or a map is
+still a `~` row, and a value TOML cannot hold (an array, a map, a whole number
+past `i64::MAX`), or a scalar sitting where the schema has a table, refuses the
+whole write instead of landing as text or replacing what the operator wrote. No
+wire change.
+
+**A dog can ask for the shepherd channel.** A `shep-channel: true` line in
+a dog's `--version` answer, or `dogs::Probe::ask_for_channel` in a dog
+built on `shep-client`, is recorded by `shep adopt` in `[daemon]
+channel_dogs`. The dog is then started with `channel` and
+`shutdown_with_message`, answers `shep trigger`, and is stopped by the
+shutdown message. A dog that did not ask answers a trigger with
+`dog_no_channel`. `PROTOCOL_VERSION` stays at 11: the new `DogSource` key
+and outcome are additive.
+
+**The metrics dog can push its series to an OTLP endpoint.** The `otel`
+cargo feature, off by default and carrying no new dependency, adds
+`otlp_endpoint`, `otlp_interval`, `otlp_timeout` and `otlp_headers` to
+`[dog.metrics]`. The dog POSTs OTLP/JSON to `{endpoint}/v1/metrics` on an
+interval, with the same series and the same labels `/metrics` serves;
+`shep_sheep_restart_total` is the one monotonic cumulative sum, started at
+the dog's own start. A 2xx naming a `partialSuccess` is a
+failed export, not a clean one. A build without the feature refuses
+`otlp_endpoint` at startup rather than running a dog that exports nothing. `otlp_headers` is a
+secret: redacted in `Debug`, marked in the schema, and never printed. No
+wire change. **Off stopped meaning "absent from what most operators get"**
+on 2026-10-14 (#737): every prebuilt release archive and the `.deb` is now
+built with `features: otel`, so `otlp_endpoint` works out of the box in a
+downloaded binary; `cargo install shep` and the Homebrew formula stay
+featureless and take `--features otel`.
+
+**The samples a sheep sends on its channel ride the same export** (2026-10-14,
+the half of spec §8's OTLP item that was still open). They land after the
+built-in groups, named as `/metrics` names them: a gauge sample is a gauge, a
+counter sample a monotonic cumulative sum started when its sender started, so
+`shep_sheep_restart_total` is no longer the only sum in the payload and a
+sender that restarts moves its counter's start, which is how OTLP means a
+reset. A sample's help text is its `description`, omitted when the sender
+wrote none, and `shep_channel_samples_refused_total` goes out as `asInt`. A
+value the text exposition can spell (`NaN`, `+Inf`) has no OTLP/JSON number
+and is dropped from the export. The drift guard
+`the_payload_names_every_series_the_exposition_names` runs over a reading that
+carries samples as well as a flock, and compares every series' own labels and
+not only its name, type and point count. No wire change.
+
+**A setting, or a whole dog table, copies from one sheep onto another.**
+`shep copy <from>.<path> <to>.<path>` takes three address forms: a field
+(`web.restart_delay`), a dog's table (`web.dogs.kelpie`), and a key or
+sub-table inside one (`web.dogs.kelpie.rulings`). A dog name and a key inside
+a table may each contain a dot, so each step past the sheep name is the
+longest name the copy's tables actually hold: `web.dogs.foo.bar` is the dog
+`foo.bar` when a side has a table under that name, and the dog `foo` with the
+key `bar` when neither does, even in a flock that runs a dog named `foo.bar`
+with no table for it. The path is the same on
+both sides. A dog table merges by default, so a key only the target has
+survives, `--replace` makes the target exactly the source at that path, and
+`--except <key>` leaves one key out because shep cannot tell that a dog's
+`git.checkout` names one project's repo. A copy refuses when one side holds
+something that is not a table where the copy has to write through one, rather
+than turning that value into a table on the way to the key it was asked to
+write. `env`, `name`, `instances` and the
+whole `dogs` map are refused, the first because a client is never sent a
+sheep's env values and the rest because the shepherd refuses them too. The
+change list prints before anything is written, and the run asks before it
+writes: `--yes` skips the question, `--dry-run` writes nothing, and with no
+terminal to ask on the run refuses rather than guessing. The list prints where
+the operator is reading it, on stdout for the table form and on stderr for
+`--format json`, whose stdout is the one envelope written after the answer. No
+wire change: the
+write is `Request::SetSheepField` for a field and
+`Request::SetSheepDogSettings` for a table.
+
+**One read prints any settings in the flock.** `shep get <name>[.<path>]`
+answers a sheep's config (`shep get api`), one field of it
+(`api.max_memory`), one dog's table inside a sheep
+(`api.dogs.kelpie.git`), or one dog's own section of `dogs.toml` and a table
+inside that (`kelpie.worker`). The answer is the TOML the address names,
+spelled as the file it lives in spells it: a sheep's fragment carries its
+`dogs.<dog>` headers, a dog's carries `[<name>]`, and the comments the
+operator wrote inside a dog's section survive the read. A dog's name is the
+longest run of segments the shepherd answers a section for, because
+`dogs.toml` spells a dog's sub-table as a header path rather than as a name.
+A table the file wrote with nothing under it keeps its header, and a key
+spelled with a dot in it stays one key on the way down, so an answer a dog's
+settings hold still pastes back.
+`env` is refused for the reason `shep copy` refuses it, and the dog read is
+the unresolved one, so a `{{secret:...}}` prints as the reference. Bare
+`shep get` is a usage error, and a name nothing answers is `NotFound`: the
+key/value store that spelling used to read lives at `shep kv get`. No wire
+change: the reads are `Request::SheepConfig` and `Request::DogConfig`.
+
+**One write changes any setting in the flock, so no dog needs its own**
+(issue #1096, under the settings spec #1073). `shep set <address> <value>`
+takes `shep get`'s address and `shep copy`'s flow: resolve against the names
+the running flock carries, read what that address holds, plan, print every key
+the write touches with its old value beside its new one, ask, write. A sheep's
+field, a key inside a sheep's table for a dog, and a key of a dog's own
+section are three shapes of one address, and each goes through the request the
+shepherd already answers, so there is no set request and everything those
+refuse this refuses, with the same reasons. A dog's section is edited in place
+rather than replaced: the text the shepherd answered is parsed, one key is
+changed, and the result is sent back, so a comment the operator wrote inside
+the section survives the write and a `[worker]` header stays a header. The
+value is TOML, and text that is not TOML is the string as typed, which is the
+grammar an operator already writes these settings in. A write carrying a dog's
+table is checked against the schema that dog published, through the same door
+lookout's config pane files a keystroke through, and only for the keys this run
+chose: a value the operator wrote into the file by hand rides along untouched.
+A dog that publishes nothing is asked nothing. A dog the flock has never been
+given a section for gets one. A write that replaces a whole section or a whole
+dog table re-reads that holder after the answer and is refused if it moved in
+the meantime, because what it sends carries every key it read rather than only
+the one named. TOML's `nan` and `inf` are refused as values: the JSON the
+shepherd carries has no cell for one, and a write built from it reaches the
+flock as a null. `--dry-run` writes nothing, `--yes` skips the
+question, and `--format json` carries the change list, `written` and `pending`
+in the one envelope. `shep set` stopped being the key/value store's hidden
+spelling at the same time: `shep kv set` is that store's verb, and a name no
+sheep or dog is is refused by name. No wire change: the writes are
+`Request::SetSheepField`, `Request::SetSheepDogSettings` and
+`Request::SetDogConfig`.
+
+**One undo drops an override or removes a dog's key** (issue #1097, under the
+settings spec #1073). `shep unset <address>` takes `shep set`'s address and
+flow, with the same `--yes`, `--dry-run` and `--format json`. A sheep's field
+goes through the new `Request::ResetSheepField { name, key }`: the shepherd
+drops the operator's override and the Flockfile's value returns, in `shep get`
+and in the running config, and the reply says what the field holds again. A key
+inside a sheep's table for a dog leaves the table, so the dog's default
+applies, and a key of a dog's own section leaves `dogs.toml` with the comments
+around it. A field with no override is refused with a sentence pointing at
+`shep get`, and the section as a whole is a usage error. The override record
+gained a `template` map holding the value in force before the first override,
+so the reset has a value to restore and a Flockfile edit keeps reaching the
+sheep. `shep unset` stopped being the key/value store's hidden spelling at the
+same time, so none of the store's old verbs remain. Wire change: additive
+`ResetSheepField` and `SheepFieldReset`, no `PROTOCOL_VERSION` move.
+
+**A dog can refuse a settings write before shep makes it** (issue #1098,
+under the settings spec #1073). A manifest declaring `validate` gets a
+`shep.validate` trigger on its channel before `shep set`, `shep unset` or a
+lookout write to that dog's settings lands, carrying the table the write would
+leave behind: `{"table": {...}, "sheep": "api"}`, with no `sheep` key for a
+dog's own section. The dog answers `{"accept":true}` or
+`{"accept":false,"reason":"..."}` on the channel it already answers `shep
+trigger` and its stop message on, and `shep_client::dogs::validate_answer`
+writes that body from one closure. A refusal, an answer that is not a verdict,
+and a dog that answered nothing inside its own `action_timeout` each stop the
+write, and the dog's own sentence is what the operator reads: `shep set` exits
+`invalid_config`, and lookout's pane reports the same
+`RequestError::Rpc` it reports a shepherd's own refusal with. A dog that
+declared nothing is never asked, and a dog in the flock with no live channel
+is not asked either, because its settings are what an operator edits before
+`shep enable`. What shep cannot read is never an acceptance: an answer with no
+verdict in it, and a manifest or `shep.toml` that could not be read, both stop
+the write and say so, because a dog that declared `validate` and was not asked
+is a check the operator believes is running. `read_manifest` says which of
+those it got (`Read`, `Absent`, `Unreadable`), and the line is at the cache: a
+dog that gave nothing, in any of the ways a dog gives nothing, declared
+nothing, and only a cache file for this exact binary that neither it nor a
+fresh probe restates is a record of a declaration shep wrote and cannot read.
+The holder is re-read after the ask as well as before it: the ask waits up to
+the dog's `action_timeout`, and a whole-section or whole-table plan carries
+every key it read. `shep copy` is a third door: it replaces a dog's whole table
+on another sheep, so it asks the dog about that table before it writes. `shep adopt` refuses a manifest
+declaring `validate` without
+`channel`: the check could never run. The ask is client-side, in
+`dog_settings::ask_dog`, and three doors use it: `settings_write::flow::run`,
+`copy::write_plan`, and `lookout::source::ClientFlock::send`. No wire change: the ask is
+`Request::Trigger`, and `Manifest.validate` shipped with the manifest.
+
+**A community dog index lists the dogs others have written, and shep prints
+how to install one without running anything** (2026-08-21 for the index and
+its parser, 2026-08-23 for the verb). `web/public/dogs.json` is a document
+built from pull requests, served from `https://shep-pm.com/dogs.json`.
+`crates/shep-cli/src/dog_index/` fetches it and `shep dogs --available` lists
+it by category, with `SHEP_DOG_INDEX` pointing a run at another URL for
+self-hosting and for the tests. Each entry names how it installs, as one of
+four kinds: `cargo` (a crates.io package, with an optional version for a
+pre-release), `cargo-git` (a repository), `go-install` (a Go module) and
+`manual` (prose, never a command). The detail view prints the install step (the
+prose itself for `manual`) and then a `shep adopt <path> --name <name>` line.
+The operator runs the first. shep runs only the second, which vets the binary
+before it registers it, so nothing in shep fetches, builds or executes a
+stranger's code. The reason, argued in
+[deferred.md](specs/deferred.md#shep-install-does-not-exist-and-a-scanner-is-not-what-would-make-it-safe)
+and tracked as #357, is that the index is written by strangers and every
+string in it reaches a terminal, so the module treats all of it as hostile
+and sanitises escapes. An index whose strings cannot be trusted to print is
+not one to trust to execute. The source kind is a tagged enum so an installer
+can be added later without asking past contributors to rewrite their entries.
+A future `shep install` would reverse the print-only call, and this entry is
+the record of the call it reverses.
 
 Project memory (cross-session state) tracks decisions; docs above are the
 source of truth.

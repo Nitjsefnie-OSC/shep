@@ -10,6 +10,245 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-25
+
+### Added
+
+- Resolve secret references in a sheep's per-dog table
+- Spawn each dog holding a connection to the shepherd **(BREAKING)**
+- Carry each dog's connection across a handover **(BREAKING)**
+- Carry each dog's connection across a handover **(BREAKING)**
+- Carry a dog's grants on DogSource and map every request to a permission **(BREAKING)**
+- Refuse a dog's request outside its grants
+- Copy one sheep's env onto another's inside the shepherd
+- Serve each Windows dog over its own user-only pipe
+- Add ResetSheepField and an override record's template **(BREAKING)**
+- Drop a sheep field's override with ResetSheepField
+- Enforce a dog's grants on its own connection **(BREAKING)**
+- Drop an override with `shep unset` **(BREAKING)**
+- Add shep dogs grant and revoke to change one permission
+
+### Changed
+
+- One seed and one blocking boot helper for boot tests
+- One flock fixture for the snapshot muster tests
+- Share one selector resolve and one log-pump collection
+- Share the dog check, the override write and the park loop
+- One helper each for an AppConfig's serde trip
+- One liveness fixture app for the registry liveness tests
+- One helper for each acknowledged log control round trip
+- Build adopt test blobs through Handover::new
+- One helper each for an abandoned reload and a committed swap
+- One call helper for every supervisor handle method
+- One accessor for a resolved app's readiness source
+- One accessor for a spawn identity's credentials
+- One helper clears a slot a refused respawn leaves
+- Take &str names and keys in the four pane setters
+- Read dogs.toml once for both dog section functions
+- One BootError::io constructor for path-carrying boot errors
+- Drop the Arc around the shutdown watch sender
+- Build watch glob sets from borrowed patterns
+- One within_deadline helper for the readiness wait
+- Drop the unreachable result check in instance_slots
+- Build the Windows path advisory through one helper
+- Share one field initialiser between the LogFile constructors
+- Rehydrate returns a named Rehydrated struct and drops its unused paths
+- Build InvalidConfig and no-sheep refusals through two helpers
+- Share the rpc test start, describe, list and push fixtures
+- Share the reload-to-a-shared-path setup in the flush tests
+- One helper for readiness source, credentials and reset
+- Share one name-list helper in the scripted runner
+- Drop a one-use closure and share the failed-exec test setup
+- Project provider cache tables through one helper
+- Rehydrate returns a named Rehydrated struct
+
+### Fixed
+
+- Build the dog link types cleanly where only unix hands a dog one
+- Build the dog link e2e test only on unix
+- A SHEP_DOG_FD naming no usable connection fails the dog's start
+- A dog's link counts as contact from its first frame
+- Allow the unused link row on non-unix
+- Freeze the dog link table while a handover copies it
+- Park each dog link on a frame boundary before a handover copies it
+- Bound a Windows dog's link by its grants too
+- Bind a dog by its grants from the moment it starts
+- Keep a dog's grants out of its own reach
+- Stop a held subscription's events when the dog's grants narrow
+- Refuse an env copy whose reviewed changes no longer hold
+- Seal each env copy change so a swapped literal is refused
+- Test an unset dog pipe with if defined, and fix the pipe-taken comment
+- Copy a sheep env instead of refusing it
+
+### Performance
+
+- Read the secret store once per start and per scale-up
+
+
+## [0.16.1] - 2026-10-22
+
+
+## [0.16.0] - 2026-10-22
+
+### Added
+
+- Answer TailLog from the sheep's own log file
+- Decode a status or dog source this build does not know **(BREAKING)**
+- Answer a request for the tail of one sheep's log
+
+### Fixed
+
+- Count an unrecognized status in the muster flourish and refuse one in a handover blob
+
+
+## [0.15.2] - 2026-10-17
+
+### Fixed
+
+- Bound a pump-EOF test wait on the descriptor, not a yield count
+- Settle the descriptor-report wait on the pump's report
+- Settle the descriptor-report test on the pump's report, not an fd number
+- Poll a readiness probe inside listen_timeout
+
+
+## [0.15.1] - 2026-10-16
+
+### Fixed
+
+- Drop the em dashes from the stale dog verdict
+- Drop every em dash from a non-test string literal
+
+
+## [0.15.0] - 2026-10-15
+
+### Added
+
+- A stamps-off sheep says so on its listing row
+- Let a sheep send a dog a note that is not a metric sample **(BREAKING)**
+- An accept backoff that waits out an accept error that will not clear
+
+### Changed
+
+- One plain_entry fixture behind the supervisor tests' entry literals
+- Testing.rs hands its doubles and its loopback fake to submodules
+- Leave the loopback fake at crate::testing_http
+- Open every shutdown test through started_apps
+- One pid guard behind both unix signal paths
+
+### Fixed
+
+- The accept loop waits out a failing accept and a shutdown wins the wait
+- The accept loop backs off when accept keeps failing
+- Bleats keeps an app's own timestamp in the file tail of a stamps-off sheep
+
+
+## [0.14.0] - 2026-10-14
+
+### Added
+
+- Disabling a dog stops it and keeps it listed
+- Refuse to delete a built-in dog, in the shepherd
+- A wildcard passes a disabled sheep by and enable sweeps only disabled ones
+- Enable and disable take a fold, a regex or all, and CLI sweeps pass a disabled sheep by
+- List every known dog at rest **(BREAKING)**
+- Re-fire config.dog.<name> when secrets.json changes a value a dog names
+- Wildcards pass a disabled sheep by, and enable and disable take any selector
+- A handover leaves a disabled dog behind
+- Delete removes a dog for good
+- A handover leaves a parked dog behind
+
+### Fixed
+
+- Enabling a dog mid-stop cancels the disable
+- Refuse a new sheep named after a dog
+- A saved sheep keeps its name against a dog at boot
+- A handover carries every dog that holds a process
+- A repeated disable sweep succeeds and the log verbs still reach a disabled sheep
+- Leave a dog that ran and stopped stopped on a second start
+- Read the secret store again after a failed read, and stamp its inode and change time
+- Dog names hold across an upgrade
+
+
+## [0.13.0] - 2026-10-13
+
+### Added
+
+- A channel metric can carry a type, labels and help text **(BREAKING)**
+- Resolve secret references in a dog's section
+- Serve DogConfigResolved
+- Re-fire config.dog.<name> when a provider's push changes a secret a dog names
+- The roll keeps a sheep's disabled mark across a restart **(BREAKING)**
+
+### Fixed
+
+- Keep the serde_json error behind a corrupt muster roll
+- Carry the disabled mark through a handover and wake the roll writer on disable
+- Name the sink's item type at the write loop's flush
+
+
+## [0.12.5] - 2026-10-07
+
+### Fixed
+
+- Cap the write loop's drain at CONN_QUEUE frames per flush
+- Release the line scratch before the pump waits for log room
+
+### Performance
+
+- Flush a connection's queued frames once, not per frame
+- Read log lines into a scratch buffer the pump keeps
+- Shrink the line scratch buffer after a very long line
+- Count running instances in one pass in FlockRegistry::roll
+
+
+## [0.12.4] - 2026-10-06
+
+### Added
+
+- Add a lamb sweep that outlives the process group
+- Sweep a sheep's lambs before reporting its exit
+- Wait for a killed lamb to stop before the sweep returns
+- Drop a sheep's lamb snapshot when it is unwatched
+- Never trust a lamb start time from before boot
+- Sweep what a lamb starts while the sweep waits
+
+### Changed
+
+- Share the targeted process-table read
+
+### Fixed
+
+- Date lamb pids to the clock tick on Linux
+- Never sweep the lambs of a leader that still runs
+- Drop a sweep walk whose root exited mid-walk
+
+
+## [0.12.3] - 2026-10-02
+
+
+## [0.12.2] - 2026-10-02
+
+
+## [0.12.1] - 2026-10-02
+
+### Fixed
+
+- Panic loudly when arm_reload_deadline has no job
+
+
+## [0.12.0] - 2026-09-30
+
+### Added
+
+- Record on an adopted DogSource whether it asked for the channel **(BREAKING)**
+- Start an adopted dog that asked with the shepherd channel
+- Name a dog's missing channel in its own trigger outcome
+
+### Fixed
+
+- Restart a reload-abandoned replacement left Starting
+
+
 ## [0.11.0] - 2026-09-29
 
 ### Performance

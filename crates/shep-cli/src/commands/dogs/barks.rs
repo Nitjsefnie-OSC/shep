@@ -36,22 +36,12 @@ pub fn barks(streams: &mut Streams<'_>, paths: &ShepPaths, args: &BarksArgs) -> 
     ))
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use shep_core::barks::{self, Bark, SinkOutcome};
 
     use super::*;
-    use crate::cli::Format;
-
-    /// Every test here drives a dog verb under `--format table`.
-    fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        }
-    }
+    use crate::commands::dogs::test_support::streams;
 
     /// A bark named `subject`, at `at_ms`, delivered to one sink named
     /// `ops`; every other field fixed.
@@ -205,5 +195,48 @@ mod tests {
 
         assert_eq!(code, ExitCode::Success);
         assert!(String::from_utf8(out).unwrap().contains("web"));
+    }
+
+    /// A directory where the ring file belongs makes the read fail with an
+    /// error other than not-found, which `barks::read` does not forgive.
+    fn paths_with_a_directory_for_the_ring() -> (tempfile::TempDir, ShepPaths) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ShepPaths::resolve(&|_| None, dir.path());
+        std::fs::create_dir_all(&paths.barks).unwrap();
+        (dir, paths)
+    }
+
+    #[test]
+    fn an_unreadable_ring_fails_with_a_message_on_stderr() {
+        let (_dir, paths) = paths_with_a_directory_for_the_ring();
+
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = barks(
+            &mut streams(&mut out, &mut err),
+            &paths,
+            &BarksArgs { tail: None },
+        );
+
+        assert_eq!(code, ExitCode::Failure);
+        assert!(!err.is_empty(), "the read error must reach stderr");
+        assert!(out.is_empty(), "no history renders on a failed read");
+    }
+
+    #[test]
+    fn an_unreadable_ring_fails_with_a_message_on_stderr_under_tail() {
+        let (_dir, paths) = paths_with_a_directory_for_the_ring();
+
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = barks(
+            &mut streams(&mut out, &mut err),
+            &paths,
+            &BarksArgs { tail: Some(2) },
+        );
+
+        assert_eq!(code, ExitCode::Failure);
+        assert!(!err.is_empty(), "the read error must reach stderr");
+        assert!(out.is_empty(), "no history renders on a failed read");
     }
 }

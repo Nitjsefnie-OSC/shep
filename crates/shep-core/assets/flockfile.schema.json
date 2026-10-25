@@ -19,11 +19,8 @@
       }
     },
     "dog": {
-      "description": "A dog's own per-app configuration, read and discarded.\n\nAdded the same way `$schema` was, explicitly rather than by relaxing\n`deny_unknown_fields`, so a typo'd key still fails loudly and exactly\none more key is legal.\n\nIt exists because the alternative is a Flockfile no daemon will accept.\nA dog that needs per-app configuration has nowhere to put it: shep-deploy\nwants a build command for the app it deploys, which belongs beside that\napp's declaration and nowhere else, and a Flockfile carrying one was\nrefused outright by `shep start`. Measured 2026-08-28 against shep\n0.1.8: an operator following shep-deploy's own README could not register\ntheir app at all. `unknown field `build`, expected `$schema` or `app``.\n\nIt must BE a table. shep does not read what is inside it, does not\nvalidate it, and makes no promise about it. Those are two different\nclaims and only the second one is a promise not to care: the dog that\nowns a key under this table is the only thing that understands it, and\nshep refusing a document because it does not recognise another\nprogram's config is a coupling neither side wants.\n\nNested under one key rather than allowing loose top-level keys, so\nexactly one name is reserved and a typo anywhere else still fails.\n\nA map of ignored values rather than `IgnoredAny`, which would have\naccepted `dog = 5` and `dog = [\"a\"]` as happily as a table. Not reading\nwhat a dog wrote is the point; not caring whether it wrote a table at\nall is a different thing, and it would have made the one key this file\nadds the one key where a typo does not fail loudly.",
-      "type": [
-        "object",
-        "null"
-      ],
+      "description": "A dog's own per-app configuration, read and discarded.\n\nAdded the same way `$schema` was, explicitly rather than by relaxing\n`deny_unknown_fields`, so a typo'd key still fails loudly and exactly\none more key is legal.\n\nIt exists because the alternative is a Flockfile no daemon will accept.\nA dog that needs per-app configuration has nowhere to put it: shep-deploy\nwants a build command for the app it deploys, which belongs beside that\napp's declaration and nowhere else, and a Flockfile carrying one was\nrefused outright by `shep start`. Measured 2026-08-28 against shep\n0.1.8: an operator following shep-deploy's own README could not register\ntheir app at all. `unknown field `build`, expected `$schema` or `app``.\n\nIt must BE a table. shep does not read what is inside it, does not\nvalidate it, and makes no promise about it. Those are two different\nclaims and only the second one is a promise not to care: the dog that\nowns a key under this table is the only thing that understands it, and\nshep refusing a document because it does not recognise another\nprogram's config is a coupling neither side wants.\n\nA bare TOML date, time or datetime is not a table either. `toml` hands\none to a generic deserializer as a one-key table under a private name,\nand that shape is refused rather than read as a table with one odd key\nin it.\n\nNested under one key rather than allowing loose top-level keys, so\nexactly one name is reserved and a typo anywhere else still fails.\n\nA map of ignored values rather than `IgnoredAny`, which would have\naccepted `dog = 5` and `dog = [\"a\"]` as happily as a table. Not reading\nwhat a dog wrote is the point; not caring whether it wrote a table at\nall is a different thing, and it would have made the one key this file\nadds the one key where a typo does not fail loudly. A defaulted map\nrather than `Option`, for the same reason: `None` and `null` would\notherwise deserialize identically, and `null` is no more a table than\n`5` or `[\"a\"]` is. `deserialize_with` is the custom function below,\nneeded because the derived map deserializer lets `null` back through\nfor one YAML backend; see that function's own comment.",
+      "type": "object",
       "additionalProperties": true
     }
   },
@@ -201,7 +198,7 @@
           }
         },
         "dogs": {
-          "description": "One table per dog, keyed by dog name, for this sheep alone.\n\nshep stores this and hands it to the dog it names. It is never read\nor validated here. A dog name need not be one shep already knows:\nconfiguring a dog before installing it is the order an operator\nwants. Never read by the daemon at a spawn or a decision, so a write\ntakes effect the moment it lands.",
+          "description": "One table per dog, keyed by dog name, for this sheep alone.\n\nshep stores this and hands it to the dog it names. It is never read\nor validated here. A dog name need not be one shep already knows:\nconfiguring a dog before installing it is the order an operator\nwants. Never read by the daemon at a spawn or a decision, so a write\ntakes effect the moment it lands.\n\nA `dogs` key that is not a table is refused, naming the key. Each\ntable inside it keeps its own rules.",
           "type": "object",
           "additionalProperties": {
             "$ref": "#/$defs/DogTable"
@@ -218,7 +215,7 @@
                 "concurrency": 2
               }
             },
-            "group": "inputs",
+            "group": "dogs",
             "refuses": [
               "a value that is not a table",
               "an empty dog name"
@@ -226,7 +223,7 @@
           }
         },
         "env": {
-          "description": "Environment for the sheep (merged over the daemon's filtered env).\n\nA value may arrive as a string, a bare boolean, or a bare whole\nnumber (`SOME_BOOL = true`, `PORT = 8080`), and leaves as a string\neither way, so this field stays `BTreeMap<String, String>` and the\nwire always carries strings. A float is refused: `1.10` would reach\nthe process as `1.1`. YAML resolves an unquoted `yes` to `\"true\"`\nand `0x1F` to `\"31\"`, so quote a value whose text must survive.",
+          "description": "Environment for the sheep (merged over the daemon's filtered env).\n\nA value may arrive as a string, a bare boolean, or a bare whole\nnumber (`SOME_BOOL = true`, `PORT = 8080`), and leaves as a string\neither way, so this field stays `BTreeMap<String, String>` and the\nwire always carries strings. A float is refused: `1.10` would reach\nthe process as `1.1`. YAML resolves an unquoted `yes` to `\"true\"`\nand `0x1F` to `\"31\"`, so quote a value whose text must survive. An\n`env` key that is not a table is refused, naming the key.",
           "type": "object",
           "additionalProperties": {
             "anyOf": [

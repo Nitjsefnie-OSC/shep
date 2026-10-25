@@ -438,16 +438,6 @@ mod tests {
         fn rows(&self) -> Vec<Vec<String>> {
             vec![vec!["1".to_string(), "2".to_string(), "3".to_string()]]
         }
-
-        fn json_key_for(header: &str) -> &'static str {
-            match header {
-                "A" => "a",
-                "B" => "b",
-                other => panic!("MalformedRow::headers() does not include {other:?}"),
-            }
-        }
-
-        const JSON_ONLY: &'static [&'static str] = &[];
     }
 
     #[test]

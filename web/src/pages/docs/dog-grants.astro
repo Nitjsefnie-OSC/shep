@@ -1,0 +1,173 @@
+---
+/*
+ * Dog grants (docs/dogs.md, "Grants"). The refusal text below is the one
+ * cli_e2e's a_dog_is_refused_outside_the_grants_written_into_shep_toml pins
+ * against a real shepherd. Its own page, not a section of dogs.astro, to
+ * keep that page inside its prose budget.
+ */
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import ReferencePills from "../../components/docs/ReferencePills.astro";
+import ShortVersion from "../../components/docs/ShortVersion.astro";
+import Callout from "../../components/docs/Callout.astro";
+import CodeBlock from "../../components/docs/CodeBlock.astro";
+---
+
+<DocsLayout
+  activeSlug="dog-grants"
+>
+  <article>
+    <h1>Dog grants</h1>
+    <ReferencePills slug="dog-grants" />
+    <p class="lede">
+      A dog talks to the shepherd over a connection of its own, and by
+      default it may ask for anything the CLI can. Grants list what it may
+      ask instead, so an honest dog stays in bounds and what it asks is
+      attributable.
+    </p>
+
+    <ShortVersion>
+      <ul>
+        <li><code>shep adopt</code> and the first <code>shep enable</code> list what a dog declares and ask. A yes writes <code>[daemon.dog_grants.&lt;name&gt;] granted = [...]</code> to <code>shep.toml</code>.</li>
+        <li>A request outside the list is refused with a <code>forbidden</code> error naming the dog, the request and the permission.</li>
+        <li>No entry means full access. An empty list means nothing.</li>
+        <li>An upgrade never widens a dog unseen: new permissions wait for your approval, and <code>shep flock</code> and <code>shep dogs</code> mark what you have not looked at.</li>
+        <li>Grants are not a sandbox.</li>
+      </ul>
+    </ShortVersion>
+
+    <h2 id="granting">Granting</h2>
+    <CodeBlock>{`$ shep adopt ~/.cargo/bin/shep-otel --name otel
+otel declares these permissions:
+  flock.read (required): reads the flock to report on it
+  events:process. (optional): hears when a sheep exits
+Grants keep otel's requests in bounds and do not confine it: it runs as you and can do anything you can.
+adopt otel and grant it these? [y/N] y
+
+# shep.toml
+[daemon.dog_grants.otel]
+granted = ["flock.read", "events:process."]`}</CodeBlock>
+    <ul>
+      <li>A no leaves the dog adopted and disabled with nothing granted. The first <code>shep enable</code> asks again.</li>
+      <li><code>--yes</code> grants everything declared. With no terminal and no <code>--yes</code>, nothing changes and the exit is 2.</li>
+      <li>A dog with no manifest prompts <code>declares nothing, runs with full access</code>, and a yes records no entry.</li>
+      <li>An unknown required permission refuses the command. An unknown optional one is dropped with a warning.</li>
+      <li>
+        The built-in dogs ask too. <code>metrics</code> declares{" "}
+        <code>flock.read</code>, <code>events:channel.metric</code> and{" "}
+        <code>events:process.</code>; <code>bark</code> declares{" "}
+        <code>flock.read</code>, <code>events:process.</code> and an optional{" "}
+        <code>events:log.</code> for log rules.
+        A built-in enabled before grants existed is granted its list at
+        upgrade, <a href="#upgrading">marked not reviewed</a>.
+      </li>
+    </ul>
+    <p>
+      The shepherd reads the list at boot. A name it cannot read stops the
+      boot, and <code>shep adopt</code> and <code>shep enable</code> refuse
+      it too, so a typo never silently grants nothing.
+    </p>
+
+    <h2 id="changing-one">Changing one</h2>
+    <CodeBlock>{`$ shep dogs revoke otel events:process.
+$ shep dogs grant otel events:process.`}</CodeBlock>
+    <ul>
+      <li>Both write <code>shep.toml</code> and reach a running dog with no restart.</li>
+      <li><code>grant</code> accepts only a permission the dog's manifest declares.</li>
+      <li>A dog with no <code>dog_grants</code> entry is refused: <code>shep enable</code> asks for its list first.</li>
+    </ul>
+
+    <h2 id="upgrading">Upgrading</h2>
+    <p>
+      shep keeps the record in the same table. The shepherd still reads{" "}
+      <code>granted</code> alone.
+    </p>
+    <CodeBlock>{`# shep.toml
+[daemon.dog_grants.otel]
+granted = ["flock.read"]
+waiting = ["events:process."]
+reviewed = false`}</CodeBlock>
+    <ul>
+      <li>
+        The first shep with grants writes an enabled dog's declared list as{" "}
+        <code>granted</code>, with <code>reviewed = false</code>. That
+        covers <code>metrics</code> and <code>bark</code> too.
+      </li>
+      <li>A dog with no manifest stays undeclared, with full access.</li>
+      <li>
+        A rebuilt dog that declares more puts the new permissions in{" "}
+        <code>waiting</code>, and runs on <code>granted</code> meanwhile.
+      </li>
+      <li>
+        <code>shep enable</code> asks about what waits. A no, or no terminal
+        without <code>--yes</code>, changes nothing.
+      </li>
+      <li>
+        <code>shep dogs grant</code> approves the one permission it names
+        and clears <code>reviewed = false</code>.
+      </li>
+      <li>
+        shep notices a rebuild at the next boot, reload, <code>enable</code>{" "}
+        or <code>grant</code>.
+      </li>
+    </ul>
+    <p>
+      <code>shep dogs</code> and the Dogs table of <code>shep flock</code>{" "}
+      show an <code>ACCESS</code> column for this machine's dogs:{" "}
+      <code>undeclared</code>, <code>not reviewed</code> or{" "}
+      <code>waiting</code>. <code>--format json</code> adds{" "}
+      <code>access</code> to each dog row, and the schema version does not
+      move.
+    </p>
+
+    <h2 id="permissions">Permissions</h2>
+    <table>
+      <thead>
+        <tr><th>Permission</th><th>Lets the dog</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>flock.read</code></td><td>look at the flock and its configuration</td></tr>
+        <tr><td><code>flock.control</code></td><td>start, stop, restart and signal sheep</td></tr>
+        <tr><td><code>flock.edit</code></td><td>add and delete sheep and change their configuration</td></tr>
+        <tr><td><code>logs.read</code></td><td>read the end of a sheep's log</td></tr>
+        <tr><td><code>logs.manage</code></td><td>reopen and flush logs</td></tr>
+        <tr><td><code>events:&lt;prefix&gt;</code></td><td>subscribe to topics that begin with the prefix</td></tr>
+        <tr><td><code>secrets.read:&lt;scope&gt;</code></td><td>read a sheep's dog settings with secrets resolved, in the environment the scope names</td></tr>
+        <tr><td><code>secrets.write:&lt;namespace&gt;</code></td><td>push values into that namespace</td></tr>
+        <tr><td><code>dogs.control</code></td><td>enable, disable and configure other dogs</td></tr>
+        <tr><td><code>dogs.trigger:&lt;name&gt;</code></td><td>send an action to the named dog</td></tr>
+        <tr><td><code>shepherd.control</code></td><td>stop the shepherd</td></tr>
+      </tbody>
+    </table>
+    <ul>
+      <li>
+        A dog always keeps its own <code>dogs.toml</code> section and its
+        own sheep settings, whatever it was granted.
+      </li>
+      <li>
+        A subscription is judged on the part of each topic before its first
+        glob character: <code>events:process.</code> covers{" "}
+        <code>process.*</code> and <code>events:process.exit</code> does not.
+      </li>
+    </ul>
+
+    <h2 id="a-refusal">A refusal</h2>
+    <p>
+      A dog granted only <code>flock.read</code> that asks to stop a sheep
+      gets this back:
+    </p>
+    <CodeBlock>{`dog \`otel\` was refused \`stop\`: it needs \`flock.control\`, which was not granted to it`}</CodeBlock>
+
+    <h2 id="older-shepherds">Older shepherds</h2>
+    <p>
+      A shepherd older than protocol 12 records grants and enforces nothing.{" "}
+      <code>shep adopt</code> and <code>shep enable</code> say so when they
+      reach one.
+    </p>
+
+    <Callout variant="careful">
+      Grants are not a sandbox. A dog runs as you and could open the control
+      socket the way the CLI does. They keep an honest dog inside the lines
+      you drew and do not contain a hostile one.
+    </Callout>
+  </article>
+</DocsLayout>

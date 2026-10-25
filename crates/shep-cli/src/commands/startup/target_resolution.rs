@@ -232,12 +232,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             install(&mut streams, &plan, Privilege::Unprivileged);
         }
         let printed = String::from_utf8(err).unwrap();
@@ -263,12 +258,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             install(&mut streams, &plan, Privilege::Root)
         };
         assert_eq!(code, ExitCode::Usage);
@@ -301,12 +291,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             remove(&mut streams, &plan, Privilege::Unprivileged)
         };
         assert_ne!(code, ExitCode::Success);

@@ -17,6 +17,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::file_lock::FileLock;
+use crate::versioned_file::{self, ReadError, Versioned};
 
 /// The on-disk format's version.
 ///
@@ -42,6 +43,14 @@ pub struct AppOverrides {
     pub declared: BTreeSet<String>,
     /// Names of `env` keys the current Flockfile declares.
     pub declared_env: BTreeSet<String>,
+    /// What each overridden field held before the operator spoke for it: the
+    /// Flockfile's value as of the last load that named it, or the value the
+    /// sheep was created with. `ResetSheepField` puts it back.
+    ///
+    /// Absent for a field overridden before this was recorded, and the reset
+    /// then falls back to the built-in default.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub template: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Redacted: `fields` can hold an `env` map, and this store is where an
@@ -52,6 +61,10 @@ impl fmt::Debug for AppOverrides {
             .field("fields", &format_args!("<{} fields>", self.fields.len()))
             .field("declared", &self.declared)
             .field("declared_env", &self.declared_env)
+            .field(
+                "template",
+                &format_args!("<{} fields>", self.template.len()),
+            )
             .finish()
     }
 }
@@ -75,6 +88,12 @@ impl OverridesFile {
     /// older store never holds anything: writing it creates or upgrades it.
     fn holds(&self, name: &str, record: Option<&AppOverrides>) -> bool {
         self.version == OVERRIDES_VERSION && self.apps.get(name) == record
+    }
+}
+
+impl Versioned for OverridesFile {
+    fn version(&self) -> u32 {
+        self.version
     }
 }
 
@@ -140,24 +159,20 @@ impl From<serde_json::Error> for OverridesError {
     }
 }
 
-/// Reads `path` under the lock the caller already holds.
-///
-/// A missing file reads as an empty, current-version store: a fresh
-/// `$SHEP_HOME` has no overrides, and that is the normal state, not a fault.
-/// Any other `io::Error` propagates.
-fn read_file(path: &Path) -> Result<OverridesFile, OverridesError> {
-    let raw = match std::fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(OverridesFile::default());
+impl From<ReadError> for OverridesError {
+    fn from(source: ReadError) -> Self {
+        match source {
+            ReadError::Io(err) => Self::Io(err),
+            ReadError::Decode(err) => Self::Decode(err),
+            ReadError::FutureVersion(version) => Self::FutureVersion(version),
         }
-        Err(err) => return Err(OverridesError::Io(err)),
-    };
-    let file: OverridesFile = serde_json::from_str(&raw)?;
-    if file.version > OVERRIDES_VERSION {
-        return Err(OverridesError::FutureVersion(file.version));
     }
-    Ok(file)
+}
+
+/// Reads `path` under the lock the caller already holds: shorthand for
+/// [`crate::versioned_file::read_versioned`] at [`OVERRIDES_VERSION`].
+fn read_file(path: &Path) -> Result<OverridesFile, OverridesError> {
+    versioned_file::read_versioned(path, OVERRIDES_VERSION).map_err(OverridesError::from)
 }
 
 /// Rewrites `path` to hold exactly `file`.
@@ -273,6 +288,9 @@ pub fn update(
 }
 
 #[cfg(test)]
+mod template_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -384,7 +402,7 @@ mod tests {
         let value = AppOverrides {
             fields,
             declared: ["name", "script"].iter().map(|s| s.to_string()).collect(),
-            declared_env: BTreeSet::new(),
+            ..AppOverrides::default()
         };
         put(&path, "web", &value).unwrap();
         assert_eq!(get(&path, "web").unwrap().as_ref(), Some(&value));
@@ -425,7 +443,7 @@ mod tests {
         // matching `config::app`'s own `debug_redacts_env_values`.
         assert_eq!(
             rendered,
-            "AppOverrides { fields: <1 fields>, declared: {}, declared_env: {} }"
+            "AppOverrides { fields: <1 fields>, declared: {}, declared_env: {}, template: <0 fields> }"
         );
     }
 

@@ -278,9 +278,10 @@ debt.
   the pane is still open, same as any other request.
 - **`u` undoes the newest unsent edit**, one at a time. It files nothing
   itself, so it never needs the control gate.
-- **`tab` walks the pane's eight groups; `1` through `8` jump straight to
-  one.** Both reset the cursor to the group's first field. A dog's pane has
-  no groups to move between, since its schema declares none.
+- **`tab` walks the pane's nine groups, `shift+tab` walks back, and `1`
+  through `9` jump straight to one.** All three reset the cursor to the
+  group's first field. A dog's pane has no groups to move between, since
+  its schema declares none.
 - **Env keys moved into the main field list**, under whichever group is on
   screen, and out of their own sub-screen. No key ever shows its value,
   before or after the move: the shepherd never sends one.

@@ -6,8 +6,12 @@
  * on the board because they mean different things.
  *
  *   - "Named as v1.0 in spec §2/§9, not yet built" is the build queue. Its
- *     items are prose paragraphs opening with a bold name (`**OTLP export
- *     (metrics dog)**`), so the anchor is that bold text.
+ *     items are prose paragraphs opening with a bold name, so the anchor is
+ *     that bold text. The queue is empty as of 2026-10-14: its last item,
+ *     OTLP export on the metrics dog, shipped with the channel samples that
+ *     were its missing half, and its entry moved to deferred-history.md.
+ *     The list is empty and the guard below is not: the next item deferred.md
+ *     queues with no entry here fails the build.
  *   - "Committed to v1.1+ by design (spec §2)" is the deliberate cuts, and
  *     Windows is the largest. Its items are top-level `- ` bullets, some
  *     bold and some not, so the anchor is each bullet's head: its text up
@@ -20,8 +24,8 @@
  * 2026-09-06 resource-limit sizing as new v1.1 scope and failed the build.
  *
  * Merging the two would be the easy thing and the wrong one. A cut is not a
- * queue item, and a board that showed Windows beside OTLP with no label
- * would promise a tier the maintainer ruled out of v1 on 2026-08-15.
+ * queue item, and a board that showed Windows beside a queue item with no
+ * label would promise a tier the maintainer ruled out of v1 on 2026-08-15.
  *
  * Both lists are parsed out of deferred.md rather than hand-copied, and
  * `checkSync` diffs parsed against curated in both directions: an item
@@ -43,9 +47,7 @@ interface ChalkboardItem {
   display: string;
 }
 
-const queuedItems: ChalkboardItem[] = [
-  { anchor: "OTLP export (metrics dog)", display: "OTLP export" },
-];
+const queuedItems: ChalkboardItem[] = [];
 
 const cutItems: ChalkboardItem[] = [
   { anchor: "HTTP/SSE MCP transport", display: "HTTP/SSE MCP transport" },

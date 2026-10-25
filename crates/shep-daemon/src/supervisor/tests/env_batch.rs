@@ -13,10 +13,25 @@ async fn env_batch_harness() -> Harness {
     start_app(&h, AppConfig::minimal("web", "./srv")).await;
     h.ctx
         .supervisor
-        .start_dog(dog_app("bark"), DogSource::BuiltIn)
+        .start_dog(dog_app("bark"), DogSource::BuiltIn { grants: None })
         .await
         .unwrap();
     h
+}
+
+/// The override store as a cold boot would find it: no file, and no record
+/// for `name` inside one. A refusal that wrote leaves either.
+fn assert_store_untouched(h: &Harness, name: &str) {
+    assert!(
+        !h.ctx.paths.overrides.exists(),
+        "{name}: the refusal created the store file"
+    );
+    assert!(
+        shep_core::overrides::get(&h.ctx.paths.overrides, name)
+            .unwrap()
+            .is_none(),
+        "{name}: the refusal still wrote a record"
+    );
 }
 
 /// The stored env of `name`, or a panic naming what was there instead.
@@ -37,7 +52,7 @@ async fn a_batch_writes_every_key_under_one_lock() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([
                 ("A".to_string(), "1".to_string()),
                 ("B".to_string(), "2".to_string()),
@@ -61,13 +76,13 @@ async fn an_identical_value_is_unchanged_rather_than_a_collision() {
     let entries = BTreeMap::from([("A".to_string(), "1".to_string())]);
     h.ctx
         .supervisor
-        .set_sheep_env_batch("web".to_string(), entries.clone(), false, false)
+        .set_sheep_env_batch("web", entries.clone(), false, false)
         .await
         .unwrap();
     let batch = h
         .ctx
         .supervisor
-        .set_sheep_env_batch("web".to_string(), entries, false, false)
+        .set_sheep_env_batch("web", entries, false, false)
         .await
         .unwrap()
         .expect("web exists");
@@ -82,7 +97,7 @@ async fn a_collision_without_force_writes_nothing_at_all() {
     h.ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("A".to_string(), "1".to_string())]),
             false,
             false,
@@ -93,7 +108,7 @@ async fn a_collision_without_force_writes_nothing_at_all() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([
                 ("A".to_string(), "2".to_string()),
                 ("B".to_string(), "9".to_string()),
@@ -121,7 +136,7 @@ async fn force_overwrites_and_reports_the_collision_in_both_lists() {
     h.ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("A".to_string(), "1".to_string())]),
             false,
             false,
@@ -132,7 +147,7 @@ async fn force_overwrites_and_reports_the_collision_in_both_lists() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("A".to_string(), "2".to_string())]),
             true,
             false,
@@ -152,7 +167,7 @@ async fn a_dry_run_answers_and_writes_nothing() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("A".to_string(), "1".to_string())]),
             false,
             true,
@@ -181,7 +196,7 @@ async fn a_dry_run_refuses_what_the_real_send_would_refuse() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("SHEP_NAME".to_string(), "nope".to_string())]),
             false,
             true,
@@ -205,7 +220,7 @@ async fn a_refused_collision_reports_rather_than_validating() {
     h.ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("A".to_string(), "1".to_string())]),
             false,
             false,
@@ -216,7 +231,7 @@ async fn a_refused_collision_reports_rather_than_validating() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([
                 ("A".to_string(), "2".to_string()),
                 ("SHEP_NAME".to_string(), "nope".to_string()),
@@ -234,20 +249,20 @@ async fn a_refused_collision_reports_rather_than_validating() {
 
 /// The contract says `app` is `Some` only when something was written.
 /// A batch every key of which is already held writes nothing, so
-/// `rpc.rs` must not record a no-op and rewrite the muster roll for it.
+/// `rpc/dispatch.rs` must not record a no-op and rewrite the muster roll for it.
 #[tokio::test(start_paused = true)]
 async fn a_batch_that_changes_nothing_parks_nothing() {
     let h = env_batch_harness().await;
     let entries = BTreeMap::from([("A".to_string(), "1".to_string())]);
     h.ctx
         .supervisor
-        .set_sheep_env_batch("web".to_string(), entries.clone(), false, false)
+        .set_sheep_env_batch("web", entries.clone(), false, false)
         .await
         .unwrap();
     let batch = h
         .ctx
         .supervisor
-        .set_sheep_env_batch("web".to_string(), entries, false, false)
+        .set_sheep_env_batch("web", entries, false, false)
         .await
         .unwrap()
         .expect("web exists");
@@ -263,7 +278,7 @@ async fn a_batch_refuses_a_dog_and_an_unknown_name() {
     assert!(
         h.ctx
             .supervisor
-            .set_sheep_env_batch("absent".to_string(), entries.clone(), false, false)
+            .set_sheep_env_batch("absent", entries.clone(), false, false)
             .await
             .unwrap()
             .is_none()
@@ -271,8 +286,61 @@ async fn a_batch_refuses_a_dog_and_an_unknown_name() {
     let err = h
         .ctx
         .supervisor
-        .set_sheep_env_batch("bark".to_string(), entries, false, false)
+        .set_sheep_env_batch("bark", entries, false, false)
         .await
         .unwrap_err();
     assert!(matches!(err, SupervisorError::IsADog(_)));
+}
+
+/// The dog refusal is a security boundary, and four pane doors reach it: a
+/// read of a dog's whole config, one env key, a batch, and a bare field.
+/// Each is asserted against the store as well as the code, since a refusal
+/// that still wrote is the same hole with a better error.
+///
+/// The batch door's refusal is already pinned by
+/// [`a_batch_refuses_a_dog_and_an_unknown_name`] above; what this adds for
+/// it is the store half, and for the other three the whole refusal.
+#[tokio::test(start_paused = true)]
+async fn every_pane_door_refuses_a_dog_and_leaves_the_store_untouched() {
+    let h = env_batch_harness().await;
+
+    let err = h.ctx.supervisor.sheep_config("bark").await.unwrap_err();
+    assert!(matches!(err, SupervisorError::IsADog(_)), "{err:?}");
+    assert_store_untouched(&h, "bark");
+
+    let err = h
+        .ctx
+        .supervisor
+        .set_sheep_env(
+            "bark",
+            "PATH",
+            Some(EnvValue::from("/tmp/evil".to_string())),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SupervisorError::IsADog(_)), "{err:?}");
+    assert_store_untouched(&h, "bark");
+
+    let err = h
+        .ctx
+        .supervisor
+        .set_sheep_env_batch(
+            "bark",
+            BTreeMap::from([("PATH".to_string(), "/tmp/evil".to_string())]),
+            false,
+            false,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SupervisorError::IsADog(_)), "{err:?}");
+    assert_store_untouched(&h, "bark");
+
+    let err = h
+        .ctx
+        .supervisor
+        .set_sheep_field("bark", "script", serde_json::json!("/tmp/evil"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SupervisorError::IsADog(_)), "{err:?}");
+    assert_store_untouched(&h, "bark");
 }

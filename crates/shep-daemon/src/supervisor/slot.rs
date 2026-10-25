@@ -85,7 +85,11 @@ pub(super) struct SheepSlot {
     ///
     /// Read by [`Actor::advance_reload`]'s replaceable test. A reload replaces
     /// `Online` instances, so without this the instance a failed reload left
-    /// behind would be beyond the reach of the reload that rolls it back.
+    /// behind would be beyond the reach of the reload that rolls it back. Also
+    /// read by [`Actor::handle_extra_restart`]'s status guard: an abandoned
+    /// reload's replacement is armed the same extras an `Online` sheep is
+    /// (see [`Actor::reload_ready_result`]), so its own liveness probe or
+    /// memory limit must still be able to restart it.
     ///
     /// Cleared wherever the id gets a new process or a new verdict:
     /// [`Actor::respawn`]'s success arm and [`Actor::went_online`].
@@ -125,6 +129,28 @@ impl SheepSlot {
             ready_failed: false,
             restart_due: None,
         }
+    }
+
+    /// Lands the slot at `status` with nothing left attached to a process
+    /// that is no longer running.
+    ///
+    /// [`Self::log_ctl`] is the one handle left in place, for the reason on
+    /// that field.
+    pub(super) fn clear_lifecycle(&mut self, status: ProcStatus) {
+        self.entry.status = status;
+        self.entry.pid = None;
+        self.entry.started_at = None;
+        // Cleared, because nothing exited here: leaving the previous
+        // process's code would show a sheep that once crashed with 1 as
+        // still crashing with 1 while it is failing to start at all.
+        self.entry.last_exit = None;
+        self.ctl = None;
+        // `signals` and `to_stdin` go wherever `to_child` goes, for the
+        // reason on each field.
+        self.to_child = None;
+        self.signals = None;
+        self.to_stdin = None;
+        self.ready_tx = None;
     }
 
     /// This sheep's shepherd-channel sender while something is still there to

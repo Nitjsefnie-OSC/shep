@@ -520,4 +520,65 @@ mod tests {
             "no roll is no age, not a stale one"
         );
     }
+
+    /// The pane's reveal gate is decided by this read and by nothing else
+    /// in the CLI's own tests: every pane-level test sets `allow_read` on
+    /// the model by hand, so the file that decides it for a real operator
+    /// is otherwise unread.
+    #[test]
+    fn a_shep_toml_that_allows_reads_opens_the_reveal_gate_in_the_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_under(dir.path());
+        std::fs::write(&paths.daemon_config, "[secrets]\nallow_read = true\n").unwrap();
+
+        let built = model(&paths, &[], "production");
+
+        assert!(
+            built.allow_read,
+            "`allow_read = true` in $SHEP_HOME/shep.toml must reach the pane, which is \
+             what a reveal asks before showing a value"
+        );
+    }
+
+    /// The one way this wiring breaks open. Every other failure (no file,
+    /// an unreadable file, a `[secrets]` section `load` rejects) lands on
+    /// `false` through `is_ok_and`, so a `SecretsSection` whose `allow_read`
+    /// starts `true` is the flip that shows every operator's stored values
+    /// to the pane with nothing written and nothing red in the suite.
+    #[test]
+    fn no_shep_toml_leaves_the_reveal_gate_shut() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_under(dir.path());
+        assert!(
+            !paths.daemon_config.exists(),
+            "this test is about the operator who never wrote a shep.toml"
+        );
+
+        let built = model(&paths, &[], "production");
+
+        assert!(
+            !built.allow_read,
+            "a missing shep.toml must read as a shut gate, not as the default the \
+             config happens to start with"
+        );
+    }
+
+    /// Fail-closed on a bad file too, the same way
+    /// `whistle::gate::resolve_control` does: a `shep.toml` that will not
+    /// parse costs the operator their reveals and nothing else, rather than
+    /// taking the pane down or trusting the gate.
+    #[test]
+    fn an_unparsable_shep_toml_leaves_the_reveal_gate_shut() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_under(dir.path());
+        std::fs::write(&paths.daemon_config, "[secrets\nallow_read = true\n").unwrap();
+
+        let built = model(&paths, &[], "production");
+
+        assert!(
+            !built.allow_read,
+            "a shep.toml the model cannot parse must shut the gate, got {:?}",
+            built.allow_read
+        );
+    }
 }

@@ -23,13 +23,17 @@ credentials (`SO_PEERCRED` / `getpeereid`), THEN:
 - Tokens, webhook URLs, and other secret-carrying config values are never
   written to logs or `Debug` output in plaintext. Over the socket they go
   as written: a dog reads its own config and its per-sheep
-  `[app.dogs.<name>]` tables through RPC, and shep cannot tell a secret in
-  either from any other value without the dog's own schema.
+  `[app.dogs.<name>]` tables through RPC (`DogConfig`, `DogSheepSettings`),
+  and shep cannot tell a secret in either from any other value without the
+  dog's own schema. `DogConfigResolved` and `SheepDogSettingsResolved` answer
+  the same two with each `{{secret:...}}` reference replaced, so a resolved
+  credential rides the socket too, to a caller that asks for it by name.
 - The socket is the boundary, not the request. Anything that gets past it
   is already running as the daemon's user, and can read `$SHEP_HOME`
-  directly. So the dog a request names (`DogSheepSettings`, `PutSecrets`)
-  is bookkeeping rather than authorization: any client can read any dog's
-  config and every sheep's tables, as it could from the files. Lookout
+  directly. So the dog a request names (`DogSheepSettings`,
+  `SheepDogSettingsResolved`, `PutSecrets`) is bookkeeping rather than
+  authorization: any client can read any dog's config and every sheep's
+  tables, as it could from the files. Lookout
   drawing a secret-marked field as `<set>` is display hygiene for
   screenshots and screen shares, not a boundary either.
 
@@ -51,6 +55,28 @@ it. On connect, the daemon checks the peer's uid via `SO_PEERCRED` (Linux) or
 uses a per-user named pipe with equivalent access-control semantics. A stale
 socket file from a crashed daemon is probe-connected before being unlinked,
 so a live daemon's socket is never clobbered by a second instance.
+
+### Reaching another host over ssh
+
+`shep --host <dest>` reaches another host's shepherd by running
+`ssh -- <dest> shep dial-stdio`.
+
+- The control plane still listens on no network port. The socket stays a unix
+  socket or a named pipe.
+- `dial-stdio` runs as the ssh login user and connects to that user's own
+  socket, so the same-uid peer check applies unchanged.
+- The boundary is ssh's authentication, the remote account and `known_hosts`.
+  shep adds no keys, certificates or credentials and weakens none of the
+  above.
+- Anyone who can ssh in as that user can already control that user's flock,
+  so nothing widens.
+- The destination reaches ssh after `--`, and a leading `-` is refused, so a
+  destination cannot smuggle an ssh option.
+- `~/.ssh/config` applies in full, `ProxyCommand` and `LocalCommand`
+  included, and runs as the operator. That is the same trust as typing `ssh`
+  by hand.
+- The remote finds `shep` through that account's non-interactive `PATH`, so
+  the first `shep` on it is what runs.
 
 ### Spawned-process environment
 
@@ -208,6 +234,10 @@ IF an operator runs `shep adopt <name> <path>`, THEN:
   trust an ordinary sheep already has, and adopting a dog grants nothing
   beyond what any Flockfile entry already could. There is no seccomp
   profile, no namespace, no separate uid for a dog.
+  `[daemon.dog_grants]` in `shep.toml` limits what a dog may ask of the
+  shepherd on its own connection. That keeps an honest dog in bounds and
+  makes its requests attributable. It does not confine a hostile one, which
+  could open the control socket like the CLI.
 - A dog's `[dog.<name>]` config — a bark sink's webhook URL included —
   reaches it over the Unix socket, never through its environment, so it
   cannot appear in the process table, in a spawned child's own inherited
@@ -313,6 +343,8 @@ TLS termination, auth).
   (metrics, serve, or a supervised app) to a non-loopback address is the
   operator's decision and outside shep's threat model until 1.0. shep does
   not audit, filter, or rate-limit traffic to processes it supervises.
+- No shep-owned transport security between hosts. It is ssh's. shep adds
+  no listener, key store or certificate.
 - **No protection against a compromised managed process.** A sheep that is
   itself compromised can do anything its own OS-level permissions allow,
   including reading files the daemon's user can read.

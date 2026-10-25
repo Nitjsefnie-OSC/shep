@@ -45,6 +45,11 @@ unparseable = "unparseable"
 # the prefix it is.
 mis = "mis"
 
+# `catch-alls`, split across the hyphen the same way. It reaches the crate
+# CHANGELOGs through ac86b3dcb's subject, which release-plz copies verbatim,
+# so fixing the CHANGELOG by hand on a release branch does not stick.
+alls = "alls"
+
 # `allow_contro`: a truncated test fixture in config/daemon.rs, proving the
 # error message for a truncated TOML key.
 contro = "contro"

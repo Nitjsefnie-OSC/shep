@@ -1,9 +1,9 @@
 //! Getting a process running, or taking one over.
 //!
-//! `spawn_fresh` assembles a spec, resolves credentials and secrets, and
-//! hands the runner a process. `install_adopted` is the other door: a
-//! survivor of a previous shepherd arrives already running, and has to be
-//! fitted back into a slot without being restarted.
+//! `spawn_fresh` assembles a spec from the credentials and secret view its
+//! caller resolved, and hands the runner a process. `install_adopted` is the
+//! other door: a survivor of a previous shepherd arrives already running, and
+//! has to be fitted back into a slot without being restarted.
 
 use super::*;
 
@@ -53,13 +53,37 @@ impl<R: ProcessRunner> Actor<R> {
             .into_info()
     }
 
-    /// The secret view one spawn of `app` resolves against.
+    /// Registers one dog as a flock member without spawning it.
+    ///
+    /// Marks it disabled when `disabled` names it, and only when this call is
+    /// what registered it: a dog or sheep already holding the name keeps the
+    /// mark it has.
+    pub(super) fn register_dog_at_rest(
+        &mut self,
+        app: &ResolvedApp,
+        source: DogSource,
+        disabled: &BTreeSet<String>,
+    ) -> ProcessInfo {
+        match self.register_without_spawning(app, ProcStatus::Stopped, Some(source)) {
+            Registration::Fresh(info) => {
+                if disabled.contains(&info.name) {
+                    self.disabled.insert(info.name.clone());
+                }
+                self.with_mark(info)
+            }
+            Registration::AlreadyKnown(info) => info,
+        }
+    }
+
+    /// The secret view one spawn, or one batch of instances, resolves
+    /// against.
     ///
     /// The store is read here rather than inside [`assemble`], the same way
     /// `credentials` is resolved by the caller: real I/O belongs to the
     /// caller so the assembler stays a pure function of its arguments. Read
-    /// per spawn rather than cached, so a `shep secret set` between two
-    /// spawns reaches the second without a daemon restart.
+    /// per spawn call, or per batch of instances of one app, rather than
+    /// cached, so a `shep secret set` between two calls reaches the second
+    /// without a daemon restart.
     ///
     /// A store that cannot be read yields an empty view rather than failing
     /// here, and logs why. A sheep that needs nothing from it still spawns,
@@ -199,22 +223,28 @@ impl<R: ProcessRunner> Actor<R> {
     /// it configures no signal of its own, and `Online` otherwise. `Errored`
     /// with no task on failure. `dog` lands on the entry either way, so a dog
     /// whose binary cannot be spawned still shows up in the dogs table.
+    ///
+    /// `secrets` is the caller's: a `Start` and a scale-up each read the
+    /// operator's store once for the whole batch of instances they spawn.
     pub(super) fn spawn_fresh(
         &mut self,
         app: &ResolvedApp,
         instance: u32,
         credentials: Option<Credentials>,
+        secrets: &SecretView,
         dog: Option<DogSource>,
         gate: &BTreeSet<String>,
     ) -> Result<ProcessInfo, String> {
         // Read before the spawn: a scale-up's new instance must show the same
         // overrides its siblings do, not a blank cell until the next load.
         let overridden = self.overridden_for(&app.config().name);
-        let secrets = self.secret_view(app);
         let id = self.next_id;
         self.next_id += 1;
-        let spec = match assemble(app, instance, &self.paths, credentials, &secrets) {
-            Ok(spec) => spec,
+        let spec = match assemble(app, instance, &self.paths, credentials, secrets) {
+            Ok(spec) => SpawnSpec {
+                dog_link: dog.is_some(),
+                ..spec
+            },
             Err(err) => {
                 // Registered before the refusal is routed: a sheep that never
                 // spawned still has to be visible, and `refuse_spawn` reads
@@ -222,7 +252,7 @@ impl<R: ProcessRunner> Actor<R> {
                 // since `assemble` is what just refused. The `Errored` here
                 // is never published: `refuse_spawn` decides the status this
                 // sheep is first seen in, and emits that one.
-                let described = describe(app, instance, &self.paths, credentials, &secrets);
+                let described = describe(app, instance, &self.paths, credentials, secrets);
                 let entry = ProcessEntry {
                     id,
                     spec: app.clone(),
@@ -262,10 +292,7 @@ impl<R: ProcessRunner> Actor<R> {
         let out_file = spec.out_file.clone();
         let err_file = spec.err_file.clone();
 
-        // A `ResolvedApp` has already been through `ProbeTarget::parse` in
-        // `normalize`, so an `Err` here means an app skipped that step.
-        let source = ReadinessSource::of(app.config())
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(app.config());
         // An app a later stage waits on is gated even with no signal of its
         // own: the wait then costs its `listen_timeout`, which is the field's
         // documented fallback, rather than costing nothing.
@@ -310,6 +337,7 @@ impl<R: ProcessRunner> Actor<R> {
                     app.clone(),
                     self.events.clone(),
                     self.tx.clone(),
+                    self.lamb_sweep(),
                 );
                 let ready_tx = if gated {
                     Some(spawn_readiness_task(
@@ -411,6 +439,7 @@ impl<R: ProcessRunner> Actor<R> {
             err_log,
             stdin_pipe,
             channel,
+            dog_link,
         } = sheep;
         let app = normalize(carried.app().clone()).map_err(|source| AdoptError::Spec {
             sheep: carried.name().to_string(),
@@ -419,10 +448,8 @@ impl<R: ProcessRunner> Actor<R> {
         // Reused as resolved, never re-resolved: the value was pinned at the
         // predecessor's first spawn, so a passwd change cannot move a running
         // app's identity.
-        let credentials = match carried.credentials() {
-            SpawnIdentity::Resolved(credentials) => credentials,
-            SpawnIdentity::Unresolved => None,
-        };
+        let identity = carried.credentials();
+        let credentials = identity.credentials();
         // Assembled for its log paths only: the entry has to name the files
         // this sheep is writing to, and a later rotation reopens them by path.
         // `describe`, so a store that moved under a running flock costs a log
@@ -443,6 +470,11 @@ impl<R: ProcessRunner> Actor<R> {
         // readiness re-arm between them has to see it, since a `ready_failed`
         // instance is `Starting` by construction and must not get a wait.
         let ready_failed = carried.ready_failed().unwrap_or(false);
+        // The mark is the app's, so it is set before the slot lands: nothing
+        // the successor does to this instance can respawn it in between.
+        if carried.disabled() == Some(true) {
+            self.disabled.insert(app.config().name.clone());
+        }
         // Restored as a pair with its reset flag: a parked config promoted
         // without it comes up on the identity the flag exists to replace.
         // A parked config that fails to normalize is dropped and warned about
@@ -487,7 +519,7 @@ impl<R: ProcessRunner> Actor<R> {
             // `Replacement` out of the swap, while `None` takes
             // `decide_on_exit`.
             reload,
-            credentials: carried.credentials(),
+            credentials: identity,
             out_file: described.out_file.clone(),
             err_file: described.err_file.clone(),
             // Restored: it is the marker that keeps a dog out of the flock.
@@ -543,6 +575,7 @@ impl<R: ProcessRunner> Actor<R> {
         let (proc, io) = self
             .runner
             .adopt(AdoptSpec {
+                name: carried.name().to_string(),
                 pid,
                 out_file: described.out_file.clone(),
                 err_file: described.err_file.clone(),
@@ -553,6 +586,8 @@ impl<R: ProcessRunner> Actor<R> {
                 log_timestamps: described.log_timestamps,
                 stdin_pipe,
                 channel,
+                dog_link,
+                dog_topics: carried.dog_topics().map(<[String]>::to_vec),
                 reaper: Arc::clone(reaper),
             })
             .map_err(|source| AdoptError::Runner {
@@ -576,8 +611,7 @@ impl<R: ProcessRunner> Actor<R> {
         // exception: its verdict already stands, and a fresh wait would clear
         // the flag a rollback needs.
         let ready_tx = (status == ProcStatus::Starting && !ready_failed).then(|| {
-            let source = ReadinessSource::of(app.config())
-                .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+            let source = ReadinessSource::of_normalized(app.config());
             spawn_readiness_task(
                 id,
                 carried.epoch(),
@@ -598,6 +632,7 @@ impl<R: ProcessRunner> Actor<R> {
             app.clone(),
             self.events.clone(),
             self.tx.clone(),
+            self.lamb_sweep(),
         );
         self.sheep.insert(
             id,

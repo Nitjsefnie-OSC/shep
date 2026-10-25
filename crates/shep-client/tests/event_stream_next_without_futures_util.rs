@@ -10,8 +10,11 @@ use shep_client::testing::fake_client_with_push;
 use shep_core::protocol::BusEvent;
 
 /// Same guard `event_stream.rs` uses: a broken implementation fails with a
-/// named assertion instead of hanging the test run.
-const EVENT_TIMEOUT: Duration = Duration::from_secs(1);
+/// named assertion instead of hanging the test run. 5 s matches
+/// `reconnect/testing.rs` `BOUND`: generous against a loaded CI runner,
+/// small enough that a genuinely stuck test fails rather than hanging the
+/// suite.
+const EVENT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[tokio::test]
 async fn next_resolves_with_no_futures_util_import_in_scope() {

@@ -40,7 +40,7 @@ pub(super) fn column_top_row(height: u16) -> u16 {
     }
 }
 
-/// The eight Flockfile groups' fields, plus the env keys, as the column
+/// The nine Flockfile groups' fields, plus the env keys, as the column
 /// scrolls through them: one entry per rendered row, and every group label
 /// this pass actually emitted, in the order it emitted them.
 ///
@@ -235,8 +235,8 @@ fn env_row_line(key: &str, sealed: bool, palette: Palette) -> Line<'static> {
 
 /// The header row: `e edit`, and how many fields
 /// [`SheepConfigView::pending`] is still carrying, once there is a config
-/// to read one off. No `tab next group`: no key routes one, the same defect
-/// the status bar carried until Task 7 fixed it for that frame.
+/// to read one off. No `tab/S-tab next / prev group`: no key routes one, the
+/// same defect the status bar carried until Task 7 fixed it for that frame.
 fn column_header_line(pane: &SheepPane, palette: Palette) -> Line<'static> {
     let mut text = "\u{2588}\u{2588} CONFIG & ENV   e edit".to_owned();
     if let Some(pending) = pane
@@ -417,7 +417,7 @@ mod tests {
     /// The group labels [`crate::lookout::pane::ConfigPane`]'s own field set
     /// carries for `web_view`'s config, in schema order, deduplicated
     /// consecutively the same way [`column_body`]'s own walk dedupes. The
-    /// source of truth [`the_groups_are_the_schemas_eight_in_its_own_order`]
+    /// source of truth [`the_groups_are_the_schemas_nine_in_its_own_order`]
     /// checks the column against, instead of a copy of the order typed by
     /// hand: `column_body` layers its own `env`-skipping logic on top of the
     /// same [`pane::sheep_fields`] this reads, so a real cross-check is what
@@ -435,12 +435,12 @@ mod tests {
         labels
     }
 
-    /// Eight groups, in the schema's own order, the same order
+    /// Nine groups, in the schema's own order, the same order
     /// [`ConfigPane`](crate::lookout::pane::ConfigPane)'s own field set gives
     /// for the same config. The frame lists seven and puts `restart` second;
     /// `cron` is missing from it entirely.
     #[test]
-    fn the_groups_are_the_schemas_eight_in_its_own_order() {
+    fn the_groups_are_the_schemas_nine_in_its_own_order() {
         let view = web_view();
         assert_eq!(group_labels_of(&view), config_pane_group_labels(&view));
     }
@@ -479,11 +479,23 @@ mod tests {
 
     /// The wire clears env before the struct is built, so no pane can show a
     /// value. This test exists so a later change that starts carrying them
-    /// fails here rather than shipping.
+    /// fails here rather than shipping, so it reads the two values
+    /// `web_view`'s fixture really holds: `db.internal` for `DB_HOST`,
+    /// `{{secret:API}}` for `API_KEY`.
+    ///
+    /// The two key rows after them are the positive control: without them, a
+    /// column that drew no env rows at all would pass the value assertions as
+    /// easily as a correct one.
     #[test]
     fn no_env_value_reaches_the_column() {
-        let rendered = env_rows_of(&web_view()).join("");
-        assert!(!rendered.contains("hunter2"), "{rendered:?}");
+        let rows = env_rows_of(&web_view());
+
+        let rendered = rows.join("");
+        assert!(!rendered.contains("db.internal"), "{rendered:?}");
+        assert!(!rendered.contains("{{secret:API}}"), "{rendered:?}");
+
+        assert!(row_for("DB_HOST", &rows).starts_with("DB_HOST"), "{rows:?}");
+        assert!(row_for("API_KEY", &rows).starts_with("API_KEY"), "{rows:?}");
     }
 
     /// A key the store fills renders sealed; a Flockfile key does not.

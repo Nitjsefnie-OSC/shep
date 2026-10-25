@@ -5,6 +5,7 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 
 use super::app::{ActionVerb, InputMode, KeyPress};
+use super::textbox::TextEdit;
 
 /// The [`KeyPress`] this event means under `mode`, or `None` for a key
 /// lookout does not bind there.
@@ -13,8 +14,9 @@ use super::app::{ActionVerb, InputMode, KeyPress};
 /// releases would otherwise fire an action once per repeat of a held key.
 /// `Ctrl-C` is a binding in either mode, since raw mode delivers it as an
 /// ordinary key event and there is no `SIGINT` to catch. `Ctrl-D`/`Ctrl-U`
-/// are `Normal`-only, so paging the bleats pane never fires behind an
-/// operator's back while they are typing a match.
+/// page only in `Normal`, so paging the bleats pane never fires behind an
+/// operator's back while they are typing a match; in `Text`, `Ctrl-U` kills
+/// to the start of the line instead.
 #[must_use]
 pub fn map_key(event: &Event, mode: InputMode) -> Option<KeyPress> {
     let Event::Key(key) = event else {
@@ -34,11 +36,20 @@ pub fn map_key(event: &Event, mode: InputMode) -> Option<KeyPress> {
             // quits from the box too, the same way it always has.
             KeyCode::Char('d') if mode == InputMode::Normal => Some(KeyPress::PageDown),
             KeyCode::Char('u') if mode == InputMode::Normal => Some(KeyPress::PageUp),
+            // The same guard from the other side: these have no meaning in
+            // `Normal`, and `ctrl-u` swaps its paging for a kill.
+            KeyCode::Char(letter) if mode == InputMode::Text => text_edit_ctrl(letter),
             _ => None,
         };
     }
     if mode == InputMode::Text {
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
         return match key.code {
+            KeyCode::Char('b') if alt => edit(TextEdit::WordLeft),
+            KeyCode::Char('f') if alt => edit(TextEdit::WordRight),
+            KeyCode::Left if alt => edit(TextEdit::WordLeft),
+            KeyCode::Right if alt => edit(TextEdit::WordRight),
+            KeyCode::Backspace if alt => edit(TextEdit::DeleteWordBack),
             // SHIFT stays: crossterm delivers a capital as `Char('W')` with
             // SHIFT set. ALT is filtered, since `Alt-w` is never a letter.
             // The guard never inspects which modifiers ARE present, only
@@ -46,10 +57,13 @@ pub fn map_key(event: &Event, mode: InputMode) -> Option<KeyPress> {
             // an unshifted one and needs no separate test:
             // `a_shifted_letter_is_still_a_letter_in_the_box` already proves
             // the general case with `W`.
-            KeyCode::Char(typed) if !key.modifiers.contains(KeyModifiers::ALT) => {
-                Some(KeyPress::TextChar(typed))
-            }
+            KeyCode::Char(typed) if !alt => Some(KeyPress::TextChar(typed)),
             KeyCode::Backspace => Some(KeyPress::TextBackspace),
+            KeyCode::Left => edit(TextEdit::Left),
+            KeyCode::Right => edit(TextEdit::Right),
+            KeyCode::Home => edit(TextEdit::Home),
+            KeyCode::End => edit(TextEdit::End),
+            KeyCode::Delete => edit(TextEdit::Delete),
             KeyCode::Enter => Some(KeyPress::TextApply),
             KeyCode::Esc => Some(KeyPress::TextAbandon),
             _ => None,
@@ -60,7 +74,8 @@ pub fn map_key(event: &Event, mode: InputMode) -> Option<KeyPress> {
         KeyCode::Esc => Some(KeyPress::Escape),
         KeyCode::Char('/') => Some(KeyPress::FilterStart),
         KeyCode::Tab => Some(KeyPress::NextGroup),
-        KeyCode::Char(digit @ '1'..='8') => Some(KeyPress::Group(digit as u8 - b'0')),
+        KeyCode::BackTab => Some(KeyPress::PrevGroup),
+        KeyCode::Char(digit @ '1'..='9') => Some(KeyPress::Group(digit as u8 - b'0')),
         KeyCode::Char('u') => Some(KeyPress::Undo),
         KeyCode::Char('c') => Some(KeyPress::Continue),
         KeyCode::Char('j') | KeyCode::Down => Some(KeyPress::SelectDown),
@@ -100,6 +115,22 @@ pub fn map_key(event: &Event, mode: InputMode) -> Option<KeyPress> {
         KeyCode::Char('n') => Some(KeyPress::MatchNext),
         KeyCode::Char('N') => Some(KeyPress::MatchPrev),
         KeyCode::Enter => Some(KeyPress::Confirm),
+        _ => None,
+    }
+}
+
+fn edit(text_edit: TextEdit) -> Option<KeyPress> {
+    Some(KeyPress::TextEdit(text_edit))
+}
+
+/// The readline-style `Ctrl-<letter>` edits a text box takes.
+fn text_edit_ctrl(letter: char) -> Option<KeyPress> {
+    match letter {
+        'a' => edit(TextEdit::Home),
+        'e' => edit(TextEdit::End),
+        'w' => edit(TextEdit::DeleteWordBack),
+        'u' => edit(TextEdit::DeleteToStart),
+        'k' => edit(TextEdit::DeleteToEnd),
         _ => None,
     }
 }
@@ -309,10 +340,10 @@ mod tests {
         );
     }
 
-    /// `Tab` belongs to the config pane's group cycling, so the secrets
-    /// pane's tab row names `<-/->` and nothing else. It used to name a
-    /// tab alias as well, which #206 took: a caption naming a key that
-    /// lands somewhere else is worse than one key short.
+    /// `Tab` and `Shift+Tab` belong to the config pane's group cycling, so
+    /// the secrets pane's tab row names `<-/->` and nothing else. It used
+    /// to name a tab alias as well, which #206 took: a caption naming a key
+    /// that lands somewhere else is worse than one key short.
     #[test]
     fn tab_walks_the_config_pane_groups_and_the_tab_row_does_not_claim_it() {
         assert_eq!(
@@ -324,8 +355,8 @@ mod tests {
                 &Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
                 InputMode::Normal
             ),
-            None,
-            "shift-tab went with it rather than leaving half a pair bound"
+            Some(KeyPress::PrevGroup),
+            "shift-tab walks back where tab walks forward"
         );
         assert_eq!(
             map_key(&key(KeyCode::Tab), InputMode::Text),
@@ -356,6 +387,116 @@ mod tests {
         let mut repeat = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
         repeat.kind = KeyEventKind::Repeat;
         assert_eq!(map_key(&Event::Key(repeat), InputMode::Normal), None);
+    }
+
+    fn modified(code: KeyCode, modifiers: KeyModifiers) -> Event {
+        Event::Key(KeyEvent::new(code, modifiers))
+    }
+
+    #[test]
+    fn the_cursor_keys_move_the_cursor_in_text_mode() {
+        let text = |event: Event| map_key(&event, InputMode::Text);
+        assert_eq!(text(key(KeyCode::Left)), edit(TextEdit::Left));
+        assert_eq!(text(key(KeyCode::Right)), edit(TextEdit::Right));
+        assert_eq!(text(key(KeyCode::Home)), edit(TextEdit::Home));
+        assert_eq!(text(key(KeyCode::End)), edit(TextEdit::End));
+        assert_eq!(text(key(KeyCode::Delete)), edit(TextEdit::Delete));
+        assert_eq!(
+            text(modified(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+            edit(TextEdit::Home)
+        );
+        assert_eq!(
+            text(modified(KeyCode::Char('e'), KeyModifiers::CONTROL)),
+            edit(TextEdit::End)
+        );
+    }
+
+    #[test]
+    fn alt_arrows_and_alt_b_and_f_move_by_word_in_text_mode() {
+        let text = |event: Event| map_key(&event, InputMode::Text);
+        assert_eq!(
+            text(modified(KeyCode::Left, KeyModifiers::ALT)),
+            edit(TextEdit::WordLeft)
+        );
+        assert_eq!(
+            text(modified(KeyCode::Right, KeyModifiers::ALT)),
+            edit(TextEdit::WordRight)
+        );
+        assert_eq!(
+            text(modified(KeyCode::Char('b'), KeyModifiers::ALT)),
+            edit(TextEdit::WordLeft)
+        );
+        assert_eq!(
+            text(modified(KeyCode::Char('f'), KeyModifiers::ALT)),
+            edit(TextEdit::WordRight)
+        );
+    }
+
+    #[test]
+    fn the_kill_keys_delete_in_text_mode() {
+        let text = |event: Event| map_key(&event, InputMode::Text);
+        assert_eq!(
+            text(modified(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            edit(TextEdit::DeleteWordBack)
+        );
+        assert_eq!(
+            text(modified(KeyCode::Backspace, KeyModifiers::ALT)),
+            edit(TextEdit::DeleteWordBack)
+        );
+        assert_eq!(
+            text(modified(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            edit(TextEdit::DeleteToStart)
+        );
+        assert_eq!(
+            text(modified(KeyCode::Char('k'), KeyModifiers::CONTROL)),
+            edit(TextEdit::DeleteToEnd)
+        );
+    }
+
+    /// Every edit key keeps its old meaning in `Normal`, or has none.
+    #[test]
+    fn the_edit_keys_keep_their_normal_mode_meaning_or_mean_nothing() {
+        let normal = |event: Event| map_key(&event, InputMode::Normal);
+        assert_eq!(normal(key(KeyCode::Left)), Some(KeyPress::TabPrev));
+        assert_eq!(normal(key(KeyCode::Right)), Some(KeyPress::TabNext));
+        assert_eq!(normal(key(KeyCode::Home)), Some(KeyPress::SelectFirst));
+        assert_eq!(normal(key(KeyCode::End)), Some(KeyPress::SelectLast));
+        assert_eq!(normal(key(KeyCode::Delete)), None);
+        assert_eq!(
+            normal(modified(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            Some(KeyPress::PageUp)
+        );
+        for letter in ['a', 'e', 'w', 'k'] {
+            assert_eq!(
+                normal(modified(KeyCode::Char(letter), KeyModifiers::CONTROL)),
+                None,
+                "ctrl-{letter}"
+            );
+        }
+        assert_eq!(
+            normal(modified(KeyCode::Backspace, KeyModifiers::ALT)),
+            None
+        );
+    }
+
+    /// An Alt-modified letter is a word move, never a typed letter.
+    #[test]
+    fn an_alt_letter_is_not_typed_into_the_box() {
+        assert_eq!(
+            map_key(
+                &modified(KeyCode::Char('x'), KeyModifiers::ALT),
+                InputMode::Text
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_paste_event_is_no_key() {
+        assert_eq!(
+            map_key(&Event::Paste("ab\ncd".to_owned()), InputMode::Text),
+            None
+        );
     }
 
     #[test]
@@ -437,7 +578,11 @@ mod tests {
         );
         assert_eq!(map_key(&ctrl_u, InputMode::Normal), Some(KeyPress::PageUp));
         assert_eq!(map_key(&ctrl_d, InputMode::Text), None);
-        assert_eq!(map_key(&ctrl_u, InputMode::Text), None);
+        assert_eq!(
+            map_key(&ctrl_u, InputMode::Text),
+            edit(TextEdit::DeleteToStart),
+            "in a box ctrl-u kills to the start of the line instead"
+        );
     }
 
     /// `?` is the keymap's second key, and `/` is untouched.
@@ -505,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn the_digits_one_through_eight_jump_to_a_group() {
+    fn the_digits_one_through_nine_jump_to_a_group() {
         for (typed, wanted) in [
             ('1', 1_u8),
             ('2', 2),
@@ -515,15 +660,15 @@ mod tests {
             ('6', 6),
             ('7', 7),
             ('8', 8),
+            ('9', 9),
         ] {
             assert_eq!(press(KeyCode::Char(typed)), Some(KeyPress::Group(wanted)));
         }
     }
 
-    /// Eight groups, so nine and zero are not group keys and stay free.
+    /// Nine groups, so zero is not a group key and stays free.
     #[test]
-    fn nine_and_zero_are_unbound() {
-        assert_eq!(press(KeyCode::Char('9')), None);
+    fn zero_is_unbound() {
         assert_eq!(press(KeyCode::Char('0')), None);
     }
 

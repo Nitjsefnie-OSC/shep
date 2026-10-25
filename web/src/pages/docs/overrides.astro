@@ -191,8 +191,9 @@ const store = `$ cat $SHEP_HOME/overrides.json
         A Flockfile is a template your app's repository owns, not live
         config. Loading one can only add a setting nobody has touched yet;
         it never overwrites one that is already established.{" "}
-        <code>shep start Flockfile.toml --reset=&lt;mode&gt;</code> is how
-        you put the file back in charge.
+        <code>shep start Flockfile.toml --reset=&lt;mode&gt;</code> puts the
+        file back in charge, and <code>shep unset api.max_memory</code> does
+        it for one setting.
       </p>
       <p>
         Three doors write an override directly, and each bypasses the file
@@ -533,6 +534,30 @@ const store = `$ cat $SHEP_HOME/overrides.json
       <code>KOJI_TOKEN={'{{secret:KOJI_TOKEN}}'}</code> and let{" "}
       <a href="/docs/secrets">secrets</a> carry the value instead.
     </Callout>
+
+    <h2 id="dropping-one-override">Dropping one override</h2>
+    <p>
+      <code>shep unset api.max_memory</code> drops that one override, so the
+      Flockfile's value returns and every other override stays. It asks
+      first, like <code>shep set</code>, and a setting with no override is
+      refused. On a dog's table or section it removes the key, so the dog's
+      default applies.
+    </p>
+
+    <h2 id="copying-a-setting-onto-another-sheep">Copying a setting onto another sheep</h2>
+    <p>
+      An override belongs to one sheep, so a second sheep has the first one's
+      tuning written out again. <code>shep copy</code>{" "}
+      does it: <code>shep copy web.restart_delay api.restart_delay</code>{" "}
+      moves one setting, and <code>shep copy web.dogs.kelpie
+      api.dogs.kelpie</code> moves a dog's whole table, which is a write that
+      dog is asked about if it declared <code>validate</code>. The path is the
+      same on both sides, a dog table merges into what the target holds unless{" "}
+      <code>--replace</code> says otherwise, and nothing is written until the
+      change list is confirmed. <code>env</code> copies the same way, a{" "}
+      <code>{'{{secret:NAME}}'}</code> as the reference. The flags are in the <a
+      href="/docs/cli#managing-a-sheep">CLI reference</a>.
+    </p>
 
     <details>
       <summary><h2 id="a-template-may-add-never-overwrite">A template may add, never overwrite</h2></summary>

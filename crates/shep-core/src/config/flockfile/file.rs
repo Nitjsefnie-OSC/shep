@@ -26,7 +26,10 @@ impl Flockfile {
     ///   parser, whose recursive-descent stack-overflows on deep input
     ///   rather than returning an error.
     /// - [`FlockfileError::NoApps`]: parsed fine but declared no apps.
-    /// - [`FlockfileError::UnknownKeys`]: named a key no field claims.
+    /// - [`FlockfileError::UnknownKeys`]: an `app` entry named a key no
+    ///   field claims. A typo at the top level never reaches this variant:
+    ///   `RawFlockfile`'s `deny_unknown_fields` refuses it inside the
+    ///   backend, so it arrives as the format variant naming the key.
     pub fn parse(source: &str, format: FlockFormat) -> Result<Self, FlockfileError> {
         Ok(Self {
             apps: parse_nonempty_apps(source, format)?,

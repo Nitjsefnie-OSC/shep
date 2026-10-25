@@ -14,6 +14,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use super::shell_quote;
+use crate::exit::ExitCode;
 
 /// Everything a generated init unit carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +47,10 @@ pub(crate) struct UnitSpec {
 /// right one for a flock deep enough to need it, but the number belongs to
 /// the operator's flock and not to this renderer, and a wrong one trades the
 /// loop for a shepherd systemd waits on forever.
+///
+/// `RestartPreventExitStatus` is [`ExitCode::DaemonAlreadyRunning`]: a
+/// shepherd started by hand already holds this home, and restarting into its
+/// lock every `RestartSec` stays under systemd's start limit forever.
 pub(crate) fn systemd_unit(spec: &UnitSpec) -> String {
     let home = systemd_environment_value(&spec.home.display().to_string());
     let path = systemd_environment_value(&spec.path.to_string_lossy());
@@ -66,12 +71,14 @@ pub(crate) fn systemd_unit(spec: &UnitSpec) -> String {
          ExecStop={exec} kill\n\
          Restart=on-failure\n\
          RestartSec=5\n\
+         RestartPreventExitStatus={already_running}\n\
          \n\
          [Install]\n\
          WantedBy=multi-user.target\n",
         user = spec.user,
         working_dir = spec.working_dir.display(),
         exec = spec.exec.display(),
+        already_running = ExitCode::DaemonAlreadyRunning as u8,
     )
 }
 
@@ -313,7 +320,7 @@ pub(crate) fn openbsd_rc_script(spec: &UnitSpec) -> String {
          # OpenBSD's rc.subr has no post-start hook: rc_pre runs before the daemon\n\
          # starts and rc_post runs after it stops. So this script reports the service\n\
          # started as soon as the shepherd process is spawned, which is BEFORE the\n\
-         # muster restore has finished — the flock may still be coming back. There is\n\
+         # muster restore has finished: the flock may still be coming back. There is\n\
          # no readiness protocol here and this script does not pretend to one. Check\n\
          # with: shep --home {home_display} flock\n\
          \n\
@@ -328,7 +335,7 @@ pub(crate) fn openbsd_rc_script(spec: &UnitSpec) -> String {
          rc_reload=NO\n\
          \n\
          # su(1)'s -l flag, which rc_exec always passes, discards the environment\n\
-         # rc.subr itself ran in — so exporting SHEP_HOME/PATH above would never reach\n\
+         # rc.subr itself ran in, so exporting SHEP_HOME/PATH above would never reach\n\
          # the daemon. Prefixing them onto the string rc_exec hands to su is the only\n\
          # way they survive. Single-quoted for the shell that evaluates that string,\n\
          # then escaped again for the double-quoted context here.\n\
@@ -402,6 +409,7 @@ mod tests {
              ExecStop=/usr/local/bin/shep kill\n\
              Restart=on-failure\n\
              RestartSec=5\n\
+             RestartPreventExitStatus=10\n\
              \n\
              [Install]\n\
              WantedBy=multi-user.target\n",
@@ -773,7 +781,7 @@ mod tests {
              # OpenBSD's rc.subr has no post-start hook: rc_pre runs before the daemon\n\
              # starts and rc_post runs after it stops. So this script reports the service\n\
              # started as soon as the shepherd process is spawned, which is BEFORE the\n\
-             # muster restore has finished — the flock may still be coming back. There is\n\
+             # muster restore has finished: the flock may still be coming back. There is\n\
              # no readiness protocol here and this script does not pretend to one. Check\n\
              # with: shep --home /home/deploy/.shep flock\n\
              \n\
@@ -788,7 +796,7 @@ mod tests {
              rc_reload=NO\n\
              \n\
              # su(1)'s -l flag, which rc_exec always passes, discards the environment\n\
-             # rc.subr itself ran in — so exporting SHEP_HOME/PATH above would never reach\n\
+             # rc.subr itself ran in, so exporting SHEP_HOME/PATH above would never reach\n\
              # the daemon. Prefixing them onto the string rc_exec hands to su is the only\n\
              # way they survive. Single-quoted for the shell that evaluates that string,\n\
              # then escaped again for the double-quoted context here.\n\

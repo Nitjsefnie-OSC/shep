@@ -135,6 +135,9 @@ pub(crate) fn assert_envelope_matches_fixture(
                 String::from_utf8_lossy(&output.stdout)
             )
         });
+    // The listing carries the dogs at rest beside the sheep; the fixture is
+    // the sheep's.
+    envelope["data"] = serde_json::Value::Array(sheep_rows(&envelope["data"]));
     {
         let data = envelope["data"]
             .as_array()
@@ -150,9 +153,20 @@ pub(crate) fn assert_envelope_matches_fixture(
     );
 }
 
+/// `output`'s two streams joined, stdout then stderr, each decoded lossily.
+///
+/// For a claim about what an operator could have seen anywhere: a secret's
+/// value must reach neither stream, so neither one gets read alone.
+pub(crate) fn combined_output(output: &Output) -> String {
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    text
+}
+
 /// Asserts a failed `--format json` invocation kept `stdout` empty and put a
 /// parseable `{"schema_version", "error": {"code", "message"}}` object on
 /// `stderr`. Only this tier has two real streams.
+#[track_caller]
 pub(crate) fn assert_json_error(output: &Output, expected_status: i32, expected_error_code: &str) {
     assert_eq!(
         output.status.code(),

@@ -1,9 +1,9 @@
 use super::super::super::app::{REVEAL_HOLDS, Reveal, SecretsPane, TypingWhat};
 use super::super::super::secrets::SecretRow;
+use super::super::super::textbox::TextBox;
 use super::super::super::theme::Palette;
-use super::super::flock::{fit, fit_owned};
+use super::super::flock::{fit, fit_owned, pad_ground};
 use super::column_tiers::Column;
-use crate::output::width::char_columns;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use std::time::Instant;
@@ -17,49 +17,11 @@ pub(super) fn byte_count(len: usize) -> String {
     }
 }
 
-/// The last `width` columns of `text`, `\u{2026}` standing in for whatever it
-/// dropped off the front, padded to `width` the way [`fit`] pads.
-///
-/// [`fit`]'s own truncation keeps the head, which is right for a stored
-/// value and wrong for one being typed: the cursor sits at the end, so the
-/// characters an operator is putting on screen right now are exactly the
-/// ones `fit` drops.
-pub(super) fn tail(text: &str, width: u16) -> String {
-    let width = usize::from(width);
-    let columns: usize = text.chars().map(char_columns).sum();
-    if columns <= width {
-        let mut out = String::from(text);
-        out.extend(core::iter::repeat_n(' ', width - columns));
-        return out;
-    }
-    if width == 0 {
-        return String::new();
-    }
-    // One column pays for the `\u{2026}`, and a double-width character
-    // straddling the boundary is dropped rather than split: `fit`'s own two
-    // rules, read from the other end.
-    let budget = width - 1;
-    let mut kept = String::new();
-    let mut used = 0;
-    for c in text.chars().rev() {
-        let c_width = char_columns(c);
-        if used + c_width > budget {
-            break;
-        }
-        kept.push(c);
-        used += c_width;
-    }
-    let mut out = String::from("\u{2026}");
-    out.extend(core::iter::repeat_n(' ', budget - used));
-    out.extend(kept.chars().rev());
-    out
-}
-
-/// A buffer being typed, with the block cursor after it, in a cell one
+/// A buffer being typed, with its cursor drawn where it is, in a cell one
 /// column short of `width` so the cursor never touches the next column's
-/// own text. [`tail`], not [`fit`], for the reason [`tail`] gives.
-pub(super) fn typed_cell(buffer: &str, width: u16) -> String {
-    tail(&format!("{buffer}\u{2588}"), width.saturating_sub(1))
+/// own text. The box scrolls to keep the cursor in view.
+pub(super) fn typed_cell(buffer: &TextBox, width: u16) -> String {
+    buffer.drawn(width.saturating_sub(1))
 }
 
 /// What one row shows in `VALUE`.
@@ -76,7 +38,7 @@ pub(super) fn typed_cell(buffer: &str, width: u16) -> String {
 pub(super) fn value_cell(
     row: &SecretRow,
     revealed: Option<&Reveal>,
-    typing: Option<&str>,
+    typing: Option<&TextBox>,
     width: u16,
 ) -> String {
     if let Some(buffer) = typing {
@@ -150,7 +112,7 @@ fn row_cell(
     row: &SecretRow,
     column: Column,
     revealed: Option<&Reveal>,
-    typing: Option<&str>,
+    typing: Option<&TextBox>,
     environment_count: usize,
     now: Instant,
 ) -> String {
@@ -193,7 +155,7 @@ pub(super) fn row_line(
     let revealed = pane.reveal.as_ref().filter(|reveal| reveal.key == row.key);
     let typing = if selected {
         pane.typing.as_ref().and_then(|typing| match &typing.what {
-            TypingWhat::ValueFor(key) if key == &row.key => Some(typing.buffer.as_str()),
+            TypingWhat::ValueFor(key) if key == &row.key => Some(&typing.buffer),
             TypingWhat::ValueFor(_) | TypingWhat::NewKey => None,
         })
     } else {
@@ -210,18 +172,8 @@ pub(super) fn row_line(
         spans.push(Span::styled(text, ground));
         used += column.width();
     }
-    pad(&mut spans, used, width, ground);
+    pad_ground(&mut spans, used, width, ground);
     Line::from(spans)
-}
-
-/// Pads `spans` out to `width` with blank cells, the way a data row's
-/// trailing slack past its last column still has to be blanked. Mirrors
-/// `flock::pad_ground`, private there.
-pub(super) fn pad(spans: &mut Vec<Span<'static>>, used: u16, width: u16, style: Style) {
-    let short = width.saturating_sub(used);
-    if short > 0 {
-        spans.push(Span::styled(" ".repeat(usize::from(short)), style));
-    }
 }
 
 /// The `+ new key` row's own [`Line`]: `KEY` names the affordance, `VALUE`
@@ -242,9 +194,7 @@ pub(super) fn new_key_row_line(
     let typing_name = selected
         .then_some(pane.typing.as_ref())
         .flatten()
-        .and_then(|typing| {
-            matches!(typing.what, TypingWhat::NewKey).then_some(typing.buffer.as_str())
-        });
+        .and_then(|typing| matches!(typing.what, TypingWhat::NewKey).then_some(&typing.buffer));
     let mut spans: Vec<Span<'static>> = Vec::with_capacity(columns.len());
     let mut used = 0u16;
     for column in columns {
@@ -258,7 +208,7 @@ pub(super) fn new_key_row_line(
         spans.push(Span::styled(fit(&text, column.width()), ground));
         used += column.width();
     }
-    pad(&mut spans, used, width, ground);
+    pad_ground(&mut spans, used, width, ground);
     Line::from(spans)
 }
 
@@ -269,8 +219,6 @@ mod tests {
     use super::super::pane_chrome::tab_line;
 
     use super::super::super::super::theme::Palette;
-
-    use crate::output::width::char_columns;
 
     use super::*;
 
@@ -294,24 +242,6 @@ mod tests {
             tail.trim_start().starts_with('\u{2026}'),
             "hidden tabs before the last one: {tail:?}"
         );
-    }
-
-    /// A double-width character straddling the boundary is dropped rather
-    /// than split, the same rule `fit` keeps, read from the other end.
-    #[test]
-    fn the_tail_drops_a_wide_character_rather_than_splitting_it() {
-        // Ten columns of hiragana. In nine the `…` pays one and the last
-        // four characters spend the other eight exactly.
-        let exact = tail("\u{3042}\u{3044}\u{3046}\u{3048}\u{304a}", 9);
-        assert_eq!(exact, "\u{2026}\u{3044}\u{3046}\u{3048}\u{304a}");
-        assert_eq!(exact.chars().map(char_columns).sum::<usize>(), 9);
-
-        // In eight, seven columns are left for characters worth two each:
-        // the fourth from the end is dropped whole and its odd column is
-        // padded rather than half-drawn.
-        let padded = tail("\u{3042}\u{3044}\u{3046}\u{3048}\u{304a}", 8);
-        assert_eq!(padded, "\u{2026} \u{3046}\u{3048}\u{304a}");
-        assert_eq!(padded.chars().map(char_columns).sum::<usize>(), 8);
     }
 
     /// One row of one byte: the length is printed in two places and both

@@ -25,7 +25,8 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Run things",
         &[
-            "start", "add", "serve", "stop", "restart", "reload", "delete", "stock",
+            "start", "add", "serve", "stop", "restart", "reload", "delete", "stock", "enable",
+            "disable",
         ],
     ),
     (
@@ -40,13 +41,11 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "The shepherd",
         &[
-            "ping", "kill", "reopen", "flush", "set", "get", "unset", "secret",
+            "ping", "kill", "reopen", "flush", "kv", "get", "set", "unset", "copy", "secret",
+            "host",
         ],
     ),
-    (
-        "Dogs and agents",
-        &["dogs", "enable", "disable", "adopt", "rehome", "whistle"],
-    ),
+    ("Dogs and agents", &["dogs", "adopt", "whistle"]),
     ("Foreground runs", &["runtime", "dev"]),
     ("Coming from pm2", &["import"]),
     ("Help", &["welcome", "init", "help", "completions", "style"]),
@@ -58,7 +57,11 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
 /// alphabetical `Commands:` list underneath the grouped one, which is the
 /// wall this replaces. The options section stays generated, so `--home`'s
 /// `Less common` heading is still clap's work.
-pub(super) const HELP_TEMPLATE: &str = "\
+///
+/// `pub(crate)` because [`crate::adopted_help`] renders adopted dogs into the
+/// Dogs group of a copy of it: the group listing is hand-written, and clap
+/// has no grouping of its own to hand the dogs to.
+pub(crate) const HELP_TEMPLATE: &str = "\
 {about}
 
 {usage-heading} {usage}
@@ -69,12 +72,12 @@ Getting started
   shep bleats server      follow its output
   shep startup            bring it back after a reboot
 
-Run things       start add serve stop restart reload delete stock
+Run things       start add serve stop restart reload delete stock enable disable
 See what's up    flock describe bleats lookout fold barks
 Survive reboots  save muster startup unstartup
 Talk to a sheep  trigger signal whisper
-The shepherd     ping kill reopen flush set get unset secret
-Dogs and agents  dogs enable disable adopt rehome whistle
+The shepherd     ping kill reopen flush kv get set unset copy secret host
+Dogs and agents  dogs adopt whistle
 Foreground runs  runtime dev
 Coming from pm2  import
 Help             welcome init help completions style

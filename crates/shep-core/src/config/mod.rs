@@ -8,12 +8,14 @@ pub mod daemon;
 pub mod dogs;
 pub mod flockfile;
 pub mod graph;
+pub mod key_path;
 pub mod kill_signal;
 pub mod level;
 pub mod normalize;
 pub mod probe;
 #[cfg(feature = "schema")]
 pub mod scaffold;
+mod table;
 pub mod template;
 
 pub use app::{AppConfig, DogTable, ProbeConfig, ProbeKind};

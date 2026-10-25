@@ -5,6 +5,7 @@
 //! told apart from an operator's stop and from a drain. The others answer
 //! the remaining events a sheep or a subsystem raises.
 
+use super::actor_disable::Sweep;
 use super::*;
 
 impl<R: ProcessRunner> Actor<R> {
@@ -17,52 +18,98 @@ impl<R: ProcessRunner> Actor<R> {
     /// come through. `&self` keeps the handler free of state changes, which is
     /// what lets it skip the epoch check.
     ///
-    /// A matched sheep with no pump is a success. The pumps asked are every
-    /// slot writing to a path a matched sheep writes to, matched or not; the
-    /// reply stays keyed by the selector.
+    /// A matched sheep with no pump is a success. The pumps asked come from
+    /// [`Self::pumps_for_paths`], a wider set than the selector's matches;
+    /// the reply stays keyed by the selector.
     pub(super) fn handle_reopen(
         &self,
         selector: &ProcessSelector,
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     ) {
-        let mut matched: Vec<ProcessInfo> = Vec::new();
-        let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-        for id in self.matching_ids(selector) {
+        let (mut matched, paths) = match self.resolve_selector(selector) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                let _ = reply.send(Err(error));
+                return;
+            }
+        };
+
+        // The failure text names the sheep each pump serves, so each pump's
+        // row is rebuilt from its id.
+        let mut pumps: Vec<(ProcessInfo, mpsc::Sender<LogCtl>)> = Vec::new();
+        for (id, log_ctl) in self.pumps_for_paths(&paths) {
             let slot = self
                 .sheep
                 .get(&id)
-                .expect("`matching_ids` answers with ids read off this map a moment ago");
+                .expect("`pumps_for_paths` answers with ids read off this map a moment ago");
+            pumps.push((to_info(&slot.entry, &self.smits), log_ctl));
+        }
+
+        // The table `shep reopen` prints, so it takes the listing order.
+        sort_flock(&mut matched);
+        spawn_reopen_task(matched, pumps, reply);
+    }
+
+    /// Resolves `selector` into the rows its reply carries and the log paths
+    /// the sheep those rows name write to.
+    ///
+    /// The one place the two log verbs decide which sheep they reached: they
+    /// differ only in what they do with the paths, so a rule about which
+    /// paths count cannot be written twice here.
+    ///
+    /// `matched` comes back in `reached_ids`' id order, not listing order:
+    /// each caller sorts it for the table it prints.
+    ///
+    /// # Errors
+    ///
+    /// [`SupervisorError::NotFound`] when `selector` names no registered
+    /// sheep.
+    fn resolve_selector(
+        &self,
+        selector: &ProcessSelector,
+    ) -> Result<(Vec<ProcessInfo>, BTreeSet<PathBuf>), SupervisorError> {
+        let mut matched: Vec<ProcessInfo> = Vec::new();
+        let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+        for id in self.reached_ids(selector, Sweep::Any) {
+            let slot = self
+                .sheep
+                .get(&id)
+                .expect("`reached_ids` answers with ids read off this map a moment ago");
             paths.insert(slot.entry.out_file.clone());
             paths.insert(slot.entry.err_file.clone());
             matched.push(to_info(&slot.entry, &self.smits));
         }
 
         if matched.is_empty() {
-            let _ = reply.send(Err(SupervisorError::NotFound));
-            return;
+            return Err(SupervisorError::NotFound);
         }
 
-        let mut pumps: Vec<(ProcessInfo, mpsc::Sender<LogCtl>)> = self
+        Ok((matched, paths))
+    }
+
+    /// Every live log pump writing to a path in `paths`, in id order.
+    ///
+    /// Wider than the selector's matches on purpose: a sheep the selector
+    /// never named can share a path with one it did, and that sibling's
+    /// dispatched `write(2)` would land at offset 0 of the file just
+    /// truncated, or keep a rotator's renamed inode open. A slot with no pump
+    /// is skipped: it owes no bytes.
+    ///
+    /// Sorted because `HashMap` iteration order is arbitrary and pump
+    /// failures are reported in collection order, so an unsorted set would
+    /// word a multi-pump failure differently run to run. Id order is enough
+    /// here, unlike a caller's `matched`: this list is never rendered.
+    fn pumps_for_paths(&self, paths: &BTreeSet<PathBuf>) -> Vec<(u32, mpsc::Sender<LogCtl>)> {
+        let mut pumps: Vec<(u32, mpsc::Sender<LogCtl>)> = self
             .sheep
-            .values()
-            .filter(|slot| {
+            .iter()
+            .filter(|(_, slot)| {
                 paths.contains(&slot.entry.out_file) || paths.contains(&slot.entry.err_file)
             })
-            .filter_map(|slot| {
-                slot.log_ctl
-                    .clone()
-                    .map(|log_ctl| (to_info(&slot.entry, &self.smits), log_ctl))
-            })
+            .filter_map(|(id, slot)| slot.log_ctl.clone().map(|log_ctl| (*id, log_ctl)))
             .collect();
-
-        // `HashMap` iteration order is arbitrary and pump failures are
-        // reported in collection order, so an unsorted set would word a
-        // multi-pump failure differently run to run. Id order is fine here,
-        // unlike `matched` below: this list is never rendered.
-        pumps.sort_unstable_by_key(|(info, _)| info.id);
-        // The table `shep reopen` prints, so it takes the listing order.
-        sort_flock(&mut matched);
-        spawn_reopen_task(matched, pumps, reply);
+        pumps.sort_unstable_by_key(|&(id, _)| id);
+        pumps
     }
 
     /// Reads everything a handover needs off the actor and hands it to a
@@ -74,6 +121,23 @@ impl<R: ProcessRunner> Actor<R> {
     ///
     /// Every registered sheep is described, with no selector: a handover
     /// carries one process image, so the flock goes whole or not at all.
+    ///
+    /// One group is left behind: every dog that is parked, which
+    /// [`Self::is_parked_dog`] spells as the disabled mark and no process.
+    /// Whether a dog runs is `shep.toml`'s decision, and this daemon never
+    /// reads that file while a successor boots from it, so the successor
+    /// registers a parked dog at rest exactly as a cold boot does, under a new
+    /// id. Carrying it would pin the id this flock issued and hand the
+    /// successor a stopped dog its idempotent [`Self::do_start_dog`] could
+    /// never start.
+    ///
+    /// Everything holding a process carries, marked or not. This snapshot is
+    /// the only way a successor learns a pid, and a process it never learned
+    /// is one it cannot stop: `shep disable` sets the mark before its stop
+    /// begins and answers only once the stop has finished, so a reload racing
+    /// that disable meets a marked dog still on its kill ladder. A dog an
+    /// operator stopped with `shep stop` carries too, mark or no mark: its row
+    /// and its history are the successor's to inherit.
     #[cfg(unix)]
     pub(super) fn handle_handover_snapshot(
         &self,
@@ -83,6 +147,7 @@ impl<R: ProcessRunner> Actor<R> {
         let mut drafts: Vec<HandoverDraft> = self
             .sheep
             .values()
+            .filter(|slot| !self.is_parked_dog(&slot.entry))
             .map(|slot| HandoverDraft {
                 entry: slot.entry.clone(),
                 // Whole, not `is_some()`: the kind decides what the
@@ -92,6 +157,7 @@ impl<R: ProcessRunner> Actor<R> {
                 pending_delete: slot.pending_delete,
                 epoch: slot.epoch,
                 ready_failed: slot.ready_failed,
+                disabled: self.is_disabled_id(slot.entry.id),
                 restart_due: slot.restart_due,
                 log_ctl: slot.log_ctl.clone(),
                 channel_open: slot.open_channel().is_some(),
@@ -167,46 +233,31 @@ impl<R: ProcessRunner> Actor<R> {
     /// rotator's rename would empty the archive and leave the live log alone.
     /// A stopped sheep has no pump and is still flushed.
     ///
-    /// Every slot writing to one of those paths is flushed, matched or not: an
-    /// unflushed sibling's dispatched `write(2)` would land at offset 0 of the
-    /// file just reported empty. The reply stays keyed by the selector.
+    /// Every slot writing to one of those paths is flushed, matched or not,
+    /// through [`Self::pumps_for_paths`]: an unflushed sibling's dispatched
+    /// `write(2)` would land at offset 0 of the file just reported empty. The
+    /// reply stays keyed by the selector.
     pub(super) fn handle_flush(
         &self,
         selector: &ProcessSelector,
         reply: oneshot::Sender<Result<Vec<ProcessInfo>, SupervisorError>>,
     ) {
-        let mut matched: Vec<ProcessInfo> = Vec::new();
-        let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-        for id in self.matching_ids(selector) {
-            let slot = self
-                .sheep
-                .get(&id)
-                .expect("`matching_ids` answers with ids read off this map a moment ago");
-            paths.insert(slot.entry.out_file.clone());
-            paths.insert(slot.entry.err_file.clone());
-            matched.push(to_info(&slot.entry, &self.smits));
-        }
+        let (mut matched, paths) = match self.resolve_selector(selector) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                let _ = reply.send(Err(error));
+                return;
+            }
+        };
 
-        if matched.is_empty() {
-            let _ = reply.send(Err(SupervisorError::NotFound));
-            return;
-        }
-
-        let mut pumps: Vec<(u32, mpsc::Sender<LogCtl>)> = self
-            .sheep
-            .iter()
-            .filter(|(_, slot)| {
-                paths.contains(&slot.entry.out_file) || paths.contains(&slot.entry.err_file)
-            })
-            .filter_map(|(id, slot)| slot.log_ctl.clone().map(|log_ctl| (*id, log_ctl)))
+        let pumps: Vec<mpsc::Sender<LogCtl>> = self
+            .pumps_for_paths(&paths)
+            .into_iter()
+            .map(|(_, log_ctl)| log_ctl)
             .collect();
 
-        // Sorted for the reason `handle_reopen` sorts: `HashMap` iteration
-        // order is arbitrary and failures are reported in collection order.
-        pumps.sort_unstable_by_key(|&(id, _)| id);
         // The table `shep empty` prints, so it takes the listing order.
         sort_flock(&mut matched);
-        let pumps = pumps.into_iter().map(|(_, log_ctl)| log_ctl).collect();
         spawn_flush_task(matched, pumps, paths, reply);
     }
 
@@ -353,10 +404,7 @@ impl<R: ProcessRunner> Actor<R> {
                              the instance it replaced already gone"
                         );
                         self.reloads.remove(&name);
-                        if let Some(slot) = self.sheep.get(&id) {
-                            let info = to_info(&slot.entry, &self.smits);
-                            self.emit(ProcessEventKind::ReloadAbandoned, info, true);
-                        }
+                        self.emit_reload_abandoned(id);
                     }
                 }
             }
@@ -394,8 +442,13 @@ impl<R: ProcessRunner> Actor<R> {
         // A manual Restart forces a respawn, where `decide_on_exit` would
         // choose CleanStop off `manual_stop`. Not while shutting down, which
         // would orphan a child outside the shutdown snapshot; not under
-        // `pending_delete`, which would hand back a live process as deleted.
-        if kind == Some(ManualKind::Restart) && !self.shutting_down && !pending_delete {
+        // `pending_delete`, which would hand back a live process as deleted;
+        // not for a disabled app, whose stop rode this marker.
+        if kind == Some(ManualKind::Restart)
+            && !self.shutting_down
+            && !pending_delete
+            && !self.is_disabled_id(id)
+        {
             // Re-fetched rather than carried down: the reload branches above
             // hand `self` back to itself, ending the earlier borrow.
             self.sheep
@@ -488,6 +541,23 @@ impl<R: ProcessRunner> Actor<R> {
     /// Delegates to `begin_manual`, not `respawn`, which keeps the kill ladder
     /// and the budget reset; it goes in as [`CommandOrigin::Automatic`], so an
     /// operator's `stop` can take the sheep back off a restart mid-ladder.
+    ///
+    /// The status guard is [`reload_eligible`], not a bare `== Online` check:
+    /// a `ready_failed` sheep (an abandoned reload's replacement, left
+    /// `Starting` with nothing to fall back to, see
+    /// [`Actor::reload_ready_result`] and [`Actor::handle_reload_verified`])
+    /// is armed the same extras an `Online` sheep is, and must be reachable
+    /// here or nothing ever restarts it. Both reports still guard on the pid
+    /// too, so a fresh respawn under the same id (which always clears
+    /// `ready_failed`, see [`SheepSlot::ready_failed`]) cannot be reached by a
+    /// report addressed to the process it replaced. `begin_manual`'s own
+    /// `in_an_uncommitted_swap` check is already false here: both
+    /// abandonment sites remove the job from `self.reloads` before setting
+    /// `ready_failed`, so this can race neither a drainee (never
+    /// `ready_failed`, so [`reload_eligible`] still rejects its `Stopping`
+    /// status) nor an operator's own stop of the replacement (claims the
+    /// `manual` marker first; `begin_manual` then rides that command's
+    /// outcome instead of restarting).
     pub(super) fn handle_extra_restart(
         &mut self,
         id: u32,
@@ -503,6 +573,10 @@ impl<R: ProcessRunner> Actor<R> {
             tracing::debug!(id, pid, "extra restart dropped: no such sheep");
             return;
         };
+        if self.is_disabled_id(id) {
+            tracing::info!(id, pid, "extra restart dropped: the app is disabled");
+            return;
+        }
         if slot.entry.pid != Some(pid) {
             tracing::debug!(
                 id,
@@ -512,7 +586,7 @@ impl<R: ProcessRunner> Actor<R> {
             );
             return;
         }
-        if slot.entry.status != ProcStatus::Online {
+        if !reload_eligible(slot) {
             tracing::debug!(
                 id,
                 pid,

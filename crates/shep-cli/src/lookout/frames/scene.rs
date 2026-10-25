@@ -179,6 +179,24 @@ pub enum Scene {
     /// `hours` and `models.worker` tables, `models.worker.token` drawn
     /// `<set>`.
     SheepDogTable,
+    /// `Enter` on `kelpie`, whose `skills` table holds one tagged union per
+    /// step: `implement` open onto its tag and `path`, `review` set and
+    /// closed, `retro` unset, the cursor on `path`.
+    SheepDogUnion,
+    /// A paddock-shaped dog's pane at the design target: a `clients` array
+    /// and a `models` map each read as a count, `clients` opened onto its
+    /// entries and the first of them onto its fields, a credential drawn
+    /// `<set>`.
+    DogEntries,
+    /// The same pane at 88 columns, where the explanation panel is gone.
+    DogEntriesNarrow,
+    /// The same pane with the second client open and a new `name` half
+    /// typed, the cursor drawn in the value.
+    DogEntryTyping,
+    /// The same pane with `models` open onto its `+ new` row and the key
+    /// editor open on it, `gpt-5` typed, the cursor drawn in the status
+    /// bar.
+    DogEntriesNew,
     /// The close dialog at the design size: two edits filed, one field
     /// already parked, the box centred over the dimmed editing pane.
     CloseDialog,
@@ -271,6 +289,11 @@ impl Scene {
             Self::SheepDogsList => "sheep_dogs_list",
             Self::SheepDogsRemove => "sheep_dogs_remove",
             Self::SheepDogTable => "sheep_dog_table",
+            Self::SheepDogUnion => "sheep_dog_union",
+            Self::DogEntries => "dog_entries",
+            Self::DogEntriesNarrow => "dog_entries_narrow",
+            Self::DogEntryTyping => "dog_entry_typing",
+            Self::DogEntriesNew => "dog_entries_new",
             Self::CloseDialog => "close_dialog",
             Self::CloseDialogFloor => "close_dialog_floor",
             Self::CloseDialogNarrow => "close_dialog_narrow",
@@ -421,7 +444,7 @@ impl Scene {
                 "160 columns, 25 rows: the charts hold their design width but not their design height. Under 26 rows the memory chart goes; the CPU chart and the config and env column, which give ground last, are still up."
             }
             Self::EditPane => {
-                "The redrawn editing pane on api, fresh: no edits filed, at 160x48. The tab row names all eight groups with only the active one chipped, the header reads FIELD / VALUE / LANDS, the explanation panel sits beside the field list naming the field under the cursor, and every env value reads (set) rather than the value itself."
+                "The redrawn editing pane on api, fresh: no edits filed, at 160x48. The tab row names all nine groups with only the active one chipped, the header reads FIELD / VALUE / LANDS, the explanation panel sits beside the field list naming the field under the cursor, and every env value reads (set) rather than the value itself."
             }
             Self::EditPaneEdited => {
                 "The same pane with two edits filed: cwd, which needs a respawn, and max_memory, which lands at once. The pending edits section lists both under the active group's own fields, and the title band reads 2 edits."
@@ -442,7 +465,22 @@ impl Scene {
                 "The same sub-screen with jobs's table removal armed by d: the title asks remove api's jobs table? instead of naming the sheep, and any key but enter would cancel it."
             }
             Self::SheepDogTable => {
-                "Enter on jobs opens its table pane: dotted rows for the nested hours and models.worker tables, and models.worker.token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame."
+                "Enter on jobs opens its table pane as a tree: hours and models open at the first level, models.worker opened onto token, the one field jobs's schema marks secret, drawn <set> with no value on screen anywhere in the frame."
+            }
+            Self::SheepDogUnion => {
+                "Enter on kelpie opens its table pane over a recorded copy of its schema, skills opened onto one union per step: implement reads kind = path and is open onto its kind row and its path, review reads kind = plugin and is closed, and retro reads (unset). The cursor is on path, and the explanation panel names it and carries the blurb of the path arm."
+            }
+            Self::DogEntries => {
+                "A dog's pane over a paddock-shaped schema at 160x48: clients and models each read as a count and nothing more, clients is open onto alpha, b-2 and #2, named by name, then id, then their index, and alpha is open onto its fields, key drawn <set> with no credential on screen anywhere in the frame. The cursor is on key, which opens an editor like any other field."
+            }
+            Self::DogEntriesNarrow => {
+                "The same pane at 88 columns: narrow enough that the explanation panel is gone, so the count, the entries and the rows under them have the whole width."
+            }
+            Self::DogEntryTyping => {
+                "The same pane at 160x48 with the b-2 client open and a name being typed into it: the value cell holds the typed text and the cursor, the explanation panel describes name, and the title band counts no edit until the text is applied."
+            }
+            Self::DogEntriesNew => {
+                "Enter on the + new row under models: the key editor opens in the status bar, labelled new models key, with gpt-5 typed and the cursor after it. Nothing is filed until the key is applied, so the title band counts no edit. An empty key would abandon, and a key models already holds is refused with a sentence naming it."
             }
             Self::CloseDialog => {
                 "esc pressed with cwd and err_file edited and listen_timeout already parked from before: the close dialog names both counts, boxed and centred at 160x48 over the dimmed editing pane."
@@ -611,7 +649,14 @@ impl Scene {
             Self::SheepDogsRow
             | Self::SheepDogsList
             | Self::SheepDogsRemove
-            | Self::SheepDogTable => (160, 48),
+            | Self::SheepDogTable
+            | Self::SheepDogUnion
+            | Self::DogEntries
+            | Self::DogEntryTyping
+            | Self::DogEntriesNew => (160, 48),
+            // 88: the same cut as `EditPaneNarrow`, short of the
+            // explanation panel's floor.
+            Self::DogEntriesNarrow => (88, 48),
             // 160: the design target. The box is 86 interior plus a border
             // cell each side, so (160 - 88) / 2 = 36 dimmed columns each
             // side of it.
@@ -718,6 +763,11 @@ impl Scene {
             | Self::SheepDogsList
             | Self::SheepDogsRemove
             | Self::SheepDogTable
+            | Self::SheepDogUnion
+            | Self::DogEntries
+            | Self::DogEntriesNarrow
+            | Self::DogEntryTyping
+            | Self::DogEntriesNew
             | Self::CloseDialog
             | Self::CloseDialogFloor
             | Self::CloseDialogNarrow
@@ -727,231 +777,4 @@ impl Scene {
 }
 
 #[cfg(test)]
-mod tests {
-    use ratatui::style::Modifier;
-
-    use super::super::gallery::GALLERY_PREAMBLE;
-    use super::super::scene;
-    use super::*;
-
-    /// fails if a scene stops rendering what it is named for.
-    ///
-    /// Each caption clause in [`Scene::caption`] is pinned by one
-    /// assertion here.
-    /// The preamble's own scene count matches `Scene::ALL`.
-    ///
-    /// `write_the_gallery` commits the preamble into
-    /// `docs/lookout/frames.txt`, so a wrong count is a document that
-    /// miscounts itself for an operator. Spelled out rather than a digit,
-    /// which is the form a reader sees.
-    #[test]
-    fn the_gallery_preamble_counts_the_scenes_it_has() {
-        const NUMBERS: [(usize, &str); 29] = [
-            (34, "thirty-four"),
-            (35, "thirty-five"),
-            (36, "thirty-six"),
-            (37, "thirty-seven"),
-            (38, "thirty-eight"),
-            (39, "thirty-nine"),
-            (40, "forty"),
-            (41, "forty-one"),
-            (42, "forty-two"),
-            (43, "forty-three"),
-            (44, "forty-four"),
-            (45, "forty-five"),
-            (46, "forty-six"),
-            (47, "forty-seven"),
-            (48, "forty-eight"),
-            (49, "forty-nine"),
-            (50, "fifty"),
-            (51, "fifty-one"),
-            (52, "fifty-two"),
-            (53, "fifty-three"),
-            (54, "fifty-four"),
-            (55, "fifty-five"),
-            (56, "fifty-six"),
-            (57, "fifty-seven"),
-            (58, "fifty-eight"),
-            (59, "fifty-nine"),
-            (60, "sixty"),
-            (61, "sixty-one"),
-            (62, "sixty-two"),
-        ];
-        let spelled = NUMBERS
-            .iter()
-            .find(|(n, _)| *n == Scene::ALL.len())
-            .map(|(_, word)| *word)
-            .expect("add the next number to NUMBERS when the gallery outgrows it");
-        // `fifty` is a prefix of `fifty-one` through `fifty-eight`, so a bare
-        // `contains` passes when the preamble overstates inside its own
-        // decade: 50 scenes against a preamble saying "fifty-eight" satisfies
-        // `contains("fifty")`. Refusing the hyphen is what makes the match a
-        // whole number rather than a prefix of a larger one.
-        assert!(
-            !GALLERY_PREAMBLE.contains(&format!("{spelled}-")),
-            "the preamble spells a larger number than {} scenes: {spelled}-…",
-            Scene::ALL.len()
-        );
-        assert!(
-            GALLERY_PREAMBLE.contains(spelled),
-            "the preamble says something other than {spelled}, and \
-             `write_the_gallery` commits it for an operator to read"
-        );
-    }
-
-    /// Only checks that every scene has a caption, since whether the
-    /// caption is pinned by an assertion is not machine-checkable.
-    #[test]
-    fn every_scene_has_a_caption_and_a_distinct_label() {
-        let mut labels = std::collections::BTreeSet::new();
-        for which in Scene::ALL {
-            assert!(
-                labels.insert(which.label()),
-                "two scenes share {}",
-                which.label()
-            );
-            let caption = which.caption();
-            assert!(caption.len() > 30, "{} has a stub caption", which.label());
-            assert!(
-                caption.ends_with('.'),
-                "{}'s caption is not a sentence",
-                which.label()
-            );
-        }
-    }
-
-    /// The scene that follows `scene` in gallery order, or `None` after the
-    /// last one. Mirrors `Scene::ALL`'s own order.
-    ///
-    /// Exhaustive over [`Scene`], with no wildcard arm: a variant added to
-    /// the enum without an arm here fails to compile. `scene_all_lists_every_variant_the_compiler_can_see`
-    /// below walks this chain and checks it against `ALL`, which a
-    /// hand-counted length could not: a forgotten scene just left the count
-    /// honest at the old number.
-    ///
-    /// The `scenes!` macro that declares `Scene` keeps a variant from being
-    /// left out of `ALL` outright — the two are generated from one list, so
-    /// they cannot disagree on membership. What that macro cannot catch is
-    /// this chain: a variant could still get an arm here that loops back on
-    /// itself or points somewhere unreachable from `HealthyWide`, compiling
-    /// fine while never being walked. That is exactly what this test's own
-    /// walk-and-compare catches, so the two mechanisms are covering
-    /// different halves of the same failure, not one covering the other.
-    fn scene_after(scene: Scene) -> Option<Scene> {
-        match scene {
-            Scene::HealthyWide => Some(Scene::Errored),
-            Scene::Errored => Some(Scene::Grouped),
-            Scene::Grouped => Some(Scene::Folds),
-            Scene::Folds => Some(Scene::WithDogs),
-            Scene::WithDogs => Some(Scene::MemCeiling),
-            Scene::MemCeiling => Some(Scene::CfgDrift),
-            Scene::CfgDrift => Some(Scene::Empty),
-            Scene::Empty => Some(Scene::Narrow),
-            Scene::Narrow => Some(Scene::TooNarrow),
-            Scene::TooNarrow => Some(Scene::Retrying),
-            Scene::Retrying => Some(Scene::Frozen),
-            Scene::Frozen => Some(Scene::Refused),
-            Scene::Refused => Some(Scene::FilterEditing),
-            Scene::FilterEditing => Some(Scene::FilterActive),
-            Scene::FilterActive => Some(Scene::FilterNoMatch),
-            Scene::FilterNoMatch => Some(Scene::NoDetail),
-            Scene::NoDetail => Some(Scene::TableOnly),
-            Scene::TableOnly => Some(Scene::FeedGap),
-            Scene::FeedGap => Some(Scene::FeedMissing),
-            Scene::FeedMissing => Some(Scene::Cramped),
-            Scene::Cramped => Some(Scene::HostUnknown),
-            Scene::HostUnknown => Some(Scene::Lambs),
-            Scene::Lambs => Some(Scene::LambsUnknown),
-            Scene::LambsUnknown => Some(Scene::Confirm),
-            Scene::Confirm => Some(Scene::Acting),
-            Scene::Acting => Some(Scene::ActionRefused),
-            Scene::ActionRefused => Some(Scene::ActionAccepted),
-            Scene::ActionAccepted => Some(Scene::ActionRefusedOffline),
-            Scene::ActionRefusedOffline => Some(Scene::SettingsFresh),
-            Scene::SettingsFresh => Some(Scene::SettingsSet),
-            Scene::SettingsSet => Some(Scene::SettingsConfirm),
-            Scene::SettingsConfirm => Some(Scene::SettingsTyping),
-            Scene::SettingsTyping => Some(Scene::SettingsDogs),
-            Scene::SettingsDogs => Some(Scene::SettingsNarrow),
-            Scene::SettingsNarrow => Some(Scene::SettingsShort),
-            Scene::SettingsShort => Some(Scene::Bleats),
-            Scene::Bleats => Some(Scene::Secrets),
-            Scene::Secrets => Some(Scene::SheepPane),
-            Scene::SheepPane => Some(Scene::SheepPaneCpuOnly),
-            Scene::SheepPaneCpuOnly => Some(Scene::SheepPaneSparklines),
-            Scene::SheepPaneSparklines => Some(Scene::SheepPaneShort),
-            Scene::SheepPaneShort => Some(Scene::EditPane),
-            Scene::EditPane => Some(Scene::EditPaneEdited),
-            Scene::EditPaneEdited => Some(Scene::EditPaneSqueezed),
-            Scene::EditPaneSqueezed => Some(Scene::EditPaneNarrow),
-            Scene::EditPaneNarrow => Some(Scene::SheepDogsRow),
-            Scene::SheepDogsRow => Some(Scene::SheepDogsList),
-            Scene::SheepDogsList => Some(Scene::SheepDogsRemove),
-            Scene::SheepDogsRemove => Some(Scene::SheepDogTable),
-            Scene::SheepDogTable => Some(Scene::CloseDialog),
-            Scene::CloseDialog => Some(Scene::CloseDialogFloor),
-            Scene::CloseDialogFloor => Some(Scene::CloseDialogNarrow),
-            Scene::CloseDialogNarrow => Some(Scene::CloseDialogParked),
-            Scene::CloseDialogParked => Some(Scene::Keymap),
-            Scene::Keymap => Some(Scene::KeymapFloor),
-            Scene::KeymapFloor => Some(Scene::KeymapBorderlessWide),
-            Scene::KeymapBorderlessWide => Some(Scene::KeymapNarrow),
-            Scene::KeymapNarrow => Some(Scene::KeymapTwoColumn),
-            Scene::KeymapTwoColumn => Some(Scene::KeymapFrozen),
-            Scene::KeymapFrozen => Some(Scene::KeymapReadOnly),
-            Scene::KeymapReadOnly => Some(Scene::KeymapShort),
-            Scene::KeymapShort => None,
-        }
-    }
-
-    /// Walks [`scene_after`] from the first scene and checks the walk names
-    /// exactly `Scene::ALL`, in the same order.
-    ///
-    /// The walk can only see variants `scene_after` was taught about, and
-    /// that match cannot compile with one missing, so a scene left out of
-    /// `ALL` shows up here as a length or order mismatch rather than as
-    /// nothing at all.
-    #[test]
-    fn scene_all_lists_every_variant_the_compiler_can_see() {
-        let mut walked = vec![Scene::HealthyWide];
-        while let Some(next) = scene_after(*walked.last().unwrap()) {
-            // Bounded, because `scene_after` is a hand-kept chain and a
-            // variant wired back at an earlier one would otherwise spin here
-            // forever. Nextest has no per-test timeout, so an unbounded walk
-            // fails as a twenty-minute job timeout with no named test rather
-            // than as an assertion.
-            assert!(
-                walked.len() < Scene::ALL.len(),
-                "scene_after cycles: walked {} scenes without reaching the end of {}",
-                walked.len(),
-                Scene::ALL.len()
-            );
-            walked.push(next);
-        }
-        assert_eq!(walked.as_slice(), Scene::ALL);
-    }
-
-    /// `sgr` now draws a foreground, a background and `REVERSED`, so the
-    /// title and section bands' reverse video and the selected row's
-    /// painted ground both reach `frames.ansi`. This test still forbids
-    /// any modifier beyond `REVERSED`: nothing in the dashboard uses one
-    /// today, and a scene that started would render unstyled without this
-    /// guard noticing.
-    #[test]
-    fn no_scene_uses_a_modifier_the_ansi_renderer_cannot_render() {
-        for which in Scene::ALL {
-            let buffer = scene(*which).1;
-            for y in 0..buffer.area.height {
-                for x in 0..buffer.area.width {
-                    let cell = &buffer[(buffer.area.x + x, buffer.area.y + y)];
-                    assert!(
-                        cell.modifier.is_empty() || cell.modifier == Modifier::REVERSED,
-                        "{} has an unrendered modifier at {x},{y}: {:?}",
-                        which.label(),
-                        cell.modifier
-                    );
-                }
-            }
-        }
-    }
-}
+mod tests;

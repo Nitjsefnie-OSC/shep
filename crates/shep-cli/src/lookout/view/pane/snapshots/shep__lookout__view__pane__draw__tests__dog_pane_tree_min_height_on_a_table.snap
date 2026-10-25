@@ -1,0 +1,10 @@
+---
+source: crates/shep-cli/src/lookout/view/pane/draw.rs
+expression: "frames[0]"
+---
+shep lookout   /home/ada/.shep                                                                                                                    3 in the flock
+  jobs  (dog config)                                                                                                                                            
+>  ▾ models                                                                   table      FOCUSED  models  table                                                 
+  ... 2 below                                                                                                                                                   
+  shep publishes the change; jobs decides what to reload                                                                                                        
+esc close   j/k select   g/G first/last   r refresh   space cycle   e edit   d back to default   u undo   h help   * yours   ! parked   q quit   control enabled

@@ -66,6 +66,9 @@ pub enum ProbeTarget {
 impl ProbeTarget {
     /// Parses `config.target` according to `config.kind`.
     ///
+    /// HTTP and TCP targets are trimmed before parsing, so surrounding
+    /// whitespace is accepted; an exec command is kept verbatim.
+    ///
     /// # Errors
     ///
     /// - [`ProbeTargetError::Empty`]: the target is empty or all whitespace.
@@ -309,13 +312,20 @@ fn strip_prefix_ignore_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a st
 /// Parses a TCP `host:port` target: the whole target is the authority,
 /// since a TCP target carries no scheme or path.
 fn parse_tcp(target: &str) -> Result<ProbeTarget, ProbeTargetError> {
-    let (host, port_str) = split_authority(target, target)?;
+    // The whole target is trimmed before the split, the way `parse_http`
+    // trims before its scheme match, so `"  host:5432  "` parses as
+    // `"host:5432"` instead of failing on a port `"5432  "`. Only the whole
+    // target is trimmed: whitespace inside the host survives the split and
+    // is still refused by `validate_host`. Errors keep reporting the
+    // original `target`, naming the line the operator has to edit.
+    let trimmed = target.trim();
+    let (host, port_str) = split_authority(trimmed, target)?;
     if host.is_empty() {
         return Err(ProbeTargetError::MissingHost {
             target: target.to_string(),
         });
     }
-    validate_host(host, target, target)?;
+    validate_host(host, trimmed, target)?;
     let Some(port_str) = port_str else {
         return Err(ProbeTargetError::MissingPort {
             target: target.to_string(),
@@ -825,6 +835,48 @@ mod tests {
             ProbeTarget::parse(&probe_config(ProbeKind::Tcp, "::1:5432")).unwrap_err(),
             ProbeTargetError::InvalidHost {
                 target: "::1:5432".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn surrounding_whitespace_trimmed_before_tcp_parse() {
+        // fails if only parse_http trims before parsing: "  host:5432  "
+        // would then rsplit on the last colon into port "5432  ", a
+        // BadPort complaint about whitespace the operator never meant as
+        // part of the port
+        let target = ProbeTarget::parse(&probe_config(ProbeKind::Tcp, "  host:5432  ")).unwrap();
+        assert_eq!(
+            target,
+            ProbeTarget::Tcp {
+                host: "host".to_string(),
+                port: 5432,
+            }
+        );
+    }
+
+    #[test]
+    fn tcp_surrounding_whitespace_with_a_bad_port_reports_the_original_target() {
+        // fails if the error carries the trimmed substring instead of the
+        // target as written: the message must name the line the operator
+        // has to edit, the way parse_http's errors do
+        assert_eq!(
+            ProbeTarget::parse(&probe_config(ProbeKind::Tcp, "  host:abc  ")).unwrap_err(),
+            ProbeTargetError::BadPort {
+                target: "  host:abc  ".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn tcp_whitespace_inside_the_target_is_still_refused() {
+        // fails if the trim is applied per-piece after the split instead of
+        // to the whole target: "ho st:5432" would then quietly become
+        // host "host", a hostname the operator never wrote
+        assert_eq!(
+            ProbeTarget::parse(&probe_config(ProbeKind::Tcp, "ho st:5432")).unwrap_err(),
+            ProbeTargetError::InvalidHost {
+                target: "ho st:5432".to_string()
             }
         );
     }

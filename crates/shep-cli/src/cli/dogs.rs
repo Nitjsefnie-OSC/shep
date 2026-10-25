@@ -1,15 +1,23 @@
 //! Arguments for the dog verbs: `dogs`, `enable`, `disable`, `adopt`,
-//! `rehome`, and the hidden `dog` re-exec target.
+//! the hidden `rehome`, and the hidden `dog` re-exec target.
 //!
-//! A dog is named, never selected, so none of these takes the selector
-//! grammar the flock verbs share. Three of the six get by on the one name
-//! field [`DogArgs`] carries; the docs on the other two say what they add
-//! and why it was not worth widening the shared struct.
+//! `enable` and `disable` also take a sheep's name, so each carries a
+//! sheep-and-dog `name` of its own. The rest name a dog and never select
+//! one, so none of them takes the selector grammar the flock verbs share.
+//! Two of the six get by on the one name field [`DogArgs`] carries; the docs
+//! on the others say what they add and why it was not worth widening the
+//! shared struct.
 
 use std::path::PathBuf;
 
-/// `shep dogs`, and the index of dogs you could adopt.
+/// `shep dogs`, the index of dogs you could adopt, and the two verbs that
+/// change one permission of a dog.
+///
+/// The listing's flag and filter and the subcommands exclude each other:
+/// `shep dogs grant` is a verb, so a dog named `grant` is reached with
+/// `shep dogs -- grant`.
 #[derive(Debug, clap::Args)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct DogsArgs {
     /// List the dogs published in the community index instead of the ones
     /// this shepherd is running. Needs no shepherd.
@@ -19,18 +27,52 @@ pub struct DogsArgs {
     /// contains this text, case-insensitively.
     #[arg(value_name = "FILTER")]
     pub filter: Option<String>,
+    /// Change one permission instead of listing.
+    #[command(subcommand)]
+    pub command: Option<DogsCommand>,
 }
 
-/// Arguments to `shep disable`/`shep rehome`, and to the hidden `shep dog`
+/// `shep dogs`'s subcommands.
+#[derive(Debug, clap::Subcommand)]
+pub enum DogsCommand {
+    /// Grant a dog one permission it declared.
+    ///
+    /// Writes `[daemon.dog_grants.<dog>]` in `shep.toml` and tells a
+    /// running shepherd, which judges the dog's next request by the new
+    /// grants with no restart. Only a permission the dog's manifest declares
+    /// can be granted; `shep adopt` and the first `shep enable` ask about
+    /// the whole list.
+    ///
+    /// Grants keep a dog's requests in bounds and do not confine it: it
+    /// runs as you and can do anything you can.
+    Grant(GrantArgs),
+    /// Revoke one permission from a dog.
+    ///
+    /// Writes `[daemon.dog_grants.<dog>]` in `shep.toml` and tells a
+    /// running shepherd, which refuses the dog's next request that needs
+    /// it with no restart.
+    Revoke(GrantArgs),
+}
+
+/// Arguments to `shep dogs grant` and `shep dogs revoke`.
+#[derive(Debug, clap::Args)]
+pub struct GrantArgs {
+    /// The dog's name, as `shep adopt` registered it
+    pub name: String,
+    /// The permission, as the dog's manifest spells it: `flock.read`,
+    /// `events:process.`, `secrets.read:staging`
+    pub permission: String,
+}
+
+/// Arguments to the hidden `shep rehome`, and to the hidden `shep dog`
 /// re-exec target.
 ///
-/// One struct for all three, matching [`StartupArgs`](crate::cli::StartupArgs)'s own precedent: a
+/// One struct for both, matching [`StartupArgs`](crate::cli::StartupArgs)'s own precedent: a
 /// dog is named, never selected — `SelectorArgs`' grammar (`all`, `/regex/`,
 /// `fold:<name>`) answers "which of the flock", and a dog is not the flock.
-/// `shep enable` shares this shape too, but carries a second, hidden field
-/// ([`EnableArgs`]) that none of the three below has any use for, so it
-/// gets a struct of its own rather than widening this one for verbs that
-/// would never touch the extra field.
+/// `shep enable` carries a second, hidden field ([`EnableArgs`]) and both it
+/// and `shep disable` ([`DisableArgs`]) also take a sheep's name, so each
+/// gets a struct of its own rather than widening this one.
 #[derive(Debug, clap::Args)]
 pub struct DogArgs {
     /// The dog's name, the `[<name>]` config key in `dogs.toml`
@@ -57,12 +99,25 @@ pub struct DogArgs {
 /// `the_hidden_pm2_spelling_reaches_adopt_with_the_arguments_the_right_way_round`.
 #[derive(Debug, clap::Args)]
 pub struct EnableArgs {
-    /// The dog's name, the `[<name>]` config key in `dogs.toml`
+    /// A sheep's name, `fold:<fold>`, `/<regex>/` or `all`, or a dog's name
+    /// (the `[<name>]` config key in `dogs.toml`)
     pub name: String,
     /// Hidden pm2-spelling alias for `shep adopt`: routes to `adopt` with
     /// this flag's value as the binary path
     #[arg(long, hide = true)]
     pub exec: Option<PathBuf>,
+    /// Grant a dog everything it declares without asking; a dog's first
+    /// enable asks, and with no terminal and no `--yes` refuses
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// Arguments to `shep disable`.
+#[derive(Debug, clap::Args)]
+pub struct DisableArgs {
+    /// A sheep's name, `fold:<fold>`, `/<regex>/` or `all`, or a dog's name
+    /// (the `[<name>]` config key in `dogs.toml`)
+    pub name: String,
 }
 
 /// Arguments to `shep adopt`.
@@ -85,6 +140,10 @@ pub struct AdoptArgs {
     /// to the binary's file stem with a leading `shep-` stripped.
     #[arg(long)]
     pub name: Option<String>,
+    /// Grant the dog everything it declares without asking. With no
+    /// terminal and no `--yes`, adopt refuses rather than granting.
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[cfg(test)]

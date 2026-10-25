@@ -14,6 +14,9 @@
 mod described;
 mod diagnostics;
 mod flock;
+// `pub(crate)`: `commands/bleats` is outside `output` and renders every
+// log line through these three functions.
+pub(crate) mod log_line;
 
 // `pub(crate)`: `lookout::theme`'s test module calls `paint::style_for`
 // directly to pin the anstyle and ratatui colour bindings against each
@@ -21,10 +24,10 @@ mod flock;
 pub(crate) mod paint;
 mod rows;
 mod table;
-// `pub(crate)` for `width::char_columns`, which `lookout::view::flock::fit`
-// pads by: one rule for how wide a `char` draws, shared by the two surfaces
-// that pad a cell, rather than a second copy that drifts on the first
-// double-width name. The same reasoning `paint` above is public for.
+// `pub(crate)` for `width::char_columns` and `width::text_columns`, which
+// `lookout::view::flock::fit` and the view's measuring sites pad and sum
+// by: one rule for how wide a `char` draws, shared rather than a second
+// copy that drifts. The same reasoning `paint` above is public for.
 pub(crate) mod width;
 
 use std::io;
@@ -37,17 +40,19 @@ use crate::exit::ExitCode;
 pub use described::emit_described;
 pub use diagnostics::{emit_error, emit_notice};
 pub use flock::emit_flock;
+pub(crate) use flock::{HostListing, emit_fleet_flock, emit_origin_flock};
 
 // Re-exported for `commands/`, which names every one of these at its own
 // crate-root import. `commands/` is `#[cfg(unix)]`-gated, so on Windows
 // nothing names them and `unused_imports` still flags it there.
 #[cfg_attr(windows, allow(unused_imports))]
 pub use rows::{
-    AvailableDogRows, BarkRows, DeletedIds, DescribedSecret, DogActionRow, DogRows, EmptiedFile,
-    EmptiedFiles, FlockRows, FlushedRows, ImportEnvRow, ImportEnvRows, ImportRow, ImportRows,
-    KillRow, KvEntry, KvRows, KvUnsetRow, LabelledLambRows, LambRows, RolledSheep, RolledSheepRows,
-    SavedRollRow, SecretKeyRow, SecretKeyRows, SecretSlotRow, SecretStatus, SecretValueRow,
-    SentLineRows, SignalledRows, StartupStep, StartupSteps, TriggeredRows,
+    AvailableDogRows, BarkRows, CopyChange, CopyReport, DeletedIds, DescribedSecret, DogActionRow,
+    DogActionStatus, DogRows, EmptiedFile, EmptiedFiles, FlockRows, FlushedRows, HostEntry,
+    HostRows, ImportEnvRow, ImportEnvRows, ImportRow, ImportRows, KillRow, KvEntry, KvRows,
+    KvUnsetRow, LabelledLambRows, LambRows, RolledSheep, RolledSheepRows, SavedRollRow,
+    SecretKeyRow, SecretKeyRows, SecretSlotRow, SecretStatus, SecretValueRow, SentLineRows,
+    SetReport, SettingsAnswer, SignalledRows, StartupStep, StartupSteps, TriggeredRows,
 };
 pub use table::{human_bytes, human_duration, local_timestamp, render_table};
 
@@ -78,11 +83,12 @@ pub struct OutputEnvelope<'a, T> {
 
 /// The two streams a command writes to.
 ///
-/// Production wires the process's own; tests wire a pair of `Vec<u8>`, which
-/// is what makes every renderer assertion hermetic and safe under the
-/// parallel `cargo test` gate. `&mut dyn Write` has no `Debug`, so this needs
-/// a manual one: print `Streams { .. }` and nothing else (pinned by this
-/// module's own `streams_debug_is_the_redacted_placeholder` test).
+/// Production wires the process's own; tests build a pair of `Vec<u8>`
+/// through `Streams::bare`, which is what makes every renderer assertion
+/// hermetic and safe under the parallel `cargo test` gate. `&mut dyn Write`
+/// has no `Debug`, so this needs a manual one: print `Streams { .. }` and
+/// nothing else (pinned by this module's own
+/// `streams_debug_is_the_redacted_placeholder` test).
 pub struct Streams<'a> {
     /// Rendered command output: what `emit` writes to.
     ///
@@ -159,6 +165,36 @@ impl Streams<'_> {
     }
 }
 
+/// The constructor the command tests build their streams from, test-only
+/// because production has no reason to want a fixed presentation: it wires
+/// the process's own streams and the level the operator resolved, in
+/// `dispatch.rs`.
+///
+/// `BARE` because these tests assert on words, not colour: a fixture that
+/// carried a real presentation would pin escape bytes into assertions meant
+/// to survive a style change.
+///
+/// Takes `&mut dyn io::Write` rather than `&mut Vec<u8>` so a test can hand
+/// it a writer that fails, or one that discards, as well as a buffer; a
+/// `Vec<u8>` coerces at the call site.
+#[cfg(test)]
+impl<'a> Streams<'a> {
+    /// A `Streams` that writes to `out` and `err` exactly as given, at
+    /// [`Presentation::BARE`] and format `fmt`.
+    pub(crate) fn bare(
+        out: &'a mut dyn io::Write,
+        err: &'a mut dyn io::Write,
+        fmt: Format,
+    ) -> Self {
+        Self {
+            out,
+            err,
+            style: Presentation::BARE,
+            fmt,
+        }
+    }
+}
+
 /// Implemented once per command payload. The two methods are the only
 /// place a field's presence is decided; `rows::assert_no_drift` compares
 /// `headers()` against the serialized keys per payload, so a field added
@@ -190,14 +226,26 @@ pub trait Render: Serialize {
     fn rows_for(&self, _presentation: Presentation, _status_word: bool) -> Vec<Vec<String>> {
         self.rows()
     }
-    /// Table header -> JSON key, the documented name mapping
-    /// (`UPTIME` -> `uptime_ms`, and so on).
+    /// Table header -> JSON key.
     ///
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    fn json_key_for(header: &str) -> &'static str;
+    /// Defaults to the lowercased header, which is the whole mapping for
+    /// every table whose JSON key is its header spelled in lowercase. A table
+    /// whose key is renamed overrides it, and an override keeps the contract
+    /// this method used to state for every impl: it panics on a header
+    /// outside its own `headers()`. `FlockRows` maps `EXIT` -> `last_exit`
+    /// and `UPTIME` -> `uptime_ms`, `BarkRows` maps `WHEN` -> `at_ms`.
+    ///
+    /// The default never panics, and no rendering path calls it: every call
+    /// site sits in `rows`' anti-drift tests, which pass only values taken
+    /// from `Self::headers()` and compare the mapped set against the keys the
+    /// payload really serializes. A header with no key, or a key with no
+    /// header, fails there.
+    fn json_key_for(header: &str) -> String {
+        header.to_lowercase()
+    }
     /// Serialized fields that legitimately have no column, each with a
-    /// comment giving the reason. Usually empty.
+    /// comment giving the reason. Empty by default: an impl names the
+    /// constant only when it has entries to name, each with its reason.
     ///
     /// This constant is the only thing standing between an unmapped
     /// `Serialize` field and a silently-widened, unreviewed pass of
@@ -205,7 +253,7 @@ pub trait Render: Serialize {
     /// keys matches, never why a field belongs here. Every entry an impl
     /// adds must carry its own inline `//` comment stating that reason
     /// (`"note", // internal only, never shown to a user`).
-    const JSON_ONLY: &'static [&'static str];
+    const JSON_ONLY: &'static [&'static str] = &[];
 
     /// Per-column drop priority for [`table::render_boxed`], parallel to
     /// [`Self::headers`]: index `i` here is the priority of column `i`
@@ -219,6 +267,30 @@ pub trait Render: Serialize {
     /// is. `priorities_line_up_with_headers_for_every_render_impl`
     /// (rows.rs) is the anti-drift gate enforcing it.
     const PRIORITIES: &'static [u8] = &[];
+}
+
+/// Writes `value` to `out` as one JSON line: the serialized value, then a
+/// newline.
+///
+/// The one place a `--format json` envelope reaches a writer. Every
+/// envelope in this module ([`emit`], [`emit_partial`], [`emit_flock`],
+/// [`emit_described`], [`emit_error`] and [`emit_notice`]) ends its line
+/// through here, so the newline rule is decided once: a change to it
+/// (pretty-printing, a trailing space, no newline) moves every verb's bytes
+/// at once rather than some of them. `bleats` stays outside, as the module
+/// docs say: a follow has no end, so it has no envelope to end.
+///
+/// Compact [`serde_json`] output, which is what every one of those sites
+/// has always written.
+///
+/// # Errors
+/// The underlying write failed.
+pub(crate) fn write_json_line<T: Serialize + ?Sized>(
+    out: &mut dyn io::Write,
+    value: &T,
+) -> io::Result<()> {
+    serde_json::to_writer(&mut *out, value)?;
+    writeln!(out)
 }
 
 /// Renders `data` to `out` as `fmt` calls for, boxed or plain per `style`.
@@ -243,8 +315,7 @@ pub fn emit<T: Render>(
                 command,
                 data,
             };
-            serde_json::to_writer(&mut *out, &envelope)?;
-            writeln!(out)
+            write_json_line(&mut *out, &envelope)
         }
         Format::Table => write!(out, "{}", table_of(&data, style)),
     }
@@ -369,8 +440,7 @@ pub fn emit_partial<T: Render>(
         data,
         refused,
     };
-    serde_json::to_writer(&mut *out, &envelope)?;
-    writeln!(out)
+    write_json_line(&mut *out, &envelope)
 }
 
 /// Turns the result of an `emit`/`emit_error` write into the exit code that
@@ -393,7 +463,7 @@ pub fn write_outcome(result: io::Result<()>) -> ExitCode {
 pub(crate) mod tests {
     use std::ffi::OsStr;
 
-    use shep_core::protocol::{DogSource, ProcessInfo};
+    use shep_core::protocol::{DogSource, HostUsage, ProcessInfo};
     use shep_core::status::ProcStatus;
 
     use crate::output::rows::tests::{dog_info, sample_flock, sample_info};
@@ -412,7 +482,10 @@ pub(crate) mod tests {
     /// One sheep (`"web"`), one dog (`"bark"`): the smallest listing that
     /// exercises `emit_flock`'s split, shared by the three tests below.
     pub(crate) fn mixed_listing() -> Vec<ProcessInfo> {
-        vec![sheep_info("web"), dog_info("bark", DogSource::BuiltIn)]
+        vec![
+            sheep_info("web"),
+            dog_info("bark", DogSource::BuiltIn { grants: None }),
+        ]
     }
 
     /// Pins the JSON envelope's exact shape (`--format json` is a stability
@@ -425,6 +498,55 @@ pub(crate) mod tests {
             command: "flock",
             data: sample_flock(),
         };
+        insta::assert_json_snapshot!(out);
+    }
+
+    /// The one write every `--format json` envelope goes through: the
+    /// value's compact JSON, then exactly one newline, and nothing between
+    /// them. The literal is the spec: `--format json` is one object per
+    /// invocation, so a second newline (or none) is a shape change.
+    #[test]
+    fn write_json_line_ends_one_line_with_a_newline() {
+        #[derive(Serialize)]
+        struct OneLine {
+            name: &'static str,
+        }
+        let mut out = Vec::new();
+        write_json_line(&mut out, &OneLine { name: "web" }).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "{\"name\":\"web\"}\n");
+    }
+
+    /// Pins the fleet envelope's exact shape: a local row, a row from `amp2`,
+    /// a host with usage, one whose platform `sysinfo` cannot read (`null`)
+    /// and one that listed its rows but would not answer the usage request
+    /// (no entry).
+    #[test]
+    fn the_fleet_json_envelope_shape_is_pinned() {
+        let reading = HostUsage {
+            cpu_percent: Some(11.5),
+            memory_used_bytes: 4_294_967_296,
+            memory_total_bytes: 8_589_934_592,
+            disk_bytes_per_second: Some((1_024, 2_048)),
+            network_bytes_per_second: None,
+        };
+        let listing = |host: Option<&str>, name: &str, usage| HostListing {
+            host: host.map(str::to_owned),
+            procs: vec![sheep_info(name)],
+            usage,
+        };
+        let mut out = Vec::new();
+        emit_fleet_flock(
+            &mut out,
+            "flock",
+            vec![
+                listing(None, "web", Some(Some(reading))),
+                listing(Some("amp2"), "api", Some(Some(reading))),
+                listing(Some("amp3"), "cache", Some(None)),
+                listing(Some("amp4"), "old", None),
+            ],
+        )
+        .unwrap();
+        let out: serde_json::Value = serde_json::from_slice(&out).unwrap();
         insta::assert_json_snapshot!(out);
     }
 
@@ -469,7 +591,7 @@ pub(crate) mod tests {
     /// stopped restarting, `Some(false)` for one it is still waiting on,
     /// `None` for a shepherd too old to have an opinion.
     pub(crate) fn silent_dog(name: &str, given_up: Option<bool>) -> ProcessInfo {
-        let mut info = dog_info(name, DogSource::BuiltIn);
+        let mut info = dog_info(name, DogSource::BuiltIn { grants: None });
         info.status = ProcStatus::Online;
         info.handshook = Some(false);
         info.dog_stale = given_up;
@@ -490,6 +612,36 @@ pub(crate) mod tests {
             fmt: Format::Table,
         };
         assert_eq!(format!("{streams:?}"), "Streams { .. }");
+    }
+
+    /// `Streams::bare` is what every command test builds its streams from,
+    /// so it must hand each buffer to the field the caller named: a test
+    /// that reads `out` would otherwise pass on what the command wrote to
+    /// `err`. Both writes go through the struct's own methods, so this
+    /// pins the fields and not just the constructor.
+    #[test]
+    fn bare_streams_write_to_the_buffers_given_and_carry_their_format() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let (fmt, style) = {
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
+            streams.note("OUT", "to-out");
+            streams.aside("ERR", "to-err");
+            (streams.fmt, streams.style)
+        };
+
+        let out_text = String::from_utf8(out).unwrap();
+        let err_text = String::from_utf8(err).unwrap();
+        assert!(
+            out_text.contains("to-out") && !out_text.contains("to-err"),
+            "`out` must hold only what the command wrote to stdout: {out_text:?}"
+        );
+        assert!(
+            err_text.contains("to-err") && !err_text.contains("to-out"),
+            "`err` must hold only what the command wrote to stderr: {err_text:?}"
+        );
+        assert_eq!(fmt, Format::Json);
+        assert_eq!(style, Presentation::BARE);
     }
 
     #[test]

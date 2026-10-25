@@ -14,6 +14,8 @@
 use core::fmt;
 
 use std::fs::File;
+use std::io;
+use std::os::fd::{AsFd, BorrowedFd, IntoRawFd};
 use std::os::unix::io::{FromRawFd, RawFd};
 
 /// Lowest fd number this daemon will ever adopt. 0/1/2 are stdio; adopting
@@ -69,9 +71,8 @@ pub unsafe fn adopt_fd(fd: RawFd) -> Result<File, SysError> {
 /// Takes ownership of a descriptor a handover blob names.
 ///
 /// [`adopt_fd`] for one situation: this process is a handover's successor and
-/// `fd` was named in the blob at `$SHEP_HOME/run/handover.json` before the
-/// `execve`. Safe because an inherited descriptor is open before the new
-/// image runs, so no number this process opens later can collide with it; do
+/// `fd` was named in the handover blob before the `execve`. Safe because an
+/// inherited descriptor is open before the new image runs, so no number this process opens later can collide with it; do
 /// not call it on a descriptor number from anywhere else.
 /// `handover::adopt::adopt` refuses a repeated number.
 ///
@@ -80,10 +81,58 @@ pub unsafe fn adopt_fd(fd: RawFd) -> Result<File, SysError> {
 /// - [`SysError::BadFd`]: `fd` names no open descriptor in this process.
 pub fn adopt_handover_fd(fd: RawFd) -> Result<File, SysError> {
     // SAFETY: `fd` was inherited across `execve` from this process's own
-    // predecessor, which cleared `FD_CLOEXEC` on it and named it in the
-    // handover blob. It was open before this image ran, so no number this
-    // process opens can share it.
+    // predecessor, which carried it and named it in the handover blob. It was
+    // open before this image ran, so no number this process opens can share
+    // it.
     unsafe { adopt_fd(fd) }
+}
+
+/// A descriptor this process holds open and knows only by number, borrowed
+/// for as long as the value lives.
+///
+/// The handover blob names its descriptors as numbers, and `shep-handover`
+/// carries a borrowed one. The owner of each is the supervisor's handle that
+/// the blob was built from, which stays alive across the whole handover.
+#[derive(Debug)]
+pub(crate) struct OpenFd(RawFd);
+
+impl OpenFd {
+    /// Wrap `fd`, which must name a descriptor open right now.
+    ///
+    /// # Errors
+    /// As [`adoptable_fd`].
+    pub(crate) fn new(fd: RawFd) -> Result<Self, SysError> {
+        adoptable_fd(fd)?;
+        Ok(Self(fd))
+    }
+}
+
+impl AsFd for OpenFd {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        // SAFETY: `new` found the number open, and its owner holds it open
+        // for the whole handover, which is the only time this is borrowed.
+        unsafe { BorrowedFd::borrow_raw(self.0) }
+    }
+}
+
+/// Duplicate `fd` onto a fresh number, for a caller that needs to inspect a
+/// descriptor it must not take.
+///
+/// The duplicate shares the open file description but not ownership, so
+/// closing it leaves the original open. It is above stdio, so
+/// [`adoptable_fd`] cannot refuse it as reserved. The caller owns the number
+/// that comes back.
+///
+/// # Errors
+/// `fd` names no open descriptor, or this process is at its descriptor limit.
+pub(crate) fn duplicate_fd(fd: RawFd) -> io::Result<RawFd> {
+    // `borrow_raw` panics on -1 and is unsound on a closed number, so ask the
+    // kernel first.
+    nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFD)?;
+    // SAFETY: the check above found `fd` open, and the borrow ends with the
+    // clone, which is a separate descriptor.
+    let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
+    Ok(borrowed.try_clone_to_owned()?.into_raw_fd())
 }
 
 /// Errors adopting an inherited descriptor.

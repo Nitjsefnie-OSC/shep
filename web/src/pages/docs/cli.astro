@@ -45,15 +45,18 @@ const groups = [
       "reload",
       "delete",
       "stock",
+      "copy",
+      "set",
+      "unset",
     ],
   },
   {
     title: "Inspecting the flock",
-    verbs: ["flock", "describe", "fold", "dogs"],
+    verbs: ["flock", "describe", "fold", "dogs", "get"],
   },
   {
     title: "Dogs",
-    verbs: ["enable", "disable", "adopt", "rehome"],
+    verbs: ["enable", "disable", "adopt", "dogs grant", "dogs revoke"],
   },
   {
     title: "Talking to a sheep",
@@ -65,11 +68,15 @@ const groups = [
   },
   {
     title: "The KV store",
-    verbs: ["set", "get", "unset"],
+    verbs: ["kv", "kv get", "kv set", "kv unset"],
   },
   {
     title: "Secrets",
     verbs: ["secret", "secret set", "secret get", "secret unset", "secret list"],
+  },
+  {
+    title: "Other machines",
+    verbs: ["host", "host add", "host remove", "host list"],
   },
   {
     title: "Interfaces",
@@ -165,6 +172,21 @@ if (
       control socket's own name, all of which are text, so a byte that is not
       UTF-8 would be replaced and shep would use a directory you did not name.
       That is refused too, rather than quietly substituted.
+    </Callout>
+
+    <Callout variant="note">
+      <code>--host DEST</code> runs <code>shep flock</code>,{" "}
+      <code>describe</code>, <code>fold</code>, <code>bleats</code>,{" "}
+      <code>stop</code>, <code>restart</code>,{" "}
+      <code>reload</code>, <code>delete</code>, <code>stock</code>,{" "}
+      <code>enable</code>, <code>disable</code>, <code>signal</code>,{" "}
+      <code>whisper</code>, <code>trigger</code>, <code>muster</code> and{" "}
+      <a href="/docs/lookout#over-host"><code>lookout</code></a> remotely. A destination is
+      anything <code>ssh</code> accepts: <code>amp2</code>,{" "}
+      <code>user@amp2</code> or an <code>~/.ssh/config</code> alias.{" "}
+      <code>--home</code> still names this machine's. <code>describe</code>{" "}
+      shows no secrets over <code>--host</code>. Every other verb exits 2
+      on <code>--host</code>.
     </Callout>
 
     <Callout variant="note">

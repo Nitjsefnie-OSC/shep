@@ -34,9 +34,13 @@ pub(super) fn text_of(lines: &[Line<'static>]) -> Vec<String> {
         .collect()
 }
 
-/// A dog pane with one array field marked `x-shep-secret`, two elements
-/// already set, cursor opened onto the list sub-screen.
-pub(super) fn secret_list_dog_pane() -> ConfigPane {
+/// A dog pane whose one array field is marked `x-shep-secret`, with two
+/// elements already set.
+///
+/// No list sub-screen: this pane has no widget for an array at all, and a
+/// secret array is read-only in every pane, so the row is the whole screen
+/// has to get right.
+pub(super) fn secret_array_dog_pane() -> ConfigPane {
     let schema = serde_json::json!({
         "properties": {
             "tokens": {
@@ -53,11 +57,12 @@ pub(super) fn secret_list_dog_pane() -> ConfigPane {
         "tokens = [\"ab12cd34\", \"ef56gh78\"]\n".into(),
     );
     pane.move_to_key("tokens");
-    pane.open_list();
     pane
 }
+
 /// A dog whose `db` table holds an `x-shep-secret` field one level down,
-/// cursor on `db`, so both the row and the panel beside it draw the table.
+/// cursor on `db.password`, so both that row and the panel beside it draw
+/// the secret. The table itself is two dotted rows, not one.
 pub(super) fn nested_secret_dog_pane() -> ConfigPane {
     let schema = serde_json::json!({
         "properties": { "db": { "$ref": "#/$defs/Db" } },
@@ -75,9 +80,35 @@ pub(super) fn nested_secret_dog_pane() -> ConfigPane {
         "watch".into(),
         None,
         schema,
-        "[db]\nhost = \"h\"\npassword = \"ab12cd34\"\n".into(),
+        "[db]\nhost = \"pg.internal\"\npassword = \"ab12cd34\"\n".into(),
     );
-    pane.move_to_key("db");
+    pane.move_to_key("db.password");
+    pane
+}
+
+/// A dog whose `hosts` is an array of tables, one holding an
+/// `x-shep-secret` key. A shape [`flattened`] has no rows to walk, so this
+/// stays one row drawn whole as JSON, with the secret inside it.
+pub(super) fn opaque_secret_dog_pane() -> ConfigPane {
+    let schema = serde_json::json!({
+        "properties": { "hosts": { "type": "array", "items": { "$ref": "#/$defs/Host" } } },
+        "$defs": {
+            "Host": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string", "x-shep-secret": true },
+                },
+            },
+        },
+    });
+    let mut pane = ConfigPane::dog(
+        "watch".into(),
+        None,
+        schema,
+        "[[hosts]]\nname = \"a\"\nkey = \"ab12cd34\"\n".into(),
+    );
+    pane.move_to_key("hosts");
     pane
 }
 
@@ -187,6 +218,34 @@ pub(super) fn bark_pane() -> ConfigPane {
             .into(),
     )
 }
+
+/// A dog pane over a section whose nested table is written as its own
+/// `[models.worker]` header: the credential two tables down is a row of its
+/// own, under `models` and `worker`, and `worker` starts closed.
+pub(super) fn nested_table_dog_pane() -> ConfigPane {
+    ConfigPane::dog(
+        "jobs".into(),
+        None,
+        fixtures::nested_dog_schema(),
+        fixtures::nested_dog_section(),
+    )
+}
+
+/// The same nested schema as a table `web` carries for `jobs`, so the
+/// pane is a per-sheep table pane.
+pub(super) fn nested_sheep_dog_pane() -> ConfigPane {
+    let table = serde_json::json!({
+        "name": "small",
+        "models": { "worker": { "model": "gpt", "token": "sk-live-51Hx9Qa" } },
+    });
+    ConfigPane::sheep_dog(
+        "web".into(),
+        "jobs".into(),
+        &fixtures::nested_dog_schema(),
+        table.as_object().cloned().expect("a table"),
+    )
+}
+
 /// [`pane_lines`]'s own rows for the sheep [`fixtures::app_in_sheep_pane`]
 /// opens, rendered plain: the config pane's own equivalent of
 /// [`fixtures::draw_lines`], which draws the bleats pane instead.

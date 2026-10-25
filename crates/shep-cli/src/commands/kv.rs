@@ -1,4 +1,4 @@
-//! `shep set` / `shep get` / `shep unset`: the CLI half of
+//! `shep kv get` / `shep kv set` / `shep kv unset`: the CLI half of
 //! [`shep_core::kv`].
 //!
 //! No [`Client`](shep_client::Client) anywhere in this module. The store has
@@ -11,6 +11,9 @@ use shep_core::paths::ShepPaths;
 use crate::cli::{KvGetArgs, KvSetArgs, KvUnsetArgs};
 use crate::exit::ExitCode;
 use crate::output::{KvEntry, KvRows, KvUnsetRow, Streams, emit, write_outcome};
+
+/// The `command` key every `shep kv` envelope carries.
+const COMMAND: &str = "kv";
 
 /// The exit code each [`KvError`] maps to.
 ///
@@ -34,7 +37,7 @@ fn fail(streams: &mut Streams<'_>, err: &KvError) -> ExitCode {
     streams.fail(code, &err.to_string())
 }
 
-/// `shep set <key> <value>`.
+/// `shep kv set <key> <value>`.
 pub fn set(streams: &mut Streams<'_>, paths: &ShepPaths, args: &KvSetArgs) -> ExitCode {
     match kv::set(&paths.kv, &args.key, &args.value) {
         Ok(()) => {
@@ -45,7 +48,7 @@ pub fn set(streams: &mut Streams<'_>, paths: &ShepPaths, args: &KvSetArgs) -> Ex
             write_outcome(emit(
                 &mut *streams.out,
                 streams.fmt,
-                "set",
+                COMMAND,
                 row,
                 streams.style,
             ))
@@ -54,11 +57,11 @@ pub fn set(streams: &mut Streams<'_>, paths: &ShepPaths, args: &KvSetArgs) -> Ex
     }
 }
 
-/// `shep get [key]`: one value, or with no key the whole store in
-/// [`kv::all`]'s `BTreeMap` order.
+/// `shep kv get [key]`: one value, or with no
+/// key the whole store in [`kv::all`]'s `BTreeMap` order.
 ///
 /// Exits [`ExitCode::NotFound`] for a key the store does not have, writing
-/// nothing to `streams.out`, so `shep get k || echo default` works in a
+/// nothing to `streams.out`, so `shep kv get k || echo default` works in a
 /// script.
 pub fn get(streams: &mut Streams<'_>, paths: &ShepPaths, args: &KvGetArgs) -> ExitCode {
     let Some(key) = &args.key else {
@@ -73,7 +76,7 @@ pub fn get(streams: &mut Streams<'_>, paths: &ShepPaths, args: &KvGetArgs) -> Ex
                 write_outcome(emit(
                     &mut *streams.out,
                     streams.fmt,
-                    "get",
+                    COMMAND,
                     rows,
                     streams.style,
                 ))
@@ -91,7 +94,7 @@ pub fn get(streams: &mut Streams<'_>, paths: &ShepPaths, args: &KvGetArgs) -> Ex
             write_outcome(emit(
                 &mut *streams.out,
                 streams.fmt,
-                "get",
+                COMMAND,
                 row,
                 streams.style,
             ))
@@ -104,7 +107,7 @@ pub fn get(streams: &mut Streams<'_>, paths: &ShepPaths, args: &KvGetArgs) -> Ex
     }
 }
 
-/// `shep unset <key>` / `shep unset --all`.
+/// `shep kv unset <key>` / `shep kv unset --all`.
 ///
 /// Exits [`ExitCode::NotFound`] for a key the store does not have, rather
 /// than exiting 0 on a no-op an operator would read as success.
@@ -114,7 +117,7 @@ pub fn unset(streams: &mut Streams<'_>, paths: &ShepPaths, args: &KvUnsetArgs) -
             Ok(removed) => write_outcome(emit(
                 &mut *streams.out,
                 streams.fmt,
-                "unset",
+                COMMAND,
                 KvUnsetRow { removed },
                 streams.style,
             )),
@@ -132,7 +135,7 @@ pub fn unset(streams: &mut Streams<'_>, paths: &ShepPaths, args: &KvUnsetArgs) -
         Ok(true) => write_outcome(emit(
             &mut *streams.out,
             streams.fmt,
-            "unset",
+            COMMAND,
             KvUnsetRow { removed: 1 },
             streams.style,
         )),
@@ -150,12 +153,7 @@ mod tests {
     use crate::cli::Format;
 
     fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Json,
-        }
+        Streams::bare(out, err, Format::Json)
     }
 
     /// `$SHEP_HOME` is `dir` itself, so `paths.kv`'s parent exists:
@@ -272,5 +270,24 @@ mod tests {
             !paths.kv.exists(),
             "the store must not be created on a refused key"
         );
+    }
+
+    /// fails if the store's envelope stops answering under `kv`, the name a
+    /// `--format json` script keys on.
+    #[test]
+    fn the_envelope_answers_under_kv() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = kv_path(&dir);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let args = KvSetArgs {
+            key: "a".to_string(),
+            value: "1".to_string(),
+        };
+        let code = set(&mut streams(&mut out, &mut err), &paths, &args);
+        assert_eq!(code, ExitCode::Success);
+        let envelope: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(envelope["command"], "kv", "{envelope}");
+        assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
     }
 }

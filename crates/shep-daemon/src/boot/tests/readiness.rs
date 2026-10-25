@@ -7,9 +7,11 @@
 
 use crate::boot::*;
 use crate::fake::{ProcScript, ScriptedRunner};
-use crate::testing::{AnnouncingRunner, roll_of, test_paths};
+use crate::testing::{AnnouncingRunner, test_paths};
 use shep_core::config::AppConfig;
 use std::time::Duration;
+
+use super::seed_roll;
 
 #[tokio::test]
 async fn boot_writes_readiness_to_the_callers_pipe_after_the_socket_is_bound() {
@@ -25,7 +27,7 @@ async fn boot_writes_readiness_to_the_callers_pipe_after_the_socket_is_bound() {
     let (mut reader, writer) = std::io::pipe().unwrap();
     let pipe = std::fs::File::from(std::os::fd::OwnedFd::from(writer));
 
-    let daemon = boot(
+    let daemon = boot_with_idle_sweep(
         ScriptedRunner::new(vec![]),
         paths.clone(),
         BootOptions {
@@ -66,12 +68,7 @@ async fn readiness_is_reported_only_once_the_roll_is_restored() {
     let _guard = SIGNAL_TEST_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let paths = test_paths(&dir);
-    init_dirs(&paths).unwrap();
-    crate::snapshot::write_atomic(
-        &paths.snapshot,
-        &roll_of(vec![AppConfig::minimal("web", "./srv")]),
-    )
-    .unwrap();
+    seed_roll(&paths, vec![AppConfig::minimal("web", "./srv")]);
 
     // Inside the TempDir and short: macOS caps a unix socket path near
     // 97 characters, which `test_paths` already keeps this under.
@@ -91,9 +88,9 @@ async fn readiness_is_reported_only_once_the_roll_is_restored() {
         &notify_path,
     );
 
-    let daemon = boot(
+    let daemon = boot_with_idle_sweep(
         runner,
-        paths.clone(),
+        paths,
         BootOptions {
             restore: true,
             notify_socket: Some(notify_path.clone().into_os_string()),
@@ -134,9 +131,9 @@ async fn a_readiness_datagram_that_cannot_be_delivered_does_not_fail_the_boot() 
     let dir = tempfile::tempdir().unwrap();
     let paths = test_paths(&dir);
 
-    let daemon = boot(
+    let daemon = boot_with_idle_sweep(
         ScriptedRunner::new(vec![]),
-        paths.clone(),
+        paths,
         BootOptions {
             // Bound by nothing, and never created by anything: the send
             // is an error, which is the whole premise of the case.

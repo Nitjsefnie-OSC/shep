@@ -18,7 +18,8 @@ use super::super::super::theme::Palette;
 use super::super::cell;
 use super::super::flock::fit;
 use super::super::overlay;
-use super::layout::{BOX_WIDTH, body_width, columns, wrap};
+use super::layout::{BOX_WIDTH, body_width, wrap};
+use crate::output::width::text_columns;
 use crate::vocabulary::Role;
 
 /// `""` for one, `"S"` for every other count: the plural suffix
@@ -52,11 +53,11 @@ const HEADING_SHEEP_COLUMN: usize = 36;
 fn close_dialog_heading_row(dialog: &CloseDialog, body: u16) -> String {
     let left = close_dialog_heading(dialog);
     let right = close_dialog_sheep_clause(dialog);
-    let left_w = columns(&left);
+    let left_w = text_columns(&left);
     // One space of separation at minimum, however far past the column the
     // left clause runs.
     let gap = HEADING_SHEEP_COLUMN.saturating_sub(left_w).max(1);
-    if left_w + gap + columns(&right) > usize::from(body) {
+    if left_w + gap + text_columns(&right) > usize::from(body) {
         return left;
     }
     format!("{left}{}{right}", " ".repeat(gap))
@@ -355,7 +356,7 @@ fn close_dialog_rows(
 /// cannot show, it says, the same rule the bleats feed follows when it
 /// counts the lines it discarded.
 ///
-/// `width` is the whole row's, [`super::layout::GUTTER`] included, since that is what a
+/// `width` is the whole row's, [`GUTTER`](crate::lookout::view::flock::GUTTER) included, since that is what a
 /// marked row must still fit inside.
 fn shed_dialog_rows(rows: &mut Vec<(DialogRow, Line<'static>)>, height: u16, width: u16) {
     let height = usize::from(height);
@@ -396,7 +397,7 @@ fn mark_cut(line: &mut Line<'static>, width: u16) {
     if text.ends_with('\u{2026}') {
         return;
     }
-    while columns(&text) + 1 > usize::from(width) {
+    while text_columns(&text) + 1 > usize::from(width) {
         text.pop();
     }
     text.push('\u{2026}');

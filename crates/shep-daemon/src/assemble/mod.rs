@@ -11,7 +11,7 @@
 //! `describe` is for the callers that read a spec's log paths or build its
 //! prober without ever starting a process.
 //!
-//! Public for its two out-of-crate readers and nothing else: `tests/real_runner.rs`
+//! Public for its two out-of-crate readers and nothing else: `tests/real_runner/`
 //! calls [`assemble`] to build a spec it then spawns for real, and
 //! [`instance_slots`]'s doc example is compiled as its own crate.
 

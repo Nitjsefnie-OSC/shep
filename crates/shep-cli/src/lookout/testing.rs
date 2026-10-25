@@ -41,3 +41,14 @@ impl Local for FakeLocal {
         None
     }
 }
+
+/// A recorded copy of shep-kelpie's `--schema` answer, as `kelpie-schema.json`
+/// holds it.
+pub(super) fn kelpie_answer() -> serde_json::Value {
+    serde_json::from_str(include_str!("kelpie-schema.json")).expect("the recording is JSON")
+}
+
+/// The part of [`kelpie_answer`] a sheep's `kelpie` table is edited by.
+pub(super) fn kelpie_sheep_schema() -> serde_json::Value {
+    super::probe_sheep_dogs::sheep_schema(&kelpie_answer()).expect("the answer names x-shep-sheep")
+}

@@ -9,6 +9,7 @@ use commands::shep_toml::ShepToml;
 use exit::ExitCode;
 
 use crate::home::resolve_paths;
+use crate::remote::refuse_host;
 use crate::{cli, commands, exit};
 
 /// Runs the token clap could not place as an adopted dog: `shep <dogname>
@@ -38,6 +39,7 @@ pub(crate) fn dispatch_adopted_dog(
     // that position is this dog's own argv.
     let index = argv.iter().position(|arg| arg.to_str() == Some(name))?;
     let global = GlobalArgs {
+        host: None,
         home: home_before(&argv[1..index]),
         format: Format::Table,
         quiet: false,
@@ -50,8 +52,19 @@ pub(crate) fn dispatch_adopted_dog(
     let path = ShepToml::adopted_dog_path_readonly(&paths.daemon_config, name)
         .ok()
         .flatten()?;
-    let dog_argv = argv[index + 1..].to_vec();
-    Some(run_adopted_dog(&path, &paths.home, name, &dog_argv))
+    // An adopted dog is a local binary: running it here for a `--host` the
+    // operator aimed elsewhere would be the substitution `--host` refuses.
+    if host_before(&argv[1..index]).is_some() {
+        return Some(refuse_host(format_before(&argv[1..index])).into());
+    }
+    let dog_argv = &argv[index + 1..];
+    // A dog that declared its subcommands gets shep's own help page for them;
+    // every other invocation, and every dog that declared nothing, is passed
+    // through to the binary as it always was.
+    if let Some(code) = crate::adopted_help::describe_dog(name, &path, &paths.home, dog_argv) {
+        return Some(code.into());
+    }
+    Some(run_adopted_dog(&path, &paths.home, name, dog_argv))
 }
 
 /// Scans `prefix`, the argv tokens before the one clap could not place, for
@@ -60,7 +73,7 @@ pub(crate) fn dispatch_adopted_dog(
 /// The only global flag [`resolve_paths`] reads. Falls back to `$SHEP_HOME`
 /// by hand, since clap's own `env = "SHEP_HOME"` attribute never ran on an
 /// argv it could not parse.
-fn home_before(prefix: &[OsString]) -> Option<PathBuf> {
+pub(crate) fn home_before(prefix: &[OsString]) -> Option<PathBuf> {
     let mut tokens = prefix.iter();
     while let Some(arg) = tokens.next() {
         if let Some(value) = home_equals_value(arg) {
@@ -71,6 +84,54 @@ fn home_before(prefix: &[OsString]) -> Option<PathBuf> {
         }
     }
     std::env::var_os("SHEP_HOME").map(PathBuf::from)
+}
+
+/// Scans `prefix`, the argv tokens before the one clap could not place, for
+/// `--host` in either `--host value` or `--host=value` form.
+///
+/// Only presence matters to the caller, which refuses. A `--host` with no
+/// value after it still answers `Some`, with an empty one, and a value that
+/// is not UTF-8 is read lossily: both are refused all the same, and neither
+/// may be the way a dog slips through. No `$SHEP_HOST` fallback exists.
+fn host_before(prefix: &[OsString]) -> Option<String> {
+    let mut tokens = prefix.iter();
+    while let Some(arg) = tokens.next() {
+        if let Some(value) = arg.to_string_lossy().strip_prefix("--host=") {
+            return Some(value.to_owned());
+        }
+        if arg == "--host" {
+            return Some(
+                tokens
+                    .next()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            );
+        }
+    }
+    None
+}
+
+/// Scans `prefix`, the argv tokens before the one clap could not place, for
+/// `--format` in either `--format value` or `--format=value` form.
+///
+/// Only the refusal reads it: clap never finished parsing this argv, so
+/// [`cli::GlobalArgs::format`] was never filled in, and a JSON consumer would
+/// otherwise get table text. A missing or unknown value answers
+/// [`Format::Table`], the flag's own default.
+fn format_before(prefix: &[OsString]) -> Format {
+    let mut tokens = prefix.iter();
+    while let Some(arg) = tokens.next() {
+        let value = match arg.to_string_lossy().strip_prefix("--format=") {
+            Some(value) => value.to_owned(),
+            None if arg == "--format" => match tokens.next() {
+                Some(value) => value.to_string_lossy().into_owned(),
+                None => break,
+            },
+            None => continue,
+        };
+        return <Format as clap::ValueEnum>::from_str(&value, true).unwrap_or(Format::Table);
+    }
+    Format::Table
 }
 
 /// The value in a `--home=value` token, or `None` when `arg` is not one.
@@ -125,7 +186,7 @@ fn run_adopted_dog(
         Ok(status) => std::process::ExitCode::from(dog_exit_code(status)),
         Err(err) => {
             eprintln!("shep: could not run adopted dog {}: {err}", path.display());
-            std::process::ExitCode::from(ExitCode::Failure as u8)
+            ExitCode::Failure.into()
         }
     }
 }
@@ -180,6 +241,97 @@ mod tests {
             OsString::from("/tmp/z"),
         ];
         assert_eq!(home_before(&prefix), Some(PathBuf::from("/tmp/z")));
+    }
+
+    #[test]
+    fn host_before_reads_a_separate_value_and_an_equals_form() {
+        let spaced = [OsString::from("--host"), OsString::from("amp2")];
+        assert_eq!(host_before(&spaced), Some("amp2".to_owned()));
+
+        let equals = [OsString::from("--host=user@amp2")];
+        assert_eq!(host_before(&equals), Some("user@amp2".to_owned()));
+
+        let after_others = [
+            OsString::from("--format"),
+            OsString::from("json"),
+            OsString::from("--host"),
+            OsString::from("amp2"),
+        ];
+        assert_eq!(host_before(&after_others), Some("amp2".to_owned()));
+
+        assert_eq!(host_before(&[OsString::from("--home=/tmp/x")]), None);
+        assert_eq!(host_before(&[]), None);
+        assert_eq!(
+            host_before(&[OsString::from("--host")]),
+            Some(String::new()),
+            "a flag with no value is still a flag that was typed"
+        );
+    }
+
+    #[test]
+    fn format_before_reads_a_separate_value_and_an_equals_form() {
+        let spaced = [OsString::from("--format"), OsString::from("json")];
+        assert_eq!(format_before(&spaced), Format::Json);
+
+        let equals = [OsString::from("--format=json")];
+        assert_eq!(format_before(&equals), Format::Json);
+
+        let after_others = [
+            OsString::from("--host"),
+            OsString::from("amp2"),
+            OsString::from("--format"),
+            OsString::from("json"),
+        ];
+        assert_eq!(format_before(&after_others), Format::Json);
+
+        assert_eq!(format_before(&[]), Format::Table);
+        assert_eq!(format_before(&[OsString::from("--format")]), Format::Table);
+        assert_eq!(
+            format_before(&[OsString::from("--format=xml")]),
+            Format::Table
+        );
+        assert_eq!(
+            format_before(&[OsString::from("--host=amp2")]),
+            Format::Table
+        );
+    }
+
+    /// The dog writes a marker file when it runs, so "refused" is read from
+    /// the file's absence: a `std::process::ExitCode` cannot be inspected.
+    #[cfg(unix)]
+    #[test]
+    fn an_adopted_dog_behind_host_is_refused_not_run_here() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".shep");
+        std::fs::create_dir_all(&home).unwrap();
+        let marker = dir.path().join("ran");
+        let script = dir.path().join("mydog.sh");
+        std::fs::write(&script, format!("#!/bin/sh\ntouch {}\n", marker.display())).unwrap();
+        let mut mode = std::fs::metadata(&script).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
+        std::fs::set_permissions(&script, mode).unwrap();
+        ShepToml::edit(&home.join("shep.toml"), |cfg| {
+            cfg.adopt_dog("mydog", &script, false).unwrap();
+        })
+        .unwrap();
+
+        for host_args in [vec!["--host", "amp2"], vec!["--host=amp2"]] {
+            let argv: Vec<OsString> = ["shep", "--home"]
+                .into_iter()
+                .map(OsString::from)
+                .chain([home.clone().into_os_string()])
+                .chain(host_args.into_iter().map(OsString::from))
+                .chain([OsString::from("mydog"), OsString::from("koji")])
+                .collect();
+            let err = Cli::try_parse_from(&argv).unwrap_err();
+            assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
+
+            assert!(
+                dispatch_adopted_dog(&argv, &err).is_some(),
+                "the refusal is an answer, not a fall-through to clap: {argv:?}"
+            );
+            assert!(!marker.exists(), "the dog ran here: {argv:?}");
+        }
     }
 
     #[cfg(unix)]
@@ -266,7 +418,7 @@ mod tests {
         std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
         std::fs::set_permissions(&script, mode).unwrap();
         ShepToml::edit(&home.join("shep.toml"), |cfg| {
-            cfg.adopt_dog("mydog", &script).unwrap();
+            cfg.adopt_dog("mydog", &script, false).unwrap();
         })
         .unwrap();
 

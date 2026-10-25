@@ -26,6 +26,11 @@ pub(super) const EVENT_WAIT: Duration = Duration::from_secs(30);
 /// How many `tokio::task::yield_now` rounds [`settle`] spends: headroom
 /// for the group loop, the actor and a sheep's task each needing a
 /// scheduling turn. Never advances the paused clock itself.
+///
+/// A plain round count bounds it because everything this waits on is an
+/// in-process mpsc send or actor hop, pushed straight onto the run queue.
+/// A wait on an OS-delivered event needs a real sleep instead, to force the
+/// runtime to park and poll its reactor.
 const SETTLE_YIELDS: usize = 16;
 
 pub(super) async fn settle() {

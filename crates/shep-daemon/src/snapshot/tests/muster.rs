@@ -13,9 +13,10 @@ use super::super::*;
 use shep_core::config::{AppConfig, normalize};
 use shep_core::status::ProcStatus;
 
+use super::fixture::TestFlock;
+
 use crate::fake::{ProcScript, ScriptedRunner};
-use crate::supervisor::spawn_supervisor;
-use crate::testing::{roll_of, sorted_status, test_paths};
+use crate::testing::{roll_of, sorted_status};
 
 /// Restoring only the running ones would make `shep stop` destructive
 /// across a daemon restart: the sheep would leave the flock entirely.
@@ -30,14 +31,17 @@ fn restorable_keeps_every_member_and_starts_only_what_was_up() {
         SavedApp {
             app: AppConfig::minimal("web", "./srv"),
             instances_running: 2,
+            disabled: false,
         },
         SavedApp {
             app: stopped,
             instances_running: 0,
+            disabled: false,
         },
         SavedApp {
             app: opted_out,
             instances_running: 1,
+            disabled: false,
         },
     ]);
     let restorable = restorable(roll);
@@ -91,32 +95,23 @@ fn restorable_reports_a_hand_edited_invalid_app_instead_of_aborting() {
 /// inverted restore rule would pass any one alone.
 #[tokio::test(start_paused = true)]
 async fn muster_restores_both_and_starts_only_the_one_that_was_up() {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    std::fs::create_dir_all(paths.snapshot.parent().unwrap()).unwrap();
     let roll = FlockSnapshot::with_apps(vec![
         SavedApp {
             app: AppConfig::minimal("up", "./srv"),
             instances_running: 1,
+            disabled: false,
         },
         SavedApp {
             app: AppConfig::minimal("down", "./srv"),
             instances_running: 0,
+            disabled: false,
         },
     ]);
-    write_atomic(&paths.snapshot, &roll).unwrap();
 
-    let (events, _rx) = crate::bus::test_bus(64);
-    let handle = spawn_supervisor(
-        ScriptedRunner::new(vec![ProcScript::never_exits()]),
-        paths.clone(),
-        events.clone(),
-    );
-    let registry = FlockRegistry::new();
+    let flock = TestFlock::new(ScriptedRunner::new(vec![ProcScript::never_exits()]));
+    flock.seed(&roll);
 
-    let restored = muster(&paths.snapshot, &registry, &handle, &events, &[], &[])
-        .await
-        .unwrap();
+    let restored = flock.muster().await.unwrap();
     assert_eq!(
         restored,
         vec!["up".to_string(), "down".to_string()],
@@ -124,14 +119,14 @@ async fn muster_restores_both_and_starts_only_the_one_that_was_up() {
     );
 
     assert_eq!(
-        sorted_status(&handle).await,
+        sorted_status(&flock.handle).await,
         [
             ("down".to_string(), ProcStatus::Stopped),
             ("up".to_string(), ProcStatus::Online)
         ],
         "the sheep that was down is listed and stopped, not missing"
     );
-    handle.shutdown().await;
+    flock.shutdown().await;
 }
 
 /// fails if a bad entry that is not LAST takes every app after it down.
@@ -146,27 +141,18 @@ async fn muster_restores_both_and_starts_only_the_one_that_was_up() {
 /// load-bearing, since scripts are consumed in spawn order.
 #[tokio::test(start_paused = true)]
 async fn a_bad_saved_app_does_not_take_the_apps_after_it_down() {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    std::fs::create_dir_all(paths.snapshot.parent().unwrap()).unwrap();
     let app = |name: &str| AppConfig::minimal(name, "./srv");
     let roll = roll_of(vec![app("a-good"), app("b-bad"), app("c-good")]);
-    write_atomic(&paths.snapshot, &roll).unwrap();
 
-    let (events, _rx) = crate::bus::test_bus(64);
-    let handle = spawn_supervisor(
+    let flock = TestFlock::new(
         // Two scripts for the two that must come up. `b-bad` consumes
         // none, so a run that let it take one would starve `c-good` and
         // fail here for a reason of its own.
         ScriptedRunner::new(vec![ProcScript::never_exits(); 2]).failing_to_spawn(&["b-bad"]),
-        paths.clone(),
-        events.clone(),
     );
-    let registry = FlockRegistry::new();
+    flock.seed(&roll);
 
-    let restored = muster(&paths.snapshot, &registry, &handle, &events, &[], &[])
-        .await
-        .unwrap();
+    let restored = flock.muster().await.unwrap();
     assert_eq!(
         restored,
         vec![
@@ -177,7 +163,7 @@ async fn a_bad_saved_app_does_not_take_the_apps_after_it_down() {
     );
 
     assert_eq!(
-        sorted_status(&handle).await,
+        sorted_status(&flock.handle).await,
         [
             ("a-good".to_string(), ProcStatus::Online),
             ("b-bad".to_string(), ProcStatus::Errored),
@@ -186,7 +172,7 @@ async fn a_bad_saved_app_does_not_take_the_apps_after_it_down() {
         "every app after the broken one must still get its turn, and the \
          broken one must be visible rather than absent"
     );
-    handle.shutdown().await;
+    flock.shutdown().await;
 }
 
 /// fails if ONE saved app that cannot start keeps the rest of the flock
@@ -206,32 +192,23 @@ async fn a_bad_saved_app_does_not_take_the_apps_after_it_down() {
 /// not the roll's, and `gone` sorts first.
 #[tokio::test(start_paused = true)]
 async fn one_unstartable_saved_app_does_not_keep_the_rest_of_the_flock_down() {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    std::fs::create_dir_all(paths.snapshot.parent().unwrap()).unwrap();
     let roll = roll_of(vec![
         AppConfig::minimal("good", "./srv"),
         AppConfig::minimal("gone", "./deleted-by-a-rebuild"),
     ]);
-    write_atomic(&paths.snapshot, &roll).unwrap();
 
-    let (events, _rx) = crate::bus::test_bus(64);
-    let handle = spawn_supervisor(
+    let flock = TestFlock::new(
         ScriptedRunner::new(vec![ProcScript::never_exits()])
             .refusing(&["gone"])
             .failing_to_spawn(&["gone"]),
-        paths.clone(),
-        events.clone(),
     );
-    let registry = FlockRegistry::new();
+    flock.seed(&roll);
 
-    let restored = muster(&paths.snapshot, &registry, &handle, &events, &[], &[])
-        .await
-        .unwrap();
+    let restored = flock.muster().await.unwrap();
     assert_eq!(restored, vec!["good".to_string(), "gone".to_string()]);
 
     assert_eq!(
-        sorted_status(&handle).await,
+        sorted_status(&flock.handle).await,
         [
             ("gone".to_string(), ProcStatus::Errored),
             ("good".to_string(), ProcStatus::Online)
@@ -239,7 +216,7 @@ async fn one_unstartable_saved_app_does_not_keep_the_rest_of_the_flock_down() {
         "the app that could still run must come up, and the one that \
          could not must be visible rather than absent"
     );
-    handle.shutdown().await;
+    flock.shutdown().await;
 }
 
 /// fails if `muster` starts an app the flock already has.
@@ -250,35 +227,24 @@ async fn one_unstartable_saved_app_does_not_keep_the_rest_of_the_flock_down() {
 /// a duplicate lands as `Errored`.
 #[tokio::test(start_paused = true)]
 async fn muster_leaves_an_app_the_flock_already_has_where_it_stands() {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    std::fs::create_dir_all(paths.snapshot.parent().unwrap()).unwrap();
     let roll = roll_of(vec![AppConfig::minimal("web", "./srv")]);
-    write_atomic(&paths.snapshot, &roll).unwrap();
 
-    let (events, _rx) = crate::bus::test_bus(64);
-    let handle = spawn_supervisor(
-        ScriptedRunner::new(vec![ProcScript::never_exits()]),
-        paths.clone(),
-        events.clone(),
-    );
-    let registry = FlockRegistry::new();
+    let flock = TestFlock::new(ScriptedRunner::new(vec![ProcScript::never_exits()]));
+    flock.seed(&roll);
     let app = normalize(AppConfig::minimal("web", "./srv")).unwrap();
-    registry.record(std::slice::from_ref(&app));
-    handle.start(vec![app]).await.unwrap();
+    flock.registry.record(std::slice::from_ref(&app));
+    flock.handle.start(vec![app]).await.unwrap();
 
-    let restored = muster(&paths.snapshot, &registry, &handle, &events, &[], &[])
-        .await
-        .unwrap();
+    let restored = flock.muster().await.unwrap();
     assert_eq!(
         restored,
         vec!["web".to_string()],
         "the roll's app is restored whether or not this call is what started it"
     );
-    let listed = handle.list().await;
+    let listed = flock.handle.list().await;
     assert_eq!(listed.len(), 1, "one instance of a one-instance app");
     assert_eq!(listed[0].status, ProcStatus::Online);
-    handle.shutdown().await;
+    flock.shutdown().await;
 }
 
 /// fails if a missing roll becomes an error. A fresh `$SHEP_HOME` has
@@ -286,25 +252,10 @@ async fn muster_leaves_an_app_the_flock_already_has_where_it_stands() {
 /// machine.
 #[tokio::test(start_paused = true)]
 async fn a_missing_roll_restores_nothing_without_failing() {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = test_paths(&dir);
-    std::fs::create_dir_all(paths.snapshot.parent().unwrap()).unwrap();
-    assert!(!paths.snapshot.exists());
+    let flock = TestFlock::new(ScriptedRunner::new(vec![ProcScript::never_exits()]));
+    assert!(!flock.paths.snapshot.exists());
 
-    let (events, _rx) = crate::bus::test_bus(64);
-    let handle = spawn_supervisor(
-        ScriptedRunner::new(vec![ProcScript::never_exits()]),
-        paths.clone(),
-        events.clone(),
-    );
-    let registry = FlockRegistry::new();
-
-    assert_eq!(
-        muster(&paths.snapshot, &registry, &handle, &events, &[], &[])
-            .await
-            .unwrap(),
-        Vec::<String>::new()
-    );
-    assert!(handle.list().await.is_empty());
-    handle.shutdown().await;
+    assert_eq!(flock.muster().await.unwrap(), Vec::<String>::new());
+    assert!(flock.handle.list().await.is_empty());
+    flock.shutdown().await;
 }

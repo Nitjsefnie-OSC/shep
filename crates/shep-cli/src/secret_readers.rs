@@ -45,16 +45,16 @@ pub(crate) struct SecretNamer {
 /// looks like.
 ///
 /// Takes the roll already parsed: the pane reads it once for this and for
-/// [`roll_age`].
+/// [`roll_age`]. Takes `host_environment` rather than reading it, so a caller
+/// with a stream can report a `shep.toml` that would not read.
 pub(crate) fn namers(
-    paths: &ShepPaths,
+    host_environment: &str,
     roll: Option<&FlockSnapshot>,
     procs: &[ProcessInfo],
 ) -> Vec<SecretNamer> {
     let Some(roll) = roll else {
         return Vec::new();
     };
-    let host_environment = daemon_config(paths).daemon.environment;
     // First entry wins on a duplicate name, which is the match `find`
     // would have taken.
     let mut configs: BTreeMap<&str, &AppConfig> = BTreeMap::new();
@@ -79,7 +79,7 @@ pub(crate) fn namers(
             environment: config
                 .environment
                 .clone()
-                .unwrap_or_else(|| host_environment.clone()),
+                .unwrap_or_else(|| host_environment.to_string()),
             references,
         });
     }
@@ -121,7 +121,8 @@ pub(crate) fn by_reference(
         .map(|proc| proc.name.as_str())
         .collect();
     let mut map: BTreeMap<String, Vec<Reader>> = BTreeMap::new();
-    for namer in namers(paths, roll, procs) {
+    let host_environment = daemon_config(paths).daemon.environment;
+    for namer in namers(&host_environment, roll, procs) {
         for reference in &namer.references {
             map.entry(reference.clone()).or_default().push(Reader {
                 name: namer.name.clone(),
@@ -179,6 +180,7 @@ pub(crate) mod test_support {
                 .map(|app| SavedApp {
                     app,
                     instances_running: 1,
+                    disabled: false,
                 })
                 .collect(),
         );
@@ -198,9 +200,35 @@ pub(crate) mod test_support {
 mod tests {
     use crate::commands::query::read_roll;
     use shep_core::config::AppConfig;
+    use shep_daemon::snapshot::SavedApp;
 
     use super::test_support::{online, paths_under, stopped, write_roll};
     use super::*;
+
+    /// A shepherd that has never written its roll answers "who names which
+    /// secret" with nothing, rather than failing or inventing a config.
+    #[test]
+    fn namers_with_no_roll_names_nothing() {
+        let found = namers("production", None, &[online("web")]);
+        assert!(
+            found.is_empty(),
+            "no roll on disk: nothing to name from: {found:?}"
+        );
+    }
+
+    /// The same gap seen from the reference side: `by_reference` still
+    /// reads `shep.toml` for the host environment, but with no roll even a
+    /// running sheep contributes no row.
+    #[test]
+    fn by_reference_with_no_roll_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_under(dir.path());
+        let map = by_reference(&paths, None, &[online("web")]);
+        assert!(
+            map.is_empty(),
+            "no roll on disk: no reference has readers: {map:?}"
+        );
+    }
 
     #[test]
     fn an_app_naming_no_reference_is_left_out() {
@@ -216,7 +244,7 @@ mod tests {
 
         let roll = read_roll(&paths);
         let found = namers(
-            &paths,
+            &daemon_config(&paths).daemon.environment,
             roll.as_ref(),
             &[online("plain"), online("secretive")],
         );
@@ -239,7 +267,7 @@ mod tests {
 
         let roll = read_roll(&paths);
         let found = namers(
-            &paths,
+            &daemon_config(&paths).daemon.environment,
             roll.as_ref(),
             &[online("pinned"), online("floating")],
         );
@@ -264,12 +292,51 @@ mod tests {
 
         let roll = read_roll(&paths);
         let found = namers(
-            &paths,
+            &daemon_config(&paths).daemon.environment,
             roll.as_ref(),
             &[online("web"), online("web"), online("web")],
         );
 
         assert_eq!(found.len(), 1, "three instances, one config: {found:?}");
+    }
+
+    /// A roll written by an older build could hold two entries under one
+    /// name. `namers` keeps the first, which is the entry a `find` over
+    /// `roll.apps` would have matched: the second entry's environment and
+    /// references are ignored outright, not merged in.
+    #[test]
+    fn two_roll_entries_under_one_name_report_the_first_ones_environment_and_references() {
+        let mut first = AppConfig::minimal("web", "./srv");
+        first.environment = Some("staging".into());
+        first.env.insert("PW".into(), "{{secret:FIRST}}".into());
+        let mut second = AppConfig::minimal("web", "./srv");
+        second.environment = Some("production".into());
+        second.env.insert("PW".into(), "{{secret:SECOND}}".into());
+        let roll = FlockSnapshot::with_apps(vec![
+            SavedApp {
+                app: first,
+                instances_running: 1,
+                disabled: false,
+            },
+            SavedApp {
+                app: second,
+                instances_running: 1,
+                disabled: false,
+            },
+        ]);
+
+        let found = namers("production", Some(&roll), &[online("web")]);
+
+        assert_eq!(found.len(), 1, "one entry per name: {found:?}");
+        assert_eq!(
+            found[0].environment, "staging",
+            "the first entry's environment wins"
+        );
+        assert_eq!(
+            found[0].references,
+            BTreeSet::from(["FIRST".to_string()]),
+            "only the first entry's references are read"
+        );
     }
 
     #[test]

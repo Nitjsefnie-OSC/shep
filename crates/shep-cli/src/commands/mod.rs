@@ -6,8 +6,10 @@
 pub mod admin;
 pub mod bleats;
 pub(crate) mod bounded;
+pub(crate) mod copy;
 pub mod daemon;
 pub mod dev;
+pub(crate) mod dial_stdio;
 pub(crate) mod dog_migration;
 pub mod dogs;
 pub(crate) mod empty;
@@ -16,6 +18,7 @@ pub(crate) mod foreground;
 // ahead of a ruling on which verb fires it, so nothing calls it yet.
 #[allow(dead_code)]
 pub(crate) mod hook;
+pub mod hosts;
 pub mod import;
 pub(crate) mod init;
 pub mod kv;
@@ -34,6 +37,8 @@ pub mod secret;
 pub(crate) mod selector;
 pub mod serve;
 pub(crate) mod settings;
+pub(crate) mod settings_read;
+pub(crate) mod settings_write;
 pub(crate) mod shep_toml;
 pub mod signal;
 // `shep startup` installs a boot-time unit: systemd, launchd, openrc, or a

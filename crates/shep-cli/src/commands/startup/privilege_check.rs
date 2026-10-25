@@ -57,12 +57,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             remove(&mut streams, &plan_for_test(&home), Privilege::Unprivileged)
         };
         assert_eq!(code, ExitCode::Success);

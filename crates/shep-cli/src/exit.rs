@@ -50,12 +50,17 @@ pub enum ExitCode {
     /// one sheep ended `errored`. A flock that emptied cleanly, every sheep
     /// `stopped`, exits `Success` instead.
     FlockEmpty = 11,
-    /// This binary and the running shepherd are different versions of shep.
+    /// This binary and the shepherd it reached disagree about shep.
     ///
-    /// The handshake succeeded and only the crate versions differ, the state
-    /// `cargo install shep` leaves behind. A wire disagreement is
+    /// The handshake succeeded. Over the local socket this is the state
+    /// `cargo install shep` leaves behind: the crate versions differ and the
+    /// wire does not. Over `--host` it is the other way round, a shepherd
+    /// speaking a protocol this build does not, since that host has its own
+    /// install. A handshake the peer refused outright is
     /// [`ExitCode::ProtocolMismatch`] instead. Never returned for `kill`,
-    /// `daemon reload` or `ping`, which are how an operator gets out of it.
+    /// `daemon reload` or `ping`, which are how an operator gets out of it,
+    /// nor for `flock`, `describe` or `bleats`, which only read and warn on
+    /// stderr instead.
     VersionSkew = 12,
     /// The daemon understood the handshake but not the request itself.
     ///
@@ -162,6 +167,19 @@ impl From<&shep_client::spawn::SpawnError> for ExitCode {
     }
 }
 
+/// The `std::process::ExitCode` a process exits with to report this code:
+/// the variant's own discriminant, so the number an operator sees is the one
+/// `docs/specs/shep-v1.md` §9 states and `ExitCode::code_str` spells.
+///
+/// The only conversion the other way: every one above reads a number a
+/// `shep_client` error chose and names the `ExitCode` for it, and this one
+/// hands that choice to the OS.
+impl From<ExitCode> for std::process::ExitCode {
+    fn from(code: ExitCode) -> Self {
+        Self::from(code as u8)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,6 +258,26 @@ mod tests {
             strings.len(),
             "duplicated spelling: {strings:?}"
         );
+    }
+
+    /// `std::process::ExitCode` is opaque and reads back no number, so the
+    /// comparison is against the process code built by hand from
+    /// `docs/specs/shep-v1.md` §9's literal for each variant. A conversion
+    /// that re-picked a number, or went through a lookup instead of the
+    /// variant's own discriminant, fails here.
+    #[test]
+    fn an_exit_code_converts_to_the_process_code_with_its_own_number() {
+        for (code, spec_number) in [
+            (ExitCode::Success, 0u8),
+            (ExitCode::Failure, 1),
+            (ExitCode::Usage, 2),
+        ] {
+            assert_eq!(
+                std::process::ExitCode::from(code),
+                std::process::ExitCode::from(spec_number),
+                "{code:?} must exit with {spec_number}"
+            );
+        }
     }
 
     /// The one number both crates hard-code. If they diverge, the cold-start

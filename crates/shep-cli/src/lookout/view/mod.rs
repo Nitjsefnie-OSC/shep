@@ -9,6 +9,7 @@ pub mod bleats;
 pub mod bleats_full;
 pub mod cell;
 pub mod detail;
+mod feed_ink;
 pub mod flock;
 pub mod host;
 mod keymap;
@@ -27,6 +28,8 @@ pub mod status;
 #[cfg(test)]
 pub mod fixtures;
 mod layout_budget;
+#[cfg(test)]
+mod over_host;
 mod paint_frame;
 #[cfg(test)]
 mod testing;

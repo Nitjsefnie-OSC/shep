@@ -8,29 +8,46 @@
 //! `ProcessInfo` rows, [`lambs`] for its lamb tree, [`dogs`] for the
 //! dog-specific ones, [`toolkit`] for the paint/cell rules both share,
 //! [`lifecycle`] for one-shot verb results, [`replies`] for a daemon
-//! action's reply, [`secrets`] for the KV store and `shep secret`.
+//! action's reply, [`secrets`] for the KV store and `shep secret`, [`settings`]
+//! for `shep get`, [`settings_write`] for `shep set`, [`hosts`] for
+//! `shep host`.
 
+mod copy;
 mod dogs;
+mod hosts;
 mod lambs;
 mod lifecycle;
 mod process;
 mod replies;
 mod secrets;
+mod settings;
+mod settings_write;
 mod toolkit;
 
+pub use copy::{CopyChange, CopyReport};
 pub use dogs::*;
+pub use hosts::*;
 pub use lambs::*;
 pub use lifecycle::*;
 pub use process::*;
 pub use replies::*;
 pub use secrets::*;
+pub use settings::SettingsAnswer;
+pub use settings_write::SetReport;
 pub(crate) use toolkit::*;
+
+#[cfg(test)]
+mod access_tests;
+#[cfg(test)]
+mod disabled_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {
     use std::collections::BTreeSet;
 
-    use shep_core::protocol::{ActionOutcome, ActionReply, DogSource, ExitInfo, ProcessInfo};
+    use shep_core::protocol::{
+        ActionOutcome, ActionReply, DogAccess, DogSource, ExitInfo, ProcessInfo,
+    };
     use shep_core::status::ProcStatus;
 
     use crate::style::Presentation;
@@ -84,10 +101,17 @@ pub(crate) mod tests {
         sample_info(1, "web", uptime_ms)
     }
 
-    /// A dog-shaped `ProcessInfo`: `sample_info` with `dog` set to `source`.
+    /// A dog-shaped `ProcessInfo`: `sample_info` with `dog` set to `source`,
+    /// and the marks the CLI lays over a dog's row from `shep.toml`, which a
+    /// sheep never carries.
     pub(crate) fn dog_info(name: &str, source: DogSource) -> ProcessInfo {
         let mut info = sample_info(1, name, 60_000);
         info.dog = Some(source);
+        info.access = Some(DogAccess {
+            undeclared: true,
+            not_reviewed: true,
+            waiting: vec!["logs.read".to_string()],
+        });
         info
     }
 
@@ -108,17 +132,12 @@ pub(crate) mod tests {
     ) {
         let json = serde_json::to_value(value).unwrap();
         let record = first_record(&json);
-        let keys: BTreeSet<&str> = record
-            .as_object()
-            .unwrap()
-            .keys()
-            .map(String::as_str)
-            .collect();
+        let keys: BTreeSet<String> = record.as_object().unwrap().keys().cloned().collect();
 
-        let covered: BTreeSet<&str> = T::headers()
+        let covered: BTreeSet<String> = T::headers()
             .iter()
             .map(|h| T::json_key_for(h))
-            .chain(T::JSON_ONLY.iter().copied())
+            .chain(T::JSON_ONLY.iter().map(|k| (*k).to_owned()))
             .collect();
 
         assert_eq!(
@@ -146,7 +165,7 @@ pub(crate) mod tests {
                 continue;
             }
             let key = T::json_key_for(header);
-            let expected = match &record[key] {
+            let expected = match &record[&key] {
                 serde_json::Value::String(s) => s.clone(),
                 serde_json::Value::Number(n) => n.to_string(),
                 serde_json::Value::Bool(b) => b.to_string(),
@@ -235,6 +254,7 @@ pub(crate) mod tests {
         assert_priorities_match_headers::<SavedRollRow>(&["FILE", "APPS"]);
         assert_priorities_match_headers::<ImportRows>(&["NAME"]);
         assert_priorities_match_headers::<ImportEnvRows>(&["KEY", "STORE"]);
+        assert_priorities_match_headers::<CopyReport>(&["KEY", "CHANGE"]);
         assert_priorities_match_headers::<StartupSteps>(&["TARGET", "RESULT"]);
         assert_priorities_match_headers::<TriggeredRows>(&["ID", "NAME", "OUTCOME"]);
         assert_priorities_match_headers::<SignalledRows>(&["ID", "NAME", "OUTCOME"]);
@@ -242,10 +262,32 @@ pub(crate) mod tests {
         assert_priorities_match_headers::<BarkRows>(&["WHEN", "RULE", "SUBJECT"]);
         assert_priorities_match_headers::<KvRows>(&["KEY", "VALUE"]);
         assert_priorities_match_headers::<KvUnsetRow>(&["REMOVED"]);
+        assert_priorities_match_headers::<HostRows>(&["HOST"]);
         assert_priorities_match_headers::<AvailableDogRows>(&["NAME", "PACKAGE"]);
         assert_priorities_match_headers::<SecretKeyRows>(&["KEY", "ENVIRONMENTS"]);
         assert_priorities_match_headers::<SecretSlotRow>(&["KEY", "ENVIRONMENT"]);
         assert_priorities_match_headers::<SecretValueRow>(&["KEY", "VALUE"]);
+        assert_priorities_match_headers::<SettingsAnswer>(&["NAME"]);
+    }
+
+    /// The trait's own `json_key_for` is the lowercased header, so an impl
+    /// whose mapping is plain lowercase needs no override at all. An impl
+    /// with a real rename still wins: `EXIT` and `WHEN` are two of the seven
+    /// that override it.
+    #[test]
+    fn the_default_json_key_is_the_lowercased_header_and_an_override_still_wins() {
+        assert_eq!(KvUnsetRow::json_key_for("REMOVED"), "removed");
+        assert_eq!(FlockRows::json_key_for("EXIT"), "last_exit");
+        assert_eq!(BarkRows::json_key_for("WHEN"), "at_ms");
+    }
+
+    /// The permissive half is the default alone. An impl with a real rename
+    /// still refuses a header it does not have, which is the surviving half
+    /// of the old trait contract.
+    #[test]
+    #[should_panic(expected = "FlockRows::headers() does not include \"NOPE\"")]
+    fn an_override_still_rejects_a_header_it_does_not_have() {
+        FlockRows::json_key_for("NOPE");
     }
 
     /// The 256-colour presentation these cases render at.
@@ -277,7 +319,9 @@ pub(crate) mod tests {
             .cpu_percent(pid.map(|_| 0.0))
             .memory_bytes(pid.map(|_| 3 * 1024 * 1024))
             .dog(Some(DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
+                channel: false,
             }))
             .build()
     }
@@ -312,7 +356,11 @@ pub(crate) mod tests {
             &["FOLD", "SMIT"],
             "the sheep table's own"
         );
-        assert_eq!(&dogs[common.len()..], &["SOURCE"], "the dogs table's own");
+        assert_eq!(
+            &dogs[common.len()..],
+            &["SOURCE", "ACCESS"],
+            "the dogs table's own"
+        );
 
         // FOLD and SMIT are impossible for a dog rather than empty: a dog
         // belongs to no fold, and a smit is a mark a dog paints on a sheep.
@@ -372,10 +420,11 @@ pub(crate) mod tests {
         let adopted = DogActionRow::new(
             "log-rotate",
             DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
+                channel: false,
             },
-            "online",
-            true,
+            DogActionStatus::Acted("online"),
         );
         let cells = reversed::<DogActionRow>(adopted.rows().remove(0), dog_action_paint);
         let h = DogActionRow::headers();

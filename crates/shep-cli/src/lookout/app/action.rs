@@ -139,29 +139,8 @@ impl App {
                 refusal = refusal_sentence(&refused);
                 accepted
             }
-            Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{prefix}: the shepherd answered something this lookout does not understand"
-                    ),
-                    grave: true,
-                });
-                return Effect::None;
-            }
-            // The daemon's own message: `RequestError`'s `Display` would put a
-            // Rust identifier on an operator's screen.
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{prefix}: {}", err.message),
-                    grave: true,
-                });
-                return Effect::None;
-            }
-            Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{prefix}: {other}"),
-                    grave: true,
-                });
+            other => {
+                self.notice = Some(Notice::grave(format!("{prefix}: {}", failed_reply(other))));
                 return Effect::None;
             }
         };
@@ -174,14 +153,8 @@ impl App {
         // fold that half refused reads as a problem rather than as a done
         // thing an operator scrolls past.
         self.notice = Some(match &refusal {
-            Some(sentence) => Notice {
-                text: format!("{prefix}: {}, but {sentence}", outcome(verb)),
-                grave: true,
-            },
-            None => Notice {
-                text: format!("{prefix}: {}", outcome(verb)),
-                grave: false,
-            },
+            Some(sentence) => Notice::grave(format!("{prefix}: {}, but {sentence}", outcome(verb))),
+            None => Notice::info(format!("{prefix}: {}", outcome(verb))),
         });
         if was_empty && self.reseat(None) {
             return Effect::RefreshSelected;
@@ -249,14 +222,11 @@ impl App {
     /// question that was never about the in-flight action at all.
     pub(super) fn arm(&mut self, verb: ActionVerb) -> Effect {
         if let Some(text) = self.confirm_refusal() {
-            self.notice = Some(Notice { text, grave: true });
+            self.notice = Some(Notice::grave(text));
             return Effect::None;
         }
         let Some(key) = self.selected.clone() else {
-            self.notice = Some(Notice {
-                text: "no sheep is selected".to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave("no sheep is selected".to_string()));
             return Effect::None;
         };
         // `self.held` as well as `self.action`, the same pair
@@ -267,10 +237,7 @@ impl App {
         // that releases it. [`Self::arm_sheep_pane`] is the only other
         // door that arms from a keypress, and it refuses on the same pair.
         if self.action.is_some() || self.held.is_some() {
-            self.notice = Some(Notice {
-                text: "one action is already in flight".to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave("one action is already in flight".to_string()));
             return Effect::None;
         }
         let (target, name, count) = match &key {
@@ -318,13 +285,10 @@ impl App {
         // The whole flock, not the visible set: a filter typed after arming
         // hides a sheep, it does not remove it.
         if !self.target_present(&action.target) {
-            self.notice = Some(Notice {
-                text: format!(
-                    "{}: it is no longer in the flock",
-                    target_prefix(action.verb, &action.target, &action.name)
-                ),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(format!(
+                "{}: it is no longer in the flock",
+                target_prefix(action.verb, &action.target, &action.name)
+            )));
             return Effect::None;
         }
         let sent = Sent::Action {
@@ -517,7 +481,7 @@ mod tests {
     #[test]
     fn the_confirm_is_pinned_to_the_id_it_was_armed_on() {
         let mut app = allowed();
-        app.set_filter("api".to_string());
+        app.set_filter(TextBox::from("api"));
         app.update(Msg::Key(KeyPress::Action(ActionVerb::Stop)));
         app.update(Msg::Snapshot {
             rows: vec![

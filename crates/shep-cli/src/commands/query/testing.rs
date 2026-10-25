@@ -5,6 +5,7 @@ use super::secret_inspection::describe;
 use crate::cli::{Format, SelectorArgs};
 use crate::exit::ExitCode;
 use crate::output::Streams;
+use crate::remote::Link;
 use shep_client::Client;
 use shep_client::testing::{fake_client_answering, fake_client_with_ack, sample_ack, sample_info};
 use shep_core::paths::ShepPaths;
@@ -56,15 +57,89 @@ pub(super) async fn listing(client: &Client, fmt: Format) -> (ExitCode, String) 
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, fmt);
         flock(client, &mut streams).await
     };
     (code, String::from_utf8(out).unwrap())
+}
+
+/// What one `describe` run left behind.
+pub(super) struct Described {
+    pub(super) code: ExitCode,
+    pub(super) paths: ShepPaths,
+    pub(super) out: Vec<u8>,
+    pub(super) err: Vec<u8>,
+}
+
+/// An app named `name` whose env holds `env`, each pair a key and the
+/// value it is set to.
+pub(super) fn app_with_env(name: &str, env: &[(&str, &str)]) -> shep_core::config::AppConfig {
+    let mut config = shep_core::config::AppConfig::minimal(name, "./srv");
+    for (key, value) in env {
+        config.env.insert((*key).into(), (*value).into());
+    }
+    config
+}
+
+/// `shep describe all` at `fmt`, against a local roll holding `apps`.
+///
+/// `after_roll` runs once the roll is written and before `describe`
+/// reads, to put whatever the scenario needs beside it: store entries, a
+/// provider cache, a store that will not parse. `SHEP_HOME` is pinned to
+/// the tempdir itself, not its `.shep` default, because the default
+/// subdirectory is never created outside a real boot.
+pub(super) async fn describe_against_a_local_roll(
+    apps: Vec<shep_core::config::AppConfig>,
+    after_roll: impl FnOnce(&ShepPaths),
+    fmt: Format,
+) -> Described {
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, daemon) = fake_client_with_ack(&path, sample_ack()).await;
+    daemon.reply_to_describe(
+        apps.iter()
+            .zip(1..)
+            .map(|(app, id)| ProcessInfo::builder(id, &app.name, ProcStatus::Online).build())
+            .collect(),
+    );
+
+    let home = dir.path().display().to_string();
+    let paths = ShepPaths::resolve(
+        &move |key| (key == "SHEP_HOME").then(|| home.clone()),
+        dir.path(),
+    );
+    let roll = FlockSnapshot::with_apps(
+        apps.into_iter()
+            .map(|app| shep_daemon::snapshot::SavedApp {
+                app,
+                instances_running: 1,
+                disabled: false,
+            })
+            .collect(),
+    );
+    std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
+    after_roll(&paths);
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let code = {
+        let mut streams = Streams::bare(&mut out, &mut err, fmt);
+        describe(
+            &client,
+            &mut streams,
+            &Link::Local(&paths),
+            &SelectorArgs {
+                selectors: vec!["all".into()],
+            },
+        )
+        .await
+    };
+    Described {
+        code,
+        paths,
+        out,
+        err,
+    }
 }
 
 /// A roll entry, an operator store entry and no provider cache at all:
@@ -74,57 +149,21 @@ pub(super) async fn listing(client: &Client, fmt: Format) -> (ExitCode, String) 
 pub(super) async fn describe_with_a_seeded_web(
     fmt: Format,
 ) -> (ExitCode, shep_core::paths::ShepPaths, Vec<u8>) {
-    let dir = tempfile::tempdir().unwrap();
-    let path = shep_client::testing::control_address(dir.path());
-    let (client, daemon) = fake_client_with_ack(&path, sample_ack()).await;
-    daemon.reply_to_describe(vec![
-        ProcessInfo::builder(1, "web", ProcStatus::Online).build(),
-    ]);
-
-    // `SHEP_HOME` pinned to `dir` itself, not its `.shep` default: this
-    // test writes `paths.snapshot`/`paths.secrets` directly, and the
-    // default subdirectory is never created outside a real boot.
-    let home = dir.path().display().to_string();
-    let paths = ShepPaths::resolve(
-        &move |key| (key == "SHEP_HOME").then(|| home.clone()),
-        dir.path(),
+    let web = app_with_env(
+        "web",
+        &[
+            ("A", "{{secret:DB_PASSWORD}}"),
+            ("B", "{{secret:vercel/API_KEY}}"),
+        ],
     );
-
-    let mut config = shep_core::config::AppConfig::minimal("web", "./srv");
-    config
-        .env
-        .insert("A".into(), "{{secret:DB_PASSWORD}}".into());
-    config
-        .env
-        .insert("B".into(), "{{secret:vercel/API_KEY}}".into());
-    let roll = FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
-        app: config,
-        instances_running: 1,
-    }]);
-    std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
-    secrets::set(&paths.secrets, "DB_PASSWORD", "production", "hunter2").unwrap();
     // No provider cache written: `vercel` has never pushed anything.
-
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        };
-        describe(
-            &client,
-            &mut streams,
-            &paths,
-            &SelectorArgs {
-                selectors: vec!["all".into()],
-            },
-        )
-        .await
-    };
-    (code, paths, out)
+    let described = describe_against_a_local_roll(
+        vec![web],
+        |paths| secrets::set(&paths.secrets, "DB_PASSWORD", "production", "hunter2").unwrap(),
+        fmt,
+    )
+    .await;
+    (described.code, described.paths, described.out)
 }
 
 /// Whether `hunter2` shows up anywhere in `value`'s own JSON text, not
@@ -144,6 +183,6 @@ pub(super) fn sheep(id: u32, status: ProcStatus) -> ProcessInfo {
 /// A registered dog, which `flock_display::sheep_flourish` must never count as a sheep.
 pub(super) fn dog(id: u32) -> ProcessInfo {
     ProcessInfo::builder(id, format!("d{id}"), ProcStatus::Online)
-        .dog(Some(DogSource::BuiltIn))
+        .dog(Some(DogSource::BuiltIn { grants: None }))
         .build()
 }

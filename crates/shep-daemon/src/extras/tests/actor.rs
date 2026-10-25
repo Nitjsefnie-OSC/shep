@@ -2,28 +2,68 @@
 //! transitions, not just that the registry can.
 
 use super::*;
+use crate::sweep::{LambSignal, LambSnapshot, LambSweep, SignalError};
+use shep_core::config::ResolvedApp;
+
+/// The actor-tier fixture: a scripted runner over extras a case asserts
+/// nothing about, on a clock the case owns and reads.
+///
+/// A recording enforcer arms without ever polling, an idle lamb sweep reports
+/// no lambs and idle stats see no processes, so the only thing left that can
+/// report is the cron worker. `max_cron_sleep` stays the case's own: how far
+/// that worker may sleep is what decides whether it wakes inside the case's
+/// window.
+fn plain_harness(
+    clock: &Arc<TestClock>,
+    scripts: Vec<ProcScript>,
+    max_cron_sleep: Duration,
+) -> Harness {
+    plain_harness_with_sweep(clock, scripts, max_cron_sleep, idle_sweep())
+}
+
+/// [`plain_harness`], over a lamb sweep the caller built.
+///
+/// For a case whose claim is about the walk itself: a stop's walk runs on the
+/// blocking pool, so a sweep that really takes time is what the actor has to
+/// wait out.
+fn plain_harness_with_sweep(
+    clock: &Arc<TestClock>,
+    scripts: Vec<ProcScript>,
+    max_cron_sleep: Duration,
+    lamb_sweep: Arc<dyn LambSweep>,
+) -> Harness {
+    harness_with_extras(scripts, |reports| Extras {
+        clock: Arc::clone(clock) as Arc<dyn Clock>,
+        enforcer: Arc::new(RecordingEnforcer::default()),
+        lamb_sweep,
+        max_cron_sleep,
+        reports,
+        stats: idle_stats(),
+    })
+}
+
+/// The app the cron cases start: `web` on an hourly schedule, and nothing
+/// else beyond what a minimal app already carries.
+fn cron_app() -> ResolvedApp {
+    app_with("web", |app| {
+        app.cron_restart = Some("0 * * * *".to_string());
+    })
+}
 
 // `ProcessSelector::Name` matches a stopped sheep too, so a cron worker that
 // keeps its schedule brings back a sheep the user stopped.
 #[tokio::test(start_paused = true)]
 async fn stopping_the_last_instance_stops_its_cron_worker() {
     let clock = Arc::new(TestClock::starting_at(dt("2026-01-01T00:00:00Z")));
-    let h = harness_with_extras(vec![ProcScript::never_exits(); 12], |reports| Extras {
-        clock: Arc::clone(&clock) as Arc<dyn Clock>,
-        enforcer: Arc::new(RecordingEnforcer::default()),
-        max_cron_sleep: DEFAULT_MAX_CRON_SLEEP,
-        reports,
-        stats: idle_stats(),
-    });
+    let h = plain_harness(
+        &clock,
+        vec![ProcScript::never_exits(); 12],
+        DEFAULT_MAX_CRON_SLEEP,
+    );
     let mut rx = h.ctx.events.subscribe();
-    h.ctx
-        .supervisor
-        .start(vec![app_with("web", |app| {
-            app.cron_restart = Some("0 * * * *".to_string());
-        })])
-        .await
-        .unwrap();
+    h.ctx.supervisor.start(vec![cron_app()]).await.unwrap();
 
+    wait_for_cron_worker(&clock).await;
     cross_one_hour().await;
     expect_restart(&mut rx, "web", EVENT_WAIT).await;
 
@@ -70,21 +110,13 @@ async fn a_reload_leaves_the_name_groups_cron_worker_where_it_was() {
     let clock = Arc::new(TestClock::starting_at(dt("2026-01-01T00:00:00Z")));
     // Two procs, counted: the original and the one replacement a reload of
     // a one-instance app performs. A third is answered "script exhausted".
-    let h = harness_with_extras(vec![ProcScript::never_exits(); 2], |reports| Extras {
-        clock: Arc::clone(&clock) as Arc<dyn Clock>,
-        enforcer: Arc::new(RecordingEnforcer::default()),
-        max_cron_sleep: Duration::from_secs(600),
-        reports,
-        stats: idle_stats(),
-    });
+    let h = plain_harness(
+        &clock,
+        vec![ProcScript::never_exits(); 2],
+        Duration::from_secs(600),
+    );
     let mut rx = h.ctx.events.subscribe();
-    h.ctx
-        .supervisor
-        .start(vec![app_with("web", |app| {
-            app.cron_restart = Some("0 * * * *".to_string());
-        })])
-        .await
-        .unwrap();
+    h.ctx.supervisor.start(vec![cron_app()]).await.unwrap();
     expect_process_event(&mut rx, 0, ProcessEventKind::Online, EVENT_WAIT).await;
     // Lets the armed worker reach its first poll before the count is taken.
     tokio::task::yield_now().await;
@@ -128,50 +160,104 @@ async fn a_reload_leaves_the_name_groups_cron_worker_where_it_was() {
 /// The two cases below need a sheep in `WaitingRestart`, the one state that
 /// reaches a terminal transition through `apply_immediate`.
 fn backoff_harness(clock: &Arc<TestClock>) -> Harness {
-    harness_with_extras(
-        {
-            let mut scripts = vec![ProcScript::never_exits()];
-            scripts.push(ProcScript::const_exit(1));
-            // Spare procs so a broken implementation has something to
-            // respawn from: without them the supervisor emits `Errored` and
-            // the negative assertions below pass vacuously.
-            scripts.extend([ProcScript::never_exits(); 8]);
-            scripts
-        },
-        |reports| Extras {
-            clock: Arc::clone(clock) as Arc<dyn Clock>,
-            enforcer: Arc::new(RecordingEnforcer::default()),
-            max_cron_sleep: DEFAULT_MAX_CRON_SLEEP,
-            reports,
-            stats: idle_stats(),
-        },
-    )
+    let mut scripts = vec![ProcScript::never_exits()];
+    scripts.push(ProcScript::const_exit(1));
+    // Spare procs so a broken implementation has something to respawn from:
+    // without them the supervisor emits `Errored` and the negative assertions
+    // below pass vacuously.
+    scripts.extend([ProcScript::never_exits(); 8]);
+    plain_harness(clock, scripts, DEFAULT_MAX_CRON_SLEEP)
 }
 
 /// The cron-restarting app the two backoff cases start, parked in a backoff
 /// far longer than either case's own window, so its pending `RestartDue` can
 /// never be what a restart came from.
-fn backoff_app() -> shep_core::config::ResolvedApp {
+fn backoff_app() -> ResolvedApp {
     app_with("web", |app| {
         app.cron_restart = Some("0 * * * *".to_string());
         app.restart_delay = Some(UpDuration::from_millis(3 * 60 * 60 * 1_000));
     })
 }
 
+/// How long a settle wait may run on the real clock before it gives up.
+/// Generous enough that a loaded runner cannot flake it, and spent only when
+/// something is wrong: a wait returns the moment it is satisfied.
+const SETTLE_DEADLINE: Duration = Duration::from_secs(10);
+
+/// How far a settle wait may carry the paused clock. The rounds advance it
+/// 1ms at a time when the runtime is idle, so without this a long real-time
+/// wait would also run virtual time on, past a cron occurrence or a backoff
+/// and into side effects the test is not about. Far below either, and far
+/// above the few rounds a wait that is going to succeed needs.
+const SETTLE_VIRTUAL_LIMIT: Duration = Duration::from_secs(5);
+
+/// Waits until the armed cron worker has taken its first reading of `clock`.
+///
+/// The worker derives its occurrence from that reading, so time advanced
+/// before it lands moves the occurrence out with it: a crossing that starts
+/// early finds the schedule an hour further on, and the trigger never fires.
+/// Call this between starting the app and [`cross_one_hour`].
+///
+/// Bounded on the real clock rather than in rounds, since how many rounds a
+/// busy machine needs is not something a test can know.
+async fn wait_for_cron_worker(clock: &TestClock) {
+    let started = std::time::Instant::now();
+    while clock.reads() == 0 {
+        assert!(
+            started.elapsed() < SETTLE_DEADLINE,
+            "the cron worker never took its first clock reading"
+        );
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
 /// Each `list()` is a full round trip through the actor's mailbox, so this
 /// makes progress rather than merely observing it.
+///
+/// A round waits on the paused clock, not on `yield_now`: a stop's lamb walk
+/// runs on the blocking pool, and the runtime holds the clock still until it
+/// returns, where a yield would spend its rounds before the pool answers.
+/// Bounded on both clocks: [`SETTLE_DEADLINE`] of real time, for a wait that
+/// runs off the paused clock and so spends no virtual time while it lasts,
+/// and [`SETTLE_VIRTUAL_LIMIT`] of paused time, so a wait that spins cannot
+/// carry the clock past an occurrence. A satisfied wait returns on its first
+/// round either way.
 async fn settle_into(supervisor: &SupervisorHandle, id: u32, status: ProcStatus) {
-    for _ in 0..200 {
-        tokio::task::yield_now().await;
-        let listing = supervisor.list().await;
-        if listing
+    let started = std::time::Instant::now();
+    let virtual_start = tokio::time::Instant::now();
+    let mut last = Vec::new();
+    while started.elapsed() < SETTLE_DEADLINE && virtual_start.elapsed() < SETTLE_VIRTUAL_LIMIT {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        last = supervisor.list().await;
+        if last
             .iter()
             .any(|info| info.id == id && info.status == status)
         {
             return;
         }
     }
-    panic!("id {id} never reached {status:?}");
+    // The status it did reach is the whole diagnosis: `Online` means the
+    // trigger never fired, `Starting` means the spawn never finished, and no
+    // entry at all means the id was never registered.
+    let seen = last
+        .iter()
+        .filter(|info| info.id == id)
+        .map(|info| {
+            format!(
+                "status={:?} restarts={} pid={:?}",
+                info.status, info.restarts, info.pid
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    panic!(
+        "id {id} never reached {status:?} (last listing: {})",
+        if seen.is_empty() {
+            "no entry with this id".to_string()
+        } else {
+            seen
+        }
+    );
 }
 
 // A sheep waiting out its restart backoff has no live task, so its stop
@@ -186,6 +272,7 @@ async fn stopping_a_sheep_mid_backoff_still_stops_its_cron_worker() {
 
     // The cron occurrence restarts it onto the immediately-exiting proc,
     // landing it in its three-hour backoff.
+    wait_for_cron_worker(&clock).await;
     cross_one_hour().await;
     expect_restart(&mut rx, "web", EVENT_WAIT).await;
     settle_into(&h.ctx.supervisor, 0, ProcStatus::WaitingRestart).await;
@@ -210,6 +297,7 @@ async fn deleting_a_sheep_mid_backoff_takes_its_cron_worker_with_it() {
     let mut rx = h.ctx.events.subscribe();
     h.ctx.supervisor.start(vec![backoff_app()]).await.unwrap();
 
+    wait_for_cron_worker(&clock).await;
     cross_one_hour().await;
     expect_restart(&mut rx, "web", EVENT_WAIT).await;
     settle_into(&h.ctx.supervisor, 0, ProcStatus::WaitingRestart).await;
@@ -244,6 +332,7 @@ async fn a_cron_restart_is_never_reported_as_a_user_action() {
     let mut rx = h.ctx.events.subscribe();
     h.ctx.supervisor.start(vec![backoff_app()]).await.unwrap();
 
+    wait_for_cron_worker(&clock).await;
     cross_one_hour().await;
     let (running, manually) = expect_restart_event(&mut rx, "web", EVENT_WAIT).await;
     assert_eq!(running.restarts, 1);
@@ -273,22 +362,15 @@ async fn a_respawn_that_cannot_spawn_stops_the_name_groups_cron_worker() {
     // Exactly one script: the initial start consumes it, so the cron
     // occurrence's respawn finds it exhausted and `respawn` takes its Err
     // arm.
-    let h = harness_with_extras(vec![ProcScript::never_exits()], |reports| Extras {
-        clock: Arc::clone(&clock) as Arc<dyn Clock>,
-        enforcer: Arc::new(RecordingEnforcer::default()),
-        max_cron_sleep: DEFAULT_MAX_CRON_SLEEP,
-        reports,
-        stats: idle_stats(),
-    });
+    let h = plain_harness(
+        &clock,
+        vec![ProcScript::never_exits()],
+        DEFAULT_MAX_CRON_SLEEP,
+    );
     let mut rx = h.ctx.events.subscribe();
-    h.ctx
-        .supervisor
-        .start(vec![app_with("web", |app| {
-            app.cron_restart = Some("0 * * * *".to_string());
-        })])
-        .await
-        .unwrap();
+    h.ctx.supervisor.start(vec![cron_app()]).await.unwrap();
 
+    wait_for_cron_worker(&clock).await;
     cross_one_hour().await;
     settle_into(&h.ctx.supervisor, 0, ProcStatus::Errored).await;
 
@@ -301,31 +383,57 @@ async fn a_respawn_that_cannot_spawn_stops_the_name_groups_cron_worker() {
     );
 }
 
+/// The extras the two arming cases share: a scripted process table whose one
+/// reading reports a 900-byte tree at `pid` 1000, and the real
+/// [`PollingEnforcer`] watching it.
+///
+/// 1000 is the pid [`ScriptedRunner`] hands its first spawn, which is the
+/// whole of why an arming against any other number cannot breach: the table
+/// holds exactly one process.
+fn breach_extras(reports: ExtrasReports) -> Extras {
+    let sampler: Arc<dyn MemorySampler> = Arc::new(ScriptedSampler::new(vec![vec![ProcessRss {
+        pid: 1000,
+        parent: None,
+        bytes: 900,
+        cpu_ms: 0,
+    }]]));
+    let stats = Arc::new(StatsState::new(Arc::clone(&sampler)));
+    Extras {
+        clock: Arc::new(TestClock::starting_at(dt("2026-01-01T00:00:00Z"))),
+        enforcer: Arc::new(PollingEnforcer::start(
+            sampler,
+            reports.breaches.clone(),
+            Arc::clone(&stats),
+        )),
+        lamb_sweep: idle_sweep(),
+        max_cron_sleep: DEFAULT_MAX_CRON_SLEEP,
+        reports,
+        stats,
+    }
+}
+
+/// A bounded `timeout` + `recv` on the breach channel, and the two claims
+/// every arming case makes about what arrives: the report carries the actor's
+/// own id, and it names the pid the sheep is really running as.
+async fn expect_breach(breaches: &mut mpsc::Receiver<LimitBreach>, pid: u32) -> LimitBreach {
+    let breach = match tokio::time::timeout(EVENT_WAIT, breaches.recv()).await {
+        Ok(Some(breach)) => breach,
+        Ok(None) => panic!("the breach channel closed before a breach arrived"),
+        Err(_) => panic!("timed out waiting for a breach"),
+    };
+    assert_eq!(breach.id, 0);
+    assert_eq!(
+        breach.root_pid, pid,
+        "the breach must name the pid the sheep is actually running as"
+    );
+    breach
+}
+
 // The scripted table holds exactly one process, the pid the runner hands the
 // first spawn, so an arming against any other number never breaches.
 #[tokio::test(start_paused = true)]
 async fn the_actor_arms_the_memory_limit_against_the_spawned_pid() {
-    let mut h = harness_with_extras(vec![ProcScript::never_exits(); 4], |reports| {
-        let sampler: Arc<dyn MemorySampler> =
-            Arc::new(ScriptedSampler::new(vec![vec![ProcessRss {
-                pid: 1000,
-                parent: None,
-                bytes: 900,
-                cpu_ms: 0,
-            }]]));
-        let stats = Arc::new(StatsState::new(Arc::clone(&sampler)));
-        Extras {
-            clock: Arc::new(TestClock::starting_at(dt("2026-01-01T00:00:00Z"))),
-            enforcer: Arc::new(PollingEnforcer::start(
-                sampler,
-                reports.breaches.clone(),
-                Arc::clone(&stats),
-            )),
-            max_cron_sleep: DEFAULT_MAX_CRON_SLEEP,
-            reports,
-            stats,
-        }
-    });
+    let mut h = harness_with_extras(vec![ProcScript::never_exits(); 4], breach_extras);
     h.ctx
         .supervisor
         .start(vec![app_with("web", |app| {
@@ -337,17 +445,7 @@ async fn the_actor_arms_the_memory_limit_against_the_spawned_pid() {
         .pid
         .expect("a live sheep has a pid");
 
-    let breach = match tokio::time::timeout(EVENT_WAIT, h.breaches.recv()).await {
-        Ok(Some(breach)) => breach,
-        Ok(None) => panic!("the breach channel closed before a breach arrived"),
-        Err(_) => panic!("timed out waiting for a breach"),
-    };
-
-    assert_eq!(breach.id, 0);
-    assert_eq!(
-        breach.root_pid, pid,
-        "the enforcer must be armed against the pid the sheep is actually running as"
-    );
+    let breach = expect_breach(&mut h.breaches, pid).await;
     assert_eq!(breach.observed.bytes(), 900);
 }
 
@@ -357,27 +455,7 @@ async fn the_actor_arms_the_memory_limit_against_the_spawned_pid() {
 // all four extras. The readiness wait ends in a timeout, the same site.
 #[tokio::test(start_paused = true)]
 async fn the_actor_arms_a_readiness_gated_app_once_it_comes_online() {
-    let mut h = harness_with_extras(vec![ProcScript::never_exits(); 4], |reports| {
-        let sampler: Arc<dyn MemorySampler> =
-            Arc::new(ScriptedSampler::new(vec![vec![ProcessRss {
-                pid: 1000,
-                parent: None,
-                bytes: 900,
-                cpu_ms: 0,
-            }]]));
-        let stats = Arc::new(StatsState::new(Arc::clone(&sampler)));
-        Extras {
-            clock: Arc::new(TestClock::starting_at(dt("2026-01-01T00:00:00Z"))),
-            enforcer: Arc::new(PollingEnforcer::start(
-                sampler,
-                reports.breaches.clone(),
-                Arc::clone(&stats),
-            )),
-            max_cron_sleep: DEFAULT_MAX_CRON_SLEEP,
-            reports,
-            stats,
-        }
-    });
+    let mut h = harness_with_extras(vec![ProcScript::never_exits(); 4], breach_extras);
     h.ctx
         .supervisor
         .start(vec![app_with("web", |app| {
@@ -394,16 +472,7 @@ async fn the_actor_arms_a_readiness_gated_app_once_it_comes_online() {
     );
     let pid = listing[0].pid.expect("a spawned sheep has a pid");
 
-    let breach = match tokio::time::timeout(EVENT_WAIT, h.breaches.recv()).await {
-        Ok(Some(breach)) => breach,
-        Ok(None) => panic!("the breach channel closed before a breach arrived"),
-        Err(_) => panic!("timed out waiting for a breach"),
-    };
-    assert_eq!(breach.id, 0);
-    assert_eq!(
-        breach.root_pid, pid,
-        "the gated path must arm against the pid the sheep is running as"
-    );
+    expect_breach(&mut h.breaches, pid).await;
 }
 
 // Real time and a real `OsProber`, because that is what the actor builds:
@@ -442,4 +511,49 @@ async fn the_actor_arms_the_liveness_loop_against_the_spawned_pid() {
             epoch: 1
         }
     );
+}
+
+/// A lamb sweep whose walk takes real time, as a stop's does on a busy host.
+struct SlowWalk(Arc<dyn LambSweep>);
+
+impl LambSweep for SlowWalk {
+    fn snapshot(&self, root_pid: u32) -> LambSnapshot {
+        std::thread::sleep(Duration::from_millis(100));
+        self.0.snapshot(root_pid)
+    }
+
+    fn last_snapshot(&self, root_pid: u32) -> Option<LambSnapshot> {
+        self.0.last_snapshot(root_pid)
+    }
+
+    fn survivors(&self, snapshot: &LambSnapshot) -> Vec<u32> {
+        self.0.survivors(snapshot)
+    }
+
+    fn descendants(&self, roots: &[u32]) -> LambSnapshot {
+        self.0.descendants(roots)
+    }
+
+    fn signal(&self, pid: u32, signal: LambSignal) -> Result<(), SignalError> {
+        self.0.signal(pid, signal)
+    }
+}
+
+// The cron restart stops the running sheep first, and that stop's lamb walk
+// runs on the blocking pool. `settle_into` must wait out a walk that takes
+// real time rather than spend its rounds before the pool answers.
+#[tokio::test(start_paused = true)]
+async fn a_respawn_waits_out_a_slow_lamb_walk_before_it_errors() {
+    let clock = Arc::new(TestClock::starting_at(dt("2026-01-01T00:00:00Z")));
+    let h = plain_harness_with_sweep(
+        &clock,
+        vec![ProcScript::never_exits()],
+        DEFAULT_MAX_CRON_SLEEP,
+        Arc::new(SlowWalk(idle_sweep())),
+    );
+    h.ctx.supervisor.start(vec![cron_app()]).await.unwrap();
+
+    wait_for_cron_worker(&clock).await;
+    cross_one_hour().await;
+    settle_into(&h.ctx.supervisor, 0, ProcStatus::Errored).await;
 }

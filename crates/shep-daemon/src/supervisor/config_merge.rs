@@ -72,6 +72,40 @@ fn establish_env(next: &mut AppOverrides, incoming: &DeclaredApp) {
         .extend(incoming.declared_env.iter().cloned());
 }
 
+/// The JSON object an `AppConfig` serializes to, the shape every merge here
+/// edits field by field.
+///
+/// Through serde rather than field by field: a hand-written list of
+/// assignments goes stale when a field is added to the struct.
+///
+/// # Errors
+///
+/// A description of the failure, for [`Applied::refused`], if the config
+/// fails to travel through serde, or serializes as something other than an
+/// object.
+fn app_config_object(
+    config: &AppConfig,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    match serde_json::to_value(config) {
+        Ok(serde_json::Value::Object(map)) => Ok(map),
+        Ok(_) => Err("an app config must serialize as an object".to_string()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+/// An `AppConfig` read back out of an object built by [`app_config_object`].
+///
+/// # Errors
+///
+/// A description of the failure, for [`Applied::refused`], if the object is
+/// not a valid `AppConfig`. Only the shape is checked here: `normalize` is
+/// what checks fields against each other, and each caller runs it later.
+fn app_config_from_object(
+    map: serde_json::Map<String, serde_json::Value>,
+) -> Result<AppConfig, String> {
+    serde_json::from_value(serde_json::Value::Object(map)).map_err(|err| err.to_string())
+}
+
 /// Merges what a Flockfile declares into what a sheep is running, returning
 /// the merged config and the override record to write back.
 ///
@@ -90,16 +124,9 @@ pub(super) fn merge_declared(
     overrides: &AppOverrides,
     reset: ResetDepth,
 ) -> Result<(AppConfig, AppOverrides), String> {
-    // Through serde rather than field by field: a hand-written list of
-    // assignments goes stale when a field is added to the struct.
-    let object = |config: &AppConfig| match serde_json::to_value(config) {
-        Ok(serde_json::Value::Object(map)) => Ok(map),
-        Ok(_) => Err("an app config must serialize as an object".to_string()),
-        Err(err) => Err(err.to_string()),
-    };
-    let mut merged = object(stored)?;
-    let file = object(&incoming.config)?;
-    let defaults = object(&AppConfig::default())?;
+    let mut merged = app_config_object(stored)?;
+    let file = app_config_object(&incoming.config)?;
+    let defaults = app_config_object(&AppConfig::default())?;
 
     let mut next = overrides.clone();
     // What the file established on an earlier load, plus what the operator
@@ -131,11 +158,24 @@ pub(super) fn merge_declared(
             }
         };
         if !in_scope {
+            // An override the file still declares: the file's value is what
+            // `ResetSheepField` returns to, so it is kept current here even
+            // though this load leaves the sheep alone.
+            if next.fields.contains_key(key)
+                && let Some(value) = incoming
+                    .declared
+                    .contains(key)
+                    .then(|| file.get(key))
+                    .flatten()
+            {
+                next.template.insert(key.clone(), value.clone());
+            }
             continue;
         }
         // The override is spent: one left in `fields` would keep
         // `ProcessEntry::overridden` reporting a field that matches the file.
         next.fields.remove(key);
+        next.template.remove(key);
         // `declared` grows only where the file really spoke: marking an
         // undeclared key would lock a later append out of it.
         if incoming.declared.contains(key) {
@@ -189,8 +229,7 @@ pub(super) fn merge_declared(
         }
     }
 
-    let merged: AppConfig =
-        serde_json::from_value(serde_json::Value::Object(merged)).map_err(|err| err.to_string())?;
+    let merged = app_config_from_object(merged)?;
     Ok((merged, next))
 }
 
@@ -206,26 +245,20 @@ pub(super) fn merge_declared(
 ///
 /// A description of the failure if the rebuilt config does not travel through
 /// serde or does not normalize, which a subset of a valid merge can.
-pub(super) fn reached_spec(
+pub(super) fn reached_spec<'a>(
     stored: &AppConfig,
     merged: &AppConfig,
-    reaching: &[String],
+    reaching: impl IntoIterator<Item = &'a String>,
     instances: u32,
 ) -> Result<ResolvedApp, String> {
-    let object = |config: &AppConfig| match serde_json::to_value(config) {
-        Ok(serde_json::Value::Object(map)) => Ok(map),
-        Ok(_) => Err("an app config must serialize as an object".to_string()),
-        Err(err) => Err(err.to_string()),
-    };
-    let mut next = object(stored)?;
-    let source = object(merged)?;
+    let mut next = app_config_object(stored)?;
+    let source = app_config_object(merged)?;
     for field in reaching {
         if let Some(value) = source.get(field) {
             next.insert(field.clone(), value.clone());
         }
     }
-    let mut config: AppConfig =
-        serde_json::from_value(serde_json::Value::Object(next)).map_err(|err| err.to_string())?;
+    let mut config = app_config_from_object(next)?;
     config.instances = instances;
     normalize(config).map_err(|err| err.to_string())
 }
@@ -291,13 +324,25 @@ pub(super) fn env_override_map<'a>(
         })
 }
 
-/// `app` with its instance count set to `instances`, or `None` if the result
-/// does not normalize.
+/// `app` with its instance count set to `instances`.
 ///
 /// Re-normalized rather than mutated in place: a [`ResolvedApp`] is a proof
 /// token that its config passed `normalize`.
-pub(super) fn with_count(app: &ResolvedApp, instances: u32) -> Option<ResolvedApp> {
+///
+/// # Errors
+///
+/// Whatever `normalize` refused. Only `instances` moves here, so a config
+/// that normalized before can fail this on that count alone.
+pub(super) fn try_with_count(
+    app: &ResolvedApp,
+    instances: u32,
+) -> Result<ResolvedApp, NormalizeError> {
     let mut config = app.config().clone();
     config.instances = instances;
-    normalize(config).ok()
+    normalize(config)
+}
+
+/// [`try_with_count`], with the refusal collapsed to `None`.
+pub(super) fn with_count(app: &ResolvedApp, instances: u32) -> Option<ResolvedApp> {
+    try_with_count(app, instances).ok()
 }

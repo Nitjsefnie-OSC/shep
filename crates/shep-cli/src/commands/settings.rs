@@ -263,56 +263,31 @@ pub fn load_settings(
     let daemon_default = DaemonSection::default();
     let whistle_default = WhistleSection::default();
 
-    let log_level = match doc.daemon_log_level() {
-        Some(value) => ScalarView {
-            value,
-            source: StyleSource::Config,
-        },
-        None => ScalarView {
-            value: daemon_default.log_level.as_str().to_string(),
-            source: StyleSource::Default,
-        },
-    };
-    let log_json = match doc.daemon_log_json() {
-        Some(value) => ScalarView {
-            value: value.to_string(),
-            source: StyleSource::Config,
-        },
-        None => ScalarView {
-            value: daemon_default.log_json.to_string(),
-            source: StyleSource::Default,
-        },
-    };
-    let socket = match doc.daemon_socket() {
-        Some(value) => ScalarView {
-            value: value.display().to_string(),
-            source: StyleSource::Config,
-        },
-        None => ScalarView {
-            value: socket_default.display().to_string(),
-            source: StyleSource::Default,
-        },
-    };
-    let max_cron_sleep = match doc.daemon_max_cron_sleep() {
-        Some(value) => ScalarView {
-            value,
-            source: StyleSource::Config,
-        },
-        None => ScalarView {
-            value: render_compiled_max_cron_sleep(daemon_default.max_cron_sleep),
-            source: StyleSource::Default,
-        },
-    };
-    let allow_control = match doc.whistle_allow_control() {
-        Some(value) => ScalarView {
-            value: value.to_string(),
-            source: StyleSource::Config,
-        },
-        None => ScalarView {
-            value: whistle_default.allow_control.to_string(),
-            source: StyleSource::Default,
-        },
-    };
+    let log_level = scalar(
+        doc.daemon_log_level(),
+        |value| value,
+        daemon_default.log_level.as_str().to_string(),
+    );
+    let log_json = scalar(
+        doc.daemon_log_json(),
+        |value| value.to_string(),
+        daemon_default.log_json.to_string(),
+    );
+    let socket = scalar(
+        doc.daemon_socket(),
+        |value| value.display().to_string(),
+        socket_default.display().to_string(),
+    );
+    let max_cron_sleep = scalar(
+        doc.daemon_max_cron_sleep(),
+        |value| value,
+        render_compiled_max_cron_sleep(daemon_default.max_cron_sleep),
+    );
+    let allow_control = scalar(
+        doc.whistle_allow_control(),
+        |value| value.to_string(),
+        whistle_default.allow_control.to_string(),
+    );
     let (level, source) = style;
     let style_level = ScalarView {
         value: level.to_string(),
@@ -330,6 +305,26 @@ pub fn load_settings(
         style_level_in_file,
         dogs: dog_candidates(&doc),
     })
+}
+
+/// One scalar view: the document's value when the document wrote the key,
+/// the compiled default's text when it did not
+///
+/// `show` is the field's own display form, applied only to the document's
+/// value: a `PathBuf` for `socket`, a `String` already parsed for
+/// `log_level` and `max_cron_sleep`, a `bool` for the two flags. `default`
+/// is the absent-key text, already rendered by its own caller.
+fn scalar<T>(from_file: Option<T>, show: impl FnOnce(T) -> String, default: String) -> ScalarView {
+    match from_file {
+        Some(value) => ScalarView {
+            value: show(value),
+            source: StyleSource::Config,
+        },
+        None => ScalarView {
+            value: default,
+            source: StyleSource::Default,
+        },
+    }
 }
 
 /// [`DaemonSection::default`]'s own `max_cron_sleep`, rendered for the
@@ -546,6 +541,27 @@ mod tests {
         );
     }
 
+    /// Both halves of a [`ScalarView`], from one snapshot: a key someone
+    /// wrote carries the file's own text, and a key nobody wrote carries
+    /// the default this screen reads from.
+    #[test]
+    fn a_scalar_from_the_file_is_config_and_an_absent_one_is_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shep.toml");
+        std::fs::write(&path, "[whistle]\nallow_control = true\n").unwrap();
+
+        let snap = load_settings(&path, &socket_default_fixture(), style_fixture()).unwrap();
+
+        assert_eq!(snap.allow_control.source, StyleSource::Config);
+        assert_eq!(snap.allow_control.value, "true");
+
+        assert_eq!(snap.socket.source, StyleSource::Default);
+        assert_eq!(
+            snap.socket.value, "/var/run/shep-settings-fixture.sock",
+            "an absent key shows the socket this lookout is connected over"
+        );
+    }
+
     // `.ino()` needs `std::os::unix::fs::MetadataExt`, so unix only.
     #[cfg(unix)]
     #[test]
@@ -594,6 +610,196 @@ mod tests {
             message.contains("max_cron_sleep"),
             "the operator has to be told which key: {message}"
         );
+    }
+
+    /// Every scalar the screen can write, put through the one door that
+    /// validates and read back through the one door that renders.
+    ///
+    /// `[style] level` is the one scalar `load_settings` reports twice:
+    /// `style_level` is the level in force, which the caller hands in from
+    /// its own resolved pair, and `style_level_in_file` is the document's
+    /// half. Only the second one is something this write can get wrong.
+    #[test]
+    fn setting_each_scalar_writes_it_and_the_loader_reads_it_back() {
+        let cases: [(SettingField, &str, &str); 6] = [
+            (SettingField::LogLevel, "debug", "debug"),
+            (SettingField::LogJson, "1", "true"),
+            (
+                SettingField::Socket,
+                "/tmp/shep-settings-scalar.sock",
+                "/tmp/shep-settings-scalar.sock",
+            ),
+            (SettingField::MaxCronSleep, "30s", "30s"),
+            (SettingField::AllowControl, "false", "false"),
+            (SettingField::StyleLevel, "plain", "plain"),
+        ];
+        for (field, typed, expected) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("shep.toml");
+            std::fs::write(&path, "").unwrap();
+
+            apply_setting(
+                &path,
+                &SettingEdit::Set {
+                    field,
+                    value: typed.to_string(),
+                },
+            )
+            .unwrap_or_else(|err| panic!("{} = {typed} must be accepted: {err}", field.key()));
+
+            let snap = load_settings(&path, &socket_default_fixture(), style_fixture()).unwrap();
+            let (value, source) = match field {
+                SettingField::LogLevel => (snap.log_level.value.clone(), snap.log_level.source),
+                SettingField::LogJson => (snap.log_json.value.clone(), snap.log_json.source),
+                SettingField::Socket => (snap.socket.value.clone(), snap.socket.source),
+                SettingField::MaxCronSleep => (
+                    snap.max_cron_sleep.value.clone(),
+                    snap.max_cron_sleep.source,
+                ),
+                SettingField::AllowControl => {
+                    (snap.allow_control.value.clone(), snap.allow_control.source)
+                }
+                SettingField::StyleLevel => (
+                    snap.style_level_in_file.unwrap_or_default(),
+                    snap.style_level.source,
+                ),
+            };
+            assert_eq!(value, expected, "{} read back wrong", field.key());
+            assert_eq!(
+                source,
+                StyleSource::Config,
+                "{} is now a key someone wrote: {}",
+                field.key(),
+                value
+            );
+        }
+    }
+
+    /// The screen's boolean grammar is [`shep_core::config::parse_daemon_bool`]'s,
+    /// the one `SHEP_LOG_JSON` reads too, so `1` has to work here. A
+    /// refusal is refused before anything saves: the file keeps the bytes
+    /// it had.
+    #[test]
+    fn a_boolean_field_takes_the_daemons_spellings_and_refuses_the_rest() {
+        for (typed, expected) in [("1", "true"), ("false", "false")] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("shep.toml");
+            std::fs::write(&path, "").unwrap();
+
+            apply_setting(
+                &path,
+                &SettingEdit::Set {
+                    field: SettingField::LogJson,
+                    value: typed.to_string(),
+                },
+            )
+            .unwrap_or_else(|err| panic!("log_json = {typed} must be accepted: {err}"));
+
+            let snap = load_settings(&path, &socket_default_fixture(), style_fixture()).unwrap();
+            assert_eq!(
+                snap.log_json.value, expected,
+                "{typed} wrote the wrong half"
+            );
+            assert_eq!(snap.log_json.source, StyleSource::Config);
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shep.toml");
+        let before = "[daemon]\nlog_json = true\n";
+        std::fs::write(&path, before).unwrap();
+
+        let Err(SettingError::Invalid(message)) = apply_setting(
+            &path,
+            &SettingEdit::Set {
+                field: SettingField::LogJson,
+                value: "maybe".to_string(),
+            },
+        ) else {
+            panic!("`maybe` is not a boolean the shepherd accepts");
+        };
+        assert!(
+            message.contains("maybe"),
+            "the operator has to be told which value was refused: {message}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "a refusal writes nothing"
+        );
+    }
+
+    /// `set_field` names the level itself, so this refusal never reaches
+    /// [`DaemonConfig::load`]: `level` is the one scalar the screen
+    /// validates before the loader does.
+    #[test]
+    fn a_style_level_that_names_nothing_is_refused_and_leaves_the_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shep.toml");
+        let before = "[style]\nlevel = \"full\"\n";
+        std::fs::write(&path, before).unwrap();
+
+        let Err(SettingError::Invalid(message)) = apply_setting(
+            &path,
+            &SettingEdit::Set {
+                field: SettingField::StyleLevel,
+                value: "loud".to_string(),
+            },
+        ) else {
+            panic!("`loud` names no style level");
+        };
+        assert!(
+            message.contains("loud") && message.contains("style level"),
+            "the refusal names the value and what it failed to be: {message}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "a refusal writes nothing"
+        );
+        assert_eq!(
+            load_settings(&path, &socket_default_fixture(), style_fixture())
+                .unwrap()
+                .style_level_in_file,
+            Some("full".to_string()),
+            "the file still says the level it said before"
+        );
+    }
+
+    /// Four of the six scalars have no unset form: removing the key is not
+    /// the same act as writing its default, and the screen has to say so
+    /// rather than quietly drop the line.
+    #[test]
+    fn unsetting_a_field_with_no_unset_form_is_refused_and_leaves_the_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shep.toml");
+        let before = "[daemon]\nlog_level = \"debug\"\nlog_json = true\n\n\
+                      [whistle]\nallow_control = true\n\n\
+                      [style]\nlevel = \"plain\"\n";
+        std::fs::write(&path, before).unwrap();
+
+        for field in [
+            SettingField::LogLevel,
+            SettingField::LogJson,
+            SettingField::AllowControl,
+            SettingField::StyleLevel,
+        ] {
+            let Err(SettingError::Invalid(message)) =
+                apply_setting(&path, &SettingEdit::Unset { field })
+            else {
+                panic!("{} has no unset form and must refuse", field.key());
+            };
+            assert!(
+                message.contains("no unset form"),
+                "{}: {message}",
+                field.key()
+            );
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                before,
+                "{}: a refusal writes nothing",
+                field.key()
+            );
+        }
     }
 
     #[test]

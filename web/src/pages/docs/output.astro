@@ -76,7 +76,7 @@ import ShortVersion from "../../components/docs/ShortVersion.astro";
 
     <h3 id="the-faces">The faces</h3>
     <p>
-      Five faces across six statuses, because two of them mean the same
+      Six faces across seven statuses, because two of them mean the same
       thing to someone glancing at a table:
     </p>
     <div class="rows">
@@ -86,6 +86,7 @@ import ShortVersion from "../../components/docs/ShortVersion.astro";
       <div class="row"><span><code>(-.-)</code> asleep</span><span>stopping, stopped</span></div>
       <div class="row"><span><code>(x.x)</code> startled</span><span>errored</span></div>
       <div class="row"><span><code>(?_?)</code> puzzled</span><span>silent, dogs only</span></div>
+      <div class="row"><span><code>(?.?)</code> baffled</span><span>unrecognized</span></div>
     </div>
     <p class="fine">
       <code>silent</code> is not a lifecycle status and no sheep ever wears
@@ -189,7 +190,7 @@ import ShortVersion from "../../components/docs/ShortVersion.astro";
     <div class="rows">
       <div class="row"><span>both</span><span><code>ID NAME STATUS PID RESTARTS EXIT CPU MEM UPTIME</code></span></div>
       <div class="row"><span>sheep only</span><span><code>CFG FOLD SMIT</code></span></div>
-      <div class="row"><span>dogs only</span><span><code>SOURCE</code></span></div>
+      <div class="row"><span>dogs only</span><span><code>SOURCE ACCESS</code></span></div>
     </div>
     <CodeBlock label="shep flock">{`┌────┬────────┬──────────────┬───────┬──────────┬──────┬─────┬──────┬────────┬────────┬──────┐
 │ ID │ NAME   │ STATUS       │ PID   │ RESTARTS │ EXIT │ CFG │ CPU │ MEM  │ UPTIME │ FOLD   │ SMIT │
@@ -198,11 +199,11 @@ import ShortVersion from "../../components/docs/ShortVersion.astro";
 └────┴────────┴──────────────┴───────┴──────────┴──────┴─────┴─────┴──────┴────────┴────────┴──────┘
 
 Dogs
-┌────┬────────────┬──────────────┬───────┬──────────┬──────┬─────┬──────┬────────┬─────────┐
-│ ID │ NAME       │ STATUS       │ PID   │ RESTARTS │ EXIT │ CPU │ MEM  │ UPTIME │ SOURCE  │
-├────┼────────────┼──────────────┼───────┼──────────┼──────┼─────┼──────┼────────┼─────────┤
-│ 1  │ log-rotate │ (o.o) online │ 48207 │ 0        │ -    │ -   │ 6.6M │ 2s     │ adopted │
-└────┴────────────┴──────────────┴───────┴──────────┴──────┴─────┴──────┴────────┴─────────┘`}</CodeBlock>
+┌────┬────────────┬──────────────┬───────┬──────────┬──────┬─────┬──────┬────────┬─────────┬────────┐
+│ ID │ NAME       │ STATUS       │ PID   │ RESTARTS │ EXIT │ CPU │ MEM  │ UPTIME │ SOURCE  │ ACCESS │
+├────┼────────────┼──────────────┼───────┼──────────┼──────┼─────┼──────┼────────┼─────────┼────────┤
+│ 1  │ log-rotate │ (o.o) online │ 48207 │ 0        │ -    │ -   │ 6.6M │ 2s     │ adopted │ -      │
+└────┴────────────┴──────────────┴───────┴──────────┴──────┴─────┴──────┴────────┴─────────┴────────┘`}</CodeBlock>
     <p>
       <code>CFG</code>, <code>FOLD</code> and <code>SMIT</code> are missing
       from the dogs table because they are impossible for a dog rather than
@@ -210,6 +211,9 @@ Dogs
       <em>on</em> a sheep, and no Flockfile load ever reaches a dog, so
       nothing can park config on one. A column that reads <code>-</code> on
       every row teaches nothing.
+    </p>
+    <p>
+      <code>ACCESS</code> is in <a href="/docs/dog-grants#upgrading">grants</a>.
     </p>
     <p>
       Colours match too, column for column. Same face and status colour, same
@@ -243,14 +247,14 @@ Dogs
     </p>
     <p>
       Both of them send you to <code>shep bleats &lt;dog&gt;</code>, and that
-      is deliberate. The shepherd writes what it actually saw into the dog's
-      own log at the moment it gives up, and the fix follows from that. A
-      version skew is one cause: <code>cargo install</code> replaced the
-      binary on disk and the process still running is the old one, so a
-      reinstall and a <code>shep restart &lt;dog&gt;</code> fixes it. A dog
-      that reaches the shepherd on every connection and never names itself in
-      its handshake is another, and reinstalling the same build does nothing
-      at all for that one.
+      is deliberate. The shepherd writes what it saw into the dog's own log
+      when it gives up, and the fix follows from that. A version skew on
+      this machine is one cause: <code>cargo install</code> replaced the
+      binary on disk and the old one still runs, so a reinstall and a{" "}
+      <code>shep restart &lt;dog&gt;</code> fixes it. Over <code>--host</code>{" "}
+      only another protocol refuses. A dog that reaches the shepherd on every
+      connection and never names itself in its handshake is the other cause,
+      and reinstalling does nothing for it.
     </p>
     <p class="fine">
       Only <code>online</code> is replaced. <code>starting</code> already
@@ -273,7 +277,7 @@ Dogs
     </p>
     <p>
       <code>enable</code>, <code>disable</code>, <code>adopt</code> and{" "}
-      <code>rehome</code> print a one-row confirmation with the same
+      <code>delete</code> on a dog print a one-row confirmation with the same
       treatment. Their <code>STATUS</code> holds either a status or a
       sentence saying why no shepherd answered, and only a status is
       coloured; a sentence is left plain, because a colour repeating the
@@ -295,7 +299,7 @@ Dogs
     <Callout variant="note">
       Seven tables carry no colour at all, deliberately: <code>describe</code>'s
       lamb tree (bar the muted <code>-</code> of an unlabelled lamb),{" "}
-      <code>delete</code>'s id list, <code>unset</code>'s count, the
+      <code>delete</code>'s id list, <code>kv unset</code>'s count, the
       two saved-roll tables, the KV store, and{" "}
       <code>shep dogs --available</code>. Each is either pure data shep has no
       opinion about, or a single column that is also the whole content, where
@@ -573,6 +577,9 @@ notice[style]: full (from $SHEP_STYLE)`}</CodeBlock>
         " "
       }<code>--format json</code> gets the same refusal.
     </p>
+    <p>
+      <code>--host</code> follows that host's flock.
+    </p>
     <p class="fine">
       A flock taller than the window is cut at the bottom, with a line saying how
       many it dropped. <code>shep lookout</code> scrolls. This does not.
@@ -604,6 +611,14 @@ web:2 | listening`}</CodeBlock>
       the file itself says which instance wrote a line. Lines read live after
       that come from the daemon's own per-sheep events and carry their slot
       as normal.
+    </p>
+    <p>
+      A line with no colour of its own arrives in the colour of its stream:
+      green for stdout, red for stderr, and the <code>name |</code> label
+      stays plain. A line that already colours itself keeps its own.
+      <code>NO_COLOR</code> and a pipe add none. Table output drops the
+      escapes that could move the cursor or redraw the row;{" "}
+      <code>--format json</code> carries the raw bytes.
     </p>
   </article>
 </DocsLayout>

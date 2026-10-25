@@ -1,6 +1,6 @@
-//! Protocol version safety: refusing a shepherd whose crate version differs
-//! from this binary's, and `shep flock`'s own dispatch, which applies the
-//! guard by hand around its roll fallback.
+//! Protocol version safety: refusing a shepherd this build cannot write to,
+//! and `shep flock`'s own dispatch, which applies the guard by hand around
+//! its roll fallback.
 
 use std::io::IsTerminal;
 use std::time::Duration;
@@ -10,9 +10,10 @@ use commands::query;
 use exit::ExitCode;
 use output::Streams;
 use shep_client::Client;
-use shep_core::paths::ShepPaths;
+use shep_core::protocol::PROTOCOL_VERSION;
 
 use crate::client::unreachable_message;
+use crate::remote::Link;
 use crate::{cli, commands, exit, output};
 
 /// The verbs a version skew must never refuse, spelled the way an operator
@@ -44,7 +45,35 @@ fn recovery_verb(command: &Commands) -> Option<&'static str> {
     }
 }
 
-/// Whether a shepherd of a different version refuses this invocation.
+/// The verbs that only read the flock, spelled the way an operator types
+/// them, which a version skew warns about and does not refuse.
+///
+/// `bleats` is the whole verb: both its forms send one `ListFlock` and then
+/// read. A verb belongs here only if it changes nothing, so a pane or a tool
+/// that can write (`lookout`, `whistle`) stays out whatever it mostly does.
+///
+/// Read only by the test that holds it against [`read_verb`].
+#[allow(dead_code)]
+const READ_VERBS: [&str; 3] = ["flock", "describe", "bleats"];
+
+/// Which [`READ_VERBS`] entry `command` is, or `None` for a verb that
+/// changes the flock or is a recovery verb.
+///
+/// Returns the name rather than a bool so a test can hold this mapping and
+/// that list against each other.
+fn read_verb(command: &Commands) -> Option<&'static str> {
+    match command {
+        Commands::Flock(_) => Some("flock"),
+        Commands::Describe(_) => Some("describe"),
+        Commands::Bleats(_) => Some("bleats"),
+        _ => None,
+    }
+}
+
+/// Whether a shepherd this build cannot write to refuses this invocation.
+///
+/// What a shepherd cannot be written to is the link's question, not the
+/// verb's: see [`skew_of`].
 ///
 /// `pub(crate)`: `lookout`, `whistle` and `foreground` call `Client::connect`
 /// in their own modules and name this at each connect site, always
@@ -56,14 +85,18 @@ pub(crate) enum VersionGuard {
     /// Never refuse, whatever the shepherd answers: one of
     /// [`RECOVERY_VERBS`].
     Exempt,
+    /// Proceed and say so on stderr: one of [`READ_VERBS`], which change
+    /// nothing, so a shepherd on another version can still be listed.
+    Warn,
 }
 
 impl VersionGuard {
     /// The guard that applies to `command`.
     pub(crate) fn for_command(command: &Commands) -> Self {
-        match recovery_verb(command) {
-            Some(_) => Self::Exempt,
-            None => Self::Enforce,
+        match (recovery_verb(command), read_verb(command)) {
+            (Some(_), _) => Self::Exempt,
+            (None, Some(_)) => Self::Warn,
+            (None, None) => Self::Enforce,
         }
     }
 }
@@ -77,86 +110,326 @@ const VERSION_SKEW_CAUSE: [&str; 2] = [
     "shepherd, which is still running the old code.",
 ];
 
+/// Why a host refuses when its install is the older side of the protocol
+/// gap, as the two lines the table form prints.
+///
+/// Not [`VERSION_SKEW_CAUSE`]: `cargo install` on this machine says nothing
+/// about a shepherd that lives elsewhere. And it names the wire, not the
+/// version, because over `--host` a version difference alone is a notice and
+/// never reaches a cause: see [`skew_of`].
+const HOST_BEHIND_CAUSE: [&str; 2] = [
+    "The shep installed on that host speaks an older wire protocol.",
+    "A reload runs the shep installed there; install this version there if they still differ.",
+];
+
+/// Why a host refuses when its install is the newer side of the gap: the fix
+/// runs here, and a reload there changes nothing, since that host already
+/// runs the newer install. Sending the operator after a reload instead
+/// downgrades the host that is up to date, which is the state a fleet is in
+/// while it upgrades one host at a time.
+const HOST_AHEAD_CAUSE: [&str; 2] = [
+    "The shep installed on that host speaks a newer wire protocol.",
+    "That host runs its own install, and it is this machine that is behind.",
+];
+
+/// What a tolerated skew adds after the two builds are named, one per kind of
+/// difference.
+///
+/// Held apart from [`skew_of`] because each sentence states what the operator
+/// may still do, which is the part that changes when a link stops refusing.
+const LOCAL_CRATE_NOTICE: &str =
+    "Listing works, but verbs that change the flock refuse until it is reloaded.";
+const HOST_CRATE_NOTICE: &str = concat!(
+    "The wire protocol matches, so verbs go ahead; install the same version ",
+    "there if you want them to match.",
+);
+const PROTOCOL_NOTICE: &str = "Read verbs go ahead, but verbs that change the flock refuse.";
+
 /// The one command that fixes a skew.
 ///
 /// Read out of [`RECOVERY_VERBS`] because the two have to agree: a remedy the
 /// guard itself refused would be a dead end.
 pub(crate) const VERSION_SKEW_REMEDY: &str = RECOVERY_VERBS[1];
 
-/// The imperative naming [`VERSION_SKEW_REMEDY`], in the two shapes the
-/// formats need.
+/// The command that replaces this machine's shep, spelled as the help's
+/// Upgrading line and [`VERSION_SKEW_CAUSE`] spell it.
+const UPGRADE_COMMAND: &str = "cargo install shep";
+
+/// The command that fixes a skew, spelled for where the shepherd is.
+///
+/// With a `host` it runs over ssh: the bare [`VERSION_SKEW_REMEDY`] would
+/// reload this machine's shepherd, which is not the one in skew.
+fn version_skew_command(host: Option<&str>) -> String {
+    match host {
+        Some(dest) => format!("ssh {dest} shep {VERSION_SKEW_REMEDY}"),
+        None => format!("shep {VERSION_SKEW_REMEDY}"),
+    }
+}
+
+/// The command that fixes a protocol gap, spelled for the side of the gap it
+/// runs on.
+///
+/// Which side is behind decides it. A host behind this build is fixed there,
+/// over ssh. A host ahead of it is fixed here: reloading a host that already
+/// runs the newer install changes nothing, and installing this build there
+/// takes that host down with it.
+fn protocol_fix(host: Option<&str>, host_ahead: bool) -> String {
+    if host_ahead {
+        UPGRADE_COMMAND.to_owned()
+    } else {
+        version_skew_command(host)
+    }
+}
+
+/// The imperative naming a fix's command, in the two shapes the formats need.
 ///
 /// A `--format json` consumer gets a single-line message with the command
 /// inside it. The table form has layout, and its label carries no blank line
 /// after it: it sits directly on the command so the two read as one thing.
-fn version_skew_instruction(fmt: Format) -> String {
+fn version_skew_instruction(fmt: Format, command: &str) -> String {
     match fmt {
-        Format::Json => format!("Run `shep {VERSION_SKEW_REMEDY}`."),
+        Format::Json => format!("Run `{command}`."),
         // Two spaces of its own, on top of the indent `safe_message` gives
         // every continuation line, so the command sits a level under its
         // label rather than beside it.
-        Format::Table => format!("Run:\n  shep {VERSION_SKEW_REMEDY}"),
+        Format::Table => format!("Run:\n  {command}"),
     }
 }
 
-/// Refuses a shepherd whose crate version differs from this binary's.
+/// Where the shepherd is, as a skew message names it.
+fn shepherd_at(host: Option<&str>) -> String {
+    match host {
+        Some(dest) => format!("the shepherd on {dest}"),
+        None => "the running shepherd".to_owned(),
+    }
+}
+
+/// The opening clause of a skew message: both versions, and where the
+/// shepherd runs.
+fn version_skew_summary(running: &str, host: Option<&str>) -> String {
+    format!(
+        "this shep is {}, {} is {running}",
+        env!("CARGO_PKG_VERSION"),
+        shepherd_at(host)
+    )
+}
+
+/// The opening clause of a refusal for a shepherd on another protocol: both
+/// protocol numbers, and both crate versions.
 ///
-/// Any difference, not only a protocol difference: `cargo install shep`
-/// replaces the binary and leaves the shepherd running the old code, so the
-/// two can agree on every byte of the wire while disagreeing about what a
-/// verb does. Compares [`shep_core::protocol::HelloAck::daemon_version`]
-/// against `CARGO_PKG_VERSION`, read from a handshake that already succeeded.
+/// The versions travel with the numbers because the fix runs on whichever
+/// side of the gap is behind, and an operator who has both numbers can tell
+/// which side that is before upgrading anything.
+fn protocol_skew_summary(running: &str, peer: u32, host: Option<&str>) -> String {
+    format!(
+        "this shep is {} speaking protocol {PROTOCOL_VERSION}, {} is {running} speaking protocol {peer}",
+        env!("CARGO_PKG_VERSION"),
+        shepherd_at(host)
+    )
+}
+
+/// The one line a tolerated skew prints: the two builds, what the operator
+/// may still do, and where the fix runs.
+fn notice_line(summary: &str, tail: &str, command: &str) -> String {
+    let sentence = format!("{summary}. {tail} Run `{command}`.");
+    // `daemon_version` arrives over the socket, so the sentence is
+    // collapsed as the table refusal's is.
+    crate::terminal_safe::sanitise(&sentence).0
+}
+
+/// The refusal [`refuse_version_skew`] lays out, or [`host_skew`] flattens.
+struct Refusal {
+    /// The opening clause naming both builds.
+    summary: String,
+    /// The command that fixes it, spelled for the machine it runs on.
+    command: String,
+    /// Why it happened, as the two lines the table form prints.
+    cause: [&'static str; 2],
+}
+
+/// The refusal as the one line a caller that lays out no table needs.
+fn one_line_refusal(summary: &str, command: &str) -> String {
+    crate::terminal_safe::sanitise(&format!("{summary}. Run `{command}`.")).0
+}
+
+/// What the handshake this client already completed says about versions, in
+/// the two forms a guard needs.
+///
+/// The two links ask different questions, and each asks the one its own
+/// failure mode needs. The local socket asks whether this machine is
+/// half-replaced: `cargo install shep` replaces the binary and leaves the
+/// shepherd running the old code, so the two can agree on every byte of the
+/// wire while disagreeing about what a verb does. A link over `--host` asks
+/// only whether the two agree on the wire: that host has its own install, so
+/// there is no half machine to forget to reload, and a fleet upgrades one host
+/// at a time, which makes a version difference the normal state of six of
+/// seven rather than a mistake.
+///
+/// Equal protocols, not `peer >= MIN_SUPPORTED`: every change to a wire shape
+/// bumps [`PROTOCOL_VERSION`], so agreeing on the number is agreeing on the
+/// grammar. A floor would let this build write to a shepherd whose `AppConfig`
+/// refuses a field it has never heard of, which is the case
+/// `docs/decisions.md` turned the protocol floor down over.
+fn skew_of(client: &Client) -> Skew {
+    let ack = client.daemon();
+    let host = client.host();
+    let running = ack.daemon_version.as_str();
+    if host.is_some() {
+        if ack.protocol != PROTOCOL_VERSION {
+            // The direction of the gap is the direction of the fix: a host
+            // behind this build is reloaded, a host ahead of it is not.
+            let ahead = ack.protocol > PROTOCOL_VERSION;
+            let summary = protocol_skew_summary(running, ack.protocol, host);
+            let command = protocol_fix(host, ahead);
+            return Skew {
+                notice: Some(notice_line(&summary, PROTOCOL_NOTICE, &command)),
+                refusal: Some(Refusal {
+                    summary,
+                    command,
+                    cause: if ahead {
+                        HOST_AHEAD_CAUSE
+                    } else {
+                        HOST_BEHIND_CAUSE
+                    },
+                }),
+            };
+        }
+        if running != env!("CARGO_PKG_VERSION") {
+            let summary = version_skew_summary(running, host);
+            let command = version_skew_command(host);
+            return Skew {
+                notice: Some(notice_line(&summary, HOST_CRATE_NOTICE, &command)),
+                refusal: None,
+            };
+        }
+    } else if running != env!("CARGO_PKG_VERSION") {
+        let summary = version_skew_summary(running, None);
+        let command = version_skew_command(None);
+        return Skew {
+            notice: Some(notice_line(&summary, LOCAL_CRATE_NOTICE, &command)),
+            refusal: Some(Refusal {
+                summary,
+                command,
+                cause: VERSION_SKEW_CAUSE,
+            }),
+        };
+    }
+    Skew {
+        notice: None,
+        refusal: None,
+    }
+}
+
+/// A difference between this build and the shepherd it reached, in the two
+/// forms a guard needs.
+struct Skew {
+    /// The one line for stderr when the difference is tolerated, `None` when
+    /// there is nothing to say.
+    notice: Option<String>,
+    /// The message a verb that changes the flock gets when this link refuses
+    /// the difference, `None` when it tolerates it.
+    refusal: Option<Refusal>,
+}
+
+/// What `guard` makes of a skew on the host this client reached, for a caller
+/// that asks several hosts at once and so cannot write to a [`Streams`] as
+/// each answers.
+///
+/// # Errors
+/// The one-line refusal, with the fix spelled for the side of the gap that is
+/// behind, when `guard` is [`VersionGuard::Enforce`] and that host's shepherd
+/// speaks a protocol other than [`PROTOCOL_VERSION`]. Otherwise the notice to
+/// print, if there is one: none for [`VersionGuard::Exempt`].
+pub(crate) fn host_skew(client: &Client, guard: VersionGuard) -> Result<Option<String>, String> {
+    let skew = skew_of(client);
+    match (guard, skew.refusal) {
+        (VersionGuard::Exempt, _) => Ok(None),
+        (VersionGuard::Warn, _) => Ok(skew.notice),
+        (VersionGuard::Enforce, None) => Ok(skew.notice),
+        (VersionGuard::Enforce, Some(refusal)) => {
+            Err(one_line_refusal(&refusal.summary, &refusal.command))
+        }
+    }
+}
+
+/// Refuses a shepherd this link cannot write to, or notices the difference
+/// and goes ahead.
+///
+/// Which difference refuses is the link's, and [`skew_of`] states it: crate
+/// versions over the local socket, [`PROTOCOL_VERSION`] over `--host`. Both
+/// read a handshake that already succeeded, from
+/// [`shep_core::protocol::HelloAck`].
+///
+/// A difference the link tolerates writes [`Skew::notice`] to stderr as a
+/// notice and proceeds, so stdout stays whatever the verb prints.
 ///
 /// # Errors
 /// [`ExitCode::VersionSkew`], after writing the refusal to `streams`, when
-/// `guard` is [`VersionGuard::Enforce`] and the shepherd reports a different
-/// version. A [`VersionGuard::Exempt`] verb is always `Ok`.
+/// `guard` is [`VersionGuard::Enforce`] and this link refuses the difference.
+/// A [`VersionGuard::Exempt`] or [`VersionGuard::Warn`] verb is always `Ok`.
+///
+/// A client reached over ssh gets a refusal or a notice that names its host,
+/// and a fix on whichever side of the gap is behind: over ssh for a host on
+/// an older protocol, on this machine for one on a newer protocol.
 pub(crate) fn refuse_version_skew(
     streams: &mut Streams<'_>,
     client: &Client,
     guard: VersionGuard,
 ) -> Result<(), ExitCode> {
-    let running = client.daemon().daemon_version.as_str();
-    if guard == VersionGuard::Exempt || running == env!("CARGO_PKG_VERSION") {
-        return Ok(());
-    }
+    let skew = skew_of(client);
+    let refusal = match (guard, skew.refusal) {
+        (VersionGuard::Exempt, _) => return Ok(()),
+        (VersionGuard::Warn, _) | (VersionGuard::Enforce, None) => {
+            if let Some(notice) = skew.notice {
+                streams.aside("version_skew", &notice);
+            }
+            return Ok(());
+        }
+        (VersionGuard::Enforce, Some(refusal)) => refusal,
+    };
     let code = ExitCode::VersionSkew;
-    let summary = format!(
-        "this shep is {}, the running shepherd is {running}",
-        env!("CARGO_PKG_VERSION")
-    );
+    let Refusal {
+        summary,
+        command,
+        cause,
+    } = refusal;
     match streams.fmt {
         // One line, one envelope. A `--format json` consumer has no use for
         // the layout below, and it still gets every fact in `error.message`.
         Format::Json => {
-            let cause = VERSION_SKEW_CAUSE.join(" ");
-            let instruction = version_skew_instruction(Format::Json);
+            let cause = cause.join(" ");
+            let instruction = version_skew_instruction(Format::Json, &command);
             streams.fail(code, &format!("{summary}. {cause} {instruction}"));
         }
-        // The remedy has to sit on a line of its own to be copied.
+        // The fix has to sit on a line of its own to be copied.
         Format::Table => {
-            let cause = VERSION_SKEW_CAUSE.join("\n");
+            let cause = cause.join("\n");
             // `daemon_version` arrives over the socket, and the table
             // emitter keeps line breaks, so this collapses the one fragment
             // a peer worded before it joins prose that does not.
             let summary = crate::terminal_safe::sanitise(&summary).0;
-            let instruction = version_skew_instruction(Format::Table);
+            let instruction = version_skew_instruction(Format::Table, &command);
             streams.fail(code, &format!("{summary}\n\n{cause}\n\n{instruction}"));
         }
     }
     Err(code)
 }
 
-/// Connects to the daemon at `paths.socket`. Never autostarts.
+/// Connects to the shepherd `link` names: the socket at `paths.socket`, or a
+/// host over ssh. Never autostarts.
 ///
 /// The one seam every verb needing a [`Client`] passes through, so a shepherd
 /// of a different version is refused here and no verb has to remember to ask.
 pub(crate) async fn connect_client(
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    link: &Link<'_>,
     guard: VersionGuard,
 ) -> Result<Client, ExitCode> {
-    match Client::connect(&paths.socket).await {
+    let dialled = match link {
+        Link::Local(paths) => Client::connect(&paths.socket).await,
+        Link::Host { dest, options } => Client::connect_ssh_with(dest, options).await,
+    };
+    match dialled {
         Ok(client) => {
             refuse_version_skew(streams, &client, guard)?;
             Ok(client)
@@ -178,18 +451,55 @@ pub(crate) async fn connect_client(
 /// A refusal is not an absence. The roll fallback is for
 /// [`shep_client::ConnectError::Connect`] alone, nothing listening at all;
 /// every other variant means the shepherd is there and answered.
+///
+/// With a `hosts` list in this machine's `shep.toml`, and neither `--host` nor
+/// `--follow`, the arm is [`query::fleet::flock_all`] instead: every host's
+/// flock, this machine's first. `--host` under `--format json` tags every row
+/// with the host as typed.
+///
+/// Over a host there is no roll fallback: the roll is this machine's
+/// `flock.json`, so printing it for a dead host would list the wrong flock.
+/// The connect error's own code ends the run instead.
 pub(crate) async fn flock_command(
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    link: &Link<'_>,
     guard: VersionGuard,
     args: &cli::FlockArgs,
 ) -> ExitCode {
+    flock_command_on(streams, link, guard, args, std::io::stdout().is_terminal()).await
+}
+
+/// [`flock_command`] with whether stdout is a terminal decided by the caller,
+/// so a test of the terminal refusal holds under `--nocapture` too.
+pub(crate) async fn flock_command_on(
+    streams: &mut Streams<'_>,
+    link: &Link<'_>,
+    guard: VersionGuard,
+    args: &cli::FlockArgs,
+    stdout_is_terminal: bool,
+) -> ExitCode {
+    let paths = match link {
+        Link::Local(paths) => *paths,
+        Link::Host { .. } if args.follow => {
+            return follow_flock_command(streams, link, guard, args, stdout_is_terminal).await;
+        }
+        Link::Host { dest, .. } => {
+            return match connect_client(streams, link, guard).await {
+                Ok(client) => query::flock_from(&client, streams, Some(dest), None).await,
+                Err(code) => code,
+            };
+        }
+    };
     if args.follow {
-        return follow_flock_command(streams, paths, guard, args).await;
+        return follow_flock_command(streams, link, guard, args, stdout_is_terminal).await;
+    }
+    let hosts = query::fleet::listed_hosts(streams, paths);
+    if !hosts.is_empty() {
+        return query::fleet::flock_all(streams, paths, guard, &hosts).await;
     }
     match Client::connect(&paths.socket).await {
         Ok(client) => match refuse_version_skew(streams, &client, guard) {
-            Ok(()) => query::flock(&client, streams).await,
+            Ok(()) => query::flock_local(&client, streams, paths).await,
             // A skew is not an absence either: the roll fallback below would
             // print a listing while hiding why every other verb is refusing.
             Err(code) => code,
@@ -197,11 +507,9 @@ pub(crate) async fn flock_command(
         // The roll fallback is a table-format affordance: under `--format
         // json` a failed invocation leaves stdout empty and puts an error
         // envelope on stderr, absence included.
-        Err(_) if streams.fmt == Format::Json => {
-            match connect_client(streams, paths, guard).await {
-                Ok(client) => query::flock(&client, streams).await,
-                Err(code) => code,
-            }
+        Err(err) if streams.fmt == Format::Json => {
+            let code = ExitCode::from(&err);
+            streams.fail(code, &unreachable_message(&err))
         }
         Err(shep_client::ConnectError::Connect { .. }) => query::flock_from_roll(streams, paths),
         Err(err) => {
@@ -225,9 +533,10 @@ pub(crate) async fn flock_command(
 /// was asked.
 async fn follow_flock_command(
     streams: &mut Streams<'_>,
-    paths: &ShepPaths,
+    link: &Link<'_>,
     guard: VersionGuard,
     args: &cli::FlockArgs,
+    stdout_is_terminal: bool,
 ) -> ExitCode {
     if streams.fmt == Format::Json {
         return streams.fail(
@@ -235,13 +544,13 @@ async fn follow_flock_command(
             "`--follow` redraws a table; `--format json` has no follow form",
         );
     }
-    if !std::io::stdout().is_terminal() {
+    if !stdout_is_terminal {
         return streams.fail(
             ExitCode::Usage,
             "`--follow` needs a terminal; stdout is not one",
         );
     }
-    match connect_client(streams, paths, guard).await {
+    match connect_client(streams, link, guard).await {
         Ok(client) => {
             query::flock_follow(&client, streams, Duration::from_secs(args.interval)).await
         }
@@ -252,329 +561,9 @@ async fn follow_flock_command(
 /// Renders `err` for [`flock_command`]'s refusal arm: the shepherd is there,
 /// so this reports what it did and names the fix rather than the roll's "no
 /// shepherd running".
-fn flock_connect_refusal_message(err: &shep_client::ConnectError) -> String {
+pub(crate) fn flock_connect_refusal_message(err: &shep_client::ConnectError) -> String {
     format!("{err}; run `shep {VERSION_SKEW_REMEDY}`")
 }
 
 #[cfg(test)]
-mod tests {
-    use std::io::IsTerminal;
-
-    use cli::{DaemonArgs, StartArgs};
-
-    use super::*;
-    use crate::style;
-
-    /// A [`Streams`] over two byte buffers, so a refusal's exact text can be
-    /// read back. `BARE` because these tests assert on words, not colour.
-    fn buffered_streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: style::Presentation::BARE,
-            fmt: Format::Table,
-        }
-    }
-
-    /// A real [`Client`], past a real handshake, whose peer announced
-    /// `version`. The [`shep_client::testing::FakeDaemon`] is returned so it
-    /// outlives the client.
-    async fn client_announcing(
-        addr: &std::path::Path,
-        version: &str,
-    ) -> (Client, shep_client::testing::FakeDaemon) {
-        let ack = shep_core::protocol::HelloAck {
-            daemon_version: version.to_owned(),
-            protocol: shep_core::protocol::PROTOCOL_VERSION,
-            pid: 4242,
-            min_supported: None,
-        };
-        shep_client::testing::fake_client_with_ack(addr, ack).await
-    }
-
-    /// The case a protocol-only check misses: the wire versions agree and the
-    /// crate versions do not.
-    #[tokio::test]
-    async fn a_version_difference_with_no_protocol_difference_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let addr = shep_client::testing::control_address(dir.path());
-        let (client, _fake) = client_announcing(&addr, "0.1.8").await;
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let mut streams = buffered_streams(&mut out, &mut err);
-        let code = refuse_version_skew(&mut streams, &client, VersionGuard::Enforce)
-            .expect_err("a differing crate version must be refused");
-        assert_eq!(code, ExitCode::VersionSkew);
-    }
-
-    #[tokio::test]
-    async fn the_error_names_the_command_that_fixes_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let addr = shep_client::testing::control_address(dir.path());
-        let (client, _fake) = client_announcing(&addr, "0.1.8").await;
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        {
-            let mut streams = buffered_streams(&mut out, &mut err);
-            let _ = refuse_version_skew(&mut streams, &client, VersionGuard::Enforce);
-        }
-        let text = String::from_utf8(err).unwrap();
-        assert!(text.contains("error[version_skew]"), "{text}");
-        assert!(text.contains("this shep is"), "{text}");
-        assert!(text.contains(env!("CARGO_PKG_VERSION")), "{text}");
-        assert!(text.contains("the running shepherd is 0.1.8"), "{text}");
-        assert!(
-            text.contains("`cargo install shep` replaced the binary"),
-            "{text}"
-        );
-        assert!(text.contains("shep daemon reload"), "{text}");
-    }
-
-    /// The indentation is what makes the remedy line copyable, so it sits on
-    /// its own line rather than folded into the sentence above it.
-    #[tokio::test]
-    async fn the_table_form_names_the_remedy_as_an_instruction_not_only_a_line() {
-        let dir = tempfile::tempdir().unwrap();
-        let addr = shep_client::testing::control_address(dir.path());
-        let (client, _fake) = client_announcing(&addr, "0.1.8").await;
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        {
-            let mut streams = buffered_streams(&mut out, &mut err);
-            let _ = refuse_version_skew(&mut streams, &client, VersionGuard::Enforce);
-        }
-        let text = String::from_utf8(err).unwrap();
-
-        // No blank line between the label and the command: a gap reads as
-        // two unrelated things. Four spaces, not two: `safe_message` indents
-        // every continuation line and the instruction adds one level on top,
-        // so the command sits under its label rather than beside it.
-        assert!(
-            text.contains("Run:\n    shep daemon reload"),
-            "the label must sit directly on the copyable line it points at: {text}"
-        );
-        // The sentence above the indented line must not repeat the command.
-        assert_eq!(
-            text.matches("shep daemon reload").count(),
-            1,
-            "the remedy is named once, not restated in prose: {text}"
-        );
-    }
-
-    /// A daemon that answered the handshake and refused it is not an absence:
-    /// "no shepherd running" would send the operator to the roll instead.
-    #[tokio::test]
-    async fn flock_reports_a_refusal_as_a_refusal_not_as_no_daemon() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = ShepPaths::resolve(&|_| None, dir.path());
-        std::fs::create_dir_all(&paths.run).unwrap();
-        let refusal = shep_core::protocol::RpcError {
-            code: shep_core::protocol::RpcErrorCode::ProtocolMismatch,
-            message: "this daemon speaks protocol 1, this client speaks 2".to_string(),
-            daemon_version: Some("0.1.8".to_string()),
-        };
-        let _daemon = shep_client::testing::fake_daemon(&paths.socket, Err(refusal)).await;
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = buffered_streams(&mut out, &mut err);
-            flock_command(&mut streams, &paths, VersionGuard::Enforce, &flock_args()).await
-        };
-
-        assert_ne!(code, ExitCode::Success);
-        let text = String::from_utf8(err).unwrap();
-        assert!(
-            !text.contains("no shepherd running"),
-            "a refusal is not an absence: {text}"
-        );
-        assert!(text.contains("shep daemon reload"), "{text}");
-    }
-
-    #[tokio::test]
-    async fn flock_still_falls_back_to_the_roll_for_a_genuine_absence() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = ShepPaths::resolve(&|_| None, dir.path());
-        std::fs::create_dir_all(&paths.run).unwrap();
-        // No socket bound at `paths.socket`, so `connect(2)` itself fails.
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = buffered_streams(&mut out, &mut err);
-            flock_command(&mut streams, &paths, VersionGuard::Enforce, &flock_args()).await
-        };
-
-        assert_eq!(code, ExitCode::DaemonUnreachable);
-        let text = String::from_utf8(err).unwrap();
-        assert!(text.contains("no shepherd running"), "{text}");
-    }
-
-    /// Both of `--follow`'s refusals carry `ExitCode::Usage`, so the code
-    /// alone cannot tell them apart: delete either guard and a test asserting
-    /// only the code still passes. Each is pinned by its own message instead.
-    ///
-    /// Neither arm needs a fixture. The `--format json` case proves the first
-    /// guard answered rather than the second, since a table-format follow
-    /// under a pipe would have refused too, with different words.
-    #[tokio::test]
-    async fn follow_refuses_json_and_a_pipe_for_different_reasons() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = ShepPaths::resolve(&|_| None, dir.path());
-        let args = cli::FlockArgs {
-            follow: true,
-            interval: 1,
-        };
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = buffered_streams(&mut out, &mut err);
-            streams.fmt = Format::Json;
-            flock_command(&mut streams, &paths, VersionGuard::Enforce, &args).await
-        };
-        assert_eq!(code, ExitCode::Usage);
-        let text = String::from_utf8(err).unwrap();
-        assert!(
-            text.contains("no follow form"),
-            "the json guard answers before the terminal one: {text}"
-        );
-
-        // `cargo test` captures stdout, so the terminal guard fires on its
-        // own. Under `--nocapture` on a real terminal it cannot, and there is
-        // nothing to pin rather than something to fail.
-        if std::io::stdout().is_terminal() {
-            return;
-        }
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = buffered_streams(&mut out, &mut err);
-            flock_command(&mut streams, &paths, VersionGuard::Enforce, &args).await
-        };
-        assert_eq!(code, ExitCode::Usage);
-        let text = String::from_utf8(err).unwrap();
-        assert!(text.contains("needs a terminal"), "{text}");
-        assert!(
-            out.is_empty(),
-            "a refused follow prints no listing: {}",
-            String::from_utf8_lossy(&out)
-        );
-    }
-
-    #[tokio::test]
-    async fn a_matching_version_passes_without_a_word() {
-        let dir = tempfile::tempdir().unwrap();
-        let addr = shep_client::testing::control_address(dir.path());
-        let (client, _fake) = client_announcing(&addr, env!("CARGO_PKG_VERSION")).await;
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        {
-            let mut streams = buffered_streams(&mut out, &mut err);
-            refuse_version_skew(&mut streams, &client, VersionGuard::Enforce)
-                .expect("a matching version is not a skew");
-        }
-        assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
-    }
-
-    #[tokio::test]
-    async fn the_recovery_verbs_are_not_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let addr = shep_client::testing::control_address(dir.path());
-        let (client, _fake) = client_announcing(&addr, "0.1.8").await;
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        {
-            let mut streams = buffered_streams(&mut out, &mut err);
-            refuse_version_skew(&mut streams, &client, VersionGuard::Exempt)
-                .expect("a recovery verb is never refused on version skew");
-        }
-        assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
-    }
-
-    /// An empty [`StartArgs`], for asking which guard `add` gets. The guard
-    /// reads the verb alone, so no field here reaches it.
-    fn add_args() -> StartArgs {
-        StartArgs {
-            targets: Vec::new(),
-            name: None,
-            fold: None,
-            cwd: None,
-            interpreter: None,
-            flockfile: false,
-            no_log_timestamps: false,
-            reset: None,
-        }
-    }
-
-    /// A [`cli::FlockArgs`] that does not follow: the bare `shep flock`.
-    fn flock_args() -> cli::FlockArgs {
-        cli::FlockArgs {
-            follow: false,
-            interval: cli::FOLLOW_INTERVAL_FLOOR_SECONDS,
-        }
-    }
-
-    /// A [`DaemonArgs`] carrying `cmd` and nothing else, for asking which
-    /// guard the `daemon` verb's two shapes get.
-    fn daemon_args(cmd: Option<cli::DaemonCmd>) -> DaemonArgs {
-        DaemonArgs {
-            cmd,
-            no_restore: false,
-            foreground: false,
-            log_json: None,
-            log_level: None,
-            socket: None,
-            max_cron_sleep: None,
-        }
-    }
-
-    /// Fails if a verb leaves [`RECOVERY_VERBS`], or arrives without being
-    /// listed there with its reason.
-    #[test]
-    fn every_exempt_verb_is_one_of_the_documented_recovery_verbs() {
-        for command in [
-            Commands::Kill,
-            Commands::Ping,
-            Commands::Daemon(daemon_args(Some(cli::DaemonCmd::Reload))),
-        ] {
-            let verb =
-                recovery_verb(&command).unwrap_or_else(|| panic!("{command:?} must stay exempt"));
-            assert!(
-                RECOVERY_VERBS.contains(&verb),
-                "{verb} is exempt but undocumented"
-            );
-        }
-        assert_eq!(
-            recovery_verb(&Commands::Daemon(daemon_args(Some(cli::DaemonCmd::Reload)))),
-            Some("daemon reload"),
-            "the verb the skew refusal names must be the verb the skew guard exempts"
-        );
-        // The hidden boot re-exec, which reaches no shepherd at all.
-        assert_eq!(recovery_verb(&Commands::Daemon(daemon_args(None))), None);
-        assert_eq!(
-            VersionGuard::for_command(&Commands::Daemon(daemon_args(None))),
-            VersionGuard::Enforce
-        );
-        assert_eq!(recovery_verb(&Commands::Flock(flock_args())), None);
-        assert_eq!(
-            VersionGuard::for_command(&Commands::Flock(flock_args())),
-            VersionGuard::Enforce
-        );
-        assert_eq!(
-            VersionGuard::for_command(&Commands::Kill),
-            VersionGuard::Exempt
-        );
-        // `add` carries a request an older shepherd cannot decode, and it
-        // reaches `Enforce` through the `_` arm rather than by being named.
-        assert_eq!(
-            VersionGuard::for_command(&Commands::Add(add_args())),
-            VersionGuard::Enforce
-        );
-    }
-}
+mod tests;

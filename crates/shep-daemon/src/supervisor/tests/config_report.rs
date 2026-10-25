@@ -6,6 +6,23 @@
 
 use super::*;
 
+/// The identity this test process already runs under, the credential pair
+/// `own_user_name()` resolves to.
+#[cfg(unix)]
+fn own_creds() -> Credentials {
+    Credentials {
+        uid: nix::unistd::geteuid().as_raw(),
+        gid: None,
+    }
+}
+
+/// An identity no passwd lookup could produce, so a spawn carrying it is a
+/// spawn that reused a stored resolution.
+const SETTLED_CREDS: Credentials = Credentials {
+    uid: 4242,
+    gid: None,
+};
+
 /// A pending field an operator cannot see is a silent divergence.
 #[tokio::test(start_paused = true)]
 async fn to_info_reports_the_pending_fields_names_only() {
@@ -74,6 +91,38 @@ async fn to_info_carries_a_sheep_s_declared_level_rules_in_order() {
 
     let entry = &actor.sheep[&0].entry;
     assert_eq!(to_info(entry, &actor.smits).level_rules, rules);
+}
+
+/// `shep bleats --no-follow` reads the log file and has to know whether the
+/// stamp on each line is the shepherd's or the app's own. A dog's config
+/// always stamps, so its row stays `None` on `handshook`'s two-case terms.
+#[tokio::test(start_paused = true)]
+async fn a_stamps_off_sheep_reports_it_and_a_stamped_one_stays_silent() {
+    let dir = tempfile::tempdir().unwrap();
+    let (actor, _enforcer) = actor_over(
+        &dir,
+        &[
+            app_with("quiet", |app| app.log_timestamps = false),
+            app_with("stamped", |_| {}),
+            dog_app("watcher"),
+        ],
+    );
+
+    assert_eq!(
+        to_info(&actor.sheep[&0].entry, &actor.smits).log_timestamps,
+        Some(false),
+        "the file this sheep's rows point at holds its lines as it wrote them"
+    );
+    assert_eq!(
+        to_info(&actor.sheep[&1].entry, &actor.smits).log_timestamps,
+        None,
+        "a stamped row carries no key at all"
+    );
+    assert_eq!(
+        to_info(&actor.sheep[&2].entry, &actor.smits).log_timestamps,
+        None,
+        "a dog's own log lines are always stamped"
+    );
 }
 
 /// A dog's `AppConfig::minimal` sets no ceiling, so its `ProcessInfo`
@@ -242,10 +291,7 @@ async fn promoting_a_user_change_re_resolves_credentials() {
 
     actor.advance_reload("web", VecDeque::from([0]));
 
-    let wanted = Credentials {
-        uid: nix::unistd::geteuid().as_raw(),
-        gid: None,
-    };
+    let wanted = own_creds();
     assert_eq!(
         actor.runner.spawned_as(0),
         Some(wanted),
@@ -280,12 +326,9 @@ async fn promoting_an_unrelated_change_keeps_the_resolved_identity() {
             app.user = Some(NO_SUCH_USER.to_string())
         })],
     );
-    // An unresolvable name makes reuse observable: this value cannot be
-    // re-derived, so a spawn carrying it is a spawn that reused it.
-    let settled = Credentials {
-        uid: 4242,
-        gid: None,
-    };
+    // An unresolvable name makes reuse observable: `SETTLED_CREDS` cannot
+    // be re-derived, so a spawn carrying it is a spawn that reused it.
+    let settled = SETTLED_CREDS;
     actor
         .sheep
         .get_mut(&0)
@@ -351,12 +394,8 @@ async fn promoting_an_unrelated_change_keeps_the_resolved_identity() {
 async fn a_sibling_that_has_not_promoted_yet_still_re_resolves_after_later_loads() {
     let dir = tempfile::tempdir().unwrap();
     let (mut actor, _enforcer) = actor_over(&dir, &[app_with("web", |app| app.instances = 3)]);
-    // The identity the three instances already run under, and one no lookup
-    // could produce, so a spawn carrying it is a spawn that reused it.
-    let settled = Credentials {
-        uid: 4242,
-        gid: None,
-    };
+    // The identity the three instances already run under.
+    let settled = SETTLED_CREDS;
     for id in [0, 1, 2] {
         actor
             .sheep
@@ -384,15 +423,12 @@ async fn a_sibling_that_has_not_promoted_yet_still_re_resolves_after_later_loads
 
     actor.respawn(1, true);
 
-    let wanted = Credentials {
-        uid: nix::unistd::geteuid().as_raw(),
-        gid: None,
-    };
+    let wanted = own_creds();
     assert_eq!(
         actor.runner.spawned_as(1),
         Some(wanted),
         "instance 1 has still never applied the `user` change, so its promotion must \
-         re-resolve; the settled 4242 here is the change being silently dropped"
+         re-resolve; `SETTLED_CREDS` here is the change being silently dropped"
     );
     assert_eq!(
         actor.sheep[&1].entry.spec.config().user,
@@ -457,10 +493,7 @@ async fn an_abandoned_reload_leaves_the_parked_config_where_it_was() {
 async fn an_abandoned_reload_leaves_the_drainees_identity_alone() {
     let dir = tempfile::tempdir().unwrap();
     let (mut actor, _enforcer) = actor_over(&dir, &[app_with("web", |_| {})]);
-    let settled = Credentials {
-        uid: 4242,
-        gid: None,
-    };
+    let settled = SETTLED_CREDS;
     actor
         .sheep
         .get_mut(&0)
@@ -660,28 +693,13 @@ async fn a_parked_config_and_its_reset_decision_survive_a_handover() {
 
     // The predecessor's entry: registered, not running, owed a `user`
     // change, and settled on an identity no lookup could produce.
-    let settled = Credentials {
-        uid: 4242,
-        gid: None,
-    };
+    let settled = SETTLED_CREDS;
     let entry = ProcessEntry {
-        id: 7,
-        spec: app_with("web", |_| {}),
         pending: Some(app_with("web", |app| app.user = Some(own_user_name()))),
         pending_reidentifies: true,
-        overridden: Vec::new(),
-        instance: 0,
         status: ProcStatus::Stopped,
-        pid: None,
-        restarts: 0,
-        started_at: None,
-        budget: RestartBudget::default(),
-        reload: ReloadState::None,
         credentials: SpawnIdentity::Resolved(Some(settled)),
-        out_file: PathBuf::new(),
-        err_file: PathBuf::new(),
-        dog: None,
-        last_exit: None,
+        ..plain_entry(7, app_with("web", |_| {}))
     };
     let carried = CarriedSheep::from_entry(&entry, 0, CarriedFds::none(), false, None, false, None);
 
@@ -703,11 +721,8 @@ async fn a_parked_config_and_its_reset_decision_survive_a_handover() {
 
     assert_eq!(
         actor.runner.spawned_as(0),
-        Some(Credentials {
-            uid: nix::unistd::geteuid().as_raw(),
-            gid: None,
-        }),
-        "and promoting it must re-resolve: the settled 4242 here is the reset decision \
+        Some(own_creds()),
+        "and promoting it must re-resolve: `SETTLED_CREDS` here is the reset decision \
          lost in the blob, which is the identity change silently dropped"
     );
     assert_eq!(

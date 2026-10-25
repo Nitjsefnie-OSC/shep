@@ -33,19 +33,6 @@ impl Render for LambRows {
             .collect()
     }
 
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "PID" => "pid",
-            "NAME" => "name",
-            other => panic!("LambRows::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
-
     // Parallel to `headers()`. Two columns, both identity, so this never
     // narrows; spelled out so a later header does not inherit it by omission.
     const PRIORITIES: &'static [u8] = &[0, 0];
@@ -98,20 +85,6 @@ impl Render for LabelledLambRows {
             |_, _, _| Paint::Default,
         )
     }
-
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "PID" => "pid",
-            "NAME" => "name",
-            "LABEL" => "label",
-            other => panic!("LabelledLambRows::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     // Parallel to `headers()`. The label is the app's own text, so it goes
     // first; PID and NAME are identity.

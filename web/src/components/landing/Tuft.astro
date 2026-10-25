@@ -1,0 +1,44 @@
+---
+/*
+ * One grass tuft in the landing pasture: the same four-blade SVG every
+ * time, placed and optionally mirrored by the caller. PastureScenery.astro
+ * owns the placement list and the two depth layers (near on the near hill,
+ * far just after the far hill); this owns the drawing and the one rule the
+ * drawing needs, so the two layers can't drift apart.
+ *
+ * Not a mark: it belongs to this scene, has no design-source page behind
+ * it, and takes no design token of its own beyond --grass-deep.
+ */
+interface Props {
+  left: string;
+  bottom: string;
+  width: number;
+  flip?: boolean;
+}
+
+const { left, bottom, width, flip } = Astro.props;
+const style = `left:${left};bottom:${bottom};width:${width}px;${flip ? "transform:scaleX(-1);" : ""}`;
+---
+
+<span class="tuft" style={style}>
+  <svg viewBox="0 0 32 18" width="100%" aria-hidden="true">
+    <g
+      fill="none"
+      stroke="var(--grass-deep)"
+      stroke-width="3"
+      stroke-linecap="round"
+    >
+      <path d="M6 17C5 11 3 8 2 3" />
+      <path d="M12 17C12 9 11 6 12 1" />
+      <path d="M18 17C19 10 21 7 23 3" />
+      <path d="M25 17C26 12 28 10 30 7" />
+    </g>
+  </svg>
+</span>
+
+<style>
+  .tuft {
+    position: absolute;
+    line-height: 0;
+  }
+</style>

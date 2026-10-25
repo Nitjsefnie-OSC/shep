@@ -14,6 +14,7 @@
 use std::io::{self, Stdout, Write};
 
 use crossterm::cursor::{Hide, Show};
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -28,6 +29,9 @@ use crate::serve::auth::base64_encode;
 pub fn restore() {
     let mut out = io::stdout();
     let _ = crossterm::execute!(out, LeaveAlternateScreen, Show);
+    // Its own call: a legacy Windows console errors here, and `execute!`
+    // stops at the first error, which would skip the screen and the cursor.
+    let _ = crossterm::execute!(out, DisableBracketedPaste);
     let _ = disable_raw_mode();
     let _ = out.flush();
 }
@@ -58,7 +62,9 @@ pub fn probe_panic_for_test() -> ! {
     panic!("shep_term_panic_probe: deliberate panic exercising restore-before-backtrace ordering");
 }
 
-/// Enters raw mode and the alternate screen, and hides the cursor.
+/// Enters raw mode and the alternate screen, hides the cursor and tries to
+/// turn on bracketed paste, so a paste arrives as one event instead of as
+/// keys. A terminal that cannot do bracketed paste is not an error.
 ///
 /// Raw mode goes on before the alternate screen, so a failure entering the
 /// alternate screen restores the terminal before returning the error rather
@@ -74,6 +80,9 @@ pub fn enter() -> io::Result<Stdout> {
         restore();
         return Err(err);
     }
+    // Best-effort: a legacy Windows console cannot do it, and lookout runs
+    // there without paste.
+    let _ = crossterm::execute!(out, EnableBracketedPaste);
     Ok(out)
 }
 

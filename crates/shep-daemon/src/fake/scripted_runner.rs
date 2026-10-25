@@ -62,6 +62,9 @@ struct SpawnedProc {
     /// the identity a spawn actually carried rather than merely that a
     /// spawn happened.
     credentials: Option<Credentials>,
+    /// The program this spawn was asked to run, copied off
+    /// [`SpawnSpec::program`], read back via [`ScriptedRunner::spawned_program`].
+    program: String,
 }
 
 /// The pid [`ScriptedRunner`] gives the first proc it spawns; each later
@@ -153,8 +156,18 @@ fn open_reportable_fds() -> ([std::fs::File; 6], crate::handover::CarriedFds) {
         err_log: Some(files[3].as_raw_fd()),
         stdin: Some(files[4].as_raw_fd()),
         channel: Some(files[5].as_raw_fd()),
+        dog_link: None,
     };
     (files, fds)
+}
+
+/// Turns a builder's borrowed name list into the owned names the runner stores.
+///
+/// Every name-list builder here takes `&[&str]` and writes into a
+/// `Mutex<Vec<String>>`, which the runner's own spawn and preflight checks
+/// read back by name.
+fn name_vec(names: &[&str]) -> Vec<String> {
+    names.iter().map(|n| n.to_string()).collect()
 }
 
 impl ScriptedRunner {
@@ -194,7 +207,7 @@ impl ScriptedRunner {
     #[cfg(unix)]
     #[must_use]
     pub fn with_a_pump_that_never_reports(self, names: &[&str]) -> Self {
-        *self.deaf_pump.lock().unwrap() = names.iter().map(|n| (*n).to_string()).collect();
+        *self.deaf_pump.lock().unwrap() = name_vec(names);
         self
     }
 
@@ -220,7 +233,7 @@ impl ScriptedRunner {
     /// alone cannot express that.
     #[must_use]
     pub fn failing_to_spawn(self, names: &[&str]) -> Self {
-        *self.fail_spawn.lock().unwrap() = names.iter().map(|n| (*n).to_string()).collect();
+        *self.fail_spawn.lock().unwrap() = name_vec(names);
         self
     }
 
@@ -230,7 +243,7 @@ impl ScriptedRunner {
     /// no other fake behaviour can enter.
     #[must_use]
     pub fn refusing(self, names: &[&str]) -> Self {
-        *self.refuse.lock().unwrap() = names.iter().map(|n| (*n).to_string()).collect();
+        *self.refuse.lock().unwrap() = name_vec(names);
         self
     }
 
@@ -262,6 +275,20 @@ impl ScriptedRunner {
     #[track_caller]
     pub fn spawned_as(&self, spawn_index: usize) -> Option<Credentials> {
         self.spawned.lock().unwrap()[spawn_index].credentials
+    }
+
+    /// The program the spawn at `spawn_index` was asked to run.
+    ///
+    /// The fake runs nothing, so this is how a test tells which of two
+    /// registrations of one name a spawn came from.
+    ///
+    /// # Panics
+    ///
+    /// If `spawn_index` is out of range.
+    #[must_use]
+    #[track_caller]
+    pub fn spawned_program(&self, spawn_index: usize) -> String {
+        self.spawned.lock().unwrap()[spawn_index].program.clone()
     }
 
     /// How many spawns this runner has been asked for.
@@ -336,7 +363,7 @@ impl ScriptedRunner {
     ///
     /// The fake writes no files, so this proves only that the request
     /// reached this spawn's end of [`ProcIo::log_ctl`](crate::runner::ProcIo::log_ctl). Whether a reopened
-    /// handle lands on a recreated inode is `tests/real_runner.rs`'s question.
+    /// handle lands on a recreated inode is `tests/real_runner/logs.rs`'s question.
     ///
     /// # Panics
     ///
@@ -391,7 +418,7 @@ impl ScriptedRunner {
     ///
     /// Proves only that the line reached [`ProcIo::to_stdin`](crate::runner::ProcIo::to_stdin) intact; a
     /// real `\n`-terminated line landing in a real fd 0 is
-    /// `tests/real_runner.rs`'s question.
+    /// `tests/real_runner/environment.rs`'s question.
     ///
     /// # Panics
     ///
@@ -487,7 +514,7 @@ impl ProcessRunner for ScriptedRunner {
         // The fake writes no files, so there is nothing to reopen; what it
         // must do is answer every request like a live pump, and stop
         // answering once the proc exits (unless a lamb holds the pipe), so
-        // that branch stays reachable to `tests/real_runner.rs`.
+        // that branch stays reachable to `tests/real_runner/logs.rs`.
         let log_ctl_live = Arc::new(AtomicBool::new(true));
         let ctl_live = Arc::clone(&log_ctl_live);
         let reopens = Arc::new(AtomicU32::new(0));
@@ -650,6 +677,7 @@ impl ProcessRunner for ScriptedRunner {
             resumes,
             stdin_lines,
             credentials: spec.credentials,
+            program: spec.program.clone(),
         });
         drop(spawned);
 

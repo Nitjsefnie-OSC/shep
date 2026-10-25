@@ -39,6 +39,17 @@ impl<R: ProcessRunner> Actor<R> {
         // once per app. That walk carries every refusal back on
         // `Response::Reloading`, so a fold reloaded around a busy app is
         // still named at the operator rather than being a missing row.
+        if selector.is_exact() {
+            let names = matched
+                .iter()
+                .filter_map(|id| self.sheep.get(id))
+                .map(|slot| slot.entry.spec.config().name.as_str());
+            if let Err(refusal) = self.refuse_disabled(names) {
+                let _ = reply.send(Err(refusal));
+                return;
+            }
+        }
+
         let in_flight = matched.iter().find_map(|id| {
             let slot = self
                 .sheep
@@ -173,10 +184,7 @@ impl<R: ProcessRunner> Actor<R> {
                     // The one end a reload reaches without `abort_reload`: no
                     // replacement was ever registered, and `spawn_replacement`
                     // has already put the drainee back to `Online`.
-                    if let Some(slot) = self.sheep.get(&old_id) {
-                        let info = to_info(&slot.entry, &self.smits);
-                        self.emit(ProcessEventKind::ReloadAbandoned, info, true);
-                    }
+                    self.emit_reload_abandoned(old_id);
                     return;
                 }
             }
@@ -197,8 +205,7 @@ impl<R: ProcessRunner> Actor<R> {
             .intended_spec(old_id)
             .expect("reload_mode_of: the instance was found replaceable a moment ago")
             .config();
-        let source = ReadinessSource::of(config)
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(config);
         ReloadMode::of(config, &source)
     }
 
@@ -265,6 +272,16 @@ impl<R: ProcessRunner> Actor<R> {
         old_id: u32,
         mode: ReloadMode,
     ) -> Result<u32, String> {
+        // The last word on the mark for both orderings, ahead of anything the
+        // drainee or the id counter would be left holding if it refused.
+        if let Some(slot) = self.sheep.get(&old_id)
+            && self.is_disabled_id(old_id)
+        {
+            return Err(format!(
+                "{} is disabled; `shep enable` brings it back",
+                slot.entry.spec.config().name
+            ));
+        }
         // `Credentials` is `Copy`; reused, and re-resolved only when the config
         // being promoted is what changed `user` or `group`. A drainee is
         // running, so the seam finds a resolved identity and touches nothing.
@@ -299,18 +316,20 @@ impl<R: ProcessRunner> Actor<R> {
         // abandons the reload rather than reaching for a restart ladder: the
         // drainee is still up and still serving, which beats either status
         // `refuse_spawn` could leave behind.
-        let spec = assemble(
-            &app,
-            instance,
-            &self.paths,
-            credentials,
-            &self.secret_view(&app),
-        )
-        .map_err(|err| err.to_string())?;
+        let spec = SpawnSpec {
+            dog_link: dog.is_some(),
+            ..assemble(
+                &app,
+                instance,
+                &self.paths,
+                credentials,
+                &self.secret_view(&app),
+            )
+            .map_err(|err| err.to_string())?
+        };
         let out_file = spec.out_file.clone();
         let err_file = spec.err_file.clone();
-        let source = ReadinessSource::of(app.config())
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(app.config());
 
         let drainee = self
             .sheep
@@ -354,6 +373,7 @@ impl<R: ProcessRunner> Actor<R> {
                     app.clone(),
                     self.events.clone(),
                     self.tx.clone(),
+                    self.lamb_sweep(),
                 );
                 let ready_tx = spawn_readiness_task(
                     new_id,
@@ -448,7 +468,10 @@ impl<R: ProcessRunner> Actor<R> {
             // With nothing to fall back to, the reload ends here. The
             // replacement is left running and `Starting`, never `Online`: a
             // deploy tool reads `Online` as "the new release is serving". That
-            // costs it the extras `went_online` arms.
+            // costs it the extras `went_online` arms. Armed here instead, so a
+            // `liveness_probe` or `max_memory` this app configures still
+            // watches it: `handle_extra_restart`'s guard admits a
+            // `ready_failed` sheep precisely so this arming is not a dead end.
             tracing::warn!(
                 name,
                 new_id,
@@ -462,6 +485,7 @@ impl<R: ProcessRunner> Actor<R> {
                 let info = to_info(&slot.entry, &self.smits);
                 self.emit(ProcessEventKind::ReloadAbandoned, info, true);
             }
+            self.arm_extras(new_id);
             return;
         }
 
@@ -507,14 +531,13 @@ impl<R: ProcessRunner> Actor<R> {
     /// the reload moves on to the next instance (or ends).
     ///
     /// The `Reloaded` this announces is the one event that says a swap
-    /// succeeded, and it goes out before the next swap begins so a clustered
-    /// app's reload reads in order. It is owed only to a replacement that is
-    /// serving: one that went down inside the drain window keeps its row, and
-    /// the event would name a process that is not there. Anything else ends
-    /// the reload as an abandonment, the queue with it being the rest of a
-    /// clustered app left on the old code. An overlapping reload of a probed
-    /// app defers the success and asks again with the drainee gone, since its
-    /// `Online` may rest on a probe the drainee answered.
+    /// succeeded, through [`Self::commit_swap_success`]. It is owed only to a
+    /// replacement that is serving: one that went down inside the drain window
+    /// keeps its row, and the event would name a process that is not there.
+    /// Anything else ends the reload as an abandonment, the queue with it being
+    /// the rest of a clustered app left on the old code. An overlapping reload
+    /// of a probed app defers the success and asks again with the drainee gone,
+    /// since its `Online` may rest on a probe the drainee answered.
     pub(super) fn finish_swap(&mut self, name: &str) {
         let Some(job) = self.reloads.remove(name) else {
             return;
@@ -553,9 +576,7 @@ impl<R: ProcessRunner> Actor<R> {
         self.clear_reload(new_id);
 
         if serving {
-            let info = to_info(&self.sheep[&new_id].entry, &self.smits);
-            self.emit(ProcessEventKind::Reloaded, info, true);
-            self.advance_reload(name, job.queue);
+            self.commit_swap_success(name, new_id, job.queue);
             return;
         }
 
@@ -565,10 +586,7 @@ impl<R: ProcessRunner> Actor<R> {
             "reload abandoned: the replacement was no longer serving when the instance it \
              replaced went"
         );
-        if let Some(slot) = self.sheep.get(&new_id) {
-            let info = to_info(&slot.entry, &self.smits);
-            self.emit(ProcessEventKind::ReloadAbandoned, info, true);
-        }
+        self.emit_reload_abandoned(new_id);
     }
 
     /// The readiness source a drained swap still has to prove, if it has one.
@@ -590,8 +608,7 @@ impl<R: ProcessRunner> Actor<R> {
             return None;
         }
         let config = self.sheep.get(&new_id)?.entry.spec.config();
-        let source = ReadinessSource::of(config)
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(config);
         matches!(source, ReadinessSource::Probe(..)).then_some(source)
     }
 
@@ -614,10 +631,7 @@ impl<R: ProcessRunner> Actor<R> {
         // `instance` and `credentials` never change after registration, so
         // this is the instance's own spawn spec, bar a reference the store
         // has stopped answering.
-        let credentials = match slot.entry.credentials {
-            SpawnIdentity::Resolved(creds) => creds,
-            SpawnIdentity::Unresolved => None,
-        };
+        let credentials = slot.entry.credentials.credentials();
         let described = describe(
             &slot.entry.spec,
             slot.entry.instance,

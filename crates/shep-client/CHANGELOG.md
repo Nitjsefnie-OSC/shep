@@ -10,6 +10,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-25
+
+### Added
+
+- Read a sheep's per-dog table with its secrets resolved
+- A dog connects over the link its shepherd spawned it holding
+- Carry a dog's grants on DogSource and map every request to a permission **(BREAKING)**
+- Answer a validate trigger in one call
+- Resolve secret references in a sheep's per-dog table
+- Answer `--shep-manifest` from `Probe` **(BREAKING)**
+- Answer `--shep-manifest` from `Probe` with manifest v1 **(BREAKING)**
+- Spawn each dog holding a connection to the shepherd **(BREAKING)**
+- Serve each Windows dog over its own user-only pipe
+- Enforce a dog's grants on its own connection **(BREAKING)**
+- A dog can refuse a settings write before shep makes it
+
+### Fixed
+
+- An older shepherd's sheep_dog_table is NotFound for an unknown sheep
+- Build the dog link types cleanly where only unix hands a dog one
+- A SHEP_DOG_FD naming no usable connection fails the dog's start
+- Make the validate_answer example assert both verdicts
+- Test an unset dog pipe with if defined, and fix the pipe-taken comment
+
+
+## [0.16.1] - 2026-10-22
+
+
+## [0.16.0] - 2026-10-22
+
+### Added
+
+- Connect to another host's shepherd through the system ssh
+- `--host <dest> muster` boots that host's shepherd from its saved roll
+- Add tail_log to Client and ReconnectingClient
+- Decode a status or dog source this build does not know **(BREAKING)**
+- Connect_ssh reaches another host's shepherd through the system ssh
+- Boot a host's shepherd from its saved roll with `shep --host <dest> muster`
+- Answer a request for the tail of one sheep's log
+
+### Changed
+
+- Handshake and run a connection over any byte stream
+
+### Fixed
+
+- Bound only the ssh handshake and skip the spawn on a spent timeout
+- Move sort_flock tests out of the over-long process.rs and drop 'catch-alls'
+
+
+## [0.15.2] - 2026-10-17
+
+
+## [0.15.1] - 2026-10-16
+
+
+## [0.15.0] - 2026-10-15
+
+### Added
+
+- Let a sheep send a dog a note that is not a metric sample **(BREAKING)**
+
+### Fixed
+
+- --no-log-timestamps reaches a sheep the flock already has
+
+
+## [0.14.0] - 2026-10-14
+
+### Added
+
+- The metrics dog serves the samples a sheep sends on its channel
+
+
+## [0.13.0] - 2026-10-13
+
+### Added
+
+- Ask for the resolved section in dog_config
+
+### Fixed
+
+- Read a reference through the shared tokenizer on the fallback path
+
+
+## [0.12.5] - 2026-10-07
+
+
+## [0.12.4] - 2026-10-06
+
+### Added
+
+- Add STOP_DEADLINE and a slow-daemon test fake
+
+
+## [0.12.3] - 2026-10-02
+
+
+## [0.12.2] - 2026-10-02
+
+
+## [0.12.1] - 2026-10-02
+
+
+## [0.12.0] - 2026-09-30
+
+### Added
+
+- Let a dog ask for the shepherd channel through dogs::Probe
+
+
 ## [0.11.0] - 2026-09-29
 
 ### Added

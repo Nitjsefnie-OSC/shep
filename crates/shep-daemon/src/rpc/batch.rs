@@ -11,11 +11,12 @@ use std::path::Path;
 
 use shep_core::config::graph::BootPlan;
 use shep_core::config::{DeclaredApp, ResolvedApp};
-use shep_core::protocol::{RpcError, RpcErrorCode, SheepApplied};
+use shep_core::protocol::{RpcError, SheepApplied};
 
 use crate::supervisor::Applied;
 
 use super::context::RpcContext;
+use super::error::invalid_config;
 
 /// Whether `namespace`'s push may reach the cache file: the `persist` key
 /// of its own `[<namespace>]` table in `dogs.toml`, or `true`.
@@ -61,11 +62,11 @@ pub(super) fn persists(dogs_config: &Path, namespace: &str) -> bool {
 ///
 /// # Errors
 ///
-/// - [`RpcErrorCode::InvalidConfig`]: the graph holds a cycle ONE OF THIS
-///   BATCH'S APPS IS IN, named as the path to break. A knot standing
-///   elsewhere in the registry is left to whichever request drew it. The
-///   same code `normalize_all`'s own refusal carries a few lines up, so it
-///   reaches the operator as `ExitCode::InvalidConfig`.
+/// - [`shep_core::protocol::RpcErrorCode::InvalidConfig`]: the graph holds a
+///   cycle ONE OF THIS BATCH'S APPS IS IN, named as the path to break. A knot
+///   standing elsewhere in the registry is left to whichever request drew it.
+///   The same code `normalize_all`'s own refusal carries a few lines up, so
+///   it reaches the operator as `ExitCode::InvalidConfig`.
 pub(super) fn staged_plan(ctx: &RpcContext, apps: &[ResolvedApp]) -> Result<BootPlan, RpcError> {
     let mut edges = ctx.registry.depends_on_by_name();
     // A dog is a node with no edges of its own, so an edge naming one
@@ -103,14 +104,10 @@ pub(super) fn staged_plan(ctx: &RpcContext, apps: &[ResolvedApp]) -> Result<Boot
         .position(|knot| knot.iter().any(|name| batch.contains(name.as_str())))
         .and_then(|knot| plan.cycles.get(knot));
     if let Some(cycle) = cycle {
-        return Err(RpcError {
-            code: RpcErrorCode::InvalidConfig,
-            message: format!(
-                "dependency cycle: {}",
-                shep_core::config::graph::render_cycle(cycle)
-            ),
-            daemon_version: None,
-        });
+        return Err(invalid_config(format!(
+            "dependency cycle: {}",
+            shep_core::config::graph::render_cycle(cycle)
+        )));
     }
     // Warned, not refused: a dependency on an app whose Flockfile lives in
     // another repository is legitimate, and the boot path takes the same view

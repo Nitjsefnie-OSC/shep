@@ -101,10 +101,11 @@ pub fn fitness(sheep: &[Candidate<'_>]) -> Fitness {
 fn refusal(candidate: &Candidate<'_>) -> Option<RefusedReason> {
     let entry = candidate.entry;
     let config = entry.spec.config();
-    let name = || config.name.clone();
 
     if candidate.pump_unresponsive {
-        return Some(RefusedReason::PumpUnresponsive { sheep: name() });
+        return Some(RefusedReason::PumpUnresponsive {
+            sheep: config.name.clone(),
+        });
     }
     None
 }
@@ -204,12 +205,14 @@ mod tests {
     #[test]
     fn a_dog_is_carried_rather_than_refused() {
         let mut built_in = entry_fixture(|_| {});
-        built_in.dog = Some(DogSource::BuiltIn);
+        built_in.dog = Some(DogSource::BuiltIn { grants: None });
         assert_eq!(fitness(&[plain(&built_in)]), Fitness::Carryable);
 
         let mut adopted = entry_fixture(|_| {});
         adopted.dog = Some(DogSource::Adopted {
+            grants: None,
             path: "/opt/bin/shep-log-rotate".to_string(),
+            channel: false,
         });
         assert_eq!(fitness(&[plain(&adopted)]), Fitness::Carryable);
     }

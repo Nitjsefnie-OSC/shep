@@ -10,7 +10,9 @@ use shep_core::protocol::ProcessInfo;
 use crate::cli::Format;
 use crate::style::Presentation;
 
-use super::{FlockRows, LabelledLambRows, LambRows, SCHEMA_VERSION, rows, table_of};
+use super::{
+    FlockRows, LabelledLambRows, LambRows, SCHEMA_VERSION, rows, table_of, write_json_line,
+};
 
 /// The `--format json` shape [`emit_described`] writes:
 /// [`super::OutputEnvelope`]'s own three fields, plus `secrets` riding
@@ -72,8 +74,7 @@ pub fn emit_described(
                 data: FlockRows(listing),
                 secrets,
             };
-            serde_json::to_writer(&mut *out, &envelope)?;
-            writeln!(out)
+            write_json_line(&mut *out, &envelope)
         }
         Format::Table => {
             let flock = FlockRows(listing);
@@ -95,7 +96,7 @@ pub fn emit_described(
                 }
                 writeln!(
                     out,
-                    "\nLambs of {} (id {}) — parent-pid descendants of {}, which is not exactly \
+                    "\nLambs of {} (id {}): parent-pid descendants of {}, which is not exactly \
                      the set a stop kills",
                     sheep.name,
                     sheep.id,
@@ -228,7 +229,7 @@ mod tests {
 
     #[test]
     fn describe_says_nothing_extra_about_a_row_that_is_not_silent() {
-        let mut talking = dog_info("bark", DogSource::BuiltIn);
+        let mut talking = dog_info("bark", DogSource::BuiltIn { grants: None });
         talking.handshook = Some(true);
         talking.dog_stale = Some(false);
 

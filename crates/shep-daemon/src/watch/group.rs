@@ -108,13 +108,16 @@ pub(super) async fn run_group(
                 | SupervisorError::InvalidScale(_)
                 | SupervisorError::CannotStart(_)
                 | SupervisorError::IsADog(_)
+                | SupervisorError::Disabled(_)
                 | SupervisorError::InvalidEnv(_)
                 | SupervisorError::InvalidField(_)
-                | SupervisorError::Overrides(_)),
+                | SupervisorError::Overrides(_)
+                | SupervisorError::NoSuchSheep(_)
+                | SupervisorError::EnvChanged(_)),
             ) => {
                 // A restart touches no log files, starts no reload, scales
-                // nothing and registers no batch, names no dog, field or
-                // override, so none of these nine can arrive here. Named
+                // nothing and registers no batch, names no dog, field, override or
+                // second sheep, so none of these twelve can arrive here. Named
                 // rather than swept into a catch-all, so a variant this path
                 // can produce still fails to compile.
                 tracing::warn!(name, %err, "watch-triggered restart reported an unrelated failure");

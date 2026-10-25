@@ -1,8 +1,7 @@
 //! Shared harness for the tokio_runner test suite: [`PumpHarness`] and the
-//! helpers built on it, used by [`log_io`] and [`handover`] (a third
-//! module, spawn_io, is pending separately).
+//! helpers built on it, used by [`log_io`], [`handover`] and [`spawn_io`].
 //!
-//! Tests needing a real child live in `tests/real_runner.rs`; a
+//! Tests needing a real child live in `tests/real_runner/`; a
 //! `tokio::io::duplex` half stands in for the pump's `AsyncRead` here.
 //! `a_flush_reports_the_write_its_file_never_took` drives a `LogFile`
 //! directly, the only way to force a write failure. Real clock, not paused,
@@ -16,7 +15,7 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tokio::io::{AsyncWrite, AsyncWriteExt as _, DuplexStream};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _, DuplexStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 
@@ -68,19 +67,27 @@ struct PumpHarness<W = DuplexStream> {
     pipes: PipeFds,
 }
 
-impl PumpHarness {
-    fn start() -> Self {
-        Self::start_stamped(true)
-    }
-
-    /// [`PumpHarness::start`] for a sheep whose `log_timestamps` is
-    /// `stamped`.
-    fn start_stamped(stamped: bool) -> Self {
+impl<W> PumpHarness<W> {
+    /// Opens the two log paths and hands `spawn_log_pump` the given stream
+    /// ends: the one constructor every [`PumpHarness`] shape goes through.
+    ///
+    /// Generic over the reading side, since [`spawn_log_pump`] takes any
+    /// `AsyncRead`. The writing side is what a test feeds, and that is the
+    /// struct's `W`.
+    fn start_with<R>(
+        out_writer: W,
+        out_reader: R,
+        err_writer: W,
+        err_reader: R,
+        stamped: bool,
+        pipes: PipeFds,
+    ) -> Self
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+    {
         let dir = tempfile::tempdir().unwrap();
         let out_path = dir.path().join("out.log");
         let err_path = dir.path().join("err.log");
-        let (out_writer, out_reader) = tokio::io::duplex(STREAM_BUFFER);
-        let (err_writer, err_reader) = tokio::io::duplex(STREAM_BUFFER);
         let (logs_tx, logs) = mpsc::channel(CHANNEL_CAPACITY);
         let (ctl, ctl_rx) = mpsc::channel(CHANNEL_CAPACITY);
         spawn_log_pump(
@@ -91,7 +98,7 @@ impl PumpHarness {
             stamped,
             logs_tx,
             ctl_rx,
-            PipeFds::default(),
+            pipes,
         );
         Self {
             dir,
@@ -101,8 +108,29 @@ impl PumpHarness {
             err_writer,
             logs,
             ctl,
-            pipes: PipeFds::default(),
+            pipes,
         }
+    }
+}
+
+impl PumpHarness {
+    fn start() -> Self {
+        Self::start_stamped(true)
+    }
+
+    /// [`PumpHarness::start`] for a sheep whose `log_timestamps` is
+    /// `stamped`.
+    fn start_stamped(stamped: bool) -> Self {
+        let (out_writer, out_reader) = tokio::io::duplex(STREAM_BUFFER);
+        let (err_writer, err_reader) = tokio::io::duplex(STREAM_BUFFER);
+        Self::start_with(
+            out_writer,
+            out_reader,
+            err_writer,
+            err_reader,
+            stamped,
+            PipeFds::default(),
+        )
     }
 }
 
@@ -116,9 +144,6 @@ impl PumpHarness {
 #[cfg(unix)]
 impl PumpHarness<tokio::net::unix::pipe::Sender> {
     fn start_over_pipes() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let out_path = dir.path().join("out.log");
-        let err_path = dir.path().join("err.log");
         let (out_writer, out_reader) = tokio::net::unix::pipe::pipe().unwrap();
         let (err_writer, err_reader) = tokio::net::unix::pipe::pipe().unwrap();
         let pipes = PipeFds {
@@ -127,33 +152,12 @@ impl PumpHarness<tokio::net::unix::pipe::Sender> {
             stdin: None,
             channel: None,
         };
-        let (logs_tx, logs) = mpsc::channel(CHANNEL_CAPACITY);
-        let (ctl, ctl_rx) = mpsc::channel(CHANNEL_CAPACITY);
-        spawn_log_pump(
-            Some(out_reader),
-            Some(err_reader),
-            LogSink::Path(out_path.clone()),
-            LogSink::Path(err_path.clone()),
-            true,
-            logs_tx,
-            ctl_rx,
-            pipes,
-        );
-        Self {
-            dir,
-            out_path,
-            err_path,
-            out_writer,
-            err_writer,
-            logs,
-            ctl,
-            pipes,
-        }
+        Self::start_with(out_writer, out_reader, err_writer, err_reader, true, pipes)
     }
 }
 
 impl<W: AsyncWrite + Unpin> PumpHarness<W> {
-    /// Sends a [`LogCtl::ReportFds`] and waits for the answer.
+    /// [`request_fds`] over this harness's control channel.
     ///
     /// Generic over the writing side rather than living with the
     /// descriptor cases, because what a report does to the pump is not
@@ -161,15 +165,7 @@ impl<W: AsyncWrite + Unpin> PumpHarness<W> {
     /// The cases about those three run over the cheaper in-memory pair.
     #[cfg(unix)]
     async fn report_fds(&self) -> CarriedFds {
-        let (done, ack) = oneshot::channel();
-        self.ctl
-            .send(LogCtl::ReportFds { done })
-            .await
-            .expect("the pump must still be reading its control channel");
-        timeout(PUMP_DEADLINE, ack)
-            .await
-            .expect("a descriptor report must be acknowledged")
-            .expect("the pump must answer rather than drop the acknowledgement")
+        request_fds(&self.ctl).await
     }
 
     /// Sends a [`LogCtl::Resume`], which carries no acknowledgement.
@@ -222,31 +218,48 @@ impl<W: AsyncWrite + Unpin> PumpHarness<W> {
     /// [`PumpHarness::reopen`] for the case where the answer itself is
     /// the assertion.
     async fn reopen_for_answer(&self) -> Result<(), ReopenError> {
-        let (done, ack) = oneshot::channel();
-        self.ctl
-            .send(LogCtl::Reopen { done })
-            .await
-            .expect("the pump must still be reading its control channel");
-        timeout(PUMP_DEADLINE, ack)
-            .await
-            .expect("a reopen must be acknowledged")
-            .expect("the pump must answer rather than drop the acknowledgement")
+        ctl_acked(&self.ctl, "a reopen", |done| LogCtl::Reopen { done }).await
     }
 
     /// Sends a [`LogCtl::Flush`], waits for its acknowledgement, and
     /// requires success: every caller flushes handles the pump can write.
     async fn flush(&self) {
-        let (done, ack) = oneshot::channel();
-        self.ctl
-            .send(LogCtl::Flush { done })
-            .await
-            .expect("the pump must still be reading its control channel");
-        let outcome = timeout(PUMP_DEADLINE, ack)
-            .await
-            .expect("a flush must be acknowledged")
-            .expect("the pump must answer rather than drop the acknowledgement");
+        let outcome = ctl_acked(&self.ctl, "a flush", |done| LogCtl::Flush { done }).await;
         assert_eq!(outcome, Ok(()), "this flush must have worked");
     }
+}
+
+/// Sends a control request that answers on `done`, and waits for the
+/// answer: the round trip every acknowledged [`LogCtl`] variant needs.
+///
+/// A send that fails and an answer whose sender was dropped both mean the
+/// pump is gone, and every caller reads them the same way. `what` names the
+/// request in the timeout message, since a pump that is hung answers
+/// nothing and the request is the only clue to which wait timed out.
+async fn ctl_acked<T>(
+    ctl: &mpsc::Sender<LogCtl>,
+    what: &str,
+    make_cmd: impl FnOnce(oneshot::Sender<T>) -> LogCtl,
+) -> T {
+    let (done, ack) = oneshot::channel();
+    ctl.send(make_cmd(done))
+        .await
+        .expect("the pump must still be reading its control channel");
+    timeout(PUMP_DEADLINE, ack)
+        .await
+        .unwrap_or_else(|_| panic!("{what} must be acknowledged"))
+        .expect("the pump must answer rather than drop the acknowledgement")
+}
+
+/// [`ctl_acked`] for a [`LogCtl::ReportFds`].
+///
+/// Takes the sender rather than a harness: the cases that ask for a
+/// descriptor report build their own pump over a single stream, which no
+/// [`PumpHarness`] shape is.
+#[cfg(unix)]
+async fn request_fds(ctl: &mpsc::Sender<LogCtl>) -> CarriedFds {
+    let report = |done| LogCtl::ReportFds { done };
+    ctl_acked(ctl, "a descriptor report", report).await
 }
 
 /// One log file's contents with [`super::log_file::LogFile::append`]'s
@@ -307,6 +320,56 @@ async fn assert_file_settles(path: &Path, expected: &str) {
 #[cfg(unix)]
 fn is_open(fd: RawFd) -> bool {
     nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFD).is_ok()
+}
+
+/// Polls [`LogCtl::ReportFds`] until `settled` holds of the answer, and
+/// answers with that report.
+///
+/// The wait is on the pump's own bookkeeping rather than on a descriptor
+/// number: a closed number is free for the next `open` anywhere in this
+/// process, and `cargo test` runs cases on parallel threads in one process,
+/// so a poll of the raw number can be answered by an unrelated file and
+/// never settle.
+///
+/// Every unsettled round ends with a [`LogCtl::Resume`]: a report parks the
+/// pump (see [`super::log_file::LogFiles::reading`]), and a parked pump
+/// cannot reach EOF, drop its reader, or clear the number. The sleep between
+/// rounds is real rather than [`tokio::task::yield_now`], because the EOF
+/// arrives through the OS reactor, which the runtime drives only once
+/// nothing else is runnable.
+#[cfg(unix)]
+async fn report_fds_until(
+    ctl: &mpsc::Sender<LogCtl>,
+    settled: impl Fn(&CarriedFds) -> bool,
+) -> CarriedFds {
+    let mut last: Option<CarriedFds> = None;
+    let report = timeout(PUMP_DEADLINE, async {
+        loop {
+            let (done, ack) = oneshot::channel();
+            ctl.send(LogCtl::ReportFds { done })
+                .await
+                .expect("the pump must still be reading its control channel");
+            let fds = ack
+                .await
+                .expect("the pump must answer a descriptor report rather than drop it");
+            if settled(&fds) {
+                return fds;
+            }
+            last = Some(fds);
+            ctl.send(LogCtl::Resume)
+                .await
+                .expect("a parked pump must still be reading its control channel");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    match report {
+        Ok(fds) => fds,
+        Err(_) => panic!(
+            "the pump never reported a settled descriptor set inside {PUMP_DEADLINE:?}, \
+             last report {last:?}"
+        ),
+    }
 }
 
 /// How many times `a_last_line_written_before_the_sheep_task_lets_go_reaches_the_file`
@@ -449,16 +512,20 @@ const SMALLEST_PIPE: usize = 16 * 1024;
 #[cfg(unix)]
 const RUN_LINE: usize = 8;
 
-/// Hands the runtime to the pump task and back.
+/// Hands the runtime to the pump task and back, for a stream backed by an
+/// in-memory [`tokio::io::duplex`] pair rather than a real pipe.
 ///
-/// `#[tokio::test]` runs on a current-thread runtime, so yielding is
-/// what lets the pump run at all: dropping a duplex writer wakes its
-/// read with EOF, and retiring a stream from there has no await of its
-/// own, so the pump reaches its next park before this returns. The
-/// repeats are slack for a pump that wakes with other work already
-/// queued, not a race the count papers over.
-async fn let_the_pump_settle() {
-    for _ in 0..16 {
+/// `#[tokio::test]` runs on a current-thread runtime, so yielding is what
+/// lets the pump run at all: dropping a duplex writer wakes its read with
+/// EOF by pushing the pump's task straight onto the run queue, and retiring
+/// a stream from there has no await of its own, so one turn is enough for
+/// the pump to reach its next park. A duplex pair has no OS reactor in the
+/// loop, so unlike [`report_fds_until`] there is no event a busy runtime
+/// could leave undelivered. The second yield is slack for whichever task
+/// this caller happens to be queued behind, not a race the count papers
+/// over.
+async fn let_the_duplex_pump_settle() {
+    for _ in 0..2 {
         tokio::task::yield_now().await;
     }
 }

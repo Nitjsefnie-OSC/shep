@@ -317,6 +317,7 @@ fn log_ctl_spec() -> SpawnSpec {
         channel: false,
         stdin: false,
         credentials: None,
+        dog_link: false,
     }
 }
 
@@ -338,7 +339,7 @@ async fn a_live_sheep_keeps_holding_its_log_control_sender() {
     let (actor_tx, _actor_rx) = mpsc::channel(8);
     let app = normalize(AppConfig::minimal("svc", "./svc")).unwrap();
     tokio::spawn(run_sheep(
-        7, proc, io, app, ctl_rx, signal_rx, events, actor_tx,
+        7, proc, io, app, ctl_rx, signal_rx, events, actor_tx, None,
     ));
 
     // Yields rather than a clock advance: the failing path is ready work,

@@ -147,12 +147,12 @@ fn exposure_notice(bind: IpAddr, auth: bool, root: &Path) -> Option<String> {
     let root = root.display();
     Some(if auth {
         format!(
-            "shep serve: bound to {bind}, reachable from beyond this host — {root} is exposed \
+            "shep serve: bound to {bind}, reachable from beyond this host. {root} is exposed \
              to anything that can reach the port"
         )
     } else {
         format!(
-            "shep serve: bound to {bind}, reachable from beyond this host, with no --auth set — \
+            "shep serve: bound to {bind}, reachable from beyond this host, with no --auth set. \
              {root}'s files will be readable by anything that can reach the port"
         )
     })
@@ -169,7 +169,7 @@ fn follow_symlinks_notice(follow_symlinks: bool) -> Option<String> {
     }
     Some(
         "shep serve: --follow-symlinks reopens the check-then-open race (TOCTOU) the default \
-         per-component walk closes — a symlink under the docroot can now point anywhere this \
+         per-component walk closes. A symlink under the docroot can now point anywhere this \
          process can read"
             .to_string(),
     )

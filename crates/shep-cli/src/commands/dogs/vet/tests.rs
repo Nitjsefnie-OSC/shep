@@ -4,16 +4,7 @@ use shep_core::protocol::MIN_SUPPORTED;
 use super::*;
 use crate::cli::AdoptArgs;
 use crate::commands::dogs::adopt;
-
-/// Every test here drives a dog verb under `--format table`.
-fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-    Streams {
-        out,
-        err,
-        style: crate::style::Presentation::BARE,
-        fmt: crate::cli::Format::Table,
-    }
-}
+use crate::commands::dogs::test_support::streams;
 
 fn chmod(path: &Path, mode: u32) {
     let mut perms = std::fs::metadata(path).unwrap().permissions();
@@ -60,6 +51,36 @@ fn a_binary_shep_has_never_seen_is_vetted_before_anything_is_written() {
         vet_binary_within(&bogus, dir.path(), "probe", TEST_BUDGET),
         Err(AdoptRefusal::WillNotExec { .. })
     ));
+}
+
+/// A directory the operator cannot search hides the file without it being
+/// absent: "no file exists" would send them looking for a path that is there.
+#[test]
+fn a_path_behind_an_unsearchable_directory_is_not_reported_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let sealed = dir.path().join("sealed");
+    std::fs::create_dir(&sealed).unwrap();
+    let bin = sealed.join("dog");
+    std::fs::write(&bin, "#!/bin/sh\nexit 0\n").unwrap();
+    chmod(&bin, 0o755);
+    chmod(&sealed, 0o000);
+
+    // A process that bypasses mode bits (root) is not hidden from the file.
+    let hidden = std::fs::metadata(&bin).is_err();
+    let refusal = vet_binary_within(&bin, dir.path(), "probe", TEST_BUDGET);
+    // Restored before any assert so the tempdir can be removed.
+    chmod(&sealed, 0o700);
+    if !hidden {
+        return;
+    }
+
+    assert!(
+        matches!(
+            &refusal,
+            Err(AdoptRefusal::Inaccessible { reason }) if !reason.is_empty()
+        ),
+        "a lookup failure that is not absence must name its cause, got {refusal:?}"
+    );
 }
 
 #[test]
@@ -134,6 +155,7 @@ async fn a_dog_above_this_protocol_is_adopted() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin,
     };
@@ -170,6 +192,7 @@ async fn a_dog_below_the_floor_is_refused_at_adopt() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin,
     };
@@ -220,6 +243,7 @@ async fn no_restart_warning_for_a_dog_inside_the_window() {
         &format!("echo 'shep-otel 0.1.3'\necho 'shep-protocol: {PROTOCOL_VERSION}'"),
     );
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin.clone(),
     };
@@ -259,6 +283,7 @@ async fn a_restart_warning_fires_for_a_dog_below_the_floor() {
         &format!("echo 'shep-otel 0.1.3'\necho 'shep-protocol: {PROTOCOL_VERSION}'"),
     );
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin.clone(),
     };
@@ -306,12 +331,14 @@ async fn a_dog_whose_version_is_nothing_like_sheps_is_still_adopted() {
         Some(DogVersion {
             version: "9.9.9-rc1".to_string(),
             protocol: Some(PROTOCOL_VERSION),
+            channel: false,
         })
     );
 
     let mut out = Vec::new();
     let mut err = Vec::new();
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin,
     };
@@ -343,6 +370,7 @@ async fn a_dog_that_does_not_answer_is_adopted_with_an_unknown_protocol() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin,
     };
@@ -371,12 +399,14 @@ async fn a_dog_that_names_no_protocol_is_adopted_with_the_version_it_gave() {
         Some(DogVersion {
             version: "0.1.3".to_string(),
             protocol: None,
+            channel: false,
         })
     );
 
     let mut out = Vec::new();
     let mut err = Vec::new();
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin,
     };
@@ -518,6 +548,7 @@ fn output_that_answers_nothing_shep_asked_is_not_a_refusal() {
         Some(DogVersion {
             version: "--version".to_string(),
             protocol: None,
+            channel: false,
         }),
         "the last field of line 1 is taken as the version, whatever it is"
     );
@@ -538,6 +569,7 @@ fn a_future_shep_key_is_ignored_rather_than_breaking_the_parser() {
         Some(DogVersion {
             version: "0.4.0".to_string(),
             protocol: Some(2),
+            channel: false,
         })
     );
 
@@ -547,6 +579,7 @@ fn a_future_shep_key_is_ignored_rather_than_breaking_the_parser() {
         Some(DogVersion {
             version: "0.1.3".to_string(),
             protocol: None,
+            channel: false,
         }),
         "a protocol that is not a decimal is unknown, not a refusal"
     );
@@ -679,6 +712,7 @@ async fn a_dog_whose_schema_run_exits_non_zero_has_no_schema_and_no_warning() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin,
     };
@@ -706,6 +740,7 @@ async fn a_dog_that_prints_no_schema_has_no_schema_and_no_warning() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin,
     };
@@ -738,6 +773,7 @@ async fn a_dog_that_prints_invalid_json_is_adopted_with_one_warning() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin,
     };
@@ -793,6 +829,7 @@ async fn a_published_schema_reaches_no_file_shep_writes() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin,
     };
@@ -846,6 +883,7 @@ async fn a_group_writable_binary_is_adopted_with_a_warning() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: bin.clone(),
     };
@@ -871,6 +909,7 @@ async fn a_refused_adopt_leaves_the_config_untouched() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let args = AdoptArgs {
+        yes: true,
         name: Some("otel".to_string()),
         path: dir.path().join("nope"),
     };

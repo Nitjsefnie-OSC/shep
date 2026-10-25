@@ -1,11 +1,16 @@
 //! Moving `[dog.<name>]` out of `shep.toml` and into `dogs.toml`, once.
 //!
-//! [`migrate_dog_sections`] runs at the top of every daemon boot and does
-//! nothing on all but the first. It is one of two writers `dogs.toml` has:
-//! the other is `shep_daemon::dogs::set_dog_section`, which the config pane
-//! reaches through `Request::SetDogConfig`. Both rewrite the whole file, so
-//! both hold `dogs.toml`'s own [`ConfigLock`] across the read-modify-write;
-//! while both locks are held, `shep.toml`'s is the outer one.
+//! [`migrate_dog_sections`] runs at the top of every daemon boot, and
+//! `shep adopt` runs it before seeding a manifest's `defaults` so a home
+//! that still holds `[dog.<name>]` values moves them before a seeded
+//! section could collide with them. It does nothing on all but the first.
+//! It is one of the writers `dogs.toml` has:
+//! the others are [`seed_dog_defaults`], which `shep adopt` runs when a
+//! manifest carries `defaults`, and `shep_daemon::dogs::set_dog_section`,
+//! which the config pane reaches through `Request::SetDogConfig`. All
+//! rewrite the whole file when they write, so all hold `dogs.toml`'s own
+//! [`ConfigLock`] across the read-modify-write; while both the `shep.toml`
+//! and `dogs.toml` locks are held, `shep.toml`'s is the outer one.
 //! `RawDaemonConfig` keeps its `dog` field so an un-migrated file still
 //! parses under `deny_unknown_fields`.
 
@@ -95,8 +100,8 @@ pub(crate) fn migrate_dog_sections(paths: &ShepPaths) -> Result<Vec<String>, Dog
         if let Some(name) = incoming.keys().find(|name| collides(name)) {
             return Err(DogMigrationError::WouldOverwrite { name: name.clone() });
         }
-        let mut moved: Vec<String> = incoming.keys().cloned().collect();
-        moved.sort();
+        // `incoming` is a `BTreeMap`, so its keys are already in name order.
+        let moved: Vec<String> = incoming.keys().cloned().collect();
 
         // Appended: a table taken out of `shep.toml` still carries the
         // position it held there. The scan covers every positioned table, not
@@ -122,17 +127,109 @@ pub(crate) fn migrate_dog_sections(paths: &ShepPaths) -> Result<Vec<String>, Dog
 /// Whether `dogs.toml` holds a section for `name`. A missing file is
 /// `Ok(false)`.
 ///
-/// `shep rehome`'s only interest in this file: it forgets the adoption and
-/// leaves the settings, so the answer decides whether there is anything to
-/// tell the operator it kept. Takes no lock and writes nothing, so a
-/// section appearing or vanishing under the read changes a notice, never a
-/// file.
+/// `shep delete <dog>` and the hidden `shep rehome`'s only interest in this
+/// file: they forget the adoption and leave the settings, so the answer
+/// decides whether there is anything to tell the operator it kept. Takes no
+/// lock and writes nothing, so a section appearing or vanishing under the
+/// read changes a notice, never a file.
 ///
 /// # Errors
 /// [`DogMigrationError::ReadDogs`] if the file exists and could not be
 /// read, and [`DogMigrationError::Parse`] if it is not valid TOML.
 pub(crate) fn dog_section_exists(path: &Path, name: &str) -> Result<bool, DogMigrationError> {
     Ok(read_dogs_document(path)?.contains_key(name))
+}
+
+/// What `shep adopt` does with a manifest's `defaults`: writes them as
+/// `name`'s section in `dogs.toml` when the file holds no section for the
+/// dog, and touches nothing otherwise.
+///
+/// `defaults` is TOML text for the dog's own section body, so it is parsed
+/// as a document and inserted whole under `[name]`: a `defaults` holding
+/// `[sinks]` arrives as `[name.sinks]`. The section lands after every
+/// section already in the file, the same way a migrated one does.
+///
+/// `dogs.toml` is read before the `defaults` are judged, so an unreadable
+/// file is reported whatever the manifest declared: a broken `dogs.toml`
+/// cannot ride through an adopt hidden behind the warning about a dog's
+/// bad `defaults`. That first read is the gate, not the decision. Whether
+/// a section is already there is decided only inside the lock, so the
+/// answer is never a read a concurrent writer has invalidated. A kept
+/// section still means no write at all: the file survives byte-for-byte,
+/// down to its inode.
+///
+/// # Errors
+/// - [`DogMigrationError::ReadDogs`] and [`DogMigrationError::Parse`] when
+///   `dogs.toml` exists and cannot be read or is not valid TOML, whatever
+///   the `defaults` hold. A file shep cannot read is a file shep cannot
+///   write into, so the adopt refuses rather than replacing it.
+/// - [`DogMigrationError::Lock`] and [`DogMigrationError::Write`] for the
+///   underlying I/O of the write.
+///
+/// A `defaults` that is not valid TOML is not an error: it is the dog's
+/// bug, [`DefaultsOutcome::Unreadable`] reports it, and the adopt proceeds
+/// exactly as it does for a dog whose schema answer is not JSON.
+pub(crate) fn seed_dog_defaults(
+    paths: &ShepPaths,
+    name: &str,
+    defaults: &str,
+) -> Result<DefaultsOutcome, DogMigrationError> {
+    // The gate read: its answer is discarded, its error is not. Judging
+    // the operator's file first is what reports a broken `dogs.toml` even
+    // when the dog's `defaults` are broken too.
+    read_dogs_document(&paths.dogs_config)?;
+    let Ok(parsed) = defaults.parse::<DocumentMut>() else {
+        return Ok(DefaultsOutcome::Unreadable);
+    };
+    // Comments and whitespace are not a section: a dog that declared
+    // nothing writes nothing.
+    if parsed.is_empty() {
+        return Ok(DefaultsOutcome::Empty);
+    }
+    // The lock is taken before the section is looked for, so `Kept` is
+    // never decided from a read a concurrent writer has already replaced:
+    // a section appearing is kept, and one vanishing mid-flight re-seeds
+    // on the next adopt rather than being missed by a stale glance.
+    let _lock = ConfigLock::acquire(&paths.dogs_config).map_err(DogMigrationError::Lock)?;
+    let mut merged = read_dogs_document(&paths.dogs_config)?;
+    if merged.contains_key(name) {
+        return Ok(DefaultsOutcome::Kept);
+    }
+    let mut next = merged
+        .iter()
+        .filter_map(|(_, item)| last_position(item))
+        .max()
+        .map_or(0, |last| last + 1);
+    // The parsed document's root table is implicit, holding the defaults'
+    // keys and any sub-tables its own headers spelled. Made explicit and
+    // named, it is the section; renumbered like a migrated one, it lands
+    // in one piece at the end. Cloned through `as_table` rather than taken
+    // through `DocumentMut::into_table`: that method postdates the
+    // `toml_edit` floor this workspace declares, and CI's minimal-versions
+    // job builds at the floor.
+    let mut section = parsed.as_table().clone();
+    section.set_implicit(false);
+    let mut item = Item::Table(section);
+    renumber_tables(&mut item, &mut next);
+    merged.insert(name, item);
+    write_dogs_config(&paths.dogs_config, &merged.to_string()).map_err(DogMigrationError::Write)?;
+    Ok(DefaultsOutcome::Written)
+}
+
+/// Which of the four things `shep adopt` did with a manifest's `defaults`
+/// an operator should be told about.
+#[derive(Debug)]
+pub(crate) enum DefaultsOutcome {
+    /// `dogs.toml` gained a `[<name>]` section holding the defaults.
+    Written,
+    /// `dogs.toml` already holds a `name` section, so it was not opened
+    /// for writing at all.
+    Kept,
+    /// The `defaults` declared nothing, so nothing was written.
+    Empty,
+    /// The `defaults` are not valid TOML: the dog's bug, warned about, and
+    /// nothing was written.
+    Unreadable,
 }
 
 /// Reads `path` as an editable document, treating a missing file as an empty

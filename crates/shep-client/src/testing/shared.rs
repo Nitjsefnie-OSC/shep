@@ -1,7 +1,7 @@
 use futures_util::{SinkExt, StreamExt};
 use shep_core::protocol::{
     BusEvent, DogSource, Envelope, ExitInfo, Hello, HelloAck, HelloReply, Lamb, PROTOCOL_VERSION,
-    ProcessEventKind, ProcessInfo, Reply, Response, RpcError, RpcErrorCode, decode_frame,
+    ProcessEventKind, ProcessInfo, Reply, Response, RpcError, RpcErrorCode, codec, decode_frame,
     encode_frame,
 };
 use shep_core::status::ProcStatus;
@@ -83,7 +83,7 @@ pub fn sample_info() -> ProcessInfo {
         .err_file(Some("/home/ada/.shep/logs/web-0-err.log".to_string()))
         .cpu_percent(Some(12.5))
         .memory_bytes(Some(48 * 1024 * 1024))
-        .dog(Some(DogSource::BuiltIn))
+        .dog(Some(DogSource::BuiltIn { grants: None }))
         .lambs(Some(vec![Lamb::new(4243, "node")]))
         // `restarts: 3` already implies an exit; give it a real outcome
         // rather than `None` so `last_exit`'s JSON shape gets exercised too.
@@ -107,6 +107,19 @@ pub(super) async fn handshake(frames: &mut Frames, ack: HelloAck) -> Hello {
     let reply: HelloReply = Ok(ack);
     frames.send(encode_frame(&reply).unwrap()).await.unwrap();
     hello
+}
+
+/// Accepts one connection on `listener`, frames it with [`codec`], and
+/// completes the handshake with `ack`: the three lines every one-connection
+/// fake in this module starts with. Returns the live [`Frames`], and
+/// discards the [`Hello`], which none of these fakes reads.
+///
+/// Panics on any accept or handshake failure.
+pub(super) async fn accept_handshaked(listener: &mut Listener, ack: HelloAck) -> Frames {
+    let stream = listener.accept().await.unwrap();
+    let mut frames = Framed::new(stream, codec());
+    let _hello = handshake(&mut frames, ack).await;
+    frames
 }
 
 /// Reads and decodes the next envelope. Panics on failure or a closed

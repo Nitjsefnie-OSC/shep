@@ -61,14 +61,7 @@ impl fmt::Display for SecretRef<'_> {
 #[must_use]
 pub fn references(config: &AppConfig) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
-    let mut scan = |value: &str| {
-        secret_references_in(value, |reference| {
-            found.insert(match reference.namespace {
-                Some(namespace) => format!("{namespace}/{}", reference.key),
-                None => reference.key.to_string(),
-            });
-        });
-    };
+    let mut scan = |value: &str| found.extend(references_in(value));
     for value in config.env.values() {
         scan(value);
     }
@@ -81,6 +74,26 @@ pub fn references(config: &AppConfig) -> BTreeSet<String> {
     if let Some(value) = &config.err_file {
         scan(value);
     }
+    found
+}
+
+/// Every `{{secret:...}}` reference `value` names, as [`references`] spells
+/// them (`KEY` or `namespace/KEY`, no braces), deduplicated.
+///
+/// The same tokenizer [`references`] walks a config's fields with and
+/// [`template::render_secrets`] resolves against, so a string this reports
+/// nothing for is one `render_secrets` would not substitute. A malformed
+/// `{{secret:...}}` is not a reference here; `render_secrets` is what refuses
+/// it.
+#[must_use]
+pub fn references_in(value: &str) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    secret_references_in(value, |reference| {
+        found.insert(match reference.namespace {
+            Some(namespace) => format!("{namespace}/{}", reference.key),
+            None => reference.key.to_string(),
+        });
+    });
     found
 }
 
@@ -140,6 +153,28 @@ pub fn namespaces_of(config: &AppConfig) -> BTreeSet<String> {
         .collect()
 }
 
+/// What a client may be told about one env value: the value itself when it is
+/// exactly one `{{secret:...}}` reference, and `<redacted>` otherwise.
+///
+/// A reference names a secret and is not one. Text around a reference is
+/// literal and may carry a secret of its own, so a value that merely embeds a
+/// reference is redacted whole.
+#[must_use]
+pub fn shown_env_value(value: &str) -> String {
+    let whole = value
+        .strip_prefix("{{secret:")
+        .and_then(|rest| rest.strip_suffix("}}"))
+        .is_some_and(|body| SecretRef::parse(body).is_some());
+    if whole {
+        value.to_string()
+    } else {
+        REDACTED_ENV.to_string()
+    }
+}
+
+/// What [`shown_env_value`] prints for a value that is not a reference.
+pub const REDACTED_ENV: &str = "<redacted>";
+
 #[cfg(test)]
 mod tests {
 
@@ -193,6 +228,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn references_in_reads_one_string_through_the_same_tokenizer() {
+        assert_eq!(
+            references_in("a {{secret:ONE}} {{name}} {{secret:vercel/TWO}} {{secret:ONE}}"),
+            BTreeSet::from(["ONE".to_string(), "vercel/TWO".to_string()])
+        );
+        for none in [
+            "plain",
+            "{{{{secret:ONE}}}}",
+            "{{secret:bad key}}",
+            "{{secret:ONE",
+        ] {
+            assert!(references_in(none).is_empty(), "{none:?} names nothing");
+        }
+    }
+
     /// The key, not the reference. `references` answers the other direction,
     /// and a pane marking a row needs this one.
     #[test]
@@ -243,5 +294,26 @@ mod tests {
             .to_string(),
             "{{secret:vercel/K}}"
         );
+    }
+
+    /// A reference that is the whole value prints as written, and every other
+    /// value, a literal or one that merely embeds a reference, prints as
+    /// `<redacted>`: the text around an embedded reference is a literal too.
+    #[test]
+    fn only_a_value_that_is_one_reference_is_shown() {
+        for shown in ["{{secret:KEY}}", "{{secret:vercel/KEY}}"] {
+            assert_eq!(shown_env_value(shown), shown);
+        }
+        for hidden in [
+            "hunter2",
+            "",
+            "postgres://u:{{secret:PW}}@db/app",
+            "{{secret:A}}{{secret:B}}",
+            "{{secret:bad key}}",
+            "{{name}}",
+            "{{secret:KEY}} ",
+        ] {
+            assert_eq!(shown_env_value(hidden), "<redacted>", "{hidden:?}");
+        }
     }
 }

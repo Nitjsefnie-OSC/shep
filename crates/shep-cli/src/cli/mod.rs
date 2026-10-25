@@ -15,22 +15,37 @@
 //! `#[cfg(unix)]` module could not own.
 
 mod dogs;
+#[cfg(test)]
+mod dogs_grant_tests;
 mod flock;
 mod help;
+mod hosts;
 mod import;
+mod kv;
 mod logs;
+mod settings;
 mod sheep;
 mod store;
 mod system;
+#[cfg(test)]
+mod unset_tests;
 mod verbs;
 
 use std::path::PathBuf;
 
-use help::{HELP_TEMPLATE, version_text};
+use shep_core::destination::Destination;
 
-pub use dogs::{AdoptArgs, DogArgs, DogsArgs, EnableArgs};
+use help::version_text;
+
+// `crate::adopted_help` renders the registry's dogs into a copy of this
+// template; the template itself is what ships and stays hand-written.
+pub(crate) use help::HELP_TEMPLATE;
+
+pub use dogs::{AdoptArgs, DisableArgs, DogArgs, DogsArgs, DogsCommand, EnableArgs};
 pub use flock::{FlockArgs, FoldArgs, LookoutArgs};
+pub use hosts::{HostArgs, HostCommand};
 pub use import::{ImportArgs, ImportCommand, ImportEnvArgs, ImportPm2Args};
+pub use kv::{KvArgs, KvCommand, KvGetArgs, KvSetArgs, KvUnsetArgs};
 pub use logs::{BarksArgs, BleatsArgs, FlushArgs, ReopenArgs};
 // Two defaults whose only caller outside their own module is a test
 // elsewhere in the crate: lib.rs builds a `FlockArgs` by hand, and
@@ -40,12 +55,19 @@ pub use logs::{BarksArgs, BleatsArgs, FlushArgs, ReopenArgs};
 pub(crate) use flock::FOLLOW_INTERVAL_FLOOR_SECONDS;
 #[allow(unused_imports)]
 pub use logs::DEFAULT_BLEAT_LINES;
+pub use settings::{GetArgs, SetArgs, UnsetArgs};
 pub use sheep::{
-    ResetMode, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StockArgs, TriggerArgs, WhisperArgs,
+    CopyArgs, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StockArgs, TriggerArgs, WhisperArgs,
 };
-pub use store::{KvGetArgs, KvSetArgs, KvUnsetArgs, SecretArgs, SecretCommand};
+// `ResetMode` converts to `ResetDepth` through `From`, so nothing outside
+// this crate's tests names it in a build that compiles them out. Same allow
+// as `DEFAULT_BLEAT_LINES` above.
+#[allow(unused_imports)]
+pub use sheep::ResetMode;
+pub use store::{SecretArgs, SecretCommand};
 pub use system::{
-    CompletionArgs, DaemonArgs, DaemonCmd, DevArgs, InitArgs, RuntimeArgs, StartupArgs, StyleArgs,
+    CompletionArgs, DaemonArgs, DaemonCmd, DevArgs, DialStdioArgs, InitArgs, RuntimeArgs,
+    StartupArgs, StyleArgs,
 };
 pub use verbs::Commands;
 
@@ -106,6 +128,17 @@ pub struct GlobalArgs {
     // the flag's own place in it.
     #[arg(long, global = true, value_enum)]
     pub style: Option<crate::style::StyleLevel>,
+    /// Reach another host's shepherd over ssh
+    ///
+    /// DEST is an ssh destination: `amp2`, `user@amp2`, or an alias from
+    /// ~/.ssh/config. `flock`, `describe`, `fold`, `bleats`,
+    /// `stop`, `restart`, `reload`, `delete`, `stock`, `enable`, `disable`,
+    /// `signal`, `whisper`, `trigger` and `lookout` take it; any other verb
+    /// refuses it rather than act on this machine. `describe` shows no
+    /// secrets over it, and `enable` takes no hidden `--exec` form over it.
+    /// `--home` still names this machine's home, never the host's.
+    #[arg(long, global = true, value_name = "DEST", value_parser = parse_destination)]
+    pub host: Option<String>,
     /// Talk to a different shepherd
     ///
     /// Mostly plumbing: `shep dev` sessions, a system-wide flock, tests. You
@@ -123,6 +156,17 @@ pub struct GlobalArgs {
     // render was read.
     #[arg(long, global = true, env = "SHEP_HOME")]
     pub home: Option<PathBuf>,
+}
+
+/// `--host`'s value parser: the destination as written, once
+/// [`Destination::parse`] accepts it.
+///
+/// Held as the `String` rather than the [`Destination`], so [`GlobalArgs`]
+/// stays plain data that the adopted-dog path can build by hand.
+fn parse_destination(raw: &str) -> Result<String, String> {
+    Destination::parse(raw)
+        .map(|dest| dest.as_str().to_owned())
+        .map_err(|err| err.to_string())
 }
 
 /// `--format`'s two shapes.
@@ -201,12 +245,57 @@ mod tests {
         assert!(Cli::try_parse_from(["shep", "--style", "loud", "flock"]).is_err());
     }
 
+    /// fails if `--host` stops being optional, stops being global (valid on
+    /// either side of the verb), or stops accepting either spelling of its
+    /// value.
+    #[test]
+    fn host_flag_defaults_to_unset_and_takes_a_destination() {
+        use clap::Parser;
+
+        let cli = Cli::try_parse_from(["shep", "flock"]).unwrap();
+        assert_eq!(cli.global.host, None);
+
+        for argv in [
+            vec!["shep", "--host", "amp2", "flock"],
+            vec!["shep", "--host=amp2", "flock"],
+            vec!["shep", "flock", "--host", "amp2"],
+            vec!["shep", "flock", "--host=amp2"],
+        ] {
+            let cli = Cli::try_parse_from(&argv).unwrap();
+            assert_eq!(cli.global.host.as_deref(), Some("amp2"), "{argv:?}");
+        }
+
+        let cli = Cli::try_parse_from(["shep", "--host", "deploy@amp2", "flock"]).unwrap();
+        assert_eq!(cli.global.host.as_deref(), Some("deploy@amp2"));
+    }
+
+    /// `--host` reaches ssh as an argument, so a value ssh would read as an
+    /// option never gets as far as a `GlobalArgs`.
+    #[test]
+    fn host_flag_refuses_a_destination_ssh_would_read_as_an_option() {
+        use clap::Parser;
+
+        for argv in [
+            vec!["shep", "--host=-oProxyCommand=x", "flock"],
+            vec!["shep", "--host", "", "flock"],
+            vec!["shep", "--host", "a b", "flock"],
+        ] {
+            let err = Cli::try_parse_from(&argv).expect_err(&format!("{argv:?}"));
+            assert_eq!(
+                err.kind(),
+                clap::error::ErrorKind::ValueValidation,
+                "{argv:?}"
+            );
+        }
+    }
+
     /// `std::env::set_var` is `unsafe` in edition 2024 and this crate is
     /// `#![forbid(unsafe_code)]`, so nothing here can establish an ambient
     /// `$SHEP_HOME` and observe clap actually reading it. The next best
     /// thing, and the thing that actually matters for `$SHEP_HOME` to keep
-    /// working, is pinning that clap was *told* to read it: if `env =
-    /// "SHEP_HOME"` (`cli.rs:30`) is ever deleted, this fails.
+    /// working, is pinning that clap was *told* to read it: if
+    /// [`GlobalArgs::home`]'s `env = "SHEP_HOME"` attribute is ever
+    /// deleted, this fails.
     #[test]
     fn home_flag_is_wired_to_the_shep_home_env_var() {
         use clap::CommandFactory;

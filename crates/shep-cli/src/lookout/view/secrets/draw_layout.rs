@@ -425,16 +425,12 @@ mod tests {
         let drawn = cell(&buffer, row_of(&buffer, "DB_PASSWORD"), Column::Value);
 
         assert!(
-            drawn.trim_end().ends_with('\u{2588}'),
+            drawn.trim_end().ends_with('\u{258f}'),
             "the cursor is the last thing on the cell: {drawn:?}"
         );
         assert!(
             drawn.contains("THE-TAIL"),
             "and the characters just typed are next to it: {drawn:?}"
-        );
-        assert!(
-            drawn.starts_with('\u{2026}'),
-            "with the marker where the head went: {drawn:?}"
         );
         assert!(
             !drawn.contains("abcdef"),

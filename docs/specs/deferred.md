@@ -27,19 +27,21 @@ order:
    then the wire and config asymmetries, then the tooling and doc staleness.
 2. **The rest of the v1.0 surface** — serve, dev/runtime, `.js` Flockfile,
    schemars, the daemon-config flags layer, and openrc + BSD rc.d.
-3. ~~**The Windows functional tier — last**~~ (the maintainer, 2026-08-12). **Superseded
-   2026-08-15: Windows is out of v1 entirely** and moved to the v1.1+ section
+3. ~~**The Windows functional tier — last**~~ (the maintainer, 2026-08-12).
+   **Superseded 2026-08-15: Windows left this queue for the v1.1+ section**
    below. The estimate that was "mostly guesswork" has since been made, and it
    is what changed the decision — see
-   [windows-estimate.md](windows-estimate.md).
+   [windows-estimate.md](windows-estimate.md). The tier shipped on 2026-08-26,
+   eleven days after that move, and its record is under "Not deferred" in
+   [deferred-history.md](deferred-history.md).
 
 **Dogs** (spec §8) was originally queued first and has since shipped, on
 `feat/phase9-dogs`; see "Not deferred" below for what landed. **whistle**
 (spec §8, §13) has since shipped too, on Phase 13; same section.
 
 Ordering is not priority. Windows was last because its estimate was the
-weakest; now that the estimate exists, it is out of v1 rather than at the end
-of it.
+weakest; the estimate was made, the tier moved to v1.1+, and it shipped there
+on 2026-08-26.
 
 ## Committed to v1.1+ by design (spec §2)
 
@@ -392,53 +394,12 @@ landed part of a spec section, the entry names the part still missing rather
 than the whole section. See `docs/systematic-refactor/refactor-workspace/`
 for what phase is next.
 
-**OTLP export (metrics dog)** (spec §8) — the metrics dog serves
-Prometheus exposition only; no `otel` cargo feature exists in
-`crates/shep-cli/Cargo.toml`. Tracked as https://github.com/shep-pm/shep/issues/347.
+The queue is empty as of 2026-10-14. Its last item, OTLP export on the
+metrics dog, shipped that day with the channel samples that were its missing
+half. Its entry, and every other item this section used to hold, is now in
+[deferred-history.md](deferred-history.md) under "Not deferred".
 
 ## Known debt, recorded rather than built
-
-### The Windows shepherd channel has no DACL, and the random name is not one
-
-`tokio_runner.rs` creates the channel pipe with the DEFAULT security
-descriptor, which on Windows grants read to Everyone and restricts write, and
-the `accept` that follows authenticates nobody. The 128 random bits in the
-name were added against that, and they close less than the comment there
-originally claimed.
-
-**Prediction versus observation.** The nonce means a hostile local account
-cannot park itself on a name it worked out in advance. It does not stop that
-account WATCHING: the pipe namespace enumerates to any unprivileged local
-user. Measured on Windows 10, from a non-elevated PowerShell,
-`[System.IO.Directory]::GetFiles("//./pipe/")` returned 190 names. An account
-polling that in a loop sees `shep-channel-<pid>-<n>-<nonce>` appear in the
-window between `Listener::bind` and the child's own open, and can connect
-first. What it gets is daemon-to-child frames plus a `wait_ready` sheep that
-never goes online, so: disclosure of whatever an app puts on its channel, and
-a local denial of service against startup.
-
-**Why it is not fixed here.** A restrictive descriptor means
-`ServerOptions::create_with_security_attributes_raw`, which takes a raw
-pointer to a `SECURITY_ATTRIBUTES` this code would have to build, and
-`shep-core` is `#![forbid(unsafe_code)]`. The transport seam would have to
-grow a way to pass a descriptor down, and the descriptor itself would have to
-be built behind `shep_daemon::sys_windows`, which is the only place on that
-platform allowed to write `unsafe`. That is a real design change to the seam
-rather than a one-line fix, which is why it is written down rather than
-squeezed into the Windows tier's own pull request.
-
-**Severity, honestly: this is recorded, not queued.** It needs an attacker
-already running code as a DIFFERENT account on the same machine, winning a
-millisecond race, against a Windows install running shep. The maintainer's read, and it
-is the right one: a shep-on-Windows user who also has a hostile local account
-on the same box is close to a nonexistent population, and the fix costs a
-redesign of the transport seam plus new unsafe FFI. Do not spend that on
-this. It is written down because the docs used to imply a random name was a
-security boundary, and a false claim in published docs is worth correcting
-whatever the exploit likelihood. The claim is fixed. The DACL is a someday.
-
-Tracked as https://github.com/shep-pm/shep/issues/350.
-
 
 ### What the reload-readiness fix does NOT cover -- open, 2026-08-28
 
@@ -491,10 +452,13 @@ Identity and lifecycle (`id`, `name`, `status`, `pid`, `restarts`,
 struct, and a dog's row leaves several of them meaningless.
 
 Deferred on the wire audit's own recommendation: do not split speculatively.
-What would force it is the `lambs` field — the moment a row carries a process
-tree, the question of what a `FlockMember` is stops being cosmetic. Phase 10
-made that field cheap to add (`ProcessInfo` is `#[non_exhaustive]` with a
-builder), which is deliberately the opposite of forcing the split early.
+The trigger it named was the `lambs` field, and that trigger has fired.
+`ProcessInfo::lambs` is on the wire, and the shepherd fills it
+(`rpc/enrichment.rs` walks each sheep's process tree into the row), so a row
+does carry a process tree and the question of what a `FlockMember` is has
+stopped being cosmetic. The split is still open: the field arrived the cheap
+way Phase 10 built for it (`ProcessInfo` is `#[non_exhaustive]` with a
+builder), and nothing since has forced the four concerns apart.
 
 Tracked as https://github.com/shep-pm/shep/issues/352.
 
@@ -582,13 +546,13 @@ job was to find the friction rather than resolve it.
 
 Tracked as https://github.com/shep-pm/shep/issues/355.
 
-### A third-party dog has no way to ship its own defaults
+### ~~A third-party dog has no way to ship its own defaults~~ -- done, 2026-10-24
 
 Raised 2026-08-20 while designing `shep-log-rotate`, the first fully external
 dog. `shep adopt <name> <path>` vets, registers, enables and starts in one
 command, and then the operator has an adopted dog with no `[<name>]`
 section in `dogs.toml` and nothing telling them what its knobs are. The
-README is the only answer today.
+README was the only answer.
 
 The maintainer asked whether a dog's repo could ship a `Flockfile.toml` that `shep adopt`
 reads. It cannot: `RawFlockfile` is `deny_unknown_fields` over exactly
@@ -598,17 +562,16 @@ file, committed in a service's repo, describing what to supervise. `shep.toml`
 is the daemon's, one per machine, holding dogs, style and interpreters. A dog's
 registration belongs to the machine.
 
-**Deferred deliberately.** The near-term answer costs shep nothing: a dog
-prints its own commented defaults (`the-dog --print-config >> shep.toml`),
-which is the same shape `shep init` gives a Flockfile, and it puts the
-documentation of a dog's options where its defaults already live.
-
-**The trust question is what any real design has to answer.** A `Dogfile.toml`
-that `adopt` reads means shep parsing a file the dog's author wrote and merging
-it into the operator's `shep.toml`. That is a larger step than "run this
-binary", and `adopt`'s existing vetting ritual exists because this boundary is
-taken seriously. Worth revisiting if a dog ecosystem appears; not worth
-pre-building for one dog.
+**Built as the manifest's `defaults` field** (#1073, #1086): a dog answers
+`--shep-manifest` with TOML text for its own section, and `shep adopt`
+writes it as `[<name>]` in `dogs.toml` when the file holds no section for
+the dog, and never over one that exists. The trust question was answered by
+the route rather than by a new file: the defaults arrive through the
+manifest probe `adopt` already runs on the vetted binary and caches by its
+sha256, so shep parses no file the dog's author wrote. The
+`--print-config`-style flag this deferral recommended as the near-term
+answer is no longer needed, and `docs/dogs.md` and the writing-a-dog page
+say so.
 
 Tracked as https://github.com/shep-pm/shep/issues/356.
 
@@ -715,15 +678,16 @@ tell it apart from a shep bug.
 The full postmortem, including the wrong diagnosis it took to get here, is in
 [deferred-history.md](deferred-history.md).
 
-### The handover blob's compatibility tests never load an old blob
+### ~~The handover blob's compatibility tests never load an old blob~~ -- done, 2026-10-14
 
 Raised in review on #84, 2026-08-31, and agreed rather than argued away.
 
-Eight cases are named `a_blob_written_before_<field>_was_carried_still_loads`
+Ten cases are named `a_blob_written_before_<field>_was_carried_still_loads`
 -- stdin, the channel, `pending_delete`, the manual marker, a swap in flight,
-`ready_failed`, the restart deadline, and (since phase 3 task 4) the dog
-marker. Every one of them builds a blob from today's `Handover`, serialises
-it, removes one key, and loads the result.
+`ready_failed`, the restart deadline, the dog marker, the parked config
+(`pending` and `pending_reidentifies`), and the disabled mark. Every one of
+them builds a blob from today's `Handover`, serialises it, removes one key,
+and loads the result.
 
 That proves the thing each field's carry actually needs: an absent key loads
 as `None` rather than refusing, so a successor boots against a predecessor
@@ -731,23 +695,73 @@ that never wrote the field. It is not nothing.
 
 **What it cannot prove is that a blob written by an older binary still
 parses**, because it round-trips through today's serialiser. Rename a field
-and every one of these follows the rename and keeps passing, while a real
-blob on disk from v0.1.18 fails. IR-35 asks for exactly the missing half:
+and nine of these follow the rename and keep passing, while a real blob on
+disk from v0.1.18 fails. IR-35 asks for exactly the missing half:
 "committed byte-fixtures from the previous protocol version that must still
 deserialize".
 
-**One wrinkle stops this being a straight IR-35 application, and it needs
-deciding rather than inferring.** The rule says fixtures from the PREVIOUS
-protocol version, and the blob's `VERSION` has never moved from 1. Every
-format worth pinning -- v0.1.18 through v0.1.21, and each phase's additions
-inside them -- is version 1 with fewer optional fields. So the fixture policy
-has to answer what a fixture is keyed to when the version does not move: a
-release, a phase, or every shape that ever shipped.
+**The wrinkle the entry was waiting on, settled by the maintainer:** the rule
+says fixtures from the PREVIOUS protocol version, and the blob's `VERSION`
+has never moved from 1, so there is no version to key a fixture to. The policy
+is **one fixture per distinct shape that shipped, named for the first
+`shep-daemon-v*` tag that wrote it**. A shape is the set of keys a serialised
+blob holds -- at the blob, at `sheep[]`, at `sheep[].fds` and at `reloads`.
 
-Not done in #84 because it is not that PR's test. Covering only the newest
-field would leave one case in a different style from seven siblings and barely
-reduce the risk, since the exposure is the whole blob rather than any one
-key.
+What that turned out to be: every tag from `shep-daemon-v0.1.18` (the first
+with a handover) to `shep-daemon-v0.14.0`, 61 tags, each dumped from its own
+code rather than transcribed. Twelve distinct key sets, not the ten the issue
+predicted. Seven are `shep-daemon`'s own structs adding a key, which is where
+the ten cases come from -- several releases added more than one at a time, so
+ten field additions land on seven shapes. The other five are the `AppConfig`
+a sheep carries: `depends_on` (v0.5.0), `environment` (v0.6.2), `level_rules`
+and the dropping of `increment_var` (v0.8.0), `dogs` (v0.11.0), and
+`log_timestamps` (v0.12.0). Those are blob shapes too: a rename there breaks
+a blob on disk exactly as a rename in `CarriedSheep` does.
+
+Built as `crates/shep-daemon/fixtures/handover/`, twenty-four files: one per
+shape plus a `-populated` sibling for each, every one the bytes that release's
+own serialiser wrote, with a README naming the tag, the command and whether
+that release crossed the blob as `$SHEP_HOME/run/handover.json` or as the state
+of a `shep-handover` envelope (from v0.13.0). `crates/shep-daemon/src/handover/blob/tests/old_blobs.rs`
+loads each plain shape through `Handover::load_value`, asserts the whole key
+set that release wrote at the blob, at `sheep[]`, at `sheep[].fds` and at
+`sheep[].app` (`old_blob_shape.rs` holds those sets as data), the values that
+shape wrote, and that every key it predates reads as `None` through the
+accessor; loads the oldest through `Handover::read`, which is what the
+legacy arm of the boot uses; and guards that the fixture directory and the lists
+of fixtures in those files are the same set. Nothing blesses or regenerates a
+fixture: that is the bug these exist to catch.
+
+Review on the pull request found what a key set on its own cannot do. A shape
+with nothing in it passes a rename: `manual` renamed on the wire failed no
+plain fixture and no `compat` case, and `kill_timeout` renamed on `AppConfig`
+did the same, because an absent key and a `null` read alike and
+`AppConfig` carries `#[serde(default)]`. The `-populated` siblings are the
+answer, dumped the same way from each release's own code with every optional
+key that release had a place for filled in, round-tripped through that
+release's `Handover` before printing so the release's own deserialiser had to
+accept the blob its own serialiser then wrote. Those two renames then failed
+ten of the populated fixtures and twelve of them.
+
+Review found the same gap twice more on the plain half. From v0.1.22 on a
+per-fixture test pinned only the keys of `sheep[0]`: dropping `reloads` from the
+blob or `channel` from a sheep's descriptors passed, and none of the five
+`AppConfig`-derived shapes pinned the keys of `sheep[0].app`, so dropping
+`depends_on`, `environment` or `level_rules` passed. Every fixture test now
+compares all four levels against the release's key set, plain and populated
+alike. Dropping `reloads` from v0.1.22, `channel` from its descriptors, `stdin`
+from v0.13.0's, `depends_on` from v0.5.0's config, `environment` from v0.8.0's,
+`level_rules` from v0.11.0's, `log_timestamps` from v0.12.0's, renaming `manual`
+in v0.1.22's bytes, adding a key no release wrote to v0.1.30, and dropping
+`kill_timeout` from a populated fixture each fail the test named for that file.
+
+The mutation check this entry asks for, run against `pending_delete` renamed
+to `pending_removed`: it failed each of the ten fixtures that carry the key,
+`compat`'s own `a_blob_written_before_pending_delete_was_carried_still_loads`
+(it removes the key by name and asserts the removal found one), and the `Debug`
+redaction case. The nine other `a_blob_written_before_*` cases passed unchanged,
+which is the nine this entry predicted, and the one that failed is the one that
+names the field by hand.
 
 Tracked as https://github.com/shep-pm/shep/issues/358.
 
@@ -794,62 +808,29 @@ built on this branch.
 
 Tracked as https://github.com/shep-pm/shep/issues/359.
 
-### A promoted dog cannot handshake during the restore, open, 2026-09-06
+### ~~A promoted dog cannot handshake during the restore~~ -- done, 2026-10-23
 
-`[daemon] boot_first_dogs` spawns a dog ahead of the muster restore, so a
-log-rotation dog is running before a sheep starts writing. The spawn happens
-there, and the link does not. `boot` binds the control socket and hands back a
-`RunningDaemon` without serving it: `RpcServer::serve` runs inside
-`RunningDaemon::run`, after `boot` returns and so after the restore. A dog
-connecting during the restore sits in the listen backlog with nothing
-accepting behind it.
+`[daemon] boot_first_dogs` spawns a dog ahead of the muster restore, but the
+control socket was only served after it: `RpcServer::serve` runs inside
+`RunningDaemon::run`. A promoted dog's first connect sat in the backlog,
+timed out at `HANDSHAKE_TIMEOUT`, exited `daemon_unreachable` and was
+restarted, a restart it had not earned (#360).
 
-`shep-client`'s `HANDSHAKE_TIMEOUT` is five seconds, and
-`ReconnectingClient`'s first connection is not supervised, on its own rule
-that a socket nobody answers is the caller's error rather than a handover.
-So `DogRuntime::start` returns `ConnectError::HandshakeTimeout`, the dog
-exits `daemon_unreachable`, and the shepherd restarts it. Driven against a
-live daemon, on the boot-order page's own worked example, a three-app
-unprobed chain that costs 6.17 seconds:
+Each supervised dog is now spawned holding a connection of its own, a
+socketpair end on fd 4 named in `SHEP_DOG_FD`, and the shepherd serves it
+from spawn through `serve_dog_links`, before and apart from the listener.
+`DogRuntime::start` uses it when the variable is set and falls back to the
+socket when it is not, or when the link is lost. The decision is "A dog gets
+a connection of its own, served from its spawn" in `docs/decisions.md`.
 
-```
-20:44:31.584 [shep] shep started this dog; its process is pid 43781
-20:44:36.594 shep dog metrics: no shepherd answered at the socket: the handshake did not complete within 5s
-20:44:36.595 [shep] this dog's process exited with code 5
-20:44:37.589 [shep] shep accepted this dog's handshake; it is registered with this shepherd as `metrics`, on protocol 6
-```
+A handover carries the link: its descriptor and the dog's subscription travel
+in the blob, and the successor serves it without a `Hello` and re-arms the
+subscription after a `daemon.dropped` notice (#1088, "A handover carries each
+dog's connection" in `docs/decisions.md`).
 
-The dog heals itself the moment serving starts, and `shep flock` then shows
-a restart it did not earn. What it does not do is rotate a log during the
-restore, which is the window the promotion exists to cover. A longer restore
-costs one more cycle every five seconds, and no cycle is ever fatal: a
-five-second run is a stable exit against the 1s `min_uptime` default, so the
-`max_restarts` budget resets each time and the dog never errors.
-
-It is not `DOG_SILENCE_BUDGET`, which is also five seconds and reads like the
-culprit. `spawn_silent_dog_watch` is spawned after the restore, and its
-`PeerContacts` starts warming there too, so its earliest verdict lands about
-ten seconds after the restore ends, by which time the dog has handshaken.
-The two budgets carry the same number and answer different questions.
-
-The options, none of them free:
-
-1. Retry the first connect inside `DogRuntime::start`. That reverses what
-   `ReconnectingClient::connect` documents, and it needs a bound, since a dog
-   retrying forever can no longer report a socket nothing is ever going to
-   answer. Any bound is a guess at the length of a restore nobody knows in
-   advance. Every third-party dog on the same SDK inherits whichever answer.
-2. Serve before the restore. `boot`'s rustdoc argues the current order one
-   invariant at a time: readiness reported after the restore is the honest
-   answer to `Type=notify`, and a client connecting during the restore waits
-   with it instead of reading a half-restored flock. Serving first gives up
-   both.
-3. Accept it, and say so where an operator reads it. Promotion buys a dog a
-   spawn that runs first, not a link that works first, and it only holds for
-   a flock that restores inside five seconds. `boot-order.astro` now says
-   that much either way.
-
-Tracked as https://github.com/shep-pm/shep/issues/360.
+What it does not cover: a dog started by hand has no link and still waits for
+the listener. A frame in flight at the exec, and events published between the
+exec and the re-arm, are lost.
 
 ## Ideas, recorded but not designed
 
@@ -901,7 +882,8 @@ Questions a design would have to answer, roughly in the order they bite:
   shepherd that runs these is a long-lived privileged daemon executing
   arbitrary shell out of a config file. A CLI that runs them uses the
   operator's own shell and privileges, which is far easier to reason about,
-  and costs nothing that matters while multi-host remains a non-goal.
+  and costs nothing that matters while a shepherd supervising a process on another
+  host remains a non-goal.
 - **Which directory.** Mostly already decided: Phase 17 resolved a
   Flockfile's relative `script` against the app's own directory rather than
   the daemon's cwd, and an app's `cwd` defaults to the Flockfile's directory.
@@ -980,86 +962,20 @@ JavaScript and Python, where the examples are what an author copies today.
 
 Tracked as https://github.com/shep-pm/shep/issues/362 for JavaScript and https://github.com/shep-pm/shep/issues/363 for Python.
 
-## A readiness probe cannot verify a reload's replacement
-
-Found on 2026-08-28 by deploying real repositories with shep-deploy against a
-real shepherd, not by reading code. Two experiments, same broken release, same
-app, differing only in whether the old instance was answering:
-
-| old instance answering the probe | outcome |
-|---|---|
-| yes | the broken release was verified, recorded as deployed, exit 0, app down |
-| no | the broken release was correctly refused and rolled back, exit 12 |
-
-The second row is the machinery working. The first is the defect, and the
-mechanism is exact. `spawn_replacement` derives `ReadinessSource::of(config)`,
-which is `Probe` for an app with a `readiness_probe`. `await_ready`'s `Probe`
-arm probes immediately, and says why in its own comment: "the first probe must
-land at t=0, not after one `interval`". At t=0 the drainee is still listening
-on the address the probe names, because draining is what `reload_ready_result`
-does AFTER readiness resolves. So the old instance answers, the replacement is
-declared `Ready`, the old is drained, and the address goes dead.
-
-Timed, with a `listen_timeout` of ten seconds:
-
-```text
-t+0.0s  probe answers YES  status=online  pid=7349   the old release
-t+1.0s  probe answers no   status=online  pid=7745   the new one, already Online
-t+25.8s probe answers no   status=online  pid=7745
-```
-
-**This is not a bug in one line, it is a property of the arrangement.** An
-address probe cannot say which of two processes answered it, and an overlapping
-reload exists precisely to have two. `SO_REUSEPORT`, which is what makes the
-overlap zero-downtime in the first place, makes it worse rather than better:
-the kernel balances across both sockets, so even a probe that arrives late may
-be answered by the instance on its way out.
-
-What it costs downstream: `shep-deploy`'s `verify = "probed"` watches for a new
-process reaching `Online`. The replacement gets there on the drainee's answer,
-so it is marked `Ready` and then `Online` while never having served anything
-itself, and the deploy that was waiting on exactly that signal records success.
-The release is left in place, serving nothing. That crate's README now says
-what its verification actually checks and points here.
-
-**The workaround that exists today is `wait_ready = true`.** It selects
-`ReadinessSource::Channel`, and the channel is per instance: `spawn_readiness_task`
-creates a fresh `oneshot` per spawned id, so the drainee has no way to answer
-the replacement's. An app that can write `{"kind":"ready"}` on its shepherd
-channel therefore gets a reload gate that means what it says, today, with none
-of the work below. An app that cannot is the case this entry is about.
-
-### The options, none of them free
-
-1. **Probe after the drain, not before.** Keeps the overlap, adds a second
-   readiness check once the drainee is gone, and reports the reload failed if
-   it does not pass. Does not restore the old instance, which is already gone
-   by then, but it tells the truth, and a deploy dog with the previous release
-   still on disk can act on it. The most honest of the three and the most work.
-2. **Prefer the channel for a gated reload.** `wait_ready` is per process and
-   cannot be answered by the drainee. This means telling operators that a probe
-   does not gate a reload and `wait_ready` is what does, which is a real
-   demotion of the feature most apps can actually use.
-3. **Serialise: drain, then start, then probe.** Correct verification, no
-   overlap, no zero-downtime reload. Not worth it.
-
-Recommendation is 1, with the doc change from 2 alongside it, because even
-after 1 the pre-drain probe pass remains meaningless and should stop being
-described as verification.
-
-Not built here because it changes what a reload promises, which is the maintainer's call
-rather than a fix to apply on the way past.
-
 ## Closed entries live next door
 
-Everything this file used to carry that is now FIXED, STALE, resolved or
-rejected, plus the record of what shipped instead of being deferred, moved to
-[deferred-history.md](deferred-history.md) on 2026-08-29. That is 1303 lines
-against the 733 left here, and a reader had to get past all of it to reach
-the 13 entries under "Known debt" that are actually still open. All three
-numbers were stated once and then drifted, which is the failure this file
-warns about elsewhere; they are counted, not remembered, and they were
-recounted on 2026-09-06 when the staged-reload JSON entry moved next door.
+Two moves, not one. The bulk of what this file carried that is now FIXED,
+STALE, resolved or rejected, plus the record of what shipped instead of being
+deferred, moved to [deferred-history.md](deferred-history.md) on 2026-08-29,
+the day of the split, when a reader had to get past all of it to reach the
+entries under "Known debt" that are actually still open. The reload-readiness
+entry followed on 2026-10-15, once the serial reload had made it a closed
+record rather than open debt.
+
+The two files now run 1412 lines there against 1056 here. Both counts were
+stated once and then drifted, which is the failure this file warns about
+elsewhere; they are counted, not remembered, and this pair was counted after
+the 2026-10-15 move.
 
 This file answers "what is not built". That one answers "what was not built,
 and what happened to it".

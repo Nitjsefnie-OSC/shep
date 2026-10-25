@@ -38,6 +38,11 @@ const REGENERATE: &str =
 /// `AppConfig::kill_signal` stays a plain string here even though
 /// `config::normalize` accepts only four spellings, since the schema's
 /// job is what serde parses, not what a later validation step accepts.
+///
+/// # Panics
+/// Never in practice: schemars produces a `serde_json::Value` tree, which
+/// `to_string_pretty` cannot fail on. `#[track_caller]` so a future
+/// fallible change reports the caller.
 #[track_caller]
 #[must_use]
 pub fn flockfile_schema_string() -> String {
@@ -56,10 +61,8 @@ pub fn flockfile_schema_string() -> String {
 /// plain string here even though `config::normalize` accepts only four
 /// spellings.
 ///
-/// # Panics
-/// Never in practice: schemars produces a `serde_json::Value` tree, which
-/// `to_string_pretty` cannot fail on. `#[track_caller]` so a future
-/// fallible change reports the caller.
+/// `#[track_caller]` for the same reason as [`flockfile_schema_string`],
+/// which is the one that serializes it.
 #[track_caller]
 #[must_use]
 pub fn flockfile_schema_json() -> Schema {

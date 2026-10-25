@@ -5,7 +5,7 @@ expression: render_text(&buffer)
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)  2 edits                                                                                                                                
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab next group   1…8 jump                                                     
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
    autorestart                true                                            now        FOCUSED  max_memory  memory size                                       
@@ -26,7 +26,7 @@ shep lookout   /home/ada/.shep                                                  
    NODE_ENV                   (set)                                                       █ refused: a lowercase unit                                           
    + add a key                                                                            █ refused: a fraction                                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  = read-only, set it in the Flockfile   ~ no widget for this shape   ! parked, awaits a respawn   * yours   -> changed by you, not yet written                 
+  = read-only, set it in the Flockfile   ~ no widget for this shape   ! parked, awaits a respawn   * yours   -> changed by you, not yet written   › opens screen
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 

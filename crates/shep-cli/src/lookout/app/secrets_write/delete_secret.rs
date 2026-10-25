@@ -14,25 +14,17 @@ impl App {
         let Some(pane) = self.secrets_pane_mut() else {
             return Effect::None;
         };
-        if !pane.visible_row_indices().contains(&pane.selected) {
-            return Effect::None;
-        }
-        let Some(row) = pane.model.rows.get(pane.selected).cloned() else {
+        let Some(row) = pane.selected_visible_row() else {
             return Effect::None;
         };
+        // Arming tolerates a missing tab: the confirm re-reads it and
+        // refuses there, and a tab move disarms before then.
         let environment = pane.environment().map(str::to_string);
-        if matches!(row.source, Source::Namespace(_)) {
-            self.notice = Some(Notice {
-                text: PROVIDER_ROW_REFUSAL.to_string(),
-                grave: true,
-            });
+        if self.refuse_provider_row(&row) {
             return Effect::None;
         }
         if environment.is_some_and(|tab| deletes_the_all_slot(&row, &tab)) {
-            self.notice = Some(Notice {
-                text: ALL_SLOT_REFUSAL.to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(ALL_SLOT_REFUSAL.to_string()));
             return Effect::None;
         }
         if self.authorize_write().is_none() {
@@ -72,10 +64,7 @@ impl App {
             .find(|row| row.key == key)
             .is_some_and(|row| deletes_the_all_slot(row, &environment));
         if refuses {
-            self.notice = Some(Notice {
-                text: ALL_SLOT_REFUSAL.to_string(),
-                grave: true,
-            });
+            self.notice = Some(Notice::grave(ALL_SLOT_REFUSAL.to_string()));
             return Effect::None;
         }
         let Some(authority) = self.authorize_write() else {
@@ -104,7 +93,6 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::*;
     use super::*;
 
     use super::super::testing::*;
@@ -255,8 +243,9 @@ mod tests {
     }
 
     /// An armed delete is the fourth armed thing in this module the tick
-    /// expires, mirroring the config pane's own `armed_at` at
-    /// `app.rs:1999-2005`.
+    /// expires: [`CONFIRM_EXPIRY`] in `lookout/app/action.rs` is the
+    /// deadline, and `App::on_tick` in `lookout/app/update/link.rs` drops
+    /// an action still armed past it.
     #[test]
     fn an_armed_delete_expires_like_every_other_armed_thing() {
         let mut app = fixtures::app_with_secrets_and_control();
@@ -299,6 +288,27 @@ mod tests {
 
         assert!(armed_of(&app).is_none());
         assert!(notice_of(&app).is_some_and(|n| n.contains("pushed by a dog")));
+    }
+
+    /// `D` and `Enter` refuse a provider row with the same sentence: one
+    /// fact, two doors, one wording.
+    #[test]
+    fn a_provider_row_is_refused_by_delete_and_by_write_with_one_sentence() {
+        let mut app = fixtures::app_with_a_pushed_secret_selected_and_control();
+
+        let _ = app.update(Msg::Key(KeyPress::SecretDelete));
+        let deleted = notice_of(&app);
+        assert!(armed_of(&app).is_none(), "it must refuse before it arms");
+
+        let _ = app.update(Msg::Key(KeyPress::Confirm));
+        let written = notice_of(&app);
+        assert!(
+            typing_of(&app).is_none(),
+            "it must refuse before it opens the input"
+        );
+
+        assert_eq!(deleted.as_deref(), Some(PROVIDER_ROW_REFUSAL));
+        assert_eq!(written, deleted, "one sentence, both doors");
     }
 
     /// The row's value comes from the `all` slot, so an unset against the

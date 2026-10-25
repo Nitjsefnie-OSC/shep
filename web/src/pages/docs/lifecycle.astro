@@ -194,8 +194,17 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
       <code>shep thatlldo</code> is a hidden, working alias for{" "}
       <code>stop</code>, "graceful stop" in{" "}
       <a href="/docs/getting-started">Getting started</a>'s own alias grid.
-      It isn't in <code>--help</code>, but it runs the same code as the row
+      It isn't in <code>--help</code> but runs the same code as the row
       above.
+    </p>
+    <p>
+      All four take <code>--host</code> and act on that host's shepherd only.
+    </p>
+    <p>
+      <code>start</code> takes <code>--host</code> for a sheep name only. A
+      path, <code>-</code>, <code>--flockfile</code> or a bare{" "}
+      <code>start</code> is refused with the <code>ssh</code> command that
+      runs it on the host.
     </p>
 
     <h2 id="one-ladder-two-grace-periods">One ladder, two grace periods</h2>
@@ -211,6 +220,15 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
       grace period runs out, that same process group gets{" "}
       <code>SIGKILL</code>, a signal nothing can trap, and that's the end of
       it either way.
+    </p>
+    <p id="lamb-sweep">
+      A process group doesn't hold every lamb: one that calls{" "}
+      <code>setsid</code> leaves it, and one that outlives the sheep never
+      sees the second rung. So on unix, once the sheep's process exits,
+      shep sends <code>SIGTERM</code> to every lamb in the sheep's tree,
+      and to anything they start meanwhile, then <code>SIGKILL</code> after{" "}
+      <code>kill_timeout</code>. A
+      crash is swept too. Only then does the stop return.
     </p>
     <p>
       The grace period is where the two verbs that also drive a reload
@@ -254,9 +272,10 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
       back up reads it and restores what was up.{" "}
       <a href="/docs/startup">Surviving reboots</a> is the
       full account of <code>save</code> and <code>muster</code>; this
-      section is only the one thing that page doesn't say: what{" "}
-      <code>stop</code> leaves in that file, and what <code>delete</code>{" "}
-      takes out of it.
+      section covers what <code>stop</code> leaves in that file and what{" "}
+      <code>delete</code> takes out. With <code>--host</code>,{" "}
+      <code>muster</code> is the one verb that boots a host's shepherd, from
+      that host's own roll. A Windows host is not supported yet.
     </p>
     <VerbSignature verb="stop" usage="shep stop <selector>...">
       <p>
@@ -275,17 +294,23 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
       <code>stopped</code>. Nothing restarted it, because it wasn't running
       when the roll was written and <code>muster</code>'s rule is "was it up
       when the roll was written," not "does it exist." The{" "}
-      <code>save</code> is only there to show that moment: the shepherd had
-      already written the roll, and <code>kill</code> writes it once more on
-      the way down.
+      <code>save</code> only shows that moment: <code>kill</code> writes the
+      roll once more on the way down anyway.
     </p>
     <VerbSignature verb="delete" usage="shep delete <selector>...">
       <p>
         Runs the same kill ladder if the sheep is running, then removes the
-        registration entirely. In table format the listing that follows is
-        the whole remaining flock, the same as every other lifecycle verb;
-        the ids it removed are named on stderr because their own rows are
-        gone by the time anything could print them.
+        registration entirely. In table format the listing that follows is the
+        whole remaining flock; the ids it removed are named on stderr, because
+        their rows are gone by then. A <code>shep.toml</code> this verb cannot
+        read refuses a name rather than guess at one.
+      </p>
+      <p>
+        A dog's name takes this verb too: it is struck from
+        <code>shep.toml</code>'s dog lists, so the next shepherd does not
+        bring it back, and its <code>dogs.toml</code> section stays. A
+        built-in dog is refused. <a href="/docs/dogs/">The dogs page</a>
+        has the rest.
       </p>
     </VerbSignature>
     <CodeBlock>{deleteRemovesDemo}</CodeBlock>
@@ -297,6 +322,39 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
       afterward, and <code>muster</code> can only restore what the
       roll remembers. There's no undelete: the config is gone unless you
       kept the Flockfile that produced it.
+    </p>
+    <VerbSignature verb="disable" usage="shep disable <selector>">
+      <p>
+        Stops the app and refuses to start it again until{" "}
+        <code>shep enable</code>. It takes a name, <code>fold:</code>,{" "}
+        <code>/regex/</code> or <code>all</code>. An id or{" "}
+        <code>name:slot</code> exits 2 and names the app to type. A disabled
+        app answers <code>start</code>, <code>restart</code>,{" "}
+        <code>reload</code> and <code>stock</code> with exit 2, and shows{" "}
+        <code>disabled</code> in STATUS. Disabling wins over a restart or a
+        serial reload already running: the app ends stopped and no
+        replacement spawns. The shepherd's own restarts leave it stopped and
+        log the drop: a <code>cron_restart</code> occurrence, a watch trigger,
+        the crash ladder, and memory and liveness restarts. The mark is
+        written to the muster roll and carried through a handover, so it
+        survives a shepherd restart and <code>shep daemon reload</code>.
+      </p>
+      <p>
+        Re-running <code>shep start Flockfile.toml</code> passes a disabled
+        app by: it stays stopped, an aside names{" "}
+        <code>shep enable &lt;name&gt;</code>, and the rest of the file
+        loads and the verb exits 0. A Flockfile value never clears the mark.
+      </p>
+    </VerbSignature>
+    <VerbSignature verb="enable" usage="shep enable <selector>">
+      <p>
+        Clears the mark and starts the app. An app that is not disabled is
+        left alone, and the verb says so.
+      </p>
+    </VerbSignature>
+    <p>
+      <code>stock</code>, <code>enable</code> and <code>disable</code> take{" "}
+      <code>--host</code> too, and read every name as a sheep's.
     </p>
     <p class="fine">
       whistle's four control tools mirror three of these verbs (
@@ -445,10 +503,9 @@ ID  NAME    STATUS    PID    RESTARTS  EXIT  CFG  CPU   MEM   UPTIME  FOLD  SMIT
       takes real time to become ready.
     </p>
     <p class="fine">
-      <code>SIGKILL</code>ing a sheep's own process never reaches every
-      lamb it forked; see{" "}
-      <a href="/docs/folds">Folds</a> for what a stop
-      actually kills versus what a sheep's process tree contains.
+      The <a href="#lamb-sweep">sweep</a> misses a lamb that
+      double-forks out of the tree before shep looks, and skips a recycled
+      pid. On Windows a stop ends the sheep's whole job object instead.
     </p>
 
     <details>

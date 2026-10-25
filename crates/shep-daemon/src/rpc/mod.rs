@@ -34,15 +34,23 @@ pub use context::{RpcContext, SavedRoll};
 
 mod dispatch;
 
+mod gate;
+
+pub(crate) use gate::{check_carried, kind_of, spawn_checked_forwarder};
+
 pub(crate) use dispatch::dispatch;
 #[cfg(test)]
 use dispatch::with_deadline;
 
 mod batch;
 
+mod dog_secrets;
+
 mod enrichment;
 
 mod error;
+
+mod log_tail;
 
 #[cfg(test)]
 use error::rpc_error;

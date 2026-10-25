@@ -77,7 +77,7 @@ pub struct LookoutArgs {
     ///
     /// A guard against a keystroke in a window you were reading, not a
     /// security boundary: lookout runs as you, so anything it could do you can
-    /// already do with `shep stop`. Can also be closed with `shep set
+    /// already do with `shep stop`. Can also be closed with `shep kv set
     /// lookout.allow_control false`.
     #[arg(long)]
     pub read_only: bool,

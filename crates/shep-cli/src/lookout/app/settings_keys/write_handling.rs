@@ -33,7 +33,7 @@ impl App {
             let Some(SettingsRow::Scalar(field)) = settings.cursor() else {
                 return Effect::None;
             };
-            let buffer = settings.text_seed(field).to_string();
+            let buffer = TextBox::from(settings.text_seed(field));
             settings.pending = Some(Pending::Typing { field, buffer });
             self.mode = InputMode::Text;
             return Effect::None;
@@ -71,7 +71,6 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::*;
     use super::*;
     use crate::commands::settings::ScalarView;
     use crate::lookout::view::fixtures;
@@ -472,7 +471,7 @@ mod tests {
         let Effect::Send(dog) = app.update(Msg::DogWritten {
             edit,
             ticket,
-            result: Ok(DogSource::BuiltIn),
+            result: Ok(DogSource::BuiltIn { grants: None }),
         }) else {
             panic!("a landed file half must raise the daemon half");
         };
@@ -487,7 +486,7 @@ mod tests {
 
         let info = ProcessInfo::builder(50, "metrics", ProcStatus::Online)
             .pid(Some(50_000))
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .build();
         let effect = app.update(Msg::Replied {
             sent: dog,

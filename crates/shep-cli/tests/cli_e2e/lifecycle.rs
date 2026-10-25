@@ -76,12 +76,8 @@ fn a_second_command_reuses_the_daemon_rather_than_spawning_a_second() {
         .unwrap();
     assert_success(&flock);
     let envelope: serde_json::Value = serde_json::from_slice(&flock.stdout).unwrap();
-    let names: Vec<&str> = envelope["data"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| p["name"].as_str().unwrap())
-        .collect();
+    let rows = sheep_rows(&envelope["data"]);
+    let names: Vec<&str> = rows.iter().map(|p| p["name"].as_str().unwrap()).collect();
     assert_eq!(
         names,
         ["alpha", "beta"],
@@ -116,7 +112,9 @@ fn a_lifecycle_verb_prints_the_whole_flock_and_json_still_prints_what_it_touched
     let stopped = shep(home).arg("stop").arg("alpha").output().unwrap();
     assert_success(&stopped);
     let printed = String::from_utf8(stopped.stdout).unwrap();
-    let named: Vec<&str> = printed
+    // The dogs at rest are listed under the sheep, in a table of their own.
+    let sheep_table = printed.split("\nDogs\n").next().unwrap();
+    let named: Vec<&str> = sheep_table
         .lines()
         .filter_map(|line| line.split_whitespace().nth(1))
         .filter(|word| *word != "NAME")
@@ -217,12 +215,8 @@ fn concurrent_cold_starts_produce_exactly_one_daemon() {
         .unwrap();
     assert_success(&flock);
     let envelope: serde_json::Value = serde_json::from_slice(&flock.stdout).unwrap();
-    let mut got: Vec<&str> = envelope["data"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| p["name"].as_str().unwrap())
-        .collect();
+    let rows = sheep_rows(&envelope["data"]);
+    let mut got: Vec<&str> = rows.iter().map(|p| p["name"].as_str().unwrap()).collect();
     got.sort_unstable();
     assert_eq!(
         got,

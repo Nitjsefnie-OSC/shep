@@ -10,9 +10,11 @@
 // And so are the imports only those cases use.
 #![cfg_attr(windows, allow(unused_imports))]
 
+use std::future::Future;
 use std::io::ErrorKind;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
+use std::panic::Location;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -40,6 +42,13 @@ const RECV_TIMEOUT: Duration = Duration::from_secs(10);
 mod app_configs;
 mod channel;
 mod daemon_lifetime;
+// `cfg(unix)` because only unix hands a dog a connection, and its fixture is
+// a `/bin/sh` script.
+#[cfg(unix)]
+mod dog_link;
+// Unix only, as `dog_link` is.
+#[cfg(unix)]
+mod dog_grants;
 mod dog_tables;
 mod harness;
 mod lifecycle;

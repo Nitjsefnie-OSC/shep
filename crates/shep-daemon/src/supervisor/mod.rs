@@ -26,8 +26,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
 use shep_core::config::{
-    AppConfig, ApplyGroup, DeclaredApp, DogTable, ResetDepth, ResolvedApp, apply_group, normalize,
-    reaches_running,
+    AppConfig, ApplyGroup, DeclaredApp, DogTable, NormalizeError, ResetDepth, ResolvedApp,
+    apply_group, normalize, reaches_running,
 };
 use shep_core::overrides::{self, AppOverrides};
 use shep_core::paths::ShepPaths;
@@ -76,7 +76,9 @@ use crate::secrets::ProviderSecrets;
 mod actor_actions;
 mod actor_config;
 mod actor_core;
+mod actor_disable;
 mod actor_dog_tables;
+mod actor_env_copy;
 mod actor_exit;
 mod actor_lifecycle;
 mod actor_pane;
@@ -106,7 +108,7 @@ use command::ReplyKind;
 pub(crate) use command::{Command, Msg};
 use config_merge::{
     EXTRAS_FIELDS, dog_config_refusal, env_override_map, merge_declared, pending_fields,
-    reached_spec, with_count,
+    reached_spec, try_with_count, with_count,
 };
 #[cfg(unix)]
 pub(crate) use error::AdoptError;
@@ -133,7 +135,9 @@ use tasks::{
     spawn_action_task, spawn_readiness_task, spawn_send_line_task, spawn_signal_task,
     spawn_trigger_task, spec_prober,
 };
-pub(crate) use types::{Applied, BatchPolicy, ConnId, DEFAULT_ENVIRONMENT, EnvBatch, FieldSet};
+pub(crate) use types::{
+    Applied, BatchPolicy, ConnId, DEFAULT_ENVIRONMENT, EnvBatch, EnvCopy, FieldSet, SheepDogRead,
+};
 use types::{PendingReply, Registration, Scaled, SheepCtl, Smits};
 use wire::{reload_eligible, restored_status, send_reply, swap_budget, to_info};
 // --- end module tree ---
@@ -233,6 +237,11 @@ struct Actor<R: ProcessRunner> {
     /// makes a second reload of the same app refusable, and what tells a
     /// sheep's exit whether it is a swap's business or its own.
     reloads: HashMap<String, ReloadJob>,
+    /// Every app an operator disabled, by name. The mark belongs to the app:
+    /// a scale-up, a reload's replacement and a second start of a held name
+    /// each create an entry a per-instance flag would miss. Pruned of names
+    /// with no registered instance after every message.
+    disabled: BTreeSet<String>,
 }
 
 #[cfg(test)]

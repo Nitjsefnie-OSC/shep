@@ -9,23 +9,36 @@
 //!
 //! `--no-follow` never subscribes: it tails each matched sheep's log files
 //! and exits. `--follow` prints that same tail first, then subscribes.
+//!
+//! Under `--host` those files are the remote's, so [`source::LogSource`] asks
+//! its shepherd for each tail and the rest of the loop is shared.
 
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io;
 use std::path::Path;
 
 use futures_util::FutureExt;
 use serde::Serialize;
 
-use shep_client::{Client, EventStream, Lagged};
-use shep_core::protocol::{BusEvent, ProcessInfo, Request, Response};
+use shep_client::{Client, EventStream, Lagged, RequestError};
+use shep_core::protocol::{BusEvent, LogStream, ProcessInfo};
 use shep_core::selector::ProcessSelector;
 
 use crate::cli::{BleatsArgs, Format};
-use crate::commands::rpc::{client_error, unexpected_response};
+use crate::commands::rpc::typed_request_error;
 use crate::commands::selector::parse_selector;
 use crate::exit::ExitCode;
 use crate::output::{self, Streams, write_outcome};
+use crate::remote::interrupt_within_grace;
+use crate::shutdown::Interrupt;
+
+mod source;
+use source::{FileTail, LogSource, stream_label};
+
+pub(crate) use shep_core::logtail::read_tail;
+// Only the tests size a file against the window.
+#[cfg(test)]
+pub(crate) use shep_core::logtail::TAIL_WINDOW_BYTES;
 
 /// One line of `bleats` output under `--format json`. A stability surface of
 /// its own, not wrapped in [`output::OutputEnvelope`]: a follow has no end.
@@ -53,18 +66,15 @@ struct BleatLine<'a> {
 /// subscribes, and turns the answer into an id -> [`ProcessInfo`] cache.
 ///
 /// # Errors
-/// Renders and returns the exit code for a request that failed to reach
-/// the daemon, or a response this client does not recognise (`Response`
-/// is `#[non_exhaustive]`).
-async fn resolve_names(
-    client: &Client,
-    streams: &mut Streams<'_>,
-) -> Result<HashMap<u32, ProcessInfo>, ExitCode> {
-    match client.request(Request::ListFlock).await {
-        Ok(Response::Flock(procs)) => Ok(procs.into_iter().map(|p| (p.id, p)).collect()),
-        Ok(_unrecognised) => Err(unexpected_response(streams)),
-        Err(err) => Err(client_error(streams, &err)),
-    }
+/// The request failed to reach the daemon, or the answer is one this client
+/// does not recognise (`Response` is `#[non_exhaustive]`). Reporting it is
+/// the caller's, so one can be explained away as the operator's interrupt
+/// before anything is printed.
+async fn resolve_names(client: &Client) -> Result<HashMap<u32, ProcessInfo>, RequestError> {
+    client
+        .list_flock()
+        .await
+        .map(|procs| procs.into_iter().map(|p| (p.id, p)).collect())
 }
 
 /// Subscribes to every topic `bleats` needs: `log.*` for the lines
@@ -72,16 +82,11 @@ async fn resolve_names(
 /// rather than the connection simply vanishing unexplained.
 ///
 /// # Errors
-/// Renders and returns the exit code for a subscribe request that failed.
-async fn subscribe(client: &Client, streams: &mut Streams<'_>) -> Result<EventStream, ExitCode> {
+/// The subscribe request failed. Reporting it is the caller's, for the same
+/// reason as [`resolve_names`].
+async fn subscribe(client: &Client) -> Result<EventStream, RequestError> {
     let topics = vec!["log.*".to_string(), "daemon.*".to_string()];
-    match client.subscribe(topics).await {
-        Ok(stream) => Ok(stream),
-        Err(err) => {
-            let code = ExitCode::from(&err);
-            Err(streams.fail(code, &err.to_string()))
-        }
-    }
+    client.subscribe(topics).await
 }
 
 /// Resolves `id` to a name from `cache`, or the bare id if `id` was not in
@@ -100,9 +105,13 @@ fn resolved_name(cache: &HashMap<u32, ProcessInfo>, id: u32) -> String {
 /// The daemon emits [`BusEvent::LogOut`]/[`LogErr`](BusEvent::LogErr) per
 /// sheep, so a follow labels a line even when several instances share one
 /// log file, unlike the backlog path.
-fn resolved_instance(cache: &HashMap<u32, ProcessInfo>, id: u32) -> Option<u32> {
+fn resolved_instance(
+    cache: &HashMap<u32, ProcessInfo>,
+    counts: &HashMap<String, usize>,
+    id: u32,
+) -> Option<u32> {
     let info = cache.get(&id)?;
-    if instance_count(cache, &info.name) > 1 {
+    if counts.get(info.name.as_str()).copied().unwrap_or(0) > 1 {
         info.instance
     } else {
         None
@@ -123,19 +132,23 @@ fn selector_allows(selector: &ProcessSelector, cache: &HashMap<u32, ProcessInfo>
     }
 }
 
-/// Writes one rendered line to `out`. `stream` is `"out"` or `"err"`, the
-/// sheep stream the line came from, not `out`'s own identity: every line
-/// this function is called with lands on [`Streams::out`].
+/// Writes one line, the backlog path and the follow path both through
+/// here, so a replayed line and a followed line render identically.
+///
+/// `stream` is `"out"` or `"err"`, the sheep stream the line came from,
+/// not `out`'s own identity: every line this function is called with
+/// lands on [`Streams::out`]. Table format sanitises the line and puts
+/// the stream's default colour on the line text, never on the `name |`
+/// label; JSON carries the raw line, sanitiser never applied.
 fn write_line(
-    out: &mut dyn io::Write,
-    fmt: Format,
+    streams: &mut Streams<'_>,
     id: u32,
     name: &str,
     instance: Option<u32>,
     stream: &'static str,
     line: &str,
 ) -> io::Result<()> {
-    match fmt {
+    match streams.fmt {
         Format::Json => {
             let payload = BleatLine {
                 schema_version: output::SCHEMA_VERSION,
@@ -145,13 +158,17 @@ fn write_line(
                 stream,
                 line,
             };
-            serde_json::to_writer(&mut *out, &payload)?;
-            writeln!(out)
+            serde_json::to_writer(&mut *streams.out, &payload)?;
+            writeln!(streams.out)
         }
-        Format::Table => match instance {
-            Some(slot) => writeln!(out, "{name}:{slot} | {line}"),
-            None => writeln!(out, "{name} | {line}"),
-        },
+        Format::Table => {
+            let clean = output::log_line::sanitize_log_line(line);
+            let text = output::log_line::paint_default(&clean, stream, streams.style);
+            match instance {
+                Some(slot) => writeln!(streams.out, "{name}:{slot} | {text}"),
+                None => writeln!(streams.out, "{name} | {text}"),
+            }
+        }
     }
 }
 
@@ -160,6 +177,21 @@ fn write_line(
 /// is labelled: `shep bleats web:0` still prints `web:0`, not `web`.
 fn instance_count(cache: &HashMap<u32, ProcessInfo>, name: &str) -> usize {
     cache.values().filter(|info| info.name == name).count()
+}
+
+/// Every name `cache` holds, with how many rows carry it. Same counting
+/// rule as [`instance_count`]: over the whole cache, never a selector's
+/// matched subset.
+///
+/// Built once per follow, from the one listing [`resolve_names`] took.
+/// That cache never changes after it, so a followed line's label costs one
+/// lookup here rather than a scan of every process in the flock.
+fn instance_counts(cache: &HashMap<u32, ProcessInfo>) -> HashMap<String, usize> {
+    let mut counts: HashMap<String, usize> = HashMap::with_capacity(cache.len());
+    for info in cache.values() {
+        *counts.entry(info.name.clone()).or_insert(0) += 1;
+    }
+    counts
 }
 
 /// One of `bleats`' own notices, unless `--quiet` asked for silence.
@@ -174,66 +206,6 @@ fn write_notice(streams: &mut Streams<'_>, quiet: bool, code: &str, message: &st
         return;
     }
     streams.aside(code, message);
-}
-
-/// The most of one log file a tail will read to find the lines it wants.
-///
-/// Binds only when lines average over 5 KiB, so in ordinary use the caller's
-/// line count is the bound that decides. A line count alone cannot bound
-/// memory: one arbitrarily long line with no newline would defeat it.
-const TAIL_WINDOW_BYTES: u64 = 256 * 1024;
-
-/// The last `limit` lines of one log file, bounded twice: a
-/// [`TAIL_WINDOW_BYTES`] window from the end of the file, then `limit`
-/// lines within it. Returns the lines and whether either bound cut them
-/// short.
-///
-/// `std::fs`, not `tokio::fs`: shep-cli's tokio has no `fs` feature. Each
-/// line loses its daemon-added timestamp ([`shep_core::logstamp`]), so it
-/// reads the same as a line from the bus. A non-zero seek discards bytes
-/// up to the first `\n`, rather than rendering a mid-line fragment.
-///
-/// # Errors
-/// The file could not be opened, `stat`ed, seeked, or read.
-pub(crate) fn read_tail(path: &Path, limit: usize) -> io::Result<(Vec<String>, bool)> {
-    let mut file = std::fs::File::open(path)?;
-    let len = file.metadata()?.len();
-    let start = len.saturating_sub(TAIL_WINDOW_BYTES);
-    // `start > 0` means the byte window itself left content behind, before
-    // a single line has been counted: the file is bigger than the window.
-    let window_truncated = start > 0;
-    if start > 0 {
-        file.seek(SeekFrom::Start(start))?;
-    }
-
-    let mut window = Vec::new();
-    file.read_to_end(&mut window)?;
-
-    let window: &[u8] = if start > 0 {
-        match window.iter().position(|&b| b == b'\n') {
-            Some(newline) => &window[newline + 1..],
-            None => &[],
-        }
-    } else {
-        &window
-    };
-
-    let text = String::from_utf8_lossy(window);
-    // The daemon's per-line stamp comes off here, so a `line` has one
-    // meaning across both of this verb's paths: the follow path reads the
-    // bus, which carries a sheep's own bytes. The stamp stays in the file
-    // for `tail`, `less` and `grep`.
-    let mut lines: Vec<String> = text
-        .split('\n')
-        .map(|line| shep_core::logstamp::strip(line).to_string())
-        .collect();
-    if lines.last().is_some_and(String::is_empty) {
-        lines.pop();
-    }
-    let keep_from = lines.len().saturating_sub(limit);
-    let truncated = window_truncated || keep_from > 0;
-    lines.drain(..keep_from);
-    Ok((lines, truncated))
 }
 
 /// Why a log file is not there, naming the path this process tried.
@@ -253,12 +225,34 @@ pub(crate) fn missing_log_note(stream: &str, path: &Path) -> String {
     )
 }
 
+/// The `log_path_unknown` notice for `name`'s `stream`, said once however
+/// many rows share it.
+///
+/// No path to key on, since the missing field is why this fires. The message
+/// already names the pair that varies.
+fn path_unknown_notice(
+    streams: &mut Streams<'_>,
+    quiet: bool,
+    seen_notices: &mut HashSet<String>,
+    name: &str,
+    stream: LogStream,
+) {
+    let message = format!(
+        "{name}: the daemon did not report a {} log path",
+        stream_label(stream)
+    );
+    if seen_notices.insert(message.clone()) {
+        write_notice(streams, quiet, "log_path_unknown", &message);
+    }
+}
+
 /// Renders the selected files of every sheep the selector admits, in flock
 /// order, and returns the exit code that reports how that went.
 ///
 /// Within one sheep, `out_file` (unless `--err`) prints before `err_file`
 /// (unless `--out`), with no merge between them. `cache` is a `HashMap`, so
 /// matched sheep are sorted first, by name, then instance slot, then id.
+/// Each file is read through `source`, one at a time in that order.
 ///
 /// A `None` path (a shepherd predating
 /// [`shep_core::protocol::ProcessInfo::out_file`]) is a `log_path_unknown`
@@ -266,13 +260,19 @@ pub(crate) fn missing_log_note(stream: &str, path: &Path) -> String {
 /// the exit code alone. Any other read failure is a `log_unreadable`
 /// notice and sets [`ExitCode::Failure`]; the rest of the flock still
 /// prints.
-fn tail_log_files(
+///
+/// # Errors
+/// The [`RequestError`] from a read over a host that got no answer. Nothing
+/// is printed for it here: the caller reports it, or explains it away as the
+/// operator's interrupt. The files after it are not read.
+async fn tail_log_files(
     streams: &mut Streams<'_>,
     quiet: bool,
     cache: &HashMap<u32, ProcessInfo>,
     selector: &ProcessSelector,
     args: &BleatsArgs,
-) -> ExitCode {
+    source: LogSource<'_>,
+) -> Result<ExitCode, RequestError> {
     let mut matched: Vec<&ProcessInfo> = cache
         .values()
         .filter(|info| selector.matches(&info.name, info.id, info.fold.as_deref(), info.instance))
@@ -290,113 +290,120 @@ fn tail_log_files(
     // One file, one read. Several instances can resolve to one path: every
     // `merge_logs` app does, and so does any app that set `out_file`
     // explicitly.
-    let mut seen_paths: HashSet<String> = HashSet::new();
+    // Every path here is a `&str` borrowed out of `cache`, which outlives
+    // this function, so neither set keys on an owned copy.
+    let mut seen_paths: HashSet<&str> = HashSet::new();
     let mut seen_notices: HashSet<String> = HashSet::new();
 
     // Whether a path is shared between several rows, over the whole cache
     // rather than the matched subset: a selector narrowing to one row must
     // not hide that the file is still shared.
-    let mut path_owners: HashMap<(&'static str, String), usize> = HashMap::new();
+    let mut path_owners: HashMap<(&'static str, &str), usize> = HashMap::new();
     for info in cache.values() {
         for (stream_name, path) in [
             ("out", info.out_file.as_deref()),
             ("err", info.err_file.as_deref()),
         ] {
             if let Some(path) = path {
-                *path_owners
-                    .entry((stream_name, path.to_string()))
-                    .or_insert(0) += 1;
+                *path_owners.entry((stream_name, path)).or_insert(0) += 1;
             }
         }
     }
 
     for info in matched {
         let name = &info.name;
-        let wanted: [(&'static str, Option<&str>, bool); 2] = [
-            ("out", info.out_file.as_deref(), !args.err),
-            ("err", info.err_file.as_deref(), !args.out),
+        let wanted: [(LogStream, Option<&str>, bool); 2] = [
+            (LogStream::Out, info.out_file.as_deref(), !args.err),
+            (LogStream::Err, info.err_file.as_deref(), !args.out),
         ];
-        for (stream_name, path, show) in wanted {
+        for (stream, path, show) in wanted {
             if !show {
                 continue;
             }
-            match path {
-                None => {
-                    // No path to key on, since the missing field is why this
-                    // fires. The message already names the pair that varies.
-                    let message =
-                        format!("{name}: the daemon did not report a {stream_name} log path");
-                    if seen_notices.insert(message.clone()) {
-                        write_notice(streams, quiet, "log_path_unknown", &message);
-                    }
-                }
-                Some(path) => {
-                    if !seen_paths.insert(path.to_string()) {
-                        continue;
-                    }
-                    // Only label a backlog line with a slot when this path
-                    // belongs to exactly one row: instances sharing one file
-                    // interleave in it and no line says who wrote it.
-                    let shared = path_owners
-                        .get(&(stream_name, path.to_string()))
-                        .copied()
-                        .unwrap_or(0)
-                        > 1;
-                    let label_instance = if !shared && instance_count(cache, name) > 1 {
-                        info.instance
-                    } else {
-                        None
-                    };
-                    match read_tail(Path::new(path), args.lines) {
-                        Ok((lines, _truncated)) => {
-                            for line in lines {
-                                if let Err(write_err) = write_line(
-                                    streams.out,
-                                    streams.fmt,
-                                    info.id,
-                                    name,
-                                    label_instance,
-                                    stream_name,
-                                    &line,
-                                ) {
-                                    let code = write_outcome(Err(write_err));
-                                    let _ = streams.out.flush();
-                                    return code;
-                                }
-                            }
-                        }
-                        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                            write_notice(
-                                streams,
-                                quiet,
-                                "log_missing",
-                                &format!(
-                                    "{name}: {}",
-                                    missing_log_note(stream_name, Path::new(path))
-                                ),
-                            );
-                        }
-                        Err(err) => {
-                            failure = true;
-                            write_notice(
-                                streams,
-                                quiet,
-                                "log_unreadable",
-                                &format!("failed to read {path}: {err}"),
-                            );
+            let stream_name = stream_label(stream);
+            let Some(path) = path else {
+                path_unknown_notice(streams, quiet, &mut seen_notices, name, stream);
+                continue;
+            };
+            if !seen_paths.insert(path) {
+                continue;
+            }
+            // Only label a backlog line with a slot when this path belongs to
+            // exactly one row: instances sharing one file interleave in it and
+            // no line says who wrote it.
+            let shared = path_owners.get(&(stream_name, path)).copied().unwrap_or(0) > 1;
+            let label_instance = if !shared && instance_count(cache, name) > 1 {
+                info.instance
+            } else {
+                None
+            };
+            match source.read(info, stream, path, args.lines).await {
+                Ok(FileTail::Lines(lines)) => {
+                    for line in lines {
+                        if let Err(write_err) =
+                            write_line(streams, info.id, name, label_instance, stream_name, &line)
+                        {
+                            let code = write_outcome(Err(write_err));
+                            let _ = streams.out.flush();
+                            return Ok(code);
                         }
                     }
                 }
+                Ok(FileTail::NoPath) => {
+                    path_unknown_notice(streams, quiet, &mut seen_notices, name, stream);
+                }
+                Ok(FileTail::Missing(note)) => {
+                    write_notice(streams, quiet, "log_missing", &format!("{name}: {note}"));
+                }
+                Ok(FileTail::Unreadable(message)) => {
+                    failure = true;
+                    write_notice(streams, quiet, "log_unreadable", &message);
+                }
+                Err(err) => return Err(err),
             }
         }
     }
 
     let _ = streams.out.flush();
-    if failure {
+    Ok(if failure {
         ExitCode::Failure
     } else {
         ExitCode::Success
+    })
+}
+
+/// The reporter [`link_gone`] uses for a tail read a host gave no answer to:
+/// one failure naming the host and the remedy, not one per file.
+fn stop_a_read(source: LogSource<'_>) -> impl FnOnce(&mut Streams<'_>, &RequestError) -> ExitCode {
+    move |streams, err| source.stop(streams, err)
+}
+
+/// Handles one followed log line, shared by the `LogOut` and `LogErr` arms
+/// of [`handle_event`], which differ only in `stream` and `suppressed`.
+///
+/// `stream` is `"out"` or `"err"`, the sheep stream the line came from.
+/// `suppressed` is the flag saying the operator asked not to see it:
+/// `args.err` for an out line, `args.out` for an err one.
+///
+/// Eight parameters: the follow's read-only context plus the two things
+/// the two arms differ in.
+#[allow(clippy::too_many_arguments)]
+fn handle_log_line(
+    streams: &mut Streams<'_>,
+    cache: &HashMap<u32, ProcessInfo>,
+    counts: &HashMap<String, usize>,
+    selector: &ProcessSelector,
+    id: u32,
+    line: &str,
+    stream: &'static str,
+    suppressed: bool,
+) -> io::Result<()> {
+    if !suppressed && selector_allows(selector, cache, id) {
+        let name = resolved_name(cache, id);
+        let instance = resolved_instance(cache, counts, id);
+        write_line(streams, id, &name, instance, stream, line)?;
     }
+    Ok(())
 }
 
 /// Handles one [`BusEvent`] already known to be `Ok` (a `Lagged` item is
@@ -410,26 +417,17 @@ fn handle_event(
     streams: &mut Streams<'_>,
     quiet: bool,
     cache: &HashMap<u32, ProcessInfo>,
+    counts: &HashMap<String, usize>,
     selector: &ProcessSelector,
     args: &BleatsArgs,
     event: BusEvent,
 ) -> io::Result<()> {
     match event {
         BusEvent::LogOut { id, line } => {
-            if !args.err && selector_allows(selector, cache, id) {
-                let name = resolved_name(cache, id);
-                let instance = resolved_instance(cache, id);
-                write_line(streams.out, streams.fmt, id, &name, instance, "out", &line)?;
-            }
-            Ok(())
+            handle_log_line(streams, cache, counts, selector, id, &line, "out", args.err)
         }
         BusEvent::LogErr { id, line } => {
-            if !args.out && selector_allows(selector, cache, id) {
-                let name = resolved_name(cache, id);
-                let instance = resolved_instance(cache, id);
-                write_line(streams.out, streams.fmt, id, &name, instance, "err", &line)?;
-            }
-            Ok(())
+            handle_log_line(streams, cache, counts, selector, id, &line, "err", args.out)
         }
         BusEvent::Dropped { count } => {
             // Worded apart from the `Lagged` arm below: `Dropped` is the
@@ -463,20 +461,66 @@ fn handle_event(
 /// `quiet` is `cli::GlobalArgs::quiet`: it silences this module's own notices
 /// and nothing else. A sheep's own line and a real error both still print.
 ///
-/// Delegates to [`bleats_with_signal`] with a real `SIGINT` as the interrupt
-/// source.
+/// Delegates to [`bleats_armed`] with the interrupt listener installed here.
+/// The shepherd is this machine's: see [`bleats_on_host`] for a host's.
 pub async fn bleats(
     client: &Client,
     streams: &mut Streams<'_>,
     quiet: bool,
     args: &BleatsArgs,
 ) -> ExitCode {
-    bleats_with_signal(
+    bleats_armed(client, streams, quiet, args, None).await
+}
+
+/// [`bleats`] for the shepherd on `host`, where `client` is the ssh link and
+/// not a local socket.
+///
+/// The caller says so, rather than this reading it off `client`, because the
+/// cost of getting it wrong is a tail opened from the remote's paths on this
+/// machine. Every file is read by that shepherd.
+pub async fn bleats_on_host(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    quiet: bool,
+    host: &str,
+    args: &BleatsArgs,
+) -> ExitCode {
+    bleats_armed(client, streams, quiet, args, Some(host)).await
+}
+
+/// [`bleats_over`] with the operator's Ctrl+C listened for from here.
+///
+/// Installed here rather than awaited through [`tokio::signal::ctrl_c`],
+/// which registers its handler on its first poll: a verb reaches that poll
+/// only after its listing, its backlog reads and its `Subscribe` round trip.
+/// A `SIGINT` landing before a handler exists reaches the default disposition
+/// and kills this process. Registering here means tokio queues one that lands
+/// early, and [`raced`] gives every step of the verb the chance to read it.
+///
+/// # Errors
+/// Renders and returns the exit code for a listener this OS refuses to
+/// register, which leaves the verb with no way to end on Ctrl+C.
+async fn bleats_armed(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    quiet: bool,
+    args: &BleatsArgs,
+    host: Option<&str>,
+) -> ExitCode {
+    let mut interrupt = match Interrupt::install() {
+        Ok(interrupt) => interrupt,
+        Err(err) => {
+            let message = format!("listening for an interrupt: {err}");
+            return streams.fail(ExitCode::Failure, &message);
+        }
+    };
+    bleats_over(
         client,
         streams,
         quiet,
         args,
-        tokio::signal::ctrl_c().map(|_| ()),
+        host,
+        interrupt.recv().map(|_| ()),
     )
     .await
 }
@@ -488,9 +532,11 @@ pub async fn bleats(
 /// `--no-follow` stops there and hands off to [`tail_log_files`], issuing
 /// no `Request::Subscribe`. `--follow` subscribes and loops on
 /// `tokio::select!`: a line renders, a `Lagged` item is noted and the
-/// follow continues, the stream ending means the daemon is gone
-/// ([`ExitCode::DaemonUnreachable`]), and `interrupt` firing exits
-/// [`ExitCode::Success`].
+/// follow continues, a request or a stream that stops answering ends on
+/// [`link_gone`], and `interrupt` firing exits [`ExitCode::Success`].
+///
+/// Every step before the loop is raced against `interrupt` by [`raced`], so
+/// a Ctrl+C ends the verb wherever it lands, not only once the loop arms.
 ///
 /// `streams.out` is flushed on every exit path, or buffered lines are lost.
 pub async fn bleats_with_signal(
@@ -500,36 +546,153 @@ pub async fn bleats_with_signal(
     args: &BleatsArgs,
     interrupt: impl std::future::Future<Output = ()> + Send,
 ) -> ExitCode {
+    bleats_over(client, streams, quiet, args, None, interrupt).await
+}
+
+/// What a request whose link closed mid-flight means.
+///
+/// Over a host the ssh child dies on the same Ctrl+C as this process, so a
+/// closed connection is equally consistent with the operator ending the verb:
+/// the interrupt gets [`crate::remote::HOST_INTERRUPT_GRACE`] to say so, and
+/// ends the verb at [`ExitCode::Success`] with no error printed. A shepherd
+/// that answered with a refusal is answering, so only [`RequestError::Closed`]
+/// gets the grace, and locally a Ctrl+C closes no connection at all.
+///
+/// `streams.out` is flushed before either way out, or a backlog this verb
+/// already printed stays in the writer's buffer.
+///
+/// Polling `interrupt` here is what ends a follow on an interrupt that landed
+/// before its loop armed: [`bleats_armed`] installed the listener, and tokio
+/// queued the signal.
+async fn link_gone<F, R>(
+    streams: &mut Streams<'_>,
+    host: Option<&str>,
+    err: &RequestError,
+    interrupt: &mut F,
+    report: R,
+) -> ExitCode
+where
+    F: std::future::Future<Output = ()> + Unpin,
+    R: FnOnce(&mut Streams<'_>, &RequestError) -> ExitCode,
+{
+    let _ = streams.out.flush();
+    if host.is_some()
+        && matches!(err, RequestError::Closed)
+        && interrupt_within_grace(interrupt).await
+    {
+        return ExitCode::Success;
+    }
+    // The message `report` wrote is the reason the verb ended.
+    let code = report(streams, err);
+    let _ = streams.err.flush();
+    code
+}
+
+/// One step of the verb, raced against the operator's Ctrl+C.
+///
+/// Each step can wait on a round trip or a backlog read while the interrupt
+/// listener is installed, so a step that never polled the interrupt would
+/// hold the operator's key press until it finished. `None` means the
+/// interrupt landed while the step was still waiting, and the caller owes
+/// only what the step had already printed.
+///
+/// The work arm is polled first: a shepherd that answered answered, whatever
+/// the operator pressed at the same moment.
+async fn raced<F, T, W>(interrupt: &mut F, work: W) -> Option<T>
+where
+    F: std::future::Future<Output = ()> + Unpin,
+    W: std::future::Future<Output = T>,
+{
+    tokio::select! {
+        biased;
+        value = work => Some(value),
+        () = &mut *interrupt => None,
+    }
+}
+
+/// What an interrupt the operator meant owes this verb: what it printed
+/// already, and no error.
+fn interrupt_exit(streams: &mut Streams<'_>) -> ExitCode {
+    let _ = streams.out.flush();
+    ExitCode::Success
+}
+
+/// [`bleats_with_signal`] with the host decided by the caller, so a test
+/// needs no ssh.
+///
+/// A `host` changes two things. Every tail is read by that host's shepherd,
+/// because `out_file`/`err_file` are the remote's paths and are not files
+/// here. Every request whose link closed is decided by [`link_gone`], because
+/// the ssh child dies on the same Ctrl+C.
+async fn bleats_over(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    quiet: bool,
+    args: &BleatsArgs,
+    host: Option<&str>,
+    interrupt: impl std::future::Future<Output = ()> + Send,
+) -> ExitCode {
+    tokio::pin!(interrupt);
+
     let selector = match parse_selector(streams, &args.selector) {
         Ok(selector) => selector,
         Err(code) => return code,
     };
 
+    let source = match host {
+        Some(name) => LogSource::Host { client, name },
+        None => LogSource::Local,
+    };
+
     // The id/name cache is built from one listing taken before subscribing.
     // Subscribing first would lose every line pushed while the listing is
     // still in flight.
-    let cache = match resolve_names(client, streams).await {
-        Ok(cache) => cache,
-        Err(code) => return code,
+    let cache = match raced(&mut interrupt, resolve_names(client)).await {
+        None => return interrupt_exit(streams),
+        Some(Ok(cache)) => cache,
+        Some(Err(err)) => {
+            return link_gone(streams, host, &err, &mut interrupt, typed_request_error).await;
+        }
     };
 
     if args.no_follow {
-        return tail_log_files(streams, quiet, &cache, &selector, args);
+        let tail = tail_log_files(streams, quiet, &cache, &selector, args, source);
+        return match raced(&mut interrupt, tail).await {
+            None => interrupt_exit(streams),
+            Some(Ok(code)) => code,
+            Some(Err(err)) => {
+                link_gone(streams, host, &err, &mut interrupt, stop_a_read(source)).await
+            }
+        };
     }
+
+    // A follow labels every line it receives, and `cache` cannot change
+    // under it: taken once, before subscribing.
+    let counts = instance_counts(&cache);
 
     // Backlog before subscribing, so a line in the gap is missed rather
     // than printed twice. The tail's exit code is discarded: an unreadable
-    // log for one sheep must not stop the follow over the whole flock.
+    // log for one sheep must not stop the follow over the whole flock. A host
+    // that gave no answer to a read stops it, since it would give none to the
+    // subscribe either.
     if args.lines > 0 {
-        let _ = tail_log_files(streams, quiet, &cache, &selector, args);
+        let backlog = tail_log_files(streams, quiet, &cache, &selector, args, source);
+        match raced(&mut interrupt, backlog).await {
+            None => return interrupt_exit(streams),
+            Some(Err(err)) => {
+                return link_gone(streams, host, &err, &mut interrupt, stop_a_read(source)).await;
+            }
+            Some(Ok(_)) => {}
+        }
     }
 
-    let mut stream = match subscribe(client, streams).await {
-        Ok(stream) => stream,
-        Err(code) => return code,
+    let mut stream = match raced(&mut interrupt, subscribe(client)).await {
+        None => return interrupt_exit(streams),
+        Some(Ok(stream)) => stream,
+        Some(Err(err)) => {
+            return link_gone(streams, host, &err, &mut interrupt, typed_request_error).await;
+        }
     };
-
-    tokio::pin!(interrupt);
 
     loop {
         tokio::select! {
@@ -538,7 +701,7 @@ pub async fn bleats_with_signal(
                 match item {
                     Some(Ok(event)) => {
                         if let Err(write_err) =
-                            handle_event(streams, quiet, &cache, &selector, args, event)
+                            handle_event(streams, quiet, &cache, &counts, &selector, args, event)
                         {
                             let code = write_outcome(Err(write_err));
                             let _ = streams.out.flush();
@@ -555,13 +718,15 @@ pub async fn bleats_with_signal(
                     }
                     None => {
                         let _ = streams.out.flush();
+                        if host.is_some() && interrupt_within_grace(&mut interrupt).await {
+                            return ExitCode::Success;
+                        }
                         return ExitCode::DaemonUnreachable;
                     }
                 }
             }
             () = &mut interrupt => {
-                let _ = streams.out.flush();
-                return ExitCode::Success;
+                return interrupt_exit(streams);
             }
         }
     }

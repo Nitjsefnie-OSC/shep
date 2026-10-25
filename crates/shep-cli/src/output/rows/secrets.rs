@@ -1,4 +1,4 @@
-//! Rows for `shep get`/`shep set`'s KV store, `shep secret`'s slots, and
+//! Rows for `shep kv`'s store, `shep secret`'s slots, and
 //! `shep dog available`'s listing.
 
 use serde::Serialize;
@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::dog_index::AvailableDog;
 use crate::output::Render;
 
-/// One row of `shep get`'s whole-store listing.
+/// One row of `shep kv get`'s whole-store listing.
 ///
 /// A named-field struct rather than a `(String, String)`: a tuple serializes
 /// to a JSON array, and a consumer should read `key`/`value` by name.
@@ -19,8 +19,8 @@ pub struct KvEntry {
     pub value: String,
 }
 
-/// `shep get`'s whole-store listing (bare `shep get`), or one key's own entry
-/// (`shep get <key>`).
+/// `shep kv get`'s whole-store listing (bare `shep kv get`), or one key's own
+/// entry (`shep kv get <key>`).
 ///
 /// `transparent`, so the JSON is a plain array of [`KvEntry`] objects rather
 /// than the map a consumer would have to special-case. Never from a
@@ -42,19 +42,6 @@ impl Render for KvRows {
             .map(|entry| vec![entry.key.clone(), entry.value.clone()])
             .collect()
     }
-
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "KEY" => "key",
-            "VALUE" => "value",
-            other => panic!("KvRows::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     // Two columns: a key with no value is not a row at all.
     const PRIORITIES: &'static [u8] = &[0, 0];
@@ -100,19 +87,6 @@ impl Render for SecretKeyRows {
             .collect()
     }
 
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "KEY" => "key",
-            "ENVIRONMENTS" => "environments",
-            other => panic!("SecretKeyRows::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
-
     // Two columns: a key with no environment holds nothing and is not
     // stored at all.
     const PRIORITIES: &'static [u8] = &[0, 0];
@@ -140,19 +114,6 @@ impl Render for SecretSlotRow {
     fn rows(&self) -> Vec<Vec<String>> {
         vec![vec![self.key.clone(), self.environment.clone()]]
     }
-
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "KEY" => "key",
-            "ENVIRONMENT" => "environment",
-            other => panic!("SecretSlotRow::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     // Two columns, and the pair is the slot's whole identity.
     const PRIORITIES: &'static [u8] = &[0, 0];
@@ -200,19 +161,6 @@ impl Render for SecretValueRow {
     fn rows(&self) -> Vec<Vec<String>> {
         vec![vec![self.key.clone(), self.value.clone()]]
     }
-
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "KEY" => "key",
-            "VALUE" => "value",
-            other => panic!("SecretValueRow::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     // Two columns, and the pair is the whole answer.
     const PRIORITIES: &'static [u8] = &[0, 0];
@@ -320,19 +268,6 @@ impl Render for AvailableDogRows {
             .collect()
     }
 
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "NAME" => "name",
-            "PACKAGE" => "package",
-            "CATEGORY" => "category",
-            "DESCRIPTION" => "description",
-            other => panic!("AvailableDogRows::headers() does not include {other:?}"),
-        }
-    }
-
     const JSON_ONLY: &'static [&'static str] = &[
         // The name an adopt line is built from; a table has no room to say
         // how it differs from NAME.
@@ -350,13 +285,13 @@ impl Render for AvailableDogRows {
     const PRIORITIES: &'static [u8] = &[0, 0, 6, 7];
 }
 
-/// `shep unset`'s own report: how many keys the store lost.
+/// `shep kv unset`'s own report: how many keys the store lost.
 ///
 /// A count rather than the keys: `shep_core::kv::clear` never materializes
 /// the set it empties, so a single key and `--all` share one shape.
 #[derive(Debug, Serialize)]
 pub struct KvUnsetRow {
-    /// How many keys were removed: always `1` for a single-key `unset`, which
+    /// How many keys were removed: always `1` for a single-key `kv unset`, which
     /// exits [`crate::exit::ExitCode::NotFound`] when the key was absent, and
     /// `shep_core::kv::clear`'s own count for `--all`.
     pub removed: u32,
@@ -374,18 +309,6 @@ impl Render for KvUnsetRow {
     fn rows(&self) -> Vec<Vec<String>> {
         vec![vec![self.removed.to_string()]]
     }
-
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "REMOVED" => "removed",
-            other => panic!("KvUnsetRow::headers() does not include {other:?}"),
-        }
-    }
-
-    const JSON_ONLY: &'static [&'static str] = &[];
 
     // One column, and it is the row's whole identity.
     const PRIORITIES: &'static [u8] = &[0];

@@ -54,7 +54,7 @@ pub async fn runtime(
     // zombie state and no reparent-to-init rule, so there is nothing to reap.
     #[cfg(unix)]
     {
-        let forced = std::env::var_os("SHEP_FORCE_INIT").is_some();
+        let forced = reap::ForceInit::from(std::env::var_os("SHEP_FORCE_INIT").is_some());
         if reap::should_split(std::process::id(), args.supervise, forced) {
             // `run_init` never returns; the empty match is how an
             // `Infallible` is spent as a statement.

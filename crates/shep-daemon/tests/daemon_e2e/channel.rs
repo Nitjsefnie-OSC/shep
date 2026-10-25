@@ -20,25 +20,17 @@ async fn a_wait_ready_sheep_goes_online_on_its_own_channel_message() {
     let mut client = fixture.connect().await;
 
     // Subscribe before starting: the bus delivers from the moment you join.
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["process.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    client.subscribe("process.*").await;
 
     let mut app = ready_app("greeter", &fixture.paths.home);
     // `wait_ready` both arms the gate and makes `assemble` open the channel.
     app.wait_ready = true;
     app.listen_timeout = UpDuration::from_millis(600_000);
 
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let id = infos[0].id;
+    let sheep = client.start_first(app).await;
+    let id = sheep.id;
     assert_eq!(
-        infos[0].status,
+        sheep.status,
         ProcStatus::Starting,
         "a gated sheep is `starting` when Start replies, never `online`"
     );
@@ -73,20 +65,14 @@ async fn a_triggered_action_reaches_a_real_child_and_answers_it_twice() {
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut client = fixture.connect().await;
 
-    let mut app = AppConfig::minimal("responder", "/bin/sh");
-    app.interpreter = Some("none".to_string());
-    // `channel` is what opens fd 3 here; this app gates no readiness on it.
-    app.channel = true;
-    app.args = vec![
-        "-c".to_string(),
+    let mut app = shell_app(
+        "responder",
         r#"i=0; while IFS= read -r _line <&3; do i=$((i + 1)); printf '{"kind":"action-reply","action":"gc","body":"round-%d"}\n' "$i" >&3; done"#
             .to_string(),
-    ];
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let id = infos[0].id;
+    );
+    // `channel` is what opens fd 3 here; this app gates no readiness on it.
+    app.channel = true;
+    let id = client.start_first(app).await.id;
 
     for round in 1..=2 {
         let triggered = client
@@ -121,26 +107,15 @@ async fn a_line_written_to_a_real_sheeps_stdin_comes_back_on_its_stdout() {
     let mut client = fixture.connect().await;
 
     // Subscribe before starting: the bus delivers from the moment you join.
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["log.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    client.subscribe("log.*").await;
 
-    let mut app = AppConfig::minimal("echoer", "/bin/sh");
-    app.interpreter = Some("none".to_string());
-    app.args = vec![
-        "-c".to_string(),
+    let mut app = shell_app(
+        "echoer",
         "while IFS= read -r line; do echo \"got $line\"; done".to_string(),
-    ];
+    );
     app.stdin = true;
 
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let id = infos[0].id;
+    let id = client.start_first(app).await.id;
 
     let reply = client
         .request(Request::SendLine {
@@ -169,22 +144,15 @@ async fn a_childs_metric_reaches_a_channel_subscriber_over_the_socket() {
     let mut client = fixture.connect().await;
 
     // Subscribe before starting: the bus delivers from the moment you join.
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["channel.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    client.subscribe("channel.*").await;
 
-    let mut app = AppConfig::minimal("chatty", "/bin/sh");
-    app.interpreter = Some("none".to_string());
-    app.channel = true;
     // Sleeps after the metric: the sheep must outlive the assertion.
-    app.args = vec![
-        "-c".to_string(),
+    let mut app = shell_app(
+        "chatty",
         r#"printf '{"kind":"metric","name":"rps","value":42}\n' >&3; sleep 30"#.to_string(),
-    ];
-    client.request(Request::Start { apps: vec![app] }).await;
+    );
+    app.channel = true;
+    client.start_first(app).await;
 
     // Bounded: a subscriber that never receives must fail, not hang.
     let frame = tokio::time::timeout(RECV_TIMEOUT, async {
@@ -199,11 +167,71 @@ async fn a_childs_metric_reaches_a_channel_subscriber_over_the_socket() {
     .expect("no channel.* frame within the timeout");
 
     match frame {
-        ChildMessage::Metric { name, value } => {
+        ChildMessage::Metric { name, value, .. } => {
             assert_eq!(name, "rps");
             assert!((value - 42.0).abs() < f64::EPSILON, "{value}");
         }
         other => panic!("subscribed to channel.*, received {other:?}"),
+    }
+
+    fixture.shutdown().await;
+}
+
+/// The child sends its note before its metric. So a `channel.metric`
+/// subscriber whose first frame is the metric was never handed the note.
+// `cfg(unix)` because its fixture is a `/bin/sh` script.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_childs_note_reaches_a_note_subscriber_and_not_a_metric_one() {
+    let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
+    let mut notes = fixture.connect().await;
+    let mut metrics = fixture.connect().await;
+
+    // Subscribe before starting: the bus delivers from the moment you join.
+    for (client, topic) in [
+        (&mut notes, "channel.note"),
+        (&mut metrics, "channel.metric"),
+    ] {
+        client.subscribe(topic).await;
+    }
+
+    // Sleeps after both lines: the sheep must outlive the assertions.
+    let mut app = shell_app(
+        "leaser",
+        concat!(
+            r#"printf '{"kind":"note","name":"lease.web.want.1760500000","value":1}\n' >&3; "#,
+            r#"printf '{"kind":"metric","name":"rps","value":42}\n' >&3; sleep 30"#,
+        )
+        .to_string(),
+    );
+    app.channel = true;
+    notes.start_first(app).await;
+
+    for (client, topic) in [
+        (&mut notes, "channel.note"),
+        (&mut metrics, "channel.metric"),
+    ] {
+        // Bounded: a subscriber that never receives must fail, not hang.
+        let message = tokio::time::timeout(RECV_TIMEOUT, async {
+            loop {
+                if let ServerFrame::Event(BusEvent::Channel { message, .. }) =
+                    client.next_frame().await
+                {
+                    break message;
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("no {topic} frame within the timeout"));
+
+        match (topic, message) {
+            ("channel.note", ChildMessage::Note { name, value }) => {
+                assert_eq!(name, "lease.web.want.1760500000");
+                assert!((value - 1.0).abs() < f64::EPSILON, "{value}");
+            }
+            ("channel.metric", ChildMessage::Metric { name, .. }) => assert_eq!(name, "rps"),
+            (topic, other) => panic!("subscribed to {topic}, received {other:?}"),
+        }
     }
 
     fixture.shutdown().await;
@@ -217,12 +245,7 @@ async fn a_trigger_against_a_channelless_sheep_names_the_missing_channel() {
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut client = fixture.connect().await;
 
-    let app = forever_app("mute");
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let id = infos[0].id;
+    let id = client.start_first(forever_app("mute")).await.id;
 
     let triggered = client
         .request(Request::Trigger {
@@ -258,19 +281,13 @@ async fn a_trigger_against_a_silent_child_times_out_rather_than_hitting_the_rpc_
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut client = fixture.connect().await;
 
-    let mut app = AppConfig::minimal("silent", "/bin/sh");
-    app.interpreter = Some("none".to_string());
+    let mut app = shell_app(
+        "silent",
+        "read -r _line <&3; while :; do sleep 1; done".to_string(),
+    );
     app.channel = true;
     app.action_timeout = UpDuration::from_millis(500);
-    app.args = vec![
-        "-c".to_string(),
-        "read -r _line <&3; while :; do sleep 1; done".to_string(),
-    ];
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let id = infos[0].id;
+    let id = client.start_first(app).await.id;
 
     let triggered = client
         .request(Request::Trigger {

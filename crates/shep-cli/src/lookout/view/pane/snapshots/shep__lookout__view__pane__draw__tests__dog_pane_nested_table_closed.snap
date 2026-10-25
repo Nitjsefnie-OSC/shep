@@ -1,0 +1,9 @@
+---
+source: crates/shep-cli/src/lookout/view/pane/draw.rs
+expression: "text.join(\"\\n\")"
+---
+  jobs  (dog config)                                                                                                    
+>  ▾ models                                                        FOCUSED  models  table
+     ▸ worker                                                     
+   name                       small                               
+  shep publishes the change; jobs decides what to reload

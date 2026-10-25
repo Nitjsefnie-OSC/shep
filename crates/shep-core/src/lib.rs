@@ -29,6 +29,9 @@ pub mod config;
 // old name for the lock their writers hold. Lives here rather than in
 // shep-cli (where it was born) so shep-daemon can hold it too.
 pub mod config_lock;
+// The one grammar for a host handed to `ssh`, refusing anything it could
+// read as an option.
+pub mod destination;
 // The probe contract both sides of a dog's `--version`/`--schema` answer
 // parse: flag names, the answer grammar, the schema's secret marker key.
 pub mod dogs;
@@ -42,8 +45,14 @@ pub mod kv;
 // One definition of the log-line timestamp for the writer and every reader:
 // the daemon stamps, and three different file readers in shep-cli strip.
 pub mod logstamp;
+// The end of one log file, read the same way by `bleats`, `whistle` and the
+// shepherd's `TailLog` answer.
+pub mod logtail;
 pub mod overrides;
 pub mod paths;
+// What a dog may ask of the shepherd, and the table that maps every request
+// to the permission it takes.
+pub mod permissions;
 pub mod protocol;
 pub mod secrets;
 pub mod selector;
@@ -53,6 +62,10 @@ pub mod status;
 // above it needs a `cfg`.
 pub mod transport;
 pub mod values;
+// The read shared by `kv.json`, `overrides.json` and `secrets.json`: a
+// missing file is the empty store, a newer `version` is refused. Private to
+// this crate: the three stores keep their own public error enums.
+mod versioned_file;
 
 /// One-import surface for downstream crates
 pub mod prelude {

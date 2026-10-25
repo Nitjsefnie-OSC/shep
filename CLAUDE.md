@@ -20,13 +20,18 @@ cargo test -p shep --lib --bins --all-features -- --skip ::slow::
 `::slow::` tests wait on real FSEvents or wall-clock time. Run unfiltered when
 touching `watch/`, `extras/` or the sampler (`limits/`).
 
-Task gate, once, when the task is otherwise done:
+Task gate, once, when the task is otherwise done. fmt and clippy run on 1.93
+like CI, not `stable` ([why](docs/testing.md#why-linting-runs-on-193)); install
+it once:
 
 ```bash
-cargo fmt --all --check
+rustup toolchain install 1.93 --profile minimal --component clippy,rustfmt
 ```
 ```bash
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo +1.93 fmt --all -- --check
+```
+```bash
+cargo +1.93 clippy --workspace --all-targets --all-features -- -D warnings
 ```
 ```bash
 cargo test --workspace --all-features
@@ -74,6 +79,7 @@ Workspace crates under `crates/`. Each Cargo.toml `description` states its role.
 | shep-cli | **shep** | Library with thin bins: `shep`, plus container-entrypoint aliases `shep-runtime` and `shep-dev` |
 | shep-macros | shep-macros | `#[dog_config]` attribute, re-exported as `shep_client::dogs::dog_config` |
 | shep-channel | shep-channel | Client an app links to speak the shepherd channel |
+| shep-handover | shep-handover | `execve` in place for any process: carries named descriptors and a state blob, depends on no other shep crate |
 | shep-cli-redirect | shep-cli | Empty placeholder holding the `shep-cli` name on crates.io |
 
 Also at the top level:
@@ -135,7 +141,7 @@ Most common drift: panicking constructors, `std::error::Error` instead of
 `#[track_caller]`, input grammars wider than the spec.
 
 - Every new public item needs docs and a deliberate `Debug` decision: redacted for anything carrying env or secrets, with an exact-string test (IR-41).
-- `#![forbid(unsafe_code)]` is live in core, client, cli and macros. Unsafe lives only in shep-daemon's `sys.rs` and `sys_windows.rs` and shep-channel's `endpoint.rs`, each with its own `allow(unsafe_code)` and a `// SAFETY:` comment per block (IR-22/23).
+- `#![forbid(unsafe_code)]` is live in core, client, cli and macros. Unsafe lives only in shep-daemon's `sys.rs` and `sys_windows.rs`, shep-channel's `endpoint.rs` and shep-handover's `sys.rs`, each with its own `allow(unsafe_code)` and a `// SAFETY:` comment per block (IR-22/23).
 - A dev-dependency on another workspace crate names a path only: no `workspace = true`, no version. A versioned one deadlocks publishing. `scripts/check-dev-deps.py` enforces it in CI.
 - Open design decisions are listed at the bottom of map.md and in goals.md's open questions. Those are the maintainer's calls.
 
@@ -167,4 +173,4 @@ The five default roles, label string equal to role name. See `docs/agents/triage
 
 ### Domain docs
 
-Single-context: `docs/terminology.md` is the glossary and `docs/decisions.md` the decision log. See `docs/agents/domain.md`.
+Single-context: `GLOSSARY.md` at the root is a signpost to `docs/terminology.md`, which is the glossary, and `docs/decisions.md` is the decision log. See `docs/agents/domain.md`.

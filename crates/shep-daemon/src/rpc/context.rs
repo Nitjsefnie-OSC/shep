@@ -7,13 +7,14 @@
 
 use core::time::Duration;
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tokio::sync::watch;
 
 use shep_core::paths::ShepPaths;
+use shep_core::permissions::Grants;
 use shep_core::protocol::Reply;
 
 use crate::bus::{Bus, TopicFilter};
@@ -28,44 +29,87 @@ pub(crate) const DEFAULT_DEADLINE_MS: u64 = 5_000;
 /// Ceiling on a client-supplied deadline: a peer cannot pin a daemon task open.
 pub(crate) const MAX_DEADLINE_MS: u64 = 60_000;
 
-/// Every dog name this shepherd may hold a section for, running or not.
+/// Every dog name this shepherd may hold a section for, running or not,
+/// and what each was granted.
 ///
 /// Seeded at boot from the CLI, which owns `shep.toml`. A
-/// `Request::EnableDog` adds a name, so a dog adopted against a running
-/// shepherd needs no reload. Never shrunk: `shep disable` leaves the
-/// section in `dogs.toml`, where a disabled dog still wants configuring.
-/// A set because the only question asked is membership, behind a mutex
-/// because every connection holds a clone.
+/// `Request::EnableDog` adds a name and records the grants it carries, so a
+/// dog adopted against a running shepherd needs no reload. Never shrunk:
+/// `shep disable` leaves the section in `dogs.toml`, where a disabled dog
+/// still wants configuring.
+///
+/// A name with `None` is undeclared: no grants were recorded, so every
+/// request is allowed. `Some` is exactly what the operator granted, an empty
+/// set included. A map behind a mutex because every connection holds a clone.
 #[derive(Debug, Clone)]
 pub(crate) struct KnownDogs {
-    names: Arc<Mutex<BTreeSet<String>>>,
+    dogs: Arc<Mutex<BTreeMap<String, Option<Grants>>>>,
 }
 
 impl KnownDogs {
-    /// Wraps a boot-time seed.
-    pub(crate) fn new(names: BTreeSet<String>) -> Self {
+    /// Wraps a boot-time seed of undeclared dogs.
+    #[cfg(test)]
+    pub(crate) fn new(names: std::collections::BTreeSet<String>) -> Self {
+        Self::with_grants(names.into_iter().map(|name| (name, None)))
+    }
+
+    /// Wraps a boot-time seed, each name with the grants it was spawned
+    /// with.
+    pub(crate) fn with_grants(dogs: impl IntoIterator<Item = (String, Option<Grants>)>) -> Self {
         Self {
-            names: Arc::new(Mutex::new(names)),
+            dogs: Arc::new(Mutex::new(dogs.into_iter().collect())),
         }
     }
 
     /// Whether this shepherd may hold a section for `name`.
     pub(crate) fn contains(&self, name: &str) -> bool {
-        self.lock().contains(name)
+        self.lock().contains_key(name)
     }
 
-    /// Records that `name` is a dog this shepherd knows about.
-    pub(crate) fn insert(&self, name: &str) {
-        self.lock().insert(name.to_owned());
+    /// Records that `name` is a dog this shepherd knows about, with the
+    /// `grants` it now holds. `None` leaves it undeclared.
+    #[cfg(test)]
+    pub(crate) fn insert(&self, name: &str, grants: Option<Grants>) {
+        self.lock().insert(name.to_owned(), grants);
+    }
+
+    /// Records `grants` for `name` and hands back what it held before, for
+    /// [`Self::restore`] when the start it was recorded ahead of is refused.
+    pub(crate) fn replace(&self, name: &str, grants: Option<Grants>) -> Held {
+        Held(self.lock().insert(name.to_owned(), grants))
+    }
+
+    /// Puts `name` back as [`Self::replace`] found it.
+    pub(crate) fn restore(&self, name: &str, held: Held) {
+        match held.0 {
+            Some(grants) => self.lock().insert(name.to_owned(), grants),
+            None => self.lock().remove(name),
+        };
+    }
+
+    /// What is recorded for `name`: `None` for a name never seen, and
+    /// otherwise its grants, themselves `None` when it is undeclared.
+    pub(crate) fn recorded(&self, name: &str) -> Option<Option<Grants>> {
+        self.lock().get(name).cloned()
+    }
+
+    /// What `name` was granted, or `None` when it is undeclared or unknown.
+    pub(crate) fn grants(&self, name: &str) -> Option<Grants> {
+        self.lock().get(name).cloned().flatten()
     }
 
     /// A poisoned lock is recovered rather than propagated, as
     /// [`crate::dogs::DogRefusals`] does: these are names with no invariant
     /// a panic mid-write could have broken.
-    fn lock(&self) -> MutexGuard<'_, BTreeSet<String>> {
-        self.names.lock().unwrap_or_else(PoisonError::into_inner)
+    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, Option<Grants>>> {
+        self.dogs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
+
+/// What [`KnownDogs`] held for a name before [`KnownDogs::replace`]: nothing
+/// at all, or an entry that was undeclared or granted.
+#[derive(Debug)]
+pub(crate) struct Held(Option<Option<Grants>>);
 
 /// Everything a request handler may touch; one clone per connection.
 ///
@@ -135,7 +179,7 @@ pub struct RpcContext {
     /// This daemon's OS pid, echoed in the handshake.
     pub(crate) pid: u32,
     /// Flips to `true` to start graceful daemon shutdown; see [`Self::shutdown`].
-    pub(crate) shutdown: Arc<watch::Sender<bool>>,
+    pub(crate) shutdown: watch::Sender<bool>,
     /// The live resource readings [`super::enrichment::with_live_stats`]
     /// takes a sample from.
     ///
@@ -152,6 +196,13 @@ pub struct RpcContext {
     /// read per spawn by the supervisor actor. One registry, two owners,
     /// for the reason `stats` above gives.
     pub(crate) provider_secrets: Arc<ProviderSecrets>,
+    /// The environment a dog's `{{secret:...}}` references resolve in, from
+    /// `[daemon] environment`.
+    ///
+    /// The supervisor holds the same name for the sheep it spawns. A dog
+    /// has no environment of its own to override it with, so this is the
+    /// only one `Request::DogConfigResolved` ever reads in.
+    pub(crate) host_environment: String,
 }
 
 /// Where a muster roll landed and what it recorded.

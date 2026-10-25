@@ -122,7 +122,7 @@ pub(super) fn filtered(query: &str) -> App {
         ],
         at: t0,
     });
-    app.set_filter(query.to_string());
+    app.set_filter(TextBox::from(query));
     app
 }
 

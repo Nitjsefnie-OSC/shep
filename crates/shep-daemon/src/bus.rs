@@ -285,14 +285,6 @@ impl PartialEq<BusEvent> for SharedEvent {
 #[derive(Debug)]
 pub struct TopicFilter {
     set: GlobSet,
-    /// Read only by [`Self::patterns`], which only this crate's own tests
-    /// call, so in a crate-private module both are dead in a non-test build.
-    /// `allow` rather than `expect` because the expectation would go
-    /// unfulfilled in the test build, where the tests do call it.
-    #[allow(
-        dead_code,
-        reason = "read by this crate's own tests through `patterns`"
-    )]
     patterns: Vec<String>,
 }
 
@@ -347,7 +339,6 @@ impl TopicFilter {
     // `#[inline]`, not `#[inline(always)]`: not per-frame hot like `matches`.
     #[inline]
     #[must_use]
-    #[allow(dead_code, reason = "called by this crate's own tests")]
     pub fn patterns(&self) -> &[String] {
         &self.patterns
     }
@@ -422,6 +413,19 @@ fn step(received: Result<SharedEvent, RecvError>, filter: &TopicFilter) -> Forwa
 // channel itself becomes the bounded per-subscriber queue: it drops the
 // oldest events and reports the count as `Lagged(n)`.
 pub fn spawn_forwarder(bus: &Bus, filter: TopicFilter, out: mpsc::Sender<Bytes>) -> JoinHandle<()> {
+    spawn_guarded_forwarder(bus, filter, out, || true)
+}
+
+/// [`spawn_forwarder`] that asks `still_allowed` before each frame and ends
+/// the task, with the subscriber told nothing, once it answers no.
+///
+/// For a subscription whose authority can narrow while it is held.
+pub(crate) fn spawn_guarded_forwarder(
+    bus: &Bus,
+    filter: TopicFilter,
+    out: mpsc::Sender<Bytes>,
+    still_allowed: impl Fn() -> bool + Send + 'static,
+) -> JoinHandle<()> {
     let (mut rx, interest) = bus.subscribe_for(&filter);
     // Cancel-safe: `recv` and `send` run sequentially (no select!), so an
     // aborted forwarder loses at most the frame in flight.
@@ -432,8 +436,8 @@ pub fn spawn_forwarder(bus: &Bus, filter: TopicFilter, out: mpsc::Sender<Bytes>)
         loop {
             match step(rx.recv().await, &filter) {
                 Forwarded::Frame(bytes) => {
-                    if out.send(bytes).await.is_err() {
-                        break; // subscriber hung up
+                    if !still_allowed() || out.send(bytes).await.is_err() {
+                        break; // revoked, or the subscriber hung up
                     }
                 }
                 Forwarded::Skip => {}

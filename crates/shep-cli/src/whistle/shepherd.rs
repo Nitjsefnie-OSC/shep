@@ -13,9 +13,11 @@ use std::path::PathBuf;
 
 use rmcp::model::CallToolResult;
 use shep_client::{Client, ConnectError, RequestError};
-use shep_core::protocol::{HelloAck, Request, Response};
+use shep_core::protocol::{HelloAck, ProcessInfo, Request, Response};
 
+use crate::commands::rpc::deadline_for;
 use crate::exit::ExitCode;
+use crate::whistle::read::unexpected_response;
 
 /// The socket, and the one operation anything in `whistle` performs on it.
 ///
@@ -63,6 +65,40 @@ impl Shepherd {
         &self,
         request: Request,
     ) -> Result<(HelloAck, Response), CallToolResult> {
+        let (client, ack) = self.connect().await?;
+        let deadline = deadline_for(&request);
+        let response = client
+            .request_with_deadline(request, deadline)
+            .await
+            .map_err(|err| refusal(&err));
+        // Dropping the client ends its actor task and closes the socket. Done
+        // explicitly rather than by scope end so the ordering is visible: the
+        // reply is already in hand.
+        let _ = client.close().await;
+        response.map(|response| (ack, response))
+    }
+
+    /// [`Client::list_flock`] on a connection of its own, plus the handshake
+    /// it was opened with.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::call`]. A reply that is not a listing is the same refusal
+    /// `read`'s other tools give for a reply they did not ask for.
+    pub async fn list_flock_with_ack(
+        &self,
+    ) -> Result<(HelloAck, Vec<ProcessInfo>), CallToolResult> {
+        let (client, ack) = self.connect().await?;
+        let flock = client.list_flock().await.map_err(|err| match err {
+            RequestError::UnexpectedReply { .. } => unexpected_response(),
+            other => refusal(&other),
+        });
+        let _ = client.close().await;
+        flock.map(|flock| (ack, flock))
+    }
+
+    /// Opens the connection one call uses and refuses a skewed shepherd.
+    async fn connect(&self) -> Result<(Client, HelloAck), CallToolResult> {
         let client = Client::connect(&self.socket)
             .await
             .map_err(|err| connect_refusal(&err))?;
@@ -70,12 +106,7 @@ impl Shepherd {
         // one of `RECOVERY_VERBS`.
         refuse_if_skewed(&client)?;
         let ack = client.daemon().clone();
-        let response = client.request(request).await.map_err(|err| refusal(&err));
-        // Dropping the client ends its actor task and closes the socket. Done
-        // explicitly rather than by scope end so the ordering is visible: the
-        // reply is already in hand.
-        let _ = client.close().await;
-        response.map(|response| (ack, response))
+        Ok((client, ack))
     }
 }
 
@@ -110,7 +141,7 @@ fn refuse_if_skewed(client: &Client) -> Result<(), CallToolResult> {
             "message": format!(
                 "this shep is {}, the running shepherd is {}; \
                  `cargo install shep` replaced the binary without \
-                 restarting it — run `shep daemon reload`",
+                 restarting it. Run `shep daemon reload`",
                 env!("CARGO_PKG_VERSION"),
                 client.daemon().daemon_version,
             ),

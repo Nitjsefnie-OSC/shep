@@ -1,9 +1,11 @@
+use super::install_commands::{install_commands, not_started_notice, running_shepherd};
 use super::privilege_check::{Privilege, privilege};
 use super::target_resolution::{StartupPlan, plan};
 use super::unit_layout::{remove_unit, secure_path_warning, unit_file_name, write_unit};
 use crate::cli::{Init, StartupArgs};
 use crate::exit::ExitCode;
 use crate::output::{StartupStep, StartupSteps, Streams, emit, write_outcome};
+use shep_daemon::boot::Shepherd;
 use std::path::Path;
 
 /// A step that did what it was asked.
@@ -36,7 +38,7 @@ pub fn startup(
 ) -> ExitCode {
     let plan = match plan(explicit_home, args) {
         Ok(plan) => plan,
-        Err(refusal) => return refuse(streams, refusal.code, &refusal.message),
+        Err(refusal) => return streams.fail(refusal.code, &refusal.message),
     };
     // Created before the privilege and existing-unit checks on purpose.
     // An unprivileged run prints `sudo ... --home <default>`, which
@@ -45,7 +47,7 @@ pub fn startup(
     if let Some(paths) = plan.own_default_home.clone()
         && let Err(refusal) = crate::home::create_default_home(streams, paths)
     {
-        return refuse(streams, refusal.code(), &refusal.to_string());
+        return streams.fail(refusal.code(), &refusal.to_string());
     }
     install(streams, &plan, privilege())
 }
@@ -58,7 +60,7 @@ pub fn startup(
 pub fn unstartup(streams: &mut Streams<'_>, args: &StartupArgs) -> ExitCode {
     match plan(None, args) {
         Ok(plan) => remove(streams, &plan, privilege()),
-        Err(refusal) => refuse(streams, refusal.code, &refusal.message),
+        Err(refusal) => streams.fail(refusal.code, &refusal.message),
     }
 }
 
@@ -71,6 +73,9 @@ pub fn unstartup(streams: &mut Streams<'_>, args: &StartupArgs) -> ExitCode {
 /// [`Privilege::Unprivileged`], which prints the resolved `sudo` command
 /// and exits [`ExitCode::Failure`].
 ///
+/// A shepherd already holding that home is not a refusal: the unit is
+/// enabled but not started, and a notice says how to hand the flock over.
+///
 /// If [`plan`] saw `$SUDO_USER` set, [`secure_path_warning`] also warns:
 /// `sudo` typically replaces `PATH` with its own `secure_path`, and shep
 /// has no login `PATH` left to compare against.
@@ -80,8 +85,7 @@ pub(crate) fn install(
     privilege: Privilege,
 ) -> ExitCode {
     if !plan.spec.home.is_dir() {
-        return refuse(
-            streams,
+        return streams.fail(
             ExitCode::Usage,
             &format!(
                 "no directory at {}; create it first (any shep verb run as {} creates that \
@@ -92,8 +96,7 @@ pub(crate) fn install(
         );
     }
     if plan.unit_path.exists() {
-        return refuse(
-            streams,
+        return streams.fail(
             ExitCode::Usage,
             &format!(
                 "{} already exists; shep unstartup removes it first",
@@ -102,8 +105,7 @@ pub(crate) fn install(
         );
     }
     if privilege == Privilege::Unprivileged {
-        return refuse(
-            streams,
+        return streams.fail(
             ExitCode::Failure,
             &format!(
                 "installing the unit needs root; run: sudo {} startup --user {} --home {}",
@@ -117,38 +119,25 @@ pub(crate) fn install(
         streams.aside("secure_path", &message);
     }
 
-    let mut steps = vec![write_unit(plan)];
-    match plan.init {
-        Init::Systemd => {
-            steps.push(run_step("systemctl", &["daemon-reload"]));
-            steps.push(run_step(
-                "systemctl",
-                &["enable", "--now", &unit_file_name(plan)],
-            ));
-        }
-        Init::Launchd => steps.push(run_step(
-            "launchctl",
-            &["bootstrap", "system", &plan.unit_path.display().to_string()],
-        )),
-        Init::Openrc => {
-            steps.push(run_step(
-                "rc-update",
-                &["add", &unit_file_name(plan), "default"],
-            ));
-            steps.push(run_step("rc-service", &[&unit_file_name(plan), "start"]));
-        }
-        Init::FreebsdRc => {
-            steps.push(run_step(
-                "sysrc",
-                &[&format!("{}_enable=YES", unit_file_name(plan))],
-            ));
-            steps.push(run_step("service", &[&unit_file_name(plan), "start"]));
-        }
-        Init::OpenbsdRc => {
-            steps.push(run_step("rcctl", &["enable", &unit_file_name(plan)]));
-            steps.push(run_step("rcctl", &["start", &unit_file_name(plan)]));
-        }
+    let shepherd = running_shepherd(&plan.spec.home).unwrap_or_else(|err| {
+        streams.aside(
+            "liveness",
+            &format!("could not tell whether a shepherd already runs; starting the unit: {err}"),
+        );
+        Shepherd::Absent
+    });
+    let start = shepherd == Shepherd::Absent;
+    if !start {
+        streams.aside("already_running", &not_started_notice(plan, shepherd));
     }
+
+    let mut steps = vec![write_unit(plan)];
+    steps.extend(install_commands(plan, start).iter().map(|(program, args)| {
+        run_step(
+            program,
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
+        )
+    }));
     report(streams, "startup", steps)
 }
 
@@ -177,8 +166,7 @@ pub(crate) fn remove(
         );
     }
     if privilege == Privilege::Unprivileged {
-        return refuse(
-            streams,
+        return streams.fail(
             ExitCode::Failure,
             &format!(
                 "removing the unit needs root; run: sudo {} unstartup --user {}",
@@ -299,11 +287,6 @@ fn failure_line(output: &std::process::Output) -> String {
         .map_or_else(|| format!("failed: {}", output.status), ToString::to_string)
 }
 
-/// Writes one refusal to stderr and returns the code it earned.
-pub(super) fn refuse(streams: &mut Streams<'_>, code: ExitCode, message: &str) -> ExitCode {
-    streams.fail(code, message)
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::privilege_check::Privilege;
@@ -326,12 +309,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             install(&mut streams, &plan_for_test(&home), Privilege::Unprivileged)
         };
         assert_ne!(code, ExitCode::Success);
@@ -354,12 +332,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             // Root: an unprivileged run would refuse for the other reason
             // first, never exercising the home check.
             install(&mut streams, &plan_for_test(&missing), Privilege::Root)
@@ -396,12 +369,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             report(&mut streams, "startup", steps)
         };
         assert_eq!(code, ExitCode::Failure);

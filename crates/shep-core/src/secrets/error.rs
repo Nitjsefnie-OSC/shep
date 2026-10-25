@@ -1,4 +1,5 @@
 use super::format::MAX_VALUE_BYTES;
+use crate::versioned_file::ReadError;
 use core::fmt;
 
 /// Error type returned by this module.
@@ -83,6 +84,16 @@ impl From<std::io::Error> for SecretError {
 impl From<serde_json::Error> for SecretError {
     fn from(source: serde_json::Error) -> Self {
         Self::Decode(source)
+    }
+}
+
+impl From<ReadError> for SecretError {
+    fn from(source: ReadError) -> Self {
+        match source {
+            ReadError::Io(err) => Self::Io(err),
+            ReadError::Decode(err) => Self::Decode(err),
+            ReadError::FutureVersion(version) => Self::FutureVersion(version),
+        }
     }
 }
 

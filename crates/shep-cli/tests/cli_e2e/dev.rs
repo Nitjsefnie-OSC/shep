@@ -46,9 +46,10 @@ fn wait_for_dev_online(dev_home: &Path, deadline: Duration) -> serde_json::Value
             .unwrap();
         if output.status.success()
             && let Ok(envelope) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
-            && envelope["data"][0]["status"] == "online"
+            && let Some(sheep) = sheep_rows(&envelope["data"]).into_iter().next()
+            && sheep["status"] == "online"
         {
-            return envelope["data"][0].clone();
+            return sheep;
         }
         if start.elapsed() >= deadline {
             panic!(
@@ -78,6 +79,20 @@ fn wait_bounded(child: &mut Child, timeout: Duration) -> std::process::ExitStatu
     }
 }
 
+/// Asserts a finished `shep dev` session left no shepherd at `dev_home`: no
+/// live socket, and nothing left that answers `flock`.
+#[track_caller]
+fn assert_dev_left_no_shepherd(dev_home: &Path) {
+    let socket = dev_home.join("run").join("shep.sock");
+    assert!(!socket.exists(), "dev must not leave a live socket behind");
+
+    let flock_output = shep(dev_home).arg("flock").output().unwrap();
+    assert!(
+        !flock_output.status.success(),
+        "no shepherd should remain at the dev home to answer `flock`: {flock_output:?}"
+    );
+}
+
 /// The auto-exit fires after `commands::empty::STRIKES` × `INTERVAL` (3 × 2s).
 /// The setting under test is `tidy_up: true`, which reddens the no-shepherd
 /// assertion when flipped, not the socket one. `$SHEP_DEV_HOME` points at its
@@ -98,14 +113,7 @@ fn dev_tidies_up_after_itself() {
     let output = shep_dev(dev_home.path()).arg(&flockfile).output().unwrap();
     assert_success(&output);
 
-    let socket = dev_home.path().join("run").join("shep.sock");
-    assert!(!socket.exists(), "dev must not leave a live socket behind");
-
-    let flock_output = shep(dev_home.path()).arg("flock").output().unwrap();
-    assert!(
-        !flock_output.status.success(),
-        "no shepherd should remain at the dev home to answer `flock`: {flock_output:?}"
-    );
+    assert_dev_left_no_shepherd(dev_home.path());
 }
 
 #[cfg(unix)]
@@ -146,14 +154,7 @@ fn dev_tidies_up_when_it_is_signalled_rather_than_when_the_flock_empties() {
         "a signalled dev session must still tidy up and exit cleanly: {status:?}"
     );
 
-    let socket = dev_home.path().join("run").join("shep.sock");
-    assert!(!socket.exists(), "dev must not leave a live socket behind");
-
-    let flock_output = shep(dev_home.path()).arg("flock").output().unwrap();
-    assert!(
-        !flock_output.status.success(),
-        "no shepherd should remain at the dev home to answer `flock`: {flock_output:?}"
-    );
+    assert_dev_left_no_shepherd(dev_home.path());
 
     assert!(
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(sheep_pid), None).is_err(),
@@ -190,7 +191,7 @@ fn the_alias_binaries_exist_and_reach_their_own_verbs() {
             "{bin} --help must be {verb}'s own help, not the root's:\n{text}"
         );
         assert!(
-            !text.contains("lookout"),
+            !text.contains("See what's up"),
             "{bin} printed the root verb list, so the alias supplied no verb:\n{text}"
         );
     }

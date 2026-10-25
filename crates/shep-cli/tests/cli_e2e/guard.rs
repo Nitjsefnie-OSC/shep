@@ -13,6 +13,7 @@ pub(crate) fn shep(home: &Path) -> Command {
 
 /// Asserts `output` exited `Success`, printing stderr on failure so a
 /// red run names the actual cause instead of just "assertion failed".
+#[track_caller]
 pub(crate) fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
@@ -94,8 +95,15 @@ impl DaemonGuard {
     /// Call it immediately after `.output()` and before the assertion on
     /// `output.status`: registering after it leaks the daemon in exactly the
     /// failed-autostart case where one is most likely.
+    ///
+    /// A home already held is skipped rather than pushed again. A case that
+    /// adopts after every `Output` it runs over one home adopts that home once
+    /// per pass, and [`Self::drop`] sweeps every entry it holds separately.
     pub(crate) fn adopt_home(&mut self, home: &Path) {
-        self.homes.push(home.to_path_buf());
+        let home = home.to_path_buf();
+        if !self.homes.contains(&home) {
+            self.homes.push(home);
+        }
     }
 
     /// Register a dog's own pid, a grandchild whose process group sits outside
@@ -159,6 +167,29 @@ impl Drop for DaemonGuard {
     }
 }
 
+/// A case that adopts one `$SHEP_HOME` per pass of a loop over it must not
+/// register that home once per pass: every entry is swept separately, so
+/// duplicates multiply a failing case's teardown.
+///
+/// Neither temp dir holds a pidfile or [`FIXTURE_PIDS`], so the `Drop` this
+/// test's own teardown runs kills and sweeps nothing.
+#[test]
+fn adopting_the_same_home_twice_registers_it_once() {
+    let shared = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+
+    guard.adopt_home(shared.path());
+    guard.adopt_home(shared.path());
+    guard.adopt_home(other.path());
+
+    assert_eq!(
+        guard.homes,
+        vec![shared.path().to_path_buf(), other.path().to_path_buf()],
+        "a repeated adoption must not add a second entry for the same home"
+    );
+}
+
 #[cfg(unix)]
 /// SIGKILLs every process group named in `home`'s [`FIXTURE_PIDS`], resweeping
 /// until [`GUARD_SWEEP_WINDOW`] expires.
@@ -189,11 +220,31 @@ pub(crate) fn sweep_flock(home: &Path) {
 }
 
 #[cfg(unix)]
-/// One non-blocking attempt at the daemon pid recorded at `home`.
+/// The one reader of a daemon pid recorded at `home`, the same path
+/// `shep_daemon::boot::pidfile` builds.
+///
+/// [`daemon_pid`] takes the `Ok` and drops the reason; [`read_daemon_pid`]
+/// turns that reason into the panic a case wants.
+///
+/// # Errors
+/// `String` naming either the pidfile path that could not be read, or the
+/// contents that did not parse as a pid.
+fn read_pidfile(home: &Path) -> Result<nix::unistd::Pid, String> {
+    let path = home.join("pids").join("shepd.pid");
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("no pidfile at {}: {e}", path.display()))?;
+    let raw: i32 = text
+        .trim()
+        .parse()
+        .map_err(|e| format!("bad pidfile contents {text:?}: {e}"))?;
+    Ok(nix::unistd::Pid::from_raw(raw))
+}
+
+#[cfg(unix)]
+/// One non-blocking attempt at [`read_pidfile`]: `None` for either of its two
+/// failures.
 pub(crate) fn daemon_pid(home: &Path) -> Option<nix::unistd::Pid> {
-    let text = std::fs::read_to_string(home.join("pids").join("shepd.pid")).ok()?;
-    let raw: i32 = text.trim().parse().ok()?;
-    Some(nix::unistd::Pid::from_raw(raw))
+    read_pidfile(home).ok()
 }
 
 #[cfg(unix)]
@@ -245,17 +296,13 @@ pub(crate) fn recorded_fixture_pids(home: &Path) -> Vec<nix::unistd::Pid> {
 }
 
 #[cfg(unix)]
-/// Reads the daemon pid recorded at `home`'s pidfile, the same path
-/// `shep_daemon::boot::pidfile` builds.
+/// [`read_pidfile`], panicking with its message: a case that asks for the
+/// shepherd's pid has no use for a `None` it cannot explain.
 pub(crate) fn read_daemon_pid(home: &Path) -> nix::unistd::Pid {
-    let path = home.join("pids").join("shepd.pid");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("no pidfile at {}: {e}", path.display()));
-    let raw: i32 = text
-        .trim()
-        .parse()
-        .unwrap_or_else(|e| panic!("bad pidfile contents {text:?}: {e}"));
-    nix::unistd::Pid::from_raw(raw)
+    match read_pidfile(home) {
+        Ok(pid) => pid,
+        Err(reason) => panic!("{reason}"),
+    }
 }
 
 #[cfg(unix)]

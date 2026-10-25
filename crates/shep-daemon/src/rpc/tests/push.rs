@@ -5,23 +5,7 @@ use super::*;
 
 /// Sends `entries` for `namespace` in `production` and returns the reply.
 async fn push(ctx: &RpcContext, id: u64, namespace: &str, entries: &[(&str, &str)]) -> Reply {
-    reply_of(
-        dispatch(
-            envelope(
-                id,
-                Request::PutSecrets {
-                    namespace: namespace.to_string(),
-                    environment: "production".to_string(),
-                    entries: entries
-                        .iter()
-                        .map(|(key, value)| ((*key).to_string(), (*value).to_string().into()))
-                        .collect(),
-                },
-            ),
-            ctx,
-        )
-        .await,
-    )
+    put_secrets(ctx, id, namespace, "production", entries).await
 }
 
 /// The registry the arm writes is the one the supervisor resolves
@@ -118,20 +102,7 @@ async fn a_value_at_the_cap_is_accepted() {
 #[tokio::test(start_paused = true)]
 async fn an_environment_outside_the_grammar_is_refused() {
     let h = harness(vec![]);
-    let reply = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::PutSecrets {
-                    namespace: "vercel".to_string(),
-                    environment: String::new(),
-                    entries: BTreeMap::new(),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
+    let reply = put_secrets(&h.ctx, 1, "vercel", "", &[]).await;
 
     let Err(err) = reply.result else {
         panic!("an empty environment must be refused")
@@ -179,57 +150,17 @@ async fn a_dog_that_says_nothing_about_persist_gets_a_cache() {
 #[tokio::test(start_paused = true)]
 async fn describe_sweeps_past_a_dog_and_still_answers_when_one_is_named() {
     let h = harness(vec![ProcScript::never_exits(), ProcScript::never_exits()]);
-    let started = reply_of(
-        dispatch(
-            envelope(
-                1,
-                Request::Start {
-                    apps: vec![AppConfig::minimal("web", "./srv")],
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    assert!(started.result.is_ok(), "{:?}", started.result);
+    start_web(&h).await;
     let dog = enable_dog(&h.ctx, 2, "bark").await;
 
-    let swept = reply_of(
-        dispatch(
-            envelope(
-                3,
-                Request::Describe {
-                    selector: SelectorSpec::All,
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    let Ok(Response::Described(hits)) = swept.result else {
-        panic!("expected Described, got {:?}", swept.result)
-    };
+    let hits = describe(&h.ctx, 3, SelectorSpec::All).await;
     assert_eq!(
         hits.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(),
         vec!["web"],
         "`all` is the flock, not the kennel"
     );
 
-    let named = reply_of(
-        dispatch(
-            envelope(
-                4,
-                Request::Describe {
-                    selector: SelectorSpec::Name("bark".to_string()),
-                },
-            ),
-            &h.ctx,
-        )
-        .await,
-    );
-    let Ok(Response::Described(hits)) = named.result else {
-        panic!("expected Described, got {:?}", named.result)
-    };
+    let hits = describe(&h.ctx, 4, SelectorSpec::Name("bark".to_string())).await;
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].id, dog.id);
 }
@@ -260,7 +191,7 @@ async fn enabling_a_dog_over_a_sheeps_name_is_refused_rather_than_faked() {
                 2,
                 Request::EnableDog {
                     name: "bark".to_string(),
-                    source: DogSource::BuiltIn,
+                    source: DogSource::BuiltIn { grants: None },
                 },
             ),
             &h.ctx,

@@ -16,6 +16,7 @@
 /// itself lives in the crate-private `handover` module.
 #[cfg(unix)]
 pub use crate::handover::reap::AdoptedReaper;
+mod dog_link;
 mod log_path_security;
 mod log_protocol;
 mod path_advisories;
@@ -24,6 +25,7 @@ mod process_runner;
 // that calls one.
 #[cfg(all(test, unix))]
 mod testing;
+pub use dog_link::DogLink;
 /// Named here only so the two test modules that assert on the refusal text
 /// can reach it; the lib build has no other reader and warns on the import,
 /// and both of those modules are unix-gated.

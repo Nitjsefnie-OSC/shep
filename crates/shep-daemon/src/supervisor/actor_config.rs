@@ -228,12 +228,18 @@ impl<R: ProcessRunner> Actor<R> {
         // Built from the running config, plus only the fields that can reach a
         // running process: a `NeedsRespawn` field written here would erase the
         // record of what the child was actually spawned from.
-        let reaching: Vec<String> = live.iter().chain(next_spawn.iter()).cloned().collect();
+        //
         // A subset of a config that normalized can still fail, since normalize
         // checks fields against each other: `watch` needs a `cwd`, and a file
         // declaring both leaves the `cwd` behind. That parks rather than
         // refuses.
-        let next_spec = reached_spec(&running, merged.config(), &reaching, count).ok();
+        let next_spec = reached_spec(
+            &running,
+            merged.config(),
+            live.iter().chain(next_spawn.iter()),
+            count,
+        )
+        .ok();
         let park_all = next_spec.is_none();
 
         // The whole merge, for a next spawn to pick up. Recomputed whenever an
@@ -496,13 +502,10 @@ impl<R: ProcessRunner> Actor<R> {
             let secrets = views
                 .entry(environment)
                 .or_insert_with(|| self.secret_view(&entry.spec));
-            // `Credentials` is `Copy`, so this needs no clone. The unresolved
-            // arm costs nothing: an entry reached here is running and
-            // resolved its identity before it started.
-            let credentials = match entry.credentials {
-                SpawnIdentity::Resolved(credentials) => credentials,
-                SpawnIdentity::Unresolved => None,
-            };
+            // `Credentials` is `Copy`, so this needs no clone. An entry
+            // reached here is running and resolved its identity before it
+            // started.
+            let credentials = entry.credentials.credentials();
             specs.insert(
                 entry.id,
                 describe(

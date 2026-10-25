@@ -5,7 +5,7 @@ expression: render_text(&buffer)
 shep lookout   /home/ada/.shep                                            6 in the flock
                                                                                         
  ██ api  (sheep config)                                                                 
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab n…
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs   …
   ──────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS     
   Where the process runs. Without it, the daemon's own directory                        

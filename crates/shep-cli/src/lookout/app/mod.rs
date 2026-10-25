@@ -21,6 +21,9 @@
 //!   [`samples`] the sparkline series; [`lambs`] the walk under one sheep.
 //! - [`action`] is the one armed verb, and [`close_dialog`] the one a pane
 //!   raises on its way out.
+//! - [`feed_keys`] is what the bleats pane and the sheep pane's embedded feed
+//!   answer the same way, and the armed-confirm prelude both their screens
+//!   run.
 //! - A screen apiece: [`settings`], [`secrets_pane`], [`config_pane`],
 //!   [`sheep_pane`], [`bleats`], [`dog_pane`], and the sub-screens in
 //!   [`pane_list`] and [`pane_dogs`].
@@ -43,12 +46,13 @@ use super::field::{FieldKind, FieldSet};
 use super::level::{Classifier, Level};
 use super::pane::{
     ConfigPane, DogTableState, DogsPane, FieldValue, Lock, PaneEdit, PaneRow, PaneTarget,
-    ReloadKind, SheepDogEntry,
+    ReloadKind, SectionWrite, SheepDogEntry,
 };
 use super::pane_bleats::BleatsPane;
 use super::pane_sheep::SheepPane;
 use super::secrets::{SecretRow, SecretsModel, Source};
 use super::tail::Stream;
+use super::textbox::{TextBox, TextEdit};
 use super::theme::Palette;
 use super::viewport::Viewport;
 use crate::commands::settings::{SettingEdit, SettingField, SettingsSnapshot, settings_field_set};
@@ -60,10 +64,20 @@ mod bleats;
 mod close_dialog;
 mod config_pane;
 mod config_pane_edits;
+#[cfg(test)]
+mod disabled_tests;
 mod dog_pane;
+#[cfg(test)]
+mod dog_pane_entries;
+#[cfg(test)]
+mod dog_pane_entry_add;
+#[cfg(test)]
+mod dog_pane_entry_removal;
+mod feed_keys;
 mod keys;
 mod lambs;
 mod msg;
+mod over_host;
 mod pane_dogs;
 mod pane_list;
 mod read;
@@ -85,6 +99,7 @@ pub use action::*;
 pub use close_dialog::*;
 pub(crate) use config_pane::*;
 pub use msg::*;
+pub(crate) use over_host::NOT_OVER_HOST;
 pub use rows::*;
 pub(crate) use samples::*;
 pub(crate) use secrets_pane::*;
@@ -124,6 +139,129 @@ pub(crate) enum Body {
     Sheep(Box<SheepPane>),
 }
 
+/// The body's own pane accessors, so a call site need not match on it.
+///
+/// A method on the body borrows only the body field, which is what lets a
+/// caller still read `App::now` or `App::mode` while it holds a pane. Every
+/// match below lists every variant, so a new variant fails to compile.
+impl Body {
+    /// The open config pane, or `None` on any other variant.
+    #[must_use]
+    pub(super) fn config_pane(&self) -> Option<&ConfigPane> {
+        match self {
+            Body::ConfigPane(pane) => Some(pane),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// [`Self::config_pane`]'s mutable twin.
+    pub(super) fn config_pane_mut(&mut self) -> Option<&mut ConfigPane> {
+        match self {
+            Body::ConfigPane(pane) => Some(pane),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// The settings screen, or `None` on any other variant.
+    #[must_use]
+    pub(super) fn settings(&self) -> Option<&Settings> {
+        match self {
+            Body::Settings(settings) => Some(settings),
+            Body::FlockTable
+            | Body::ConfigPane(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// [`Self::settings`]'s mutable twin.
+    pub(super) fn settings_mut(&mut self) -> Option<&mut Settings> {
+        match self {
+            Body::Settings(settings) => Some(settings),
+            Body::FlockTable
+            | Body::ConfigPane(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// The open sheep pane, or `None` on any other variant.
+    #[must_use]
+    pub(super) fn sheep_pane(&self) -> Option<&SheepPane> {
+        match self {
+            Body::Sheep(pane) => Some(pane.as_ref()),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::ConfigPane(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_) => None,
+        }
+    }
+
+    /// [`Self::sheep_pane`]'s mutable twin.
+    pub(super) fn sheep_pane_mut(&mut self) -> Option<&mut SheepPane> {
+        match self {
+            Body::Sheep(pane) => Some(pane.as_mut()),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::ConfigPane(_)
+            | Body::Bleats(_)
+            | Body::Secrets(_) => None,
+        }
+    }
+
+    /// The full-screen bleats pane, or `None` on any other variant.
+    #[must_use]
+    pub(super) fn bleats_pane(&self) -> Option<&BleatsPane> {
+        match self {
+            Body::Bleats(pane) => Some(pane),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::ConfigPane(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// [`Self::bleats_pane`]'s mutable twin.
+    pub(super) fn bleats_pane_mut(&mut self) -> Option<&mut BleatsPane> {
+        match self {
+            Body::Bleats(pane) => Some(pane),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::ConfigPane(_)
+            | Body::Secrets(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+
+    /// The open secrets pane, or `None` on any other variant.
+    ///
+    /// The mutable shape alone, as [`App::secrets_pane_mut`] has had it: no
+    /// reader needs the secrets pane by shared reference, the view reaching
+    /// it through [`App::body`].
+    pub(super) fn secrets_pane_mut(&mut self) -> Option<&mut SecretsPane> {
+        match self {
+            Body::Secrets(pane) => Some(pane),
+            Body::FlockTable
+            | Body::Settings(_)
+            | Body::ConfigPane(_)
+            | Body::Bleats(_)
+            | Body::Sheep(_) => None,
+        }
+    }
+}
+
 /// The whole dashboard's state.
 #[derive(Debug)]
 pub struct App {
@@ -141,7 +279,7 @@ pub struct App {
     /// Case-insensitive `contains`, taken literally with no trimming. Not the
     /// CLI's selector grammar, which is exact-match and so cannot narrow as you
     /// type.
-    filter: String,
+    filter: TextBox,
     /// Which keymap [`super::input::map_key`] is called with. Normal until `/`
     /// opens the box; the reducer, not the keymap, owns this state.
     mode: InputMode,
@@ -160,6 +298,10 @@ pub struct App {
     control: Control,
     /// The `$SHEP_HOME` this lookout watches, for the title line.
     home: String,
+    /// The ssh destination this lookout watches in place of this machine's
+    /// shepherd, or `None` for the local one. Set through
+    /// [`Self::set_remote_host`].
+    remote_host: Option<String>,
     /// The clock the view reads. Advanced by [`Msg::Tick`], and never once the
     /// link is [`Link::Lost`], so a frozen dashboard's uptime column stops.
     now: Instant,
@@ -315,4 +457,135 @@ fn refusal_sentence(refused: &[SheepRefusal]) -> Option<String> {
 /// `cast_possible_truncation`, not for a lookout left open 580 million years.
 fn millis(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lookout::view::fixtures;
+
+    /// The names of the [`Body`] accessors that answer for `body`, in the
+    /// order the type declares them.
+    fn answered(body: &mut Body) -> Vec<&'static str> {
+        let mut answered = Vec::new();
+        if body.config_pane().is_some() {
+            answered.push("config_pane");
+        }
+        if body.config_pane_mut().is_some() {
+            answered.push("config_pane_mut");
+        }
+        if body.settings().is_some() {
+            answered.push("settings");
+        }
+        if body.settings_mut().is_some() {
+            answered.push("settings_mut");
+        }
+        if body.sheep_pane().is_some() {
+            answered.push("sheep_pane");
+        }
+        if body.sheep_pane_mut().is_some() {
+            answered.push("sheep_pane_mut");
+        }
+        if body.bleats_pane().is_some() {
+            answered.push("bleats_pane");
+        }
+        if body.bleats_pane_mut().is_some() {
+            answered.push("bleats_pane_mut");
+        }
+        if body.secrets_pane_mut().is_some() {
+            answered.push("secrets_pane_mut");
+        }
+        answered
+    }
+
+    /// A dashboard with one sheep given the whole screen: `enter` on the
+    /// selected row, which is the only way this variant is ever reached.
+    fn app_in_sheep_pane() -> App {
+        let mut app =
+            fixtures::with_selection(ProcessInfo::builder(9, "web", ProcStatus::Online).build());
+        app.update(Msg::Key(KeyPress::Confirm));
+        app
+    }
+
+    /// Every pane variant is reached by its own accessors and by no
+    /// other's, and the dashboard by none. An accessor that answered for a
+    /// variant it does not name would hand a caller a pane the operator
+    /// never opened.
+    #[test]
+    fn each_body_accessor_answers_only_for_its_own_variant() {
+        let none: Vec<&'static str> = Vec::new();
+        assert_eq!(answered(&mut fixtures::full_app().body), none);
+        assert_eq!(
+            answered(&mut fixtures::app_in_settings().body),
+            ["settings", "settings_mut"]
+        );
+        assert_eq!(
+            answered(&mut fixtures::app_in_dog_pane().body),
+            ["config_pane", "config_pane_mut"]
+        );
+        assert_eq!(
+            answered(&mut fixtures::bleats_pane_with_filters().body),
+            ["bleats_pane", "bleats_pane_mut"]
+        );
+        assert_eq!(
+            answered(&mut fixtures::app_with_secrets().body),
+            ["secrets_pane_mut"]
+        );
+        assert_eq!(
+            answered(&mut app_in_sheep_pane().body),
+            ["sheep_pane", "sheep_pane_mut"]
+        );
+    }
+
+    /// Each key that would read or write this machine's `shep.toml`,
+    /// `dogs.toml`, secret store or dog binaries, pressed on an app watching
+    /// a host: the same notice, no effect, and the screen it would have
+    /// opened stays shut.
+    #[test]
+    fn over_a_host_the_settings_secrets_and_dog_keys_raise_a_notice_and_no_effect() {
+        use crate::lookout::app::testing::app_in_web;
+
+        let cases: [(&str, App, KeyPress); 5] = [
+            (
+                "settings",
+                fixtures::app_with_a_dog_selected_and_control(),
+                KeyPress::Settings,
+            ),
+            (
+                "secrets",
+                fixtures::app_with_a_dog_selected_and_control(),
+                KeyPress::Secrets,
+            ),
+            (
+                "a dog's config pane",
+                fixtures::app_with_a_dog_selected_and_control(),
+                KeyPress::Edit,
+            ),
+            (
+                "a sheep's dog list",
+                app_in_web(Control::Allowed),
+                KeyPress::Confirm,
+            ),
+            (
+                "a dog toggle",
+                fixtures::app_in_settings_on_dog("metrics"),
+                KeyPress::Cycle,
+            ),
+        ];
+        for (what, mut app, key) in cases {
+            let before = core::mem::discriminant(app.body());
+            app.set_remote_host("build-01");
+
+            let effect = app.update(Msg::Key(key));
+
+            assert_eq!(effect, Effect::None, "{what}");
+            let notice = app.notice().unwrap_or_else(|| panic!("{what}: no notice"));
+            assert_eq!(notice.to_string(), NOT_OVER_HOST, "{what}");
+            assert_eq!(
+                core::mem::discriminant(app.body()),
+                before,
+                "{what}: the body changed"
+            );
+        }
+    }
 }

@@ -5,7 +5,7 @@ expression: render_text(&buffer)
 shep lookout   /home/ada/.shep                                                                                                                    6 in the flock
                                                                                                                                                                 
  ██ api  (sheep config)                                                                                                                                         
-   process   logging   inputs   restart   readiness   shutdown   watch   cron     tab next group   1…8 jump                                                     
+   process   logging   inputs   restart   readiness   shutdown   watch   cron   dogs     tab/S-tab next / prev group   1…9 jump                                 
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   FIELD                       VALUE                                           LANDS                                                                             
 >  cwd                        (unset)                                         respawn    FOCUSED  cwd  text                                                     
@@ -29,7 +29,7 @@ shep lookout   /home/ada/.shep                                                  
                                     ▐                       app sets SO_REUSEPORT itself.                                  ▌ too                                
                                     ▐  c   continue         write them and leave it running. They wait for a respawn.      ▌re                                  
   ──────────────────────────────────▐                                                                                      ▌────────────────────────────────────
-  = read-only, set it in the Flockfi▐  esc  keep editing, write nothing   ·   this prompt expires in 10s ██████████        ▌ou, not yet written                 
+  = read-only, set it in the Flockfi▐  esc  keep editing, write nothing   ·   this prompt expires in 10s ██████████        ▌ou, not yet written   › opens screen
                                     ▙▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▟                                    
                                                                                                                                                                 
                                                                                                                                                                 

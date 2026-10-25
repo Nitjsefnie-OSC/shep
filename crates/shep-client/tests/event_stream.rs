@@ -11,10 +11,12 @@ use shep_client::testing::{fake_client_with_push, sample_info};
 use shep_client::{EventStream, Lagged};
 use shep_core::protocol::{BusEvent, ProcessEventKind, Response};
 
-/// Every `stream.next()` in this file is wrapped in this bound so a broken
-/// implementation fails with a named assertion instead of hanging the test
-/// run.
-const EVENT_TIMEOUT: Duration = Duration::from_secs(1);
+/// Every bounded wait in this file, `stream.next()` and the one
+/// `client.subscribe`, is wrapped in this bound so a broken implementation
+/// fails with a named assertion instead of hanging the test run. 5 s matches `reconnect/testing.rs` `BOUND`: generous against a
+/// loaded CI runner, small enough that a genuinely stuck test fails rather
+/// than hanging the suite.
+const EVENT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The next event, or a named panic for each of the three ways there is
 /// not one: the stream hangs, it ends, or it reports a lag.
@@ -80,13 +82,11 @@ async fn subscribing_installs_the_receiver_before_the_request_is_sent() {
         },
     );
 
-    let mut stream = tokio::time::timeout(
-        Duration::from_secs(1),
-        client.subscribe(vec!["process.*".into()]),
-    )
-    .await
-    .expect("subscribe must not deadlock behind its own reply")
-    .unwrap();
+    let mut stream =
+        tokio::time::timeout(EVENT_TIMEOUT, client.subscribe(vec!["process.*".into()]))
+            .await
+            .expect("subscribe must not deadlock behind its own reply")
+            .unwrap();
 
     assert!(matches!(
         next_event(
@@ -161,4 +161,40 @@ async fn a_lagging_consumer_reports_the_lag_rather_than_silently_skipping() {
     .expect("must not hang waiting for the lag notice or the stream to end")
     .expect("an overrun must be reported, never silently skipped");
     assert!(count > 0, "the lag notice must say how many were lost");
+}
+
+/// What a dog that wants notes writes: the topic, and the paths through
+/// this crate's own `shep_core` re-export.
+#[tokio::test]
+async fn a_note_subscriber_reads_the_note_by_name_and_value() {
+    use shep_client::shep_core::protocol::ChildMessage;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = shep_client::testing::control_address(dir.path());
+    let (client, daemon) = fake_client_with_push(&path).await;
+    let mut stream = client.subscribe(vec!["channel.note".into()]).await.unwrap();
+
+    daemon
+        .push(BusEvent::Channel {
+            id: 4,
+            message: ChildMessage::Note {
+                name: "lease.web.want.1760500000".into(),
+                value: 1.0,
+            },
+        })
+        .await;
+
+    let event = next_event(&mut stream, "a pushed note must arrive").await;
+    assert_eq!(event.topic(), "channel.note");
+    let BusEvent::Channel {
+        id,
+        message: ChildMessage::Note { name, value },
+    } = event
+    else {
+        panic!("expected a note, got {event:?}");
+    };
+    assert_eq!(
+        (id, name.as_str(), value),
+        (4, "lease.web.want.1760500000", 1.0)
+    );
 }

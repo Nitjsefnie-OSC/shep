@@ -75,6 +75,9 @@ pub(super) fn to_info(entry: &ProcessEntry, smits: &Smits) -> ProcessInfo {
         // Cloned per row rather than fetched on demand: a client classifies
         // every line it draws, and an empty list costs the wire nothing.
         .level_rules(entry.spec.config().level_rules.clone())
+        // `Some(false)` only for an app that turned the stamp off. A dog's
+        // config always stamps, so its row is `None` the way `handshook`'s is.
+        .log_timestamps((!entry.spec.config().log_timestamps).then_some(false))
         .build()
 }
 
@@ -114,6 +117,10 @@ pub(super) fn swap_budget(config: &AppConfig) -> Duration {
 /// [`Actor::handle_reload`]'s selector pass and [`Actor::advance_reload`], so
 /// a reload cannot drop an instance silently or reach one it had ruled out.
 /// `advance_reload` adds the `manual` half on its own.
+///
+/// [`Actor::handle_extra_restart`] asks the same question for the same
+/// reason: a `ready_failed` sheep is armed extras same as an `Online` one, so
+/// its own report must be able to reach it too.
 pub(super) fn reload_eligible(slot: &SheepSlot) -> bool {
     slot.entry.status == ProcStatus::Online || slot.ready_failed
 }

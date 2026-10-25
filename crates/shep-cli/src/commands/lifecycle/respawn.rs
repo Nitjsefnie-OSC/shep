@@ -75,6 +75,40 @@ pub(crate) async fn resume_all(
     failure.unwrap_or(ExitCode::Success)
 }
 
+/// Drops the disabled rows from `rows` and says which sheep stay down
+///
+/// A Flockfile or path load is not an operator's request to bring a sheep
+/// back: only `shep enable` clears the mark. One aside for the whole set,
+/// naming `shep enable` once per sheep. A named `shep start` does not pass
+/// through here, since the shepherd's refusal is that verb's answer.
+pub(crate) fn leave_disabled(
+    streams: &mut Streams<'_>,
+    rows: Vec<ProcessInfo>,
+) -> Vec<ProcessInfo> {
+    let (disabled, kept): (Vec<ProcessInfo>, Vec<ProcessInfo>) = rows
+        .into_iter()
+        .partition(|info| info.disabled == Some(true));
+    let refs: Vec<&ProcessInfo> = disabled.iter().collect();
+    let names = unique_names(&refs);
+    let message = match names.as_slice() {
+        [] => return kept,
+        [one] => format!("{one} is disabled and stays down; `shep enable {one}` brings it back."),
+        several => {
+            let remedies: Vec<String> = several
+                .iter()
+                .map(|name| format!("`shep enable {name}`"))
+                .collect();
+            format!(
+                "{} are disabled and stay down; {} brings one back.",
+                several.join(", "),
+                remedies.join(" or ")
+            )
+        }
+    };
+    streams.aside("start", &message);
+    kept
+}
+
 /// Reports the sheep `shep add` found already registered, and changes nothing
 ///
 /// Always [`ExitCode::Success`]: a deploy script running `shep add

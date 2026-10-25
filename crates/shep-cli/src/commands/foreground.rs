@@ -5,12 +5,13 @@
 use shep_client::Client;
 use shep_core::config::AppConfig;
 use shep_core::paths::ShepPaths;
-use shep_core::protocol::{Request, Response, SelectorSpec};
+use shep_core::protocol::{Request, SelectorSpec};
 
 use crate::cli::{BleatsArgs, DaemonArgs};
 use crate::commands::bleats::bleats_with_signal;
 use crate::commands::daemon::{boot_supervisor, daemon_exit_code};
 use crate::commands::empty::{Sample, sample, watch_until_empty};
+use crate::commands::rpc::deadline_for;
 use crate::exit::ExitCode;
 use crate::output::Streams;
 
@@ -136,11 +137,11 @@ pub async fn run(streams: &mut Streams<'_>, quiet: bool, options: ForegroundOpti
     let mut ending: Option<Ending> = None;
     {
         let watcher = watch_until_empty(|| async {
-            match client.request(Request::ListFlock).await {
-                Ok(Response::Flock(procs)) => sample(&procs),
+            match client.list_flock().await {
+                Ok(procs) => sample(&procs),
                 // A request error mid-poll is not evidence the flock is gone,
                 // and the `supervisor` branch ends the race if it is.
-                _ => Sample::Busy,
+                Err(_) => Sample::Busy,
             }
         });
         tokio::pin!(watcher);
@@ -182,16 +183,17 @@ pub async fn run(streams: &mut Streams<'_>, quiet: bool, options: ForegroundOpti
     // Stop and delete before asking the shepherd itself to go. Skipped when
     // the supervisor is already gone: `delete_flock_on_shutdown` covers it.
     if tidy_up && !already_consumed {
-        let _ = client
-            .request(Request::Stop {
+        for request in [
+            Request::Stop {
                 selector: SelectorSpec::All,
-            })
-            .await;
-        let _ = client
-            .request(Request::Delete {
+            },
+            Request::Delete {
                 selector: SelectorSpec::All,
-            })
-            .await;
+            },
+        ] {
+            let deadline = deadline_for(&request);
+            let _ = client.request_with_deadline(request, deadline).await;
+        }
     }
 
     // Best-effort: if the supervisor already exited, nothing is listening on
@@ -225,15 +227,9 @@ mod tests {
     use crate::cli::Format;
     use crate::exit::ExitCode;
     use crate::output::Streams;
-    use crate::style;
 
     fn buffered_streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: style::Presentation::BARE,
-            fmt: Format::Table,
-        }
+        Streams::bare(out, err, Format::Table)
     }
 
     /// Drives the guard against a client from a fake shepherd: `run` itself

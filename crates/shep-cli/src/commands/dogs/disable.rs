@@ -1,5 +1,5 @@
 //! `shep disable`: removes a dog from the config, and stops it if a
-//! shepherd is running.
+//! shepherd is running. The shepherd keeps listing it, disabled.
 
 use std::path::Path;
 
@@ -10,25 +10,26 @@ use shep_core::protocol::{DogSource, Request, Response};
 use crate::commands::rpc::{client_error, unexpected_response};
 use crate::commands::shep_toml::{ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
-use crate::output::{DogActionRow, Streams, emit, write_outcome};
+use crate::output::Streams;
 
 use super::{
-    DISABLED_STATUS, NO_SHEPHERD_DISABLE_STATUS, connect_or_absent, dog_source, fail_config,
+    DISABLED_STATUS, NO_SHEPHERD_DISABLE_STATUS, connect_or_absent, dog_source, emit_dog_action,
+    fail_config,
 };
 
 /// `disable`'s config half: which [`DogSource`] `name` resolved to, and the
 /// removal from `[daemon] enabled_dogs`.
 ///
 /// `disable_dog` leaves `[daemon] adopted_dogs` alone, the difference
-/// between `disable` and `rehome`, so the source reads the same before or
-/// after the edit. Read for the report only: `DisableDog` carries a name and
-/// nothing else.
+/// between `disable` and removing a dog with `shep delete`, so the source
+/// reads the same before or after the edit. Read for the report only:
+/// `DisableDog` carries a name and nothing else.
 ///
 /// # Errors
 /// [`ShepTomlError`] if the read-modify-write underneath the edit failed.
 pub(crate) fn disable_in_config(path: &Path, name: &str) -> Result<DogSource, ShepTomlError> {
     ShepToml::edit(path, |cfg| {
-        let source = dog_source(cfg, name);
+        let source = dog_source(cfg, name, None);
         cfg.disable_dog(name);
         source
     })
@@ -57,17 +58,16 @@ async fn disable_after_config(
     client: Option<&Client>,
 ) -> ExitCode {
     let Some(client) = client else {
-        let row = DogActionRow::new(name, source.clone(), NO_SHEPHERD_DISABLE_STATUS, false);
-        return write_outcome(emit(
-            &mut *streams.out,
-            streams.fmt,
+        return emit_dog_action(
+            streams,
             "disable",
-            row,
-            streams.style,
-        ));
+            name,
+            source.clone(),
+            NO_SHEPHERD_DISABLE_STATUS,
+        );
     };
-    // `Response::Deleted`, the same reply `Delete` gives: disabling
-    // deregisters exactly as `Delete` does.
+    // `Response::Deleted`, the same reply `Delete` gives, though the dog stays
+    // registered: it is the only reply an older CLI accepts for this request.
     match client
         .request(Request::DisableDog {
             name: name.to_string(),
@@ -75,14 +75,7 @@ async fn disable_after_config(
         .await
     {
         Ok(Response::Deleted(_ids)) => {
-            let row = DogActionRow::new(name, source.clone(), DISABLED_STATUS, true);
-            write_outcome(emit(
-                &mut *streams.out,
-                streams.fmt,
-                "disable",
-                row,
-                streams.style,
-            ))
+            emit_dog_action(streams, "disable", name, source.clone(), DISABLED_STATUS)
         }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
@@ -96,17 +89,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Format;
-
-    /// A dog verb's streams under `--format table`; a test reading a
-    /// JSON field sets `fmt` itself.
-    fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        }
-    }
+    use crate::commands::dogs::test_support::streams;
 
     #[test]
     fn disable_in_config_removes_the_name_and_keeps_the_adoption() {
@@ -176,8 +159,13 @@ mod tests {
         let mut streams = streams(&mut out, &mut err);
         streams.fmt = Format::Json;
 
-        let code =
-            disable_after_config(&mut streams, "bark", &DogSource::BuiltIn, Some(&client)).await;
+        let code = disable_after_config(
+            &mut streams,
+            "bark",
+            &DogSource::BuiltIn { grants: None },
+            Some(&client),
+        )
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -187,7 +175,7 @@ mod tests {
             "a shepherd answered Deleted, so it acted: {}",
             String::from_utf8_lossy(&out)
         );
-        assert_eq!(json["data"]["status"], DISABLED_STATUS);
+        assert_eq!(json["data"]["status"], DISABLED_STATUS.text());
     }
 
     /// The other half of the pair above. Pinning only the reached branch
@@ -200,7 +188,13 @@ mod tests {
         let mut streams = streams(&mut out, &mut err);
         streams.fmt = Format::Json;
 
-        let code = disable_after_config(&mut streams, "bark", &DogSource::BuiltIn, None).await;
+        let code = disable_after_config(
+            &mut streams,
+            "bark",
+            &DogSource::BuiltIn { grants: None },
+            None,
+        )
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -210,7 +204,7 @@ mod tests {
             "no shepherd answered, so none acted: {}",
             String::from_utf8_lossy(&out)
         );
-        assert_eq!(json["data"]["status"], NO_SHEPHERD_DISABLE_STATUS);
+        assert_eq!(json["data"]["status"], NO_SHEPHERD_DISABLE_STATUS.text());
     }
 
     #[tokio::test]
@@ -223,7 +217,7 @@ mod tests {
         let _ = disable_after_config(
             &mut streams(&mut out, &mut err),
             "bark",
-            &DogSource::BuiltIn,
+            &DogSource::BuiltIn { grants: None },
             Some(&client),
         )
         .await;
@@ -268,7 +262,7 @@ mod tests {
         let code = disable_after_config(
             &mut streams(&mut out, &mut err),
             "ghost",
-            &DogSource::BuiltIn,
+            &DogSource::BuiltIn { grants: None },
             Some(&client),
         )
         .await;

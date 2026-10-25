@@ -1,7 +1,9 @@
 use core::fmt;
 use std::collections::BTreeMap;
 // use schemars::generate
-use serde::{Deserialize, Deserializer};
+use serde::Deserializer;
+
+use crate::config::table::deserialize_table;
 
 /// One value an `env` table may carry: a string, or a bare boolean or whole
 /// number an operator wrote without quoting.
@@ -47,10 +49,18 @@ impl EnvValue {
 
 /// Reads an `env` table, rendering each [`EnvValue`] as the string a process
 /// receives. The `deserialize_with` on [`AppConfig::env`](crate::config::AppConfig::env).
+///
+/// The table itself goes through the shared reader in `config::table`, so an
+/// `env` that is null, or a bare TOML datetime, is refused as `` `env` must
+/// be a table `` rather than as serde's type error. A YAML `env:` with
+/// nothing after it is null, and is refused by the same arm.
+///
+/// Absent is not refused: `AppConfig`'s `#[serde(default)]` fills a key the
+/// document never named without reaching this function.
 pub(super) fn deserialize_env<'de, D: Deserializer<'de>>(
     de: D,
 ) -> Result<BTreeMap<String, String>, D::Error> {
-    Ok(BTreeMap::<String, EnvValue>::deserialize(de)?
+    Ok(deserialize_table::<D, EnvValue>(de, "env")?
         .into_iter()
         .map(|(k, v)| (k, v.into_string()))
         .collect())
@@ -120,7 +130,38 @@ mod tests {
 
     use super::*;
 
+    use crate::config::AppConfig;
+
     use super::super::testing::*;
+
+    /// fails if a wire `env` that is not a table stops being refused.
+    ///
+    /// `AppConfig` decodes from a peer as well as from a Flockfile, and both
+    /// paths read the table through the same reader. The wire refused a null
+    /// map before, in serde's words: what changed is the words, not what is
+    /// refused. A real table still decodes.
+    #[test]
+    fn a_wire_env_that_is_not_a_table_is_still_refused() {
+        for (label, value) in [
+            ("null", "null"),
+            ("a bare string", "\"postgres://hunter2\""),
+        ] {
+            let src = format!(r#"{{"name":"web","script":"./srv","env":{value}}}"#);
+            let err = serde_json::from_str::<AppConfig>(&src)
+                .expect_err("a wire env that is not a table must be refused, as it always was")
+                .to_string();
+            assert!(err.contains("`env` must be a table"), "{label}: {err}");
+            assert!(
+                !err.contains("hunter2"),
+                "the refusal leaked the value: {err}"
+            );
+        }
+
+        let config: AppConfig =
+            serde_json::from_str(r#"{"name":"web","script":"./srv","env":{"A":"b"}}"#)
+                .expect("a real env table on the wire still decodes");
+        assert_eq!(config.env["A"], "b");
+    }
 
     /// `EnvValue::Debug` prints only the kind, never the value — the exact
     /// string is pinned so a derived `Debug` (which prints the contents) fails

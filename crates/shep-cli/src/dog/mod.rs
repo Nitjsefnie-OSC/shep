@@ -5,12 +5,13 @@
 //! rides in the environment, since that is readable from the process
 //! table and captured into crash dumps. [`DogRuntime::start`] instead
 //! connects to the socket and asks for the section over
-//! `Request::DogConfig`.
+//! `Request::DogConfigResolved`.
 //!
 //! [`run_dog`] parses the name into a [`BuiltInDog`], connects, and
 //! dispatches: `"metrics"` to [`metrics::run`], `"bark"` to [`bark::run`].
 
 pub mod bark;
+mod manifests;
 pub mod metrics;
 
 pub use shep_client::dogs::DogRuntime;
@@ -113,6 +114,14 @@ pub(crate) fn builtin_schema(name: &str) -> Option<serde_json::Value> {
         BuiltInDog::Bark => config_schema::<bark::BarkConfig>(),
     };
     serde_json::to_value(schema).ok()
+}
+
+/// What a built-in dog declares, without spawning anything.
+///
+/// [`None`] for a name that is not a built-in, which is how a caller tells an
+/// adopted dog (spawn its recorded path and ask) from a built-in (this).
+pub(crate) fn builtin_manifest(name: &str) -> Option<shep_core::dogs::manifest::Manifest> {
+    BuiltInDog::from_name(name).map(manifests::manifest_of)
 }
 
 /// Runs the named dog until it is signalled. `main`'s `Commands::Dog` arm.
@@ -265,7 +274,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             envelope.body,
-            Request::DogConfig {
+            Request::DogConfigResolved {
                 name: "bark".to_string()
             }
         );
@@ -274,7 +283,7 @@ mod tests {
     }
 
     /// [`metrics::run`] blocks on a shutdown signal once it is up, so this
-    /// spawns it, waits for the `DogConfig` request, then aborts rather
+    /// spawns it, waits for the `DogConfigResolved` request, then aborts rather
     /// than awaiting a return that never comes. The section answers
     /// `bind = "127.0.0.1:0"`, an OS-assigned port, never
     /// [`metrics::MetricsConfig::default`]'s fixed `9615`.
@@ -296,7 +305,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             envelope.body,
-            Request::DogConfig {
+            Request::DogConfigResolved {
                 name: "metrics".to_string()
             }
         );

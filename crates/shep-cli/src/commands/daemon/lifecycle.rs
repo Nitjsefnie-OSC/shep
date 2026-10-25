@@ -17,6 +17,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::cli::DaemonArgs;
 use crate::commands::dog_migration::{self, DogMigrationError};
+use crate::commands::dogs::{upgrade_grants, upgrade_notice};
 use crate::exit::ExitCode;
 
 /// Everything [`run_daemon`] can fail with.
@@ -156,6 +157,15 @@ pub async fn boot_supervisor(
             moved.join(", ")
         );
     }
+    // Before the config load, for the same reason: the boot reads each dog's
+    // grants from the file, so a list this writes is the one it enforces. A
+    // refusal here is not a boot failure. The dogs keep the grants they hold,
+    // and `shep enable` looks again.
+    match upgrade_grants(&paths) {
+        Ok(changed) if changed.is_empty() => {}
+        Ok(changed) => eprintln!("shep: {}", upgrade_notice(&changed)),
+        Err(err) => eprintln!("shep: could not update the grants recorded for dogs: {err}"),
+    }
     let env = |key: &str| std::env::var(key).ok();
     let file_source = read_daemon_config_source(&paths)?;
     let overrides = daemon_overrides(args);
@@ -222,12 +232,14 @@ pub fn daemon_overrides(args: &DaemonArgs) -> DaemonOverrides {
 /// `[daemon] enabled_dogs` names each dog to start, in the order an operator
 /// wrote it; `[daemon] adopted_dogs` says which of those names is a
 /// third-party binary, and a name absent from it is [`DogSource::BuiltIn`].
+/// `[daemon] channel_dogs` says which adopted ones asked for the channel.
 #[must_use]
 pub fn boot_options(
     config: &DaemonConfig,
     args: &DaemonArgs,
     notify_socket: Option<&OsStr>,
 ) -> BootOptions {
+    let mut seen = std::collections::BTreeSet::new();
     BootOptions {
         socket: config.daemon.socket.clone(),
         ready_fd: None,
@@ -241,33 +253,24 @@ pub fn boot_options(
             .daemon
             .enabled_dogs
             .iter()
-            .map(|name| {
-                let source = match config.daemon.adopted_dogs.get(name) {
-                    Some(path) => DogSource::Adopted {
-                        path: path.display().to_string(),
-                    },
-                    None => DogSource::BuiltIn,
-                };
-                DogSpec {
-                    name: name.clone(),
-                    source,
-                }
-            })
+            .map(|name| dog_spec(config, name))
             .collect(),
         // Every dog that EXISTS, which is not the list above: that one is
-        // the spawn order and holds only what an operator switched on.
-        // `Request::SetDogConfig` is guarded on this one, because the dog
-        // most in need of configuring is the one that is disabled or has
-        // never started. The same two sources `fail_enable_unknown_dog`
-        // calls valid names, plus `enabled_dogs` itself, so a name a
-        // hand-edited `shep.toml` enables without adopting is still a dog
-        // this shepherd tries to spawn and still one it may hold a section
-        // for.
+        // the spawn order and holds only what an operator switched on. The
+        // shepherd lists each at rest, and `Request::SetDogConfig` is
+        // guarded on this one, because the dog most in need of configuring
+        // is the one that is disabled or has never started. The same two
+        // sources `fail_enable_unknown_dog` calls valid names, plus
+        // `enabled_dogs` itself, so a name a hand-edited `shep.toml`
+        // enables without adopting is still a dog this shepherd tries to
+        // spawn and still one it may hold a section for.
         known_dogs: crate::dog::BUILT_IN_DOGS
             .iter()
             .map(|built_in| (*built_in).to_string())
             .chain(config.daemon.adopted_dogs.keys().cloned())
             .chain(config.daemon.enabled_dogs.iter().cloned())
+            .filter(|name| seen.insert(name.clone()))
+            .map(|name| dog_spec(config, &name))
             .collect(),
         boot_first_dogs: config.daemon.boot_first_dogs.clone(),
         // Overwritten by `boot_supervisor`, the only caller that ever wants
@@ -276,6 +279,28 @@ pub fn boot_options(
         // This process is the shep binary, which is what the field asserts, so
         // an init system's SIGHUP reaches the handover `shep daemon reload` does.
         handover: true,
+    }
+}
+
+/// The dog `name` is: adopted from the path `shep.toml` records, or built in,
+/// with the grants `shep.toml` records for it.
+fn dog_spec(config: &DaemonConfig, name: &str) -> DogSpec {
+    let grants = config
+        .daemon
+        .dog_grants
+        .get(name)
+        .map(|section| section.granted.clone());
+    let source = match config.daemon.adopted_dogs.get(name) {
+        Some(path) => DogSource::Adopted {
+            grants,
+            path: path.display().to_string(),
+            channel: config.daemon.channel_dogs.iter().any(|dog| dog == name),
+        },
+        None => DogSource::BuiltIn { grants },
+    };
+    DogSpec {
+        name: name.to_string(),
+        source,
     }
 }
 
@@ -306,6 +331,22 @@ pub fn daemon_exit_code(err: &DaemonRunError) -> ExitCode {
 mod tests {
     use super::*;
     use shep_core::config::LogLevel;
+
+    /// An all-default [`DaemonArgs`]: no subcommand, both flags off, every
+    /// option `None`, so the `shep.toml` a test hands [`boot_options`] is the
+    /// only thing deciding what it gets. A test that needs one field set names
+    /// that field over `..args()`.
+    fn args() -> DaemonArgs {
+        DaemonArgs {
+            cmd: None,
+            no_restore: false,
+            foreground: false,
+            log_json: None,
+            log_level: None,
+            socket: None,
+            max_cron_sleep: None,
+        }
+    }
 
     #[test]
     fn every_daemon_flag_reaches_the_config() {
@@ -358,19 +399,7 @@ mod tests {
         let config =
             DaemonConfig::load(Some("[daemon]\nsocket = \"/tmp/custom.sock\"\n"), &|_| None)
                 .unwrap();
-        let opts = boot_options(
-            &config,
-            &DaemonArgs {
-                cmd: None,
-                no_restore: false,
-                foreground: false,
-                log_json: None,
-                log_level: None,
-                socket: None,
-                max_cron_sleep: None,
-            },
-            None,
-        );
+        let opts = boot_options(&config, &args(), None);
         assert!(
             opts.ready_fd.is_none(),
             "readiness is a handshake in this phase"
@@ -382,40 +411,42 @@ mod tests {
         assert!(opts.restore, "the default is to restore the muster roll");
     }
 
+    /// `metrics` in `channel_dogs` is a hand edit: a built-in never takes
+    /// the channel, whatever the file says.
     #[test]
     fn boot_options_carry_every_enabled_dog_with_the_source_the_file_names() {
         let src = r#"
 [daemon]
-enabled_dogs = ["metrics", "otel"]
+enabled_dogs = ["metrics", "otel", "jobs"]
+channel_dogs = ["jobs", "metrics"]
 
 [daemon.adopted_dogs]
 otel = "/usr/local/bin/shep-otel"
+jobs = "/usr/local/bin/shep-jobs"
 "#;
         let config = DaemonConfig::load(Some(src), &|_| None).unwrap();
-        let opts = boot_options(
-            &config,
-            &DaemonArgs {
-                cmd: None,
-                no_restore: false,
-                foreground: false,
-                log_json: None,
-                log_level: None,
-                socket: None,
-                max_cron_sleep: None,
-            },
-            None,
-        );
+        let opts = boot_options(&config, &args(), None);
         assert_eq!(
             opts.dogs,
             vec![
                 DogSpec {
                     name: "metrics".into(),
-                    source: DogSource::BuiltIn
+                    source: DogSource::BuiltIn { grants: None }
                 },
                 DogSpec {
                     name: "otel".into(),
                     source: DogSource::Adopted {
-                        path: "/usr/local/bin/shep-otel".into()
+                        grants: None,
+                        path: "/usr/local/bin/shep-otel".into(),
+                        channel: false,
+                    }
+                },
+                DogSpec {
+                    name: "jobs".into(),
+                    source: DogSource::Adopted {
+                        grants: None,
+                        path: "/usr/local/bin/shep-jobs".into(),
+                        channel: true,
                     }
                 },
             ]
@@ -432,19 +463,7 @@ enabled_dogs = ["metrics", "log-rotate"]
 boot_first_dogs = ["log-rotate"]
 "#;
         let config = DaemonConfig::load(Some(src), &|_| None).unwrap();
-        let opts = boot_options(
-            &config,
-            &DaemonArgs {
-                cmd: None,
-                no_restore: false,
-                foreground: false,
-                log_json: None,
-                log_level: None,
-                socket: None,
-                max_cron_sleep: None,
-            },
-            None,
-        );
+        let opts = boot_options(&config, &args(), None);
         assert_eq!(opts.boot_first_dogs, vec!["log-rotate".to_string()]);
     }
 
@@ -458,25 +477,28 @@ enabled_dogs = ["metrics"]
 otel = "/usr/local/bin/shep-otel"
 "#;
         let config = DaemonConfig::load(Some(src), &|_| None).unwrap();
-        let opts = boot_options(
-            &config,
-            &DaemonArgs {
-                cmd: None,
-                no_restore: false,
-                foreground: false,
-                log_json: None,
-                log_level: None,
-                socket: None,
-                max_cron_sleep: None,
-            },
-            None,
-        );
+        let opts = boot_options(&config, &args(), None);
 
-        let known: std::collections::BTreeSet<&str> =
-            opts.known_dogs.iter().map(String::as_str).collect();
         assert_eq!(
-            known,
-            ["bark", "metrics", "otel"].into_iter().collect(),
+            opts.known_dogs,
+            vec![
+                DogSpec {
+                    name: "metrics".into(),
+                    source: DogSource::BuiltIn { grants: None }
+                },
+                DogSpec {
+                    name: "bark".into(),
+                    source: DogSource::BuiltIn { grants: None }
+                },
+                DogSpec {
+                    name: "otel".into(),
+                    source: DogSource::Adopted {
+                        grants: None,
+                        path: "/usr/local/bin/shep-otel".into(),
+                        channel: false,
+                    }
+                },
+            ],
             "adopted-and-disabled is the case this field exists for"
         );
     }
@@ -486,39 +508,13 @@ otel = "/usr/local/bin/shep-otel"
         let configured =
             DaemonConfig::load(Some("[daemon]\nmax_cron_sleep = \"5m\"\n"), &|_| None).unwrap();
         assert_eq!(
-            boot_options(
-                &configured,
-                &DaemonArgs {
-                    cmd: None,
-                    no_restore: false,
-                    foreground: false,
-                    log_json: None,
-                    log_level: None,
-                    socket: None,
-                    max_cron_sleep: None,
-                },
-                None
-            )
-            .max_cron_sleep,
+            boot_options(&configured, &args(), None).max_cron_sleep,
             Some(core::time::Duration::from_secs(300))
         );
 
         let unset = DaemonConfig::load(None, &|_| None).unwrap();
         assert_eq!(
-            boot_options(
-                &unset,
-                &DaemonArgs {
-                    cmd: None,
-                    no_restore: false,
-                    foreground: false,
-                    log_json: None,
-                    log_level: None,
-                    socket: None,
-                    max_cron_sleep: None,
-                },
-                None
-            )
-            .max_cron_sleep,
+            boot_options(&unset, &args(), None).max_cron_sleep,
             None,
             "an unset knob must stay None: the daemon owns the default"
         );
@@ -530,16 +526,6 @@ otel = "/usr/local/bin/shep-otel"
         // resolves its `{{secret:...}}` references in, so an unset file
         // reaching the supervisor as anything but `production` would move
         // every such sheep to a different slot of the store.
-        let args = || DaemonArgs {
-            cmd: None,
-            no_restore: false,
-            foreground: false,
-            log_json: None,
-            log_level: None,
-            socket: None,
-            max_cron_sleep: None,
-        };
-
         let configured =
             DaemonConfig::load(Some("[daemon]\nenvironment = \"staging\"\n"), &|_| None).unwrap();
         assert_eq!(
@@ -560,13 +546,8 @@ otel = "/usr/local/bin/shep-otel"
         let opts = boot_options(
             &config,
             &DaemonArgs {
-                cmd: None,
                 no_restore: true,
-                foreground: false,
-                log_json: None,
-                log_level: None,
-                socket: None,
-                max_cron_sleep: None,
+                ..args()
             },
             None,
         );
@@ -576,19 +557,7 @@ otel = "/usr/local/bin/shep-otel"
     #[test]
     fn the_foreground_flag_reaches_the_boot_options() {
         let config = DaemonConfig::load(None, &|_| None).unwrap();
-        let bare = boot_options(
-            &config,
-            &DaemonArgs {
-                cmd: None,
-                no_restore: false,
-                foreground: false,
-                log_json: None,
-                log_level: None,
-                socket: None,
-                max_cron_sleep: None,
-            },
-            None,
-        );
+        let bare = boot_options(&config, &args(), None);
         assert!(
             bare.notify_socket.is_none(),
             "an autostarted daemon reports to nobody"
@@ -597,13 +566,8 @@ otel = "/usr/local/bin/shep-otel"
         let supervised = boot_options(
             &config,
             &DaemonArgs {
-                cmd: None,
-                no_restore: false,
                 foreground: true,
-                log_json: None,
-                log_level: None,
-                socket: None,
-                max_cron_sleep: None,
+                ..args()
             },
             Some(OsStr::new("/run/systemd/notify")),
         );
@@ -617,31 +581,14 @@ otel = "/usr/local/bin/shep-otel"
         let unflagged = boot_options(
             &config,
             &DaemonArgs {
-                cmd: None,
-                no_restore: false,
                 foreground: true,
-                log_json: None,
-                log_level: None,
-                socket: None,
-                max_cron_sleep: None,
+                ..args()
             },
             None,
         );
         assert!(unflagged.notify_socket.is_none());
 
-        let inherited = boot_options(
-            &config,
-            &DaemonArgs {
-                cmd: None,
-                no_restore: false,
-                foreground: false,
-                log_json: None,
-                log_level: None,
-                socket: None,
-                max_cron_sleep: None,
-            },
-            Some(OsStr::new("/run/systemd/notify")),
-        );
+        let inherited = boot_options(&config, &args(), Some(OsStr::new("/run/systemd/notify")));
         assert!(inherited.notify_socket.is_none());
     }
 
@@ -651,13 +598,8 @@ otel = "/usr/local/bin/shep-otel"
         let opts = boot_options(
             &config,
             &DaemonArgs {
-                cmd: None,
-                no_restore: false,
                 foreground: true,
-                log_json: None,
-                log_level: None,
-                socket: None,
-                max_cron_sleep: None,
+                ..args()
             },
             Some(OsStr::new("/run/systemd/notify")),
         );

@@ -4,7 +4,6 @@
 
 use super::*;
 
-#[cfg(unix)]
 // `cfg(unix)` because its fixture is a `/bin/sh` script.
 #[cfg(unix)]
 #[tokio::test]
@@ -12,15 +11,9 @@ async fn kill_daemon_shuts_the_flock_down_and_unlinks_the_socket() {
     let mut fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut client = fixture.connect().await;
 
-    let sleeper = |name: &str| {
-        let mut app = AppConfig::minimal(name, "/bin/sh");
-        app.interpreter = Some("none".to_string());
-        app.args = vec!["-c".to_string(), "while :; do sleep 1; done".to_string()];
-        app
-    };
     let started = client
         .request(Request::Start {
-            apps: vec![sleeper("one"), sleeper("two")],
+            apps: vec![forever_app("one"), forever_app("two")],
         })
         .await;
     let Response::Started(infos) = started.result.unwrap() else {
@@ -55,7 +48,7 @@ async fn kill_daemon_shuts_the_flock_down_and_unlinks_the_socket() {
 
     // Reaped, not merely signalled: `kill(pid, None)` still returns `Ok` for a
     // zombie, so only ESRCH proves the daemon's own `wait()` ran. The `sleep 1`
-    // grandchildren are out of reach here; `real_runner.rs` covers them.
+    // grandchildren are out of reach here; `real_runner/signals.rs` covers them.
     for pid in pids {
         assert_reaped(pid).await;
     }
@@ -129,7 +122,6 @@ async fn a_socket_left_behind_by_a_crash_does_not_block_the_next_boot() {
     rebooted.shutdown().await;
 }
 
-#[cfg(unix)]
 // `cfg(unix)` because its fixture is a `/bin/sh` script.
 #[cfg(unix)]
 #[tokio::test]
@@ -228,7 +220,6 @@ impl Drop for PathGuard {
     }
 }
 
-#[cfg(unix)]
 // `cfg(unix)` because its fixture is a `/bin/sh` script.
 #[cfg(unix)]
 #[tokio::test]
@@ -253,21 +244,12 @@ async fn a_bare_interpreter_resolves_via_the_inherited_path() {
     let fixture = Fixture::boot(tempfile::tempdir().unwrap(), false).await;
     let mut client = fixture.connect().await;
     // Subscribe before starting: a connection gets no events until it does.
-    let subscribed = client
-        .request(Request::Subscribe {
-            topics: vec!["process.*".to_string()],
-        })
-        .await;
-    assert_eq!(subscribed.result.unwrap(), Response::Subscribed);
+    client.subscribe("process.*").await;
 
     // Bare: only found via the seeded PATH now that it includes shim_dir.
     let mut app = AppConfig::minimal("bare", "unused");
     app.interpreter = Some("shep-test-interp".to_string());
-    let started = client.request(Request::Start { apps: vec![app] }).await;
-    let Response::Started(infos) = started.result.unwrap() else {
-        panic!("expected started")
-    };
-    let id = infos[0].id;
+    let id = client.start_first(app).await.id;
 
     // A failed exec lands the sheep in Errored, so Online is the assertion.
     let online = client

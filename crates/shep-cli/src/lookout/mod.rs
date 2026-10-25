@@ -27,16 +27,16 @@ pub mod link;
 pub mod pane;
 pub mod pane_bleats;
 pub mod pane_sheep;
-mod probe_sheep_dogs;
+pub(crate) mod probe_sheep_dogs;
 pub(crate) mod secrets;
 pub mod source;
 pub mod tail;
 pub mod term;
 #[cfg(test)]
 mod testing;
+pub mod textbox;
 pub mod theme;
 mod ui_event_loop;
-pub mod validation;
 pub mod view;
 pub mod viewport;
 mod wiring;

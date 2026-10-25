@@ -30,10 +30,7 @@ async fn start_registers_the_config_and_lists_it() {
     assert_eq!(roll.apps.len(), 1);
     assert_eq!(roll.apps[0].app.script, "./srv");
 
-    let listed = reply_of(dispatch(envelope(2, Request::ListFlock), &h.ctx).await);
-    let Response::Flock(flock) = listed.result.unwrap() else {
-        panic!("expected flock")
-    };
+    let flock = list_flock(&h.ctx, 2).await;
     assert_eq!(flock.len(), 1);
 }
 
@@ -89,10 +86,7 @@ async fn add_registers_a_stopped_member_and_spawns_nothing() {
     assert_eq!(roll.apps[0].app.script, "./srv");
     assert_eq!(roll.apps[0].instances_running, 0);
 
-    let listed = reply_of(dispatch(envelope(2, Request::ListFlock), &h.ctx).await);
-    let Response::Flock(flock) = listed.result.unwrap() else {
-        panic!("expected flock")
-    };
+    let flock = list_flock(&h.ctx, 2).await;
     assert_eq!(
         flock.len(),
         1,
@@ -166,10 +160,7 @@ async fn a_second_add_leaves_a_running_sheep_exactly_as_it_was() {
     assert_eq!(after[0].status, ProcStatus::Online, "still running");
     assert_eq!(after[0].pid, before[0].pid, "the same process");
 
-    let listed = reply_of(dispatch(envelope(3, Request::ListFlock), &h.ctx).await);
-    let Response::Flock(flock) = listed.result.unwrap() else {
-        panic!("expected flock")
-    };
+    let flock = list_flock(&h.ctx, 3).await;
     assert_eq!(flock.len(), 1, "one row, not two");
 }
 
@@ -178,6 +169,19 @@ fn waiting_on(name: &str, depends_on: &[&str]) -> AppConfig {
     let mut app = AppConfig::minimal(name, "./srv");
     app.depends_on = depends_on.iter().map(|n| (*n).to_string()).collect();
     app
+}
+
+/// `config` merged into the flock the way a Flockfile load sends it:
+/// one `DeclaredApp` declaring only `depends_on`, and no reset.
+fn apply_depends_on(config: AppConfig) -> Request {
+    Request::ApplyConfig {
+        apps: vec![DeclaredApp {
+            config,
+            declared: ["depends_on"].iter().map(|k| (*k).to_string()).collect(),
+            declared_env: BTreeSet::new(),
+        }],
+        reset: ResetDepth::None,
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -279,21 +283,9 @@ async fn a_batch_in_a_knot_the_named_path_leaves_out_is_still_refused() {
         ("db", vec!["api"]),
         ("web", vec!["api"]),
     ] {
-        let mut config = AppConfig::minimal(name, "./srv");
-        config.depends_on = waits_for.iter().map(|n| (*n).to_string()).collect();
         let reply = reply_of(
             dispatch(
-                envelope(
-                    2,
-                    Request::ApplyConfig {
-                        apps: vec![DeclaredApp {
-                            config,
-                            declared: ["depends_on"].iter().map(|k| (*k).to_string()).collect(),
-                            declared_env: BTreeSet::new(),
-                        }],
-                        reset: ResetDepth::None,
-                    },
-                ),
+                envelope(2, apply_depends_on(waiting_on(name, &waits_for))),
                 &h.ctx,
             )
             .await,
@@ -301,8 +293,7 @@ async fn a_batch_in_a_knot_the_named_path_leaves_out_is_still_refused() {
         assert!(reply.result.is_ok(), "the load itself draws no cycle");
     }
 
-    let mut web = AppConfig::minimal("web", "./srv");
-    web.depends_on = vec!["api".to_string()];
+    let web = waiting_on("web", &["api"]);
     let reply = reply_of(dispatch(envelope(3, Request::Start { apps: vec![web] }), &h.ctx).await);
     let err = reply.result.unwrap_err();
     assert_eq!(err.code, RpcErrorCode::InvalidConfig);
@@ -352,21 +343,9 @@ async fn a_knot_no_app_in_the_batch_is_in_does_not_refuse_the_batch() {
     // records the merged config with no cycle check of its own, so two
     // loads neither of which draws a cycle can leave one behind.
     for (name, waits_for) in [("api", "db"), ("db", "api")] {
-        let mut config = AppConfig::minimal(name, "./srv");
-        config.depends_on = vec![waits_for.to_string()];
         let reply = reply_of(
             dispatch(
-                envelope(
-                    2,
-                    Request::ApplyConfig {
-                        apps: vec![DeclaredApp {
-                            config,
-                            declared: ["depends_on"].iter().map(|k| (*k).to_string()).collect(),
-                            declared_env: BTreeSet::new(),
-                        }],
-                        reset: ResetDepth::None,
-                    },
-                ),
+                envelope(2, apply_depends_on(waiting_on(name, &[waits_for]))),
                 &h.ctx,
             )
             .await,
@@ -483,9 +462,6 @@ async fn a_stage_never_covers_a_sheep_the_request_did_not_carry() {
     let order: Vec<&str> = infos.iter().map(|info| info.name.as_str()).collect();
     assert_eq!(order, ["api"], "only what this request carried");
 
-    let listed = reply_of(dispatch(envelope(3, Request::ListFlock), &h.ctx).await);
-    let Response::Flock(flock) = listed.result.unwrap() else {
-        panic!("expected flock")
-    };
+    let flock = list_flock(&h.ctx, 3).await;
     assert_eq!(flock.len(), 2, "one row each, not a second db");
 }

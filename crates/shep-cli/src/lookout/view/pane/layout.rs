@@ -9,13 +9,8 @@
 use ratatui::text::Line;
 use shep_core::config::ApplyGroup;
 
-use crate::output::width::char_columns;
-
-/// The columns every line spends on the selection mark and the space after
-/// it, before any cell is drawn. `settings::GUTTER`'s twin, private there,
-/// and it exists for the reason that one does: a budget that forgets it is
-/// a budget every line overruns.
-pub(super) const GUTTER: u16 = 2;
+use super::super::flock::{GUTTER, take_columns};
+use crate::output::width::{char_columns, text_columns};
 
 /// The close dialog's own interior width, once it is boxed: what
 /// [`super::close::close_dialog_lines`] lays its rows out to when [`super::close::draw_close_dialog`]
@@ -176,12 +171,6 @@ pub(super) fn mask_secret(secret: bool, raw: String) -> String {
     }
 }
 
-/// How many columns `text` occupies, the same count [`super::super::flock::fit`] and
-/// [`clipped`] measure against.
-pub(super) fn columns(text: &str) -> usize {
-    text.chars().map(char_columns).sum()
-}
-
 /// The columns `line`'s spans occupy, added rather than measured against a
 /// fixed cell: a blank separator or an unselected section header is
 /// shorter than the left column's own width on its own, and only the
@@ -205,8 +194,8 @@ pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
     for word in text.split_whitespace() {
-        let word_w: usize = word.chars().map(char_columns).sum();
-        let current_w: usize = current.chars().map(char_columns).sum();
+        let word_w: usize = text_columns(word);
+        let current_w: usize = text_columns(&current);
         if current.is_empty() {
             current.push_str(word);
         } else if current_w + 1 + word_w <= width {
@@ -234,7 +223,7 @@ pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
 /// is long enough to exercise the truncation itself.
 pub(super) fn clipped(text: &str, width: u16) -> String {
     let width = usize::from(width);
-    let columns: usize = text.chars().map(char_columns).sum();
+    let columns: usize = text_columns(text);
     if columns <= width {
         return text.to_owned();
     }
@@ -242,16 +231,7 @@ pub(super) fn clipped(text: &str, width: u16) -> String {
         return String::new();
     }
     let budget = width - 1;
-    let mut out = String::new();
-    let mut used = 0;
-    for c in text.chars() {
-        let w = char_columns(c);
-        if used + w > budget {
-            break;
-        }
-        out.push(c);
-        used += w;
-    }
+    let (mut out, _) = take_columns(text, budget);
     out.push('…');
     out
 }
@@ -285,5 +265,17 @@ mod tests {
             let panel = panel_width(width).expect("the panel is drawn above 89");
             assert!(width - panel >= 40, "{} left at {width}", width - panel);
         }
+    }
+
+    /// A panel row is prose, not a table cell: a cut row stops at its `…`
+    /// rather than growing padded spaces across the column, and a row that
+    /// fits is returned whole.
+    #[test]
+    fn clipped_cuts_to_the_budget_and_pads_nothing() {
+        assert_eq!(clipped("explains the focused field", 12), "explains th…");
+        // The dropped glyph is the one that would straddle the budget.
+        assert_eq!(clipped("羊羊羊", 5), "羊羊…");
+        assert_eq!(clipped("short", 12), "short");
+        assert_eq!(clipped("anything", 0), "");
     }
 }

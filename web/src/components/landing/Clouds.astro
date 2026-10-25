@@ -1,0 +1,145 @@
+---
+/*
+ * The landing sky's drifting puffs: the lane they are placed in and the one
+ * handoff silhouette each one is drawn from. The authored config and the
+ * speed-to-custom-property math live in clouds.ts; this is the markup and
+ * the rules that style it.
+ *
+ * Not a mark: it belongs to this scene, has no design-source page behind it
+ * as its own artwork (the path is the sheep handoff silhouette), and takes
+ * no design token of its own beyond --fleece and --ink.
+ *
+ * Two things reach across the component boundary, and need no rule here:
+ * --col-right, inherited from `.stage` in SkyStage.astro, and the
+ * scroll-driven keyframes (sky-drift), defined in CelestialBodies.astro
+ * and shared because Astro 7 leaves keyframe names unscoped. Astro scopes a
+ * `<style>` to its own component, so every rule that styles this markup is
+ * here — including this slice's members of the scroll-driven block below.
+ * THE SPEED MODEL comment in SkyStage.astro is the one explanation of that
+ * parallax.
+ */
+import { clouds, cloudMotion } from "./clouds";
+---
+
+<div class="clouds">
+  {clouds.map((c) => (
+    <div
+      class={`cloud${c.atTop ? " at-top" : ""}`}
+      style={`${c.left ? `left:${c.left};` : `right:${c.right};`}top:${c.top};width:${c.width};aspect-ratio:${(104 / 78 / (c.squash ?? 1)).toFixed(3)};${c.opacity ? `opacity:${c.opacity};` : ""}${cloudMotion(c)}`}
+    >
+      <svg
+        viewBox="0 0 104 78"
+        width="100%"
+        height="100%"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <g transform={c.mirror ? "translate(104 0) scale(-1 1)" : undefined}>
+          <path
+            d="M40 20c6-9 22-10 28-2 10-3 19 4 18 13 7 4 7 15-1 19-2 8-12 11-19 8-8 5-21 4-26-3-10 1-17-7-15-16-4-8 4-18 15-19Z"
+            fill="var(--fleece)"
+            stroke="var(--ink)"
+            stroke-width="3.4"
+            stroke-linejoin="round"
+          />
+        </g>
+      </svg>
+    </div>
+  ))}
+</div>
+
+<style>
+  .clouds {
+    position: absolute;
+    inset: 0;
+    left: var(--col-right);
+    z-index: 1;
+    /* Clouds are placed by percentage inside this lane but carry a fixed
+       pixel width, so at narrow widths one can reach past the lane's right
+       edge and give the document real horizontal scroll. Clip here rather
+       than on `.stage`: `.stage` also contains `.pasture`, and any overflow
+       value other than `visible` or `clip` makes an ancestor a scroll
+       container, which silently disables `position: sticky` for its
+       descendants. That is the exact bug that flattened the whole scroll
+       effect once already. `.clouds` and `.pasture` are siblings, so
+       clipping stops here. A cloud cut off at the edge reads as one
+       drifting out of the sky.
+
+       `clip`, NOT `hidden`: hidden also makes this lane a scroll container,
+       and view() timelines bind to their nearest scroll-container ancestor
+       — with hidden here, every cloud's animation silently tracked this
+       never-scrolling lane instead of the page and sat frozen at progress
+       0 (which is why build 3's cloud parallax never actually moved).
+       clip clips identically but creates no scroll container, so the
+       timelines fall through to the root scroller. */
+    overflow: clip;
+  }
+
+  .cloud {
+    position: absolute;
+  }
+
+  /* Below 680px the scene column claims up to 92vw (SceneSection.astro's
+     own mobile override) — there's no honest lane left for a cloud beside
+     the text, so hide them deliberately rather than let them get trapped
+     under copy again. Sun/moon/stars aren't scene-column-relative and are
+     unaffected. */
+  @media (max-width: 680px) {
+    .clouds {
+      display: none;
+    }
+  }
+
+  /* Time-based ambients and the scroll-driven drift, same gates as the rest
+     of the parallax in SkyStage.astro: the sway is time-based and sits
+     behind reduced-motion only, the drift sits behind @supports as well so
+     browsers without scroll-driven animations get the static 1x sky. */
+  @media (prefers-reduced-motion: no-preference) {
+    .cloud svg {
+      animation: wind-sway var(--wind-duration, 24s) ease-in-out infinite;
+      animation-delay: var(--wind-delay, 0s);
+    }
+
+    @supports (animation-timeline: scroll()) {
+      /*
+       * The `.cloud` member of the shared base for every scroll-driven
+       * element (the `.mist` member now lives in PastureScenery.astro).
+       * It has to be restated here rather than left in the parent's
+       * selector list: Astro scopes each component's
+       * selectors to that component's own elements, so a `.cloud` in
+       * SkyStage.astro would match nothing once the markup moved, and the
+       * build stays green. Same three declarations, same order relative to
+       * the rules that set animation-name below.
+       */
+      .cloud {
+        animation-duration: auto;
+        animation-timing-function: linear;
+        animation-fill-mode: both;
+      }
+
+      .cloud.at-top {
+        animation-name: sky-drift;
+        animation-timeline: scroll(root);
+        animation-range: 0% var(--parallax-range, 100vh);
+      }
+    }
+
+    @supports (animation-timeline: view()) {
+      .cloud:not(.at-top) {
+        animation-name: sky-drift;
+        animation-timeline: view();
+        animation-range: cover 0% cover var(--parallax-range-end, 150%);
+      }
+    }
+  }
+
+  @keyframes wind-sway {
+    from,
+    to {
+      transform: translateX(calc(var(--wind-amp, 10px) * -1));
+    }
+    50% {
+      transform: translateX(var(--wind-amp, 10px));
+    }
+  }
+</style>

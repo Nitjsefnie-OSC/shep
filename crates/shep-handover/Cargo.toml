@@ -1,0 +1,38 @@
+[package]
+name = "shep-handover"
+description = "Replace a process's image with execve and carry descriptors and a state blob across it, for any process"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/shep-handover"
+keywords = ["shep", "process-manager", "execve", "handover", "unix"]
+categories = ["os::unix-apis", "asynchronous"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+# `features = ["std"]`: the state envelope is a derived struct holding a
+# `BTreeMap`, and the workspace pins serde without its default features.
+serde = { workspace = true, features = ["std"] }
+serde_json.workspace = true
+
+# Depends on no other shep crate, so a dog still built against an older shep
+# line can use it. Unix only: Windows has no `execve`, and every entry point
+# there answers "not supported" without these.
+#
+# `net` is the pipe and socket types a carried descriptor becomes, `signal`
+# the SIGCHLD stream `wait_for_child` sleeps on, `rt` the reactor both need.
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, features = ["net", "signal", "rt"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "io-util"] }
+
+[lints]
+workspace = true

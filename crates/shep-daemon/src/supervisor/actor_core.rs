@@ -78,6 +78,7 @@ impl<R: ProcessRunner> Actor<R> {
             // After every message rather than in each handler, so no path
             // that registers, deletes or edits a sheep can forget it.
             self.announce_dog_tables(&mut announced);
+            self.prune_disabled();
             if should_break {
                 break;
             }
@@ -102,8 +103,25 @@ impl<R: ProcessRunner> Actor<R> {
                 let _ = reply.send(result);
                 false
             }
-            Command::RegisterAtRest { apps, reply } => {
+            Command::RegisterAtRest {
+                apps,
+                disabled,
+                reply,
+            } => {
+                self.mark_disabled(&apps, disabled);
                 let registered = apps.iter().map(|app| self.register_at_rest(app)).collect();
+                let _ = reply.send(Ok(registered));
+                false
+            }
+            Command::RegisterDogsAtRest {
+                dogs,
+                disabled,
+                reply,
+            } => {
+                let registered = dogs
+                    .into_iter()
+                    .map(|(app, source)| self.register_dog_at_rest(&app, source, &disabled))
+                    .collect();
                 let _ = reply.send(Ok(registered));
                 false
             }
@@ -164,6 +182,25 @@ impl<R: ProcessRunner> Actor<R> {
                     reply.send(self.handle_set_sheep_env_batch(&name, &entries, force, dry_run));
                 false
             }
+            Command::CopySheepEnv {
+                from,
+                to,
+                replace,
+                except,
+                dry_run,
+                expect,
+                reply,
+            } => {
+                let _ = reply.send(self.handle_copy_sheep_env(
+                    &from,
+                    &to,
+                    replace,
+                    &except,
+                    dry_run,
+                    expect.as_deref(),
+                ));
+                false
+            }
             Command::SetSheepField {
                 name,
                 key,
@@ -173,9 +210,17 @@ impl<R: ProcessRunner> Actor<R> {
                 let _ = reply.send(self.handle_set_sheep_field(&name, &key, &value));
                 false
             }
+            Command::ResetSheepField { name, key, reply } => {
+                let _ = reply.send(self.handle_reset_sheep_field(&name, &key));
+                false
+            }
             // Both answered during a shutdown, as the pane's doors above are.
             Command::DogSheepSettings { dog, reply } => {
                 let _ = reply.send(self.handle_dog_sheep_settings(&dog));
+                false
+            }
+            Command::SheepDogRead { name, dog, reply } => {
+                let _ = reply.send(self.handle_sheep_dog_read(&name, &dog));
                 false
             }
             Command::SetSheepDogSettings {
@@ -265,13 +310,20 @@ impl<R: ProcessRunner> Actor<R> {
                 if self.shutting_down {
                     send_reply(ReplyKind::Info(reply), Err(SupervisorError::EngineStopped));
                 } else {
-                    self.begin_manual(
-                        selector,
-                        ManualKind::Restart,
-                        origin,
-                        ReplyKind::Info(reply),
-                    );
+                    self.restart_unless_disabled(&selector, origin, ReplyKind::Info(reply));
                 }
+                false
+            }
+            Command::Disable { selector, reply } => {
+                self.handle_disable(&selector, reply);
+                false
+            }
+            Command::DisableDog { name, reply } => {
+                self.handle_disable_dog(&name, reply);
+                false
+            }
+            Command::Enable { selector, reply } => {
+                self.handle_enable(&selector, reply);
                 false
             }
             Command::ExtraRestart {
@@ -304,11 +356,15 @@ impl<R: ProcessRunner> Actor<R> {
         }
     }
 
-    /// Registers + spawns one dog, or reports the one already registered
-    /// under that name.
+    /// Registers + spawns one dog, or reports the one already running under
+    /// that name.
     ///
     /// The name lookup reads names rather than markers: what it rules out is
-    /// two live processes under one name, dog or not.
+    /// two live processes under one name, dog or not. A dog entry at rest is
+    /// the exception, since no process stands behind it: it spawns in place
+    /// from `app` and `source`, which win over what it was registered with.
+    /// A dog that ran and stopped is not at rest, so a boot that names it
+    /// again leaves it stopped.
     pub(super) fn do_start_dog(
         &mut self,
         app: ResolvedApp,
@@ -317,13 +373,38 @@ impl<R: ProcessRunner> Actor<R> {
         if self.shutting_down {
             return Err(SupervisorError::EngineStopped);
         }
-        if let Some(slot) = self
+        let name = app.config().name.clone();
+        let held = self
             .sheep
-            .values()
-            .find(|slot| slot.entry.spec.config().name == app.config().name)
-        {
-            return Ok(to_info(&slot.entry, &self.smits));
-        }
+            .iter()
+            .find(|(_, slot)| slot.entry.spec.config().name == name)
+            .map(|(id, slot)| {
+                (
+                    *id,
+                    is_at_rest(&slot.entry) || self.is_parked_dog(&slot.entry),
+                    to_info(&slot.entry, &self.smits),
+                )
+            });
+        let at_rest = match held {
+            Some((id, true, _)) => Some(id),
+            Some((_, false, info)) => {
+                // A disable still stopping this dog is the operator's earlier
+                // word, and the enable is the later one.
+                self.cancel_dog_disable(&name);
+                return Ok(info);
+            }
+            None => None,
+        };
+        // Cleared whether or not the spawn lands: the operator's word is
+        // `enable`, and a spawn that fails is `Errored` rather than disabled.
+        self.disabled.remove(&name);
+        // The at-rest entry is dropped and the spawn takes its id, so a dog
+        // keeps its place in the listing across an enable. `spawn_fresh` hands
+        // out `next_id`, and a dog is one instance, which is one id.
+        let resume = at_rest.map(|id| {
+            self.sheep.remove(&id);
+            std::mem::replace(&mut self.next_id, id)
+        });
         // `PerApp`: a dog that cannot start must land in the dogs table as
         // `Errored`, which `dogs::spawn_dog_watch` subscribes to.
         let started = self.do_start(
@@ -331,8 +412,12 @@ impl<R: ProcessRunner> Actor<R> {
             Some(source),
             BatchPolicy::PerApp,
             &BTreeSet::new(),
-        )?;
-        started
+        );
+        if let Some(next_id) = resume {
+            debug_assert_eq!(self.next_id, at_rest.map_or(0, |id| id + 1));
+            self.next_id = next_id;
+        }
+        started?
             .into_iter()
             .next()
             .ok_or_else(|| SupervisorError::SpawnFailed("the dog registered no instance".into()))
@@ -355,9 +440,17 @@ impl<R: ProcessRunner> Actor<R> {
         policy: BatchPolicy,
         gate: &BTreeSet<String>,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
+        // Before any app is registered, so a refused one costs the batch
+        // nothing but the refusal. A dog is never marked, and a dog's name
+        // is not a sheep's to take.
+        if dog.is_none() {
+            self.refuse_dog_names(apps.iter().map(|app| app.config().name.as_str()))?;
+            self.refuse_disabled(apps.iter().map(|app| app.config().name.as_str()))?;
+        }
         // One sequence rather than two: a zip against `apps` misaligns the
         // moment a failure is skipped.
-        let mut ready: Vec<(ResolvedApp, Option<Credentials>)> = Vec::with_capacity(apps.len());
+        let mut ready: Vec<(ResolvedApp, Option<Credentials>, SecretView)> =
+            Vec::with_capacity(apps.len());
         // `AllOrNothing` only: a non-empty `refusals` returns before anything
         // is registered.
         let mut refusals = Vec::new();
@@ -399,7 +492,8 @@ impl<R: ProcessRunner> Actor<R> {
                 }
             };
             // Instance 0 and no credentials: neither changes which file exec
-            // names, which is all `preflight` reads.
+            // names, which is all `preflight` reads. One read of the store per
+            // app, and the view travels to every instance of it below.
             let view = self.secret_view(&app);
             let described = match assemble(&app, 0, &self.paths, None, &view) {
                 Ok(spec) => spec,
@@ -435,7 +529,7 @@ impl<R: ProcessRunner> Actor<R> {
                     tracing::warn!(sheep = %name, "{reason}");
                 }
             }
-            ready.push((app, credentials));
+            ready.push((app, credentials, view));
         }
         if !refusals.is_empty() {
             return Err(SupervisorError::CannotStart(format!(
@@ -447,7 +541,7 @@ impl<R: ProcessRunner> Actor<R> {
         }
 
         let mut results = Vec::new();
-        'apps: for (app, credentials) in ready {
+        'apps: for (app, credentials, secrets) in ready {
             let name = app.config().name.clone();
             let mut existing: Vec<u32> = self
                 .sheep
@@ -459,7 +553,7 @@ impl<R: ProcessRunner> Actor<R> {
             let slots = instance_slots(&existing, app.config().instances);
 
             for instance in slots {
-                match self.spawn_fresh(&app, instance, credentials, dog.clone(), gate) {
+                match self.spawn_fresh(&app, instance, credentials, &secrets, dog.clone(), gate) {
                     Ok(info) => results.push(info),
                     Err(message) => {
                         let failure = format!("{name}: {message}");
@@ -490,4 +584,40 @@ impl<R: ProcessRunner> Actor<R> {
         sort_flock(&mut results);
         Ok(results)
     }
+
+    /// Refuses the first of `names` that a registered dog already holds.
+    ///
+    /// A sheep started under a dog's name would join the dog's entries as one
+    /// more instance of it, leaving a name that answers to both.
+    ///
+    /// # Errors
+    ///
+    /// [`SupervisorError::IsADog`] naming that dog.
+    fn refuse_dog_names<'a>(
+        &self,
+        names: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), SupervisorError> {
+        let held = |name: &str| {
+            self.sheep
+                .values()
+                .any(|slot| slot.entry.dog.is_some() && slot.entry.spec.config().name == name)
+        };
+        match names.into_iter().find(|name| held(name)) {
+            Some(name) => Err(SupervisorError::IsADog(format!(
+                "{name} is a dog, so a sheep cannot take its name; rename the sheep"
+            ))),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Whether `entry` is a dog that has never had a process: registered, not
+/// started.
+///
+/// Every process exit writes `last_exit`, an operator's `stop` included, so a
+/// dog that ran and stopped is not at rest and is not respawned by a boot
+/// that names it again. `last_exit` rides a handover, so the answer holds
+/// across one.
+fn is_at_rest(entry: &ProcessEntry) -> bool {
+    entry.dog.is_some() && entry.status == ProcStatus::Stopped && entry.last_exit.is_none()
 }

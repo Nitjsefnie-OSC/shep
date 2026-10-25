@@ -177,12 +177,7 @@ mod tests {
         ] {
             let mut out = Vec::new();
             let mut err = Vec::new();
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             let _ = reopen(&client, &mut streams, &args(input)).await;
             let sent = envelopes.recv().await.unwrap();
             assert_eq!(
@@ -202,12 +197,7 @@ mod tests {
         let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
 
         let _ = reopen(&client, &mut streams, &args("all")).await;
 
@@ -233,12 +223,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             reopen(&client, &mut streams, &args("/[/")).await
         };
         assert_eq!(code, ExitCode::Usage);
@@ -256,12 +241,7 @@ mod tests {
             fake_client_replying_err(&path, RpcErrorCode::NotFound, "no sheep matched").await;
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let code = reopen(&client, &mut streams, &args("ghost")).await;
         assert_eq!(code, ExitCode::NotFound);
     }
@@ -281,12 +261,7 @@ mod tests {
         ] {
             let mut out = Vec::new();
             let mut err = Vec::new();
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             let _ = flush(&client, &mut streams, &flush_args(input)).await;
             let sent = envelopes.recv().await.unwrap();
             assert_eq!(
@@ -304,12 +279,7 @@ mod tests {
         let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
 
         let _ = flush(&client, &mut streams, &flush_args("all")).await;
 
@@ -330,12 +300,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             flush(&client, &mut streams, &flush_args("/[/")).await
         };
         assert_eq!(code, ExitCode::Usage);
@@ -354,12 +319,7 @@ mod tests {
             fake_client_replying_err(&path, RpcErrorCode::NotFound, "no sheep matched").await;
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let code = flush(&client, &mut streams, &flush_args("ghost")).await;
         assert_eq!(code, ExitCode::NotFound);
     }
@@ -384,12 +344,7 @@ mod tests {
         let paths = home_with_daemon_logs(&dir, b"old shepherd output");
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Json,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
 
         let code = flush_daemon(&mut streams, &paths);
 
@@ -418,12 +373,7 @@ mod tests {
         );
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Json,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
 
         let code = flush_daemon(&mut streams, &paths);
 
@@ -456,12 +406,7 @@ mod tests {
         std::fs::create_dir(&blocked).unwrap();
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
 
         let code = flush_daemon(&mut streams, &paths);
 

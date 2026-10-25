@@ -17,12 +17,17 @@ impl App {
             KeyPress::Quit => return Effect::Quit,
             KeyPress::TextChar(typed) => {
                 if let Some(Pending::Typing { buffer, .. }) = settings.pending.as_mut() {
-                    buffer.push(typed);
+                    buffer.insert(typed);
                 }
             }
             KeyPress::TextBackspace => {
                 if let Some(Pending::Typing { buffer, .. }) = settings.pending.as_mut() {
-                    buffer.pop();
+                    buffer.backspace();
+                }
+            }
+            KeyPress::TextEdit(edit) => {
+                if let Some(Pending::Typing { buffer, .. }) = settings.pending.as_mut() {
+                    buffer.edit(edit);
                 }
             }
             KeyPress::TextApply => {
@@ -32,7 +37,7 @@ impl App {
                     } else {
                         SettingEdit::Set {
                             field,
-                            value: buffer,
+                            value: buffer.as_str().to_string(),
                         }
                     };
                     let text = confirm_text_for_edit(&edit);
@@ -67,7 +72,7 @@ mod tests {
         let _ = app.update(Msg::Key(KeyPress::Confirm));
         let (field, buffer) = app.settings().unwrap().typing().expect("the editor opens");
         assert_eq!(*field, SettingField::MaxCronSleep);
-        assert_eq!(buffer, "30s");
+        assert_eq!(buffer.as_str(), "30s");
     }
 
     #[test]
@@ -144,7 +149,7 @@ mod tests {
             .unwrap()
             .typing()
             .expect("the editor reopens");
-        assert_eq!(buffer, "500ms");
+        assert_eq!(buffer.as_str(), "500ms");
         assert_eq!(
             app.mode(),
             InputMode::Text,

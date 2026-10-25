@@ -54,6 +54,9 @@ pub(super) fn ordered_walk(
     let matched: BTreeSet<String> = flock
         .iter()
         .filter(|info| exact || info.dog.is_none())
+        // A sweep passes a disabled app by. Walked, it would reach the
+        // supervisor as an exact name, which refuses it.
+        .filter(|info| exact || info.disabled != Some(true))
         .filter(|info| selector.matches(&info.name, info.id, info.fold.as_deref(), info.instance))
         .map(|info| info.name.clone())
         .collect();

@@ -90,6 +90,7 @@ async fn a_drainee_whose_liveness_probe_fails_is_reaped_rather_than_restarted() 
                 // wired here; no `cron_restart` and no `max_memory`.
                 clock: Arc::new(SystemClock),
                 enforcer: Arc::new(RecordingEnforcer::default()),
+                lamb_sweep: idle_sweep(),
                 max_cron_sleep: DEFAULT_MAX_CRON_SLEEP,
                 reports: ExtrasReports {
                     breaches: breaches_tx,
@@ -244,6 +245,54 @@ async fn a_replacement_is_kept_but_not_online_when_the_deadline_elapses_with_no_
         "a replacement that never answered is kept, and never called online"
     );
     assert_eq!(runner.kill_counts(), vec![0, 0], "neither was SIGKILLed");
+}
+
+// Left `Starting` with `ready_failed` set, the abandoned replacement above is
+// not beyond reach: it is armed the same extras an `Online` sheep is, and
+// `handle_extra_restart`'s guard admits a `ready_failed` sheep precisely so a
+// `liveness_probe` or `max_memory` breach can still restart it.
+#[tokio::test(start_paused = true)]
+async fn an_extra_restart_reaches_an_abandoned_reloads_replacement() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = AppConfig::minimal("web", "./srv");
+    app.wait_ready = true; // nobody ever signals the replacement
+    let (handle, runner, mut rx) = started(
+        &dir,
+        app,
+        vec![
+            ProcScript::stable_then_exit(1_000, 1),
+            ProcScript::never_exits(),
+            ProcScript::never_exits(),
+        ],
+    )
+    .await;
+    handle.tx.send(Msg::Ready { id: 0 }).await.unwrap();
+    expect_event(&mut rx, 0, ProcessEventKind::Online).await;
+
+    handle
+        .reload(ProcessSelector::Name("web".to_string()))
+        .await
+        .expect("the reload is accepted");
+    expect_event(&mut rx, 0, ProcessEventKind::Delete).await;
+    expect_event(&mut rx, 1, ProcessEventKind::ReloadAbandoned).await;
+
+    let before = handle.list().await;
+    assert_eq!(before[0].id, 1);
+    assert_eq!(before[0].status, ProcStatus::Starting);
+    let pid = before[0]
+        .pid
+        .expect("the abandoned replacement is still up");
+
+    handle.extra_restart(1, pid, None, None).await;
+    expect_event(&mut rx, 1, ProcessEventKind::Restart).await;
+
+    let after = handle.list().await;
+    assert_eq!(after[0].id, 1, "the restart replaces the same id in place");
+    assert_ne!(
+        after[0].pid, before[0].pid,
+        "a fresh process answered, not the one left running by the abandoned reload"
+    );
+    assert_eq!(runner.kill_counts().len(), 3, "a third process was spawned");
 }
 
 // The restore is for a drainee that goes back to serving. One an operator's

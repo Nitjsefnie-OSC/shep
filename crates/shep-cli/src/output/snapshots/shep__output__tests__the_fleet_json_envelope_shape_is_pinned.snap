@@ -1,0 +1,165 @@
+---
+source: crates/shep-cli/src/output/mod.rs
+expression: out
+---
+{
+  "command": "flock",
+  "data": [
+    {
+      "cpu_ms": null,
+      "cpu_percent": 12.5,
+      "depends_on": [],
+      "dog": null,
+      "dog_stale": null,
+      "err_file": "/logs/web-0-err.log",
+      "fold": "backend",
+      "handshook": null,
+      "id": 1,
+      "instance": null,
+      "lambs": null,
+      "last_exit": {
+        "code": 1,
+        "signal": null
+      },
+      "max_memory": null,
+      "memory_bytes": 50462720,
+      "name": "web",
+      "origin": null,
+      "out_file": "/logs/web-0-out.log",
+      "overridden": [
+        "cwd"
+      ],
+      "pending": [
+        "env"
+      ],
+      "pid": 1001,
+      "restarts": 1,
+      "smit": "▲ main@a1b2c3",
+      "status": "online",
+      "uptime_ms": 60000
+    },
+    {
+      "cpu_ms": null,
+      "cpu_percent": 12.5,
+      "depends_on": [],
+      "dog": null,
+      "dog_stale": null,
+      "err_file": "/logs/api-0-err.log",
+      "fold": "backend",
+      "handshook": null,
+      "id": 1,
+      "instance": null,
+      "lambs": null,
+      "last_exit": {
+        "code": 1,
+        "signal": null
+      },
+      "max_memory": null,
+      "memory_bytes": 50462720,
+      "name": "api",
+      "origin": "amp2",
+      "out_file": "/logs/api-0-out.log",
+      "overridden": [
+        "cwd"
+      ],
+      "pending": [
+        "env"
+      ],
+      "pid": 1001,
+      "restarts": 1,
+      "smit": "▲ main@a1b2c3",
+      "status": "online",
+      "uptime_ms": 60000
+    },
+    {
+      "cpu_ms": null,
+      "cpu_percent": 12.5,
+      "depends_on": [],
+      "dog": null,
+      "dog_stale": null,
+      "err_file": "/logs/cache-0-err.log",
+      "fold": "backend",
+      "handshook": null,
+      "id": 1,
+      "instance": null,
+      "lambs": null,
+      "last_exit": {
+        "code": 1,
+        "signal": null
+      },
+      "max_memory": null,
+      "memory_bytes": 50462720,
+      "name": "cache",
+      "origin": "amp3",
+      "out_file": "/logs/cache-0-out.log",
+      "overridden": [
+        "cwd"
+      ],
+      "pending": [
+        "env"
+      ],
+      "pid": 1001,
+      "restarts": 1,
+      "smit": "▲ main@a1b2c3",
+      "status": "online",
+      "uptime_ms": 60000
+    },
+    {
+      "cpu_ms": null,
+      "cpu_percent": 12.5,
+      "depends_on": [],
+      "dog": null,
+      "dog_stale": null,
+      "err_file": "/logs/old-0-err.log",
+      "fold": "backend",
+      "handshook": null,
+      "id": 1,
+      "instance": null,
+      "lambs": null,
+      "last_exit": {
+        "code": 1,
+        "signal": null
+      },
+      "max_memory": null,
+      "memory_bytes": 50462720,
+      "name": "old",
+      "origin": "amp4",
+      "out_file": "/logs/old-0-out.log",
+      "overridden": [
+        "cwd"
+      ],
+      "pending": [
+        "env"
+      ],
+      "pid": 1001,
+      "restarts": 1,
+      "smit": "▲ main@a1b2c3",
+      "status": "online",
+      "uptime_ms": 60000
+    }
+  ],
+  "host": {
+    "cpu_percent": 11.5,
+    "disk_bytes_per_second": [
+      1024,
+      2048
+    ],
+    "memory_total_bytes": 8589934592,
+    "memory_used_bytes": 4294967296,
+    "network_bytes_per_second": null
+  },
+  "hosts": {
+    "amp2": {
+      "cpu_percent": 11.5,
+      "disk_bytes_per_second": [
+        1024,
+        2048
+      ],
+      "memory_total_bytes": 8589934592,
+      "memory_used_bytes": 4294967296,
+      "network_bytes_per_second": null
+    },
+    "amp3": null
+  },
+  "schema_version": 1
+}

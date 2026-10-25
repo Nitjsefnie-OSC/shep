@@ -27,41 +27,21 @@ impl App {
         let verb = if enable { "enable" } else { "disable" };
         let prefix = format!("{verb} {name}");
         // `EnableDog` answers `Response::DogStarted`; `DisableDog` answers
-        // `Response::Deleted`, the same reply `Delete` gives.
+        // `Response::Deleted`, the reply an older CLI accepts, though the dog
+        // stays registered.
         match result {
             Ok(Response::DogStarted(_)) if enable => {
-                self.notice = Some(Notice {
-                    text: format!("{prefix}: the shepherd started it"),
-                    grave: false,
-                });
+                self.notice = Some(Notice::info(format!("{prefix}: the shepherd started it")));
             }
             Ok(Response::Deleted(_)) if !enable => {
-                self.notice = Some(Notice {
-                    text: format!("{prefix}: the shepherd stopped and deregistered it"),
-                    grave: false,
-                });
+                self.notice = Some(Notice::info(format!(
+                    "{prefix}: the shepherd stopped it, and it stays listed as disabled"
+                )));
             }
             // Also a mismatched guard above: an `EnableDog` answered by
             // `Response::Deleted`, or the reverse.
-            Ok(_unrecognised) => {
-                self.notice = Some(Notice {
-                    text: format!(
-                        "{prefix}: the shepherd answered something this lookout does not understand"
-                    ),
-                    grave: true,
-                });
-            }
-            Err(RequestError::Rpc(err)) => {
-                self.notice = Some(Notice {
-                    text: format!("{prefix}: {}", err.message),
-                    grave: true,
-                });
-            }
-            Err(other) => {
-                self.notice = Some(Notice {
-                    text: format!("{prefix}: {other}"),
-                    grave: true,
-                });
+            other => {
+                self.notice = Some(Notice::grave(format!("{prefix}: {}", failed_reply(other))));
             }
         }
         self.reread_settings()
@@ -100,24 +80,14 @@ impl App {
     /// confirmed toggle ends in a request to the shepherd. Replaces a
     /// [`Pending::Sent`] for that method's reason.
     pub(super) fn cycle_dog(&mut self, index: usize) -> Effect {
-        if matches!(self.link, Link::Lost { .. }) {
-            self.notice = Some(Notice {
-                text: LINK_GONE.to_string(),
-                grave: true,
-            });
+        if self.refuse_over_host() {
             return Effect::None;
         }
-        // See the comment in `Self::take_pane_writes`: a direct field
-        // match, not `Self::settings_mut`, so `self.now` stays reachable
-        // below.
-        let Some(settings) = (match &mut self.body {
-            Body::Settings(settings) => Some(settings),
-            Body::FlockTable
-            | Body::ConfigPane(_)
-            | Body::Bleats(_)
-            | Body::Secrets(_)
-            | Body::Sheep(_) => None,
-        }) else {
+        if matches!(self.link, Link::Lost { .. }) {
+            self.notice = Some(Notice::grave(LINK_GONE.to_string()));
+            return Effect::None;
+        }
+        let Some(settings) = self.body.settings_mut() else {
             return Effect::None;
         };
         let Some(dog) = settings.snapshot.dogs.get(index) else {
@@ -128,7 +98,7 @@ impl App {
         let text = if enable {
             format!("enable {name}? it starts now, no reload")
         } else {
-            format!("disable {name}? it stops now and is deregistered")
+            format!("disable {name}? it stops now and stays listed as disabled")
         };
         settings.pending = Some(Pending::DogArmed {
             edit: DogEdit { name, enable },
@@ -153,11 +123,11 @@ mod tests {
     }
 
     #[test]
-    fn disabling_says_it_deregisters() {
+    fn disabling_says_it_stays_listed() {
         let mut app = fixtures::app_in_settings_on_enabled_dog("otel");
         let _ = app.update(Msg::Key(KeyPress::Cycle));
         let text = app.settings().unwrap().pending().unwrap().text.to_string();
-        assert!(text.contains("deregistered"), "got: {text}");
+        assert!(text.contains("stays listed as disabled"), "got: {text}");
     }
 
     /// One message still yields one effect.
@@ -171,7 +141,7 @@ mod tests {
         let effect = app.update(Msg::DogWritten {
             edit,
             ticket,
-            result: Ok(DogSource::BuiltIn),
+            result: Ok(DogSource::BuiltIn { grants: None }),
         });
         assert!(matches!(
             effect,
@@ -238,7 +208,7 @@ mod tests {
         let Effect::Send(sent) = app.update(Msg::DogWritten {
             edit,
             ticket,
-            result: Ok(DogSource::BuiltIn),
+            result: Ok(DogSource::BuiltIn { grants: None }),
         }) else {
             panic!("a landed write must raise the daemon half");
         };
@@ -256,7 +226,7 @@ mod tests {
         );
         let info = ProcessInfo::builder(50, "metrics", ProcStatus::Online)
             .pid(Some(50_000))
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .build();
         app.update(Msg::Replied {
             sent,
@@ -273,10 +243,10 @@ mod tests {
         );
     }
 
-    /// `DisableDog` answers `Response::Deleted`, the reply `Delete` gives. The
-    /// sentence names the deregistration, since the confirm is gone by now.
+    /// `DisableDog` answers `Response::Deleted`, though the dog stays
+    /// registered. The sentence says so, since the confirm is gone by now.
     #[test]
-    fn a_landed_disable_names_the_deregistration() {
+    fn a_landed_disable_says_the_dog_stays_listed() {
         let (mut app, sent) = armed_and_sent_dog("otel");
         app.update(Msg::Replied {
             sent,
@@ -284,7 +254,7 @@ mod tests {
         });
         assert_eq!(
             app.notice().map(ToString::to_string).as_deref(),
-            Some("disable otel: the shepherd stopped and deregistered it")
+            Some("disable otel: the shepherd stopped it, and it stays listed as disabled")
         );
         assert!(!app.notice().unwrap().is_grave());
     }
@@ -319,7 +289,7 @@ mod tests {
                 Response::DogStarted(
                     ProcessInfo::builder(50, name, ProcStatus::Online)
                         .pid(Some(50_000))
-                        .dog(Some(DogSource::BuiltIn))
+                        .dog(Some(DogSource::BuiltIn { grants: None }))
                         .build(),
                 )
             } else {

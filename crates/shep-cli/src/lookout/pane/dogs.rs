@@ -376,7 +376,7 @@ mod tests {
         assert_eq!(pane.display_value("dogs"), "jobs, legacy");
         let mut all = pane.clone();
         let mut text = String::new();
-        for digit in 1..=8 {
+        for digit in 1..=9 {
             all.set_group(digit);
             text.push_str(&render_all(&pane_lines(&all, plain(), 200, 0)));
         }

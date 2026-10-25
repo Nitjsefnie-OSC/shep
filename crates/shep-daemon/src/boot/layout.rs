@@ -49,18 +49,11 @@ fn create_dir_at_dir_mode(dir: &Path) -> std::io::Result<()> {
 /// - [`BootError::Io`] if a directory could not be created or chmod'ed.
 pub(crate) fn init_dirs(paths: &ShepPaths) -> Result<(), BootError> {
     for dir in [&paths.home, &paths.logs, &paths.pids, &paths.run] {
-        create_dir_at_dir_mode(dir).map_err(|source| BootError::Io {
-            path: dir.clone(),
-            source,
-        })?;
+        create_dir_at_dir_mode(dir).map_err(|source| BootError::io(dir, source))?;
         // Unix only: Windows has no scalar mode to force a directory back to.
         #[cfg(unix)]
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(DIR_MODE)).map_err(
-            |source| BootError::Io {
-                path: dir.clone(),
-                source,
-            },
-        )?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(DIR_MODE))
+            .map_err(|source| BootError::io(dir, source))?;
     }
     Ok(())
 }

@@ -33,22 +33,45 @@ use assert_cmd::cargo::CommandCargoExt as _;
 use tempfile::TempDir;
 
 mod adopt;
+mod adopt_consent;
+mod adopt_defaults;
+mod adopted_help;
 mod assertions;
 mod available_dogs;
+mod builtin_grants;
+// Shared with `init.rs` and `term_panic_order.rs`, which are separate targets.
+// The file gates itself to unix.
+#[path = "../common/mod.rs"]
+mod common;
 mod constants;
 mod daemon_log;
 mod dev;
+mod dial_stdio;
 mod dispatch;
-mod dogs_kv;
+mod dog_channel;
+mod dog_channel_samples;
+mod dog_delete;
+mod dog_grants;
+mod dog_validate;
+mod dogs_barks;
+mod dogs_grant;
 mod fixtures;
+mod flockfile_disabled;
 mod flockfile_load;
+mod grants_upgrade;
 mod guard;
 mod handover_basic;
 mod handover_clustered;
+mod handover_disabled;
+mod handover_dog_link;
+mod handover_dogs;
 mod handover_extras;
 mod home_and_watch;
+mod host_flag;
+mod hosts;
 mod import_env;
 mod init_verb;
+mod kv_store;
 mod lifecycle;
 mod logs;
 mod lookout_whistle;
@@ -57,7 +80,11 @@ mod real_clock;
 mod rendering;
 mod runtime;
 mod serve;
+mod settings_get;
+mod settings_set;
+mod settings_unset;
 mod spawn_failures;
+mod ssh_stand_in;
 mod startup;
 
 pub(crate) use assertions::*;

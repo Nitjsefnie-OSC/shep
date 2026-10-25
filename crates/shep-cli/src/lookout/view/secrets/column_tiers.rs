@@ -103,6 +103,7 @@ mod tests {
     use super::super::draw_layout::cell;
     use super::super::pane_chrome::tab_line;
     use super::super::row_cells::typed_cell;
+    use crate::lookout::textbox::TextBox;
 
     use super::super::super::super::theme::Palette;
     use super::super::super::flock::GUTTER;
@@ -220,17 +221,19 @@ mod tests {
     /// The same window on the `+ new key` row, whose key name is typed into
     /// the same column by the same helper.
     #[test]
-    fn a_new_key_name_outgrowing_its_column_is_shown_from_the_end_too() {
-        let short = typed_cell("SHORT", Column::Value.width());
+    fn a_new_key_name_outgrowing_its_column_scrolls_to_keep_the_cursor_in_view() {
+        let short = typed_cell(&TextBox::from("SHORT"), Column::Value.width());
         let long = typed_cell(
-            "A_VERY_LONG_KEY_NAME_THAT_RUNS_PAST_THE_COLUMN",
+            &TextBox::from("A_VERY_LONG_KEY_NAME_THAT_RUNS_PAST_THE_COLUMN"),
             Column::Value.width(),
         );
 
-        assert!(short.starts_with("SHORT\u{2588}"), "{short:?}");
-        assert!(!short.contains('\u{2026}'), "nothing dropped: {short:?}");
-        assert!(long.starts_with('\u{2026}'), "{long:?}");
-        assert!(long.ends_with("THE_COLUMN\u{2588}"), "{long:?}");
+        assert_eq!(short, "SHORT\u{258f}");
+        assert!(long.ends_with("THE_COLUMN\u{258f}"), "{long:?}");
+        assert!(
+            long.chars().count() < usize::from(Column::Value.width()),
+            "a column short of the next one's text: {long:?}"
+        );
     }
 
     #[test]

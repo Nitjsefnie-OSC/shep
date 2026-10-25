@@ -291,12 +291,43 @@ async fn wait_for_restarts_online(handle: &SupervisorHandle, restarts: u32) -> P
     info
 }
 
-#[tokio::test(start_paused = true)]
-async fn manual_restart_resets_budget_and_respawns() {
-    let (events, _rx) = crate::bus::test_bus(64);
+/// Waits until the flock's single process settles: `Errored` on a spent
+/// budget, or `Online` with `restarts` restarts behind it.
+///
+/// A settled `Errored` ends the wait rather than hanging it, which is what
+/// makes the bound safe: a budget that was not reset reports itself instead
+/// of spinning. Same bound as [`wait_for_restarts_online`], for the same
+/// reason.
+async fn wait_for_settled(handle: &SupervisorHandle, restarts: u32) -> ProcessInfo {
+    let mut info = handle.list().await.remove(0);
+    for _ in 0..200 {
+        if info.status == ProcStatus::Errored
+            || (info.status == ProcStatus::Online && info.restarts == restarts)
+        {
+            break;
+        }
+        tokio::task::yield_now().await;
+        info = handle.list().await.remove(0);
+    }
+    info
+}
+
+/// The flock the three restart-budget cases share: two unstable crashes
+/// landed on a long-lived proc, synced at `restarts == 2`.
+///
+/// The bus receiver comes back beside the handle. A bus with no subscriber
+/// still takes every send, so dropping it early would change what the bus
+/// does for the case holding it.
+async fn arm_two_crashes_and_sync(
+    dir: &tempfile::TempDir,
+) -> (
+    SupervisorHandle,
+    tokio::sync::broadcast::Receiver<SharedEvent>,
+) {
     // Five procs: two unstable crashes, the long-lived proc they land on,
-    // the unstable respawn the manual restart performs, and the proc a
+    // the unstable respawn the restart performs, and the proc a
     // still-solvent budget restarts onto.
+    let (events, rx) = crate::bus::test_bus(64);
     let runner = ScriptedRunner::new(vec![
         ProcScript::const_exit(1),
         ProcScript::const_exit(1),
@@ -304,12 +335,11 @@ async fn manual_restart_resets_budget_and_respawns() {
         ProcScript::const_exit(1),
         ProcScript::never_exits(),
     ]);
-    let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
+    let handle = spawn_supervisor(runner, test_paths(dir), events);
     let mut app = AppConfig::minimal("svc", "./svc");
     // Three rather than sixteen: two crashes leave the budget one short.
     app.max_restarts = 3;
-    // The sync loop below busy-polls under a paused clock, so a non-zero
+    // The sync below busy-polls under a paused clock, so a non-zero
     // `exp_backoff_restart_delay` would spin it forever.
     app.exp_backoff_restart_delay = None;
     handle.start(vec![normalize(app).unwrap()]).await.unwrap();
@@ -321,6 +351,14 @@ async fn manual_restart_resets_budget_and_respawns() {
         (ProcStatus::Online, 2),
         "never reached the never_exits proc -- got {info:?}"
     );
+    (handle, rx)
+}
+
+#[tokio::test(start_paused = true)]
+async fn manual_restart_resets_budget_and_respawns() {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, _rx) = arm_two_crashes_and_sync(&dir).await;
+
     let restarted = handle
         .restart(ProcessSelector::Name("svc".to_string()))
         .await
@@ -329,18 +367,8 @@ async fn manual_restart_resets_budget_and_respawns() {
     assert_eq!(restarted[0].status, ProcStatus::Online);
 
     // The proc restart landed on is itself unstable: with the budget reset
-    // its exit is the first of three, without it the third. Bounded, since
-    // the failing outcome is a settled `Errored`.
-    let mut settled = handle.list().await.remove(0);
-    for _ in 0..200 {
-        if settled.status == ProcStatus::Errored
-            || (settled.status == ProcStatus::Online && settled.restarts == 4)
-        {
-            break;
-        }
-        tokio::task::yield_now().await;
-        settled = handle.list().await.remove(0);
-    }
+    // its exit is the first of three, without it the third.
+    let settled = wait_for_settled(&handle, 4).await;
     assert_eq!(
         (settled.status, settled.restarts),
         (ProcStatus::Online, 4),
@@ -355,34 +383,8 @@ async fn manual_restart_resets_budget_and_respawns() {
 // next exit (`claim_manual`).
 #[tokio::test(start_paused = true)]
 async fn an_automatic_restart_resets_the_budget_like_an_operators_does() {
-    let (events, _rx) = crate::bus::test_bus(64);
-    // Five procs: two unstable crashes, the long-lived proc they land on,
-    // the unstable respawn the automatic restart performs, and the proc a
-    // still-solvent budget restarts onto.
-    let runner = ScriptedRunner::new(vec![
-        ProcScript::const_exit(1),
-        ProcScript::const_exit(1),
-        ProcScript::never_exits(),
-        ProcScript::const_exit(1),
-        ProcScript::never_exits(),
-    ]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
-    let mut app = AppConfig::minimal("svc", "./svc");
-    // Three rather than sixteen: two crashes leave the budget one short.
-    app.max_restarts = 3;
-    // The sync loop below busy-polls under a paused clock, so a non-zero
-    // `exp_backoff_restart_delay` would spin it forever.
-    app.exp_backoff_restart_delay = None;
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
-    // Sync on state: immediate restarts mean restarts==2 once `never_exits`
-    // is up.
-    let info = wait_for_restarts_online(&handle, 2).await;
-    assert_eq!(
-        (info.status, info.restarts),
-        (ProcStatus::Online, 2),
-        "never reached the never_exits proc -- got {info:?}"
-    );
+    let (handle, _rx) = arm_two_crashes_and_sync(&dir).await;
 
     handle
         .restart_automatic(ProcessSelector::Name("svc".to_string()))
@@ -390,18 +392,8 @@ async fn an_automatic_restart_resets_the_budget_like_an_operators_does() {
         .unwrap();
 
     // The proc restart landed on is itself unstable: with the budget reset
-    // its exit is the first of three, without it the third. Bounded, since
-    // the failing outcome is a settled `Errored`.
-    let mut settled = handle.list().await.remove(0);
-    for _ in 0..200 {
-        if settled.status == ProcStatus::Errored
-            || (settled.status == ProcStatus::Online && settled.restarts == 4)
-        {
-            break;
-        }
-        tokio::task::yield_now().await;
-        settled = handle.list().await.remove(0);
-    }
+    // its exit is the first of three, without it the third.
+    let settled = wait_for_settled(&handle, 4).await;
     assert_eq!(
         (settled.status, settled.restarts),
         (ProcStatus::Online, 4),
@@ -416,34 +408,8 @@ async fn an_automatic_restart_resets_the_budget_like_an_operators_does() {
 // not-running state; `WaitingRestart` still holds a `RestartDue` timer.
 #[tokio::test(start_paused = true)]
 async fn restarting_a_stopped_sheep_resets_the_budget() {
-    let (events, _rx) = crate::bus::test_bus(64);
-    // Five procs: two unstable crashes, the long-lived proc they land on
-    // and the stop below ends, the unstable respawn the restart performs,
-    // and the proc a still-solvent budget restarts onto.
-    let runner = ScriptedRunner::new(vec![
-        ProcScript::const_exit(1),
-        ProcScript::const_exit(1),
-        ProcScript::never_exits(),
-        ProcScript::const_exit(1),
-        ProcScript::never_exits(),
-    ]);
     let dir = tempfile::tempdir().unwrap();
-    let handle = spawn_supervisor(runner, test_paths(&dir), events);
-    let mut app = AppConfig::minimal("svc", "./svc");
-    // Three rather than sixteen: two crashes leave the budget one short.
-    app.max_restarts = 3;
-    // The sync loop below busy-polls under a paused clock, so a non-zero
-    // `exp_backoff_restart_delay` would spin it forever.
-    app.exp_backoff_restart_delay = None;
-    handle.start(vec![normalize(app).unwrap()]).await.unwrap();
-    // Sync on state: immediate restarts mean restarts==2 once `never_exits`
-    // is up.
-    let info = wait_for_restarts_online(&handle, 2).await;
-    assert_eq!(
-        (info.status, info.restarts),
-        (ProcStatus::Online, 2),
-        "never reached the never_exits proc -- got {info:?}"
-    );
+    let (handle, _rx) = arm_two_crashes_and_sync(&dir).await;
 
     // `stop` takes the sheep off its live task without touching the budget:
     // `decide_on_exit` short-circuits to `CleanStop` on `manual_stop`,
@@ -465,18 +431,8 @@ async fn restarting_a_stopped_sheep_resets_the_budget() {
     );
 
     // The proc restart landed on is itself unstable: with the budget reset
-    // its exit is the first of three, without it the third. Bounded, since
-    // the failing outcome is a settled `Errored`.
-    let mut settled = handle.list().await.remove(0);
-    for _ in 0..200 {
-        if settled.status == ProcStatus::Errored
-            || (settled.status == ProcStatus::Online && settled.restarts == 4)
-        {
-            break;
-        }
-        tokio::task::yield_now().await;
-        settled = handle.list().await.remove(0);
-    }
+    // its exit is the first of three, without it the third.
+    let settled = wait_for_settled(&handle, 4).await;
     assert_eq!(
         (settled.status, settled.restarts),
         (ProcStatus::Online, 4),

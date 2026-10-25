@@ -34,12 +34,23 @@ shepherd, silence from an app thinking hard and silence from an app that
 never understood the question look the same, and only `action_timeout`
 running out tells them apart.
 
+An action handler runs on a thread of its own, so a slow one does not hold up
+the messages behind it, and replies can reach the shepherd in any order. Each
+reply carries the id of the action it answers, which is how the shepherd
+matches it. Handlers run beside each other, so a handler has to be `Send +
+Sync`, which `on_action` already asks for.
+
 `flush` is the call that is easiest to leave out. Sending queues, so an app
 that exits from its own shutdown handler loses replies an operator is still
 waiting on.
 
 An app that runs several children of one binary can tell `shep describe`
 which is which: `shepherd.label_lamb(child.id(), LambLabel::new("worker 1")?)`.
+
+A dog of your own can hear from an app without a metric sample:
+`shepherd.note("lease.web.want.1", 1.0)` reaches a dog subscribed to
+`channel.note`, and the metrics dog never sees it. Like a sample, a note
+is dropped rather than waited on when the shepherd falls behind.
 
 The wire itself is documented in `docs/shepherd-channel.md` in the shep
 repository. It is language agnostic, and Go, JavaScript and Python

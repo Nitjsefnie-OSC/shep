@@ -1,9 +1,14 @@
 //! [`DogTable`]: one dog's opaque per-sheep settings table.
 
 use core::fmt;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
+
+use crate::config::key_path::{push_index, push_key};
+use crate::config::table::{TOML_PRIVATE_DATETIME_KEY, deserialize_table};
+use crate::secrets::references_in;
 
 /// One dog's `[app.dogs.<name>]` table on a sheep, held opaque.
 ///
@@ -28,6 +33,99 @@ impl DogTable {
     pub fn into_map(self) -> Map<String, Value> {
         self.0
     }
+
+    /// Every `{{secret:...}}` reference a string in this table names, as
+    /// `KEY` or `namespace/KEY`.
+    ///
+    /// Walks the same strings [`Self::try_map_strings`] visits. A table this
+    /// reports nothing for has no reference that resolves, but a resolve can
+    /// still refuse malformed `{{secret:` text, which this does not count.
+    /// Keys are not among them.
+    #[must_use]
+    pub fn references(&self) -> BTreeSet<String> {
+        let mut found = BTreeSet::new();
+        let _ = self.try_map_strings::<core::convert::Infallible>("", |_, text| {
+            found.extend(references_in(text));
+            Ok(None)
+        });
+        found
+    }
+
+    /// The key path of the first string that names a `{{secret:...}}`
+    /// reference, in table order, under `root`.
+    #[must_use]
+    pub fn first_reference_path(&self, root: &str) -> Option<String> {
+        let mut first = None;
+        let _ = self.try_map_strings::<core::convert::Infallible>(root, |path, text| {
+            if first.is_none() && !references_in(text).is_empty() {
+                first = Some(path.to_string());
+            }
+            Ok(None)
+        });
+        first
+    }
+
+    /// This table with every string value `visit` replaces swapped for its
+    /// replacement.
+    ///
+    /// `visit` gets the key path of each string, nested objects and arrays
+    /// included, and its text; it answers the replacement, or `None` to leave
+    /// the string as it is. Keys and every non-string value are carried over
+    /// untouched. A path is spelled by [`push_key`] and [`push_index`] and
+    /// starts at `root`, so a caller can name the table's place in a larger
+    /// document; pass `""` for the table's own keys.
+    ///
+    /// # Errors
+    /// The first error `visit` returns, which stops the walk.
+    pub fn try_map_strings<E>(
+        &self,
+        root: &str,
+        mut visit: impl FnMut(&str, &str) -> Result<Option<String>, E>,
+    ) -> Result<Self, E> {
+        map_object(&self.0, &mut root.to_string(), &mut visit).map(Self)
+    }
+}
+
+/// What a visitor does with one string value: the key path it sits at and
+/// its text in, the replacement out, or `None` to leave it.
+type Visit<'a, E> = dyn FnMut(&str, &str) -> Result<Option<String>, E> + 'a;
+
+/// One object in [`DogTable::try_map_strings`]'s walk. `path` is the key
+/// path of `map`, restored on return.
+fn map_object<E>(
+    map: &Map<String, Value>,
+    path: &mut String,
+    visit: &mut Visit<'_, E>,
+) -> Result<Map<String, Value>, E> {
+    let mut out = Map::new();
+    for (key, value) in map {
+        let mark = path.len();
+        push_key(path, key);
+        let mapped = map_value(value, path, visit);
+        path.truncate(mark);
+        out.insert(key.clone(), mapped?);
+    }
+    Ok(out)
+}
+
+/// One value in [`DogTable::try_map_strings`]'s walk.
+fn map_value<E>(value: &Value, path: &mut String, visit: &mut Visit<'_, E>) -> Result<Value, E> {
+    match value {
+        Value::String(text) => Ok(visit(path, text)?.map_or_else(|| value.clone(), Value::String)),
+        Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                let mark = path.len();
+                push_index(path, index);
+                let mapped = map_value(item, path, visit);
+                path.truncate(mark);
+                out.push(mapped?);
+            }
+            Ok(Value::Array(out))
+        }
+        Value::Object(map) => map_object(map, path, visit).map(Value::Object),
+        other => Ok(other.clone()),
+    }
 }
 
 impl From<Map<String, Value>> for DogTable {
@@ -45,10 +143,18 @@ impl fmt::Debug for DogTable {
     }
 }
 
-/// toml_datetime's private field name for a bare TOML date, time, or
-/// datetime: the shape `toml` 0.8 hands a generic `Deserialize` before the
-/// value ever reaches JSON, measured against toml 0.8.23.
-const TOML_PRIVATE_DATETIME_KEY: &str = "$__toml_private_datetime";
+/// Reads the `dogs` table itself, one [`DogTable`] per dog. The
+/// `deserialize_with` on [`AppConfig::dogs`](crate::config::AppConfig::dogs).
+///
+/// The shared reader is what refuses `dogs: null` in YAML, where a null
+/// scalar asked for as a map would otherwise become an empty one, and a bare
+/// TOML datetime under `[[app]]`, which arrives as a one-key table. Each
+/// table inside `dogs` keeps its own rules, below.
+pub(super) fn deserialize_dogs<'de, D: Deserializer<'de>>(
+    de: D,
+) -> Result<BTreeMap<String, DogTable>, D::Error> {
+    deserialize_table(de, "dogs")
+}
 
 impl<'de> Deserialize<'de> for DogTable {
     /// Reads a table, refusing anything else, and rewrites a TOML datetime,
@@ -212,6 +318,27 @@ mod tests {
     #[test]
     fn an_array_is_refused() {
         assert!(toml::from_str::<Holder>("table = [1]\n").is_err());
+    }
+
+    /// fails if a wire `dogs` that is not a table stops being refused.
+    ///
+    /// `AppConfig` decodes from a peer as well as from a Flockfile, and both
+    /// paths read the key through the shared table reader. The wire refused a
+    /// null map before, in serde's words: what changed is the words, not what
+    /// is refused. A real table still decodes.
+    #[test]
+    fn a_wire_dogs_that_is_not_a_table_is_still_refused() {
+        let src = r#"{"name":"web","script":"./srv","dogs":null}"#;
+        let err = serde_json::from_str::<crate::config::AppConfig>(src)
+            .expect_err("a wire dogs that is not a table must be refused, as it always was");
+        let msg = err.to_string();
+        assert!(msg.contains("`dogs` must be a table"), "{msg}");
+
+        let ok: crate::config::AppConfig = serde_json::from_str(
+            r#"{"name":"web","script":"./srv","dogs":{"jobs":{"concurrency":2}}}"#,
+        )
+        .expect("a real dogs table on the wire still decodes");
+        assert_eq!(ok.dogs.len(), 1);
     }
 
     #[test]

@@ -2,6 +2,23 @@
 
 use super::*;
 
+/// Where the daemon writes the one sheep's stdout, off the daemon's own
+/// snapshot: poll until that sheep is online, then read the `out_file` its row
+/// carries.
+///
+/// A sheep's log path is the shepherd's to hand out, so a test that names the
+/// file it is about to rename or truncate reads it back rather than guessing
+/// it from `$SHEP_HOME`.
+#[track_caller]
+fn sheep_out_file(home: &Path) -> PathBuf {
+    let row = poll_flock(home, |info| info["status"] == "online");
+    PathBuf::from(
+        row["out_file"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {row}")),
+    )
+}
+
 /// Both of a sheep's streams by default, only the requested one under `--out`.
 #[test]
 fn bleats_no_follow_prints_what_a_sheep_actually_wrote() {
@@ -60,6 +77,46 @@ fn bleats_no_follow_prints_what_a_sheep_actually_wrote() {
     graceful_kill(home);
 }
 
+/// A sheep whose app turns the shepherd's stamp off writes its own RFC 3339
+/// prefix into the log file. `bleats --no-follow` read that file and cut a
+/// stamp off every line in it, so it cut 30 bytes off a line the app had
+/// stamped itself, while `--follow` printed the same line whole.
+#[test]
+fn a_stamps_off_sheeps_own_timestamp_survives_bleats_no_follow() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    let own_line = "2026-09-02T14:22:31.412+02:00 the app stamped its own line";
+    let script = write_logging_script(&dir, own_line, None);
+    let mut guard = DaemonGuard::default();
+
+    let boot = shep(home)
+        .arg("start")
+        .arg(&script)
+        .arg("--name")
+        .arg("stamper")
+        .arg("--no-log-timestamps")
+        .output()
+        .unwrap();
+    guard.adopt_home(home);
+    assert_success(&boot);
+
+    let seen = bleats_no_follow_until_contains(home, &["all"], &[own_line]);
+    assert_eq!(
+        seen.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&seen.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&seen.stdout);
+    assert!(
+        stdout.contains(own_line),
+        "the file holds this sheep's line exactly as it wrote it, and the \
+         reading verb must print all of it: stdout={stdout}"
+    );
+
+    graceful_kill(home);
+}
+
 /// `create`-mode rotation: rename the live log, run `shep reopen`, and the
 /// sheep's next line reaches the recreated path.
 ///
@@ -94,12 +151,7 @@ fn reopen_puts_a_rotated_log_back_where_bleats_can_read_it() {
          rotation: stdout={printed}"
     );
 
-    let online = poll_flock(home, |info| info["status"] == "online");
-    let out_file = PathBuf::from(
-        online["out_file"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
-    );
+    let out_file = sheep_out_file(home);
     let archive = out_file.with_extension("log.1");
     std::fs::rename(&out_file, &archive).unwrap();
     assert!(!out_file.exists(), "sanity: the rename really moved it");
@@ -184,13 +236,10 @@ fn a_reopen_that_cannot_open_a_path_again_exits_internal() {
     );
 
     // Off the daemon's own snapshot, so the test cannot disagree about which
-    // file it is blocking.
+    // file it is blocking. The row is polled again for the `id` the refusal's
+    // message has to name.
+    let out_file = sheep_out_file(home);
     let online = poll_flock(home, |info| info["status"] == "online");
-    let out_file = PathBuf::from(
-        online["out_file"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
-    );
 
     // Renamed, not deleted: a real rotation leaves the pump holding an inode
     // under a different name, with the live path unopenable.
@@ -266,12 +315,7 @@ fn copytruncate_leaves_the_next_line_at_offset_zero(stamped: bool) {
 
     // Off the daemon's own snapshot, so the test cannot disagree about which
     // file this is.
-    let online = poll_flock(home, |info| info["status"] == "online");
-    let out_file = PathBuf::from(
-        online["out_file"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
-    );
+    let out_file = sheep_out_file(home);
 
     // `logrotate copytruncate` spelled out. Nothing here is a shep verb, so
     // the daemon is never told and the pump holds the same inode at size zero.
@@ -339,6 +383,114 @@ fn an_unstamped_log_takes_its_next_line_at_offset_zero_after_a_copytruncate() {
     copytruncate_leaves_the_next_line_at_offset_zero(false);
 }
 
+/// `--no-log-timestamps` on a sheep the flock already has.
+///
+/// The flag is a value the operator typed for that sheep, so it reaches the
+/// spawn the same load performs: recorded as an override, parked as a
+/// `NeedsRespawn` field, promoted by the resume that follows.
+///
+/// The assertion is on the raw file, not through `bleats`, which strips the
+/// stamp off whatever it reads. The gate opens only after the resume, so the
+/// line it releases cannot predate the spawn under test.
+#[test]
+fn no_log_timestamps_reaches_a_stopped_sheep_started_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    let gate = home.join("second-line");
+    let script = write_rotating_script(&dir, &gate);
+    let mut guard = DaemonGuard::default();
+
+    let boot = shep(home).arg("start").arg(&script).output().unwrap();
+    guard.adopt_home(home);
+    assert_success(&boot);
+
+    let before = bleats_no_follow_until_written(home, &["all"]);
+    let printed = String::from_utf8_lossy(&before.stdout);
+    assert!(
+        printed.contains(ROTATE_BEFORE),
+        "precondition: the sheep must have logged a line to be stamped: {printed}"
+    );
+
+    // Off the daemon's own snapshot, so the test cannot disagree about which
+    // file this is.
+    let out_file = sheep_out_file(home);
+    let stamped_first = std::fs::read_to_string(&out_file).unwrap();
+    assert_eq!(unstamped_file(&out_file), format!("{ROTATE_BEFORE}\n"));
+    let first = stamped_first.lines().next().unwrap_or_default();
+    assert_ne!(
+        shep_core::logstamp::strip(first),
+        first,
+        "precondition: this sheep was started stamped: {stamped_first}"
+    );
+
+    let stopped = shep(home).arg("stop").arg("rotating").output().unwrap();
+    assert_success(&stopped);
+    let parked = poll_flock(home, |info| info["status"] == "stopped");
+    assert_eq!(
+        parked["name"], "rotating",
+        "precondition: the flock must still hold this sheep for the load below \
+         to merge into: {parked}"
+    );
+
+    // The same target, the flag this time. The sheep is already registered,
+    // so this load merges into it and brings it back rather than registering
+    // a second copy.
+    let again = shep(home)
+        .arg("start")
+        .arg(&script)
+        .arg("--no-log-timestamps")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert_success(&again);
+    let envelope: serde_json::Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(
+        sheep_rows(&envelope["data"]).len(),
+        1,
+        "the load resumed the sheep the flock already had rather than adding \
+         another: {envelope}"
+    );
+
+    // Opened only now, so the line below cannot predate the resume. The
+    // restarted sheep writes its first line and blocks here until this exists.
+    std::fs::write(&gate, "").unwrap();
+
+    let after = bleats_no_follow_until_contains(home, &["all"], &[ROTATE_AFTER]);
+    let stdout = String::from_utf8_lossy(&after.stdout);
+    assert!(
+        stdout.contains(ROTATE_AFTER),
+        "the restarted sheep must reach the line past its gate: stdout={stdout}"
+    );
+    assert_eq!(
+        after.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&after.stderr)
+    );
+    let raw = std::fs::read_to_string(&out_file).unwrap();
+    assert_eq!(
+        unstamped_file(&out_file),
+        format!("{ROTATE_BEFORE}\n{ROTATE_BEFORE}\n{ROTATE_AFTER}\n"),
+        "the restarted sheep wrote two lines into the same file: {raw}"
+    );
+    assert_eq!(
+        raw.lines().last().unwrap_or_default(),
+        ROTATE_AFTER,
+        "the line the restarted sheep wrote must reach the file with no stamp \
+         in front of it: {raw}"
+    );
+    assert_eq!(
+        raw.lines()
+            .filter(|line| shep_core::logstamp::strip(line) != *line)
+            .count(),
+        1,
+        "only the sheep that was started stamped may carry a stamp: {raw}"
+    );
+
+    graceful_kill(home);
+}
+
 /// [`ROTATE_BEFORE`] being gone proves the truncate happened; [`ROTATE_AFTER`]
 /// arriving through the same untouched handle proves it survived.
 ///
@@ -375,12 +527,7 @@ fn flush_empties_a_log_the_sheep_goes_on_appending_to() {
 
     // Off the daemon's own snapshot, so the test cannot disagree about which
     // file this is.
-    let online = poll_flock(home, |info| info["status"] == "online");
-    let out_file = PathBuf::from(
-        online["out_file"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
-    );
+    let out_file = sheep_out_file(home);
 
     // The selector is explicit because the verb requires one. `--format json`
     // for the `command` label, since `flush` and `reopen` render one table.
@@ -457,12 +604,7 @@ fn a_daemon_flush_and_a_flock_flush_never_reach_each_others_files() {
     guard.adopt_home(home);
     assert_success(&boot);
 
-    let online = poll_flock(home, |info| info["status"] == "online");
-    let out_file = PathBuf::from(
-        online["out_file"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the daemon reports its own log paths: {online}")),
-    );
+    let out_file = sheep_out_file(home);
     // Read back rather than assumed: this is the precondition both halves of
     // the case are checked against.
     let before = bleats_no_follow_until_written(home, &["all"]);

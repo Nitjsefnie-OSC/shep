@@ -36,10 +36,13 @@ when touching either.
 
 CI runs that tier as its own serial `slow` job and skips it everywhere else,
 because a contended runner cannot hold a wall clock still: the debouncer
-tests were the whole of CI's red for four runs. `boot.rs`'s
+tests were the whole of CI's red for four runs. `boot/socket.rs`'s
 `two_concurrent_boots_on_a_stale_socket_exactly_one_wins` rides along in that
 job for the same reason without being in a `mod slow` — it is fast, but it
-races two threads and needs the machine quiet. Add a timing- or
+races two threads and the socket it fabricates wants a machine nobody else is
+forking into. Its verdict is no longer a claim about the machine: each racer
+holds its daemon at a rendezvous until the sibling has reported, so the winner
+always still owns the home when the loser asks for it. Add a timing- or
 contention-sensitive test and it needs the same treatment; the workflow's
 skip list names both groups explicitly.
 
@@ -82,8 +85,9 @@ nowhere.
 ### The task gate — run once, when the task is otherwise done
 
 ```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+rustup toolchain install 1.93 --profile minimal --component clippy,rustfmt   # once
+cargo +1.93 fmt --all -- --check
+cargo +1.93 clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
@@ -106,6 +110,16 @@ in zsh a pipeline's `$?` is the last command's and `${PIPESTATUS[0]}` is empty.
 **One cargo command at a time**: the workspace shares one target-dir build
 lock, so concurrent runs block rather than parallelise. (A separate worktree,
 or `benches/`, has its own lock and may run alongside.)
+
+### Why linting runs on 1.93
+
+`rust-toolchain.toml` pins `stable`, but fmt and clippy run as `+1.93`, the
+version CI's `lint` job installs. Each stable release adds clippy lints, and
+they fire on code nobody touched, so a branch that is clean in CI would fail
+the local gate on a newer stable. Linting on a fixed version keeps the two
+the same. Tests and docs stay on `stable`. The install line above is
+one-time, and the `+1.93` commands must match the `lint` job in
+`.github/workflows/test.yml`.
 
 ### The two cross-checks — run once per phase, not per task
 

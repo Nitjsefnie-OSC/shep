@@ -8,6 +8,8 @@
 //! builds its rows by hand so column widths stay fixed and a row stays a
 //! string a test can assert on, which those widgets take away.
 
+use crate::output::width::text_columns;
+
 /// The eight sparkline steps, low to high.
 const STEPS: [char; 8] = [
     '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}',
@@ -148,7 +150,7 @@ pub fn rule(cells: usize) -> String {
 // Called by `view::mod`'s `section_band`.
 pub fn band(label: &str, cells: usize) -> String {
     let head = format!(" \u{2588}\u{2588} {label}");
-    let drawn: usize = head.chars().map(crate::output::width::char_columns).sum();
+    let drawn: usize = text_columns(&head);
     if drawn >= cells {
         return super::flock::fit(&head, cells as u16);
     }

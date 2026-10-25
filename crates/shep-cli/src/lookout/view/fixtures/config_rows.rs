@@ -23,7 +23,12 @@ pub fn config_pane_field_rows_for_tests(app: &App) -> Vec<String> {
             crate::lookout::pane::PaneRow::Field(index) => {
                 Some(pane.fields().fields()[index].key.clone())
             }
-            crate::lookout::pane::PaneRow::Env(_) | crate::lookout::pane::PaneRow::AddEnv => None,
+            crate::lookout::pane::PaneRow::Table(_)
+            | crate::lookout::pane::PaneRow::Entry(_)
+            | crate::lookout::pane::PaneRow::Choice { .. }
+            | crate::lookout::pane::PaneRow::Arm { .. }
+            | crate::lookout::pane::PaneRow::Env(_)
+            | crate::lookout::pane::PaneRow::AddEnv => None,
         })
         .collect()
 }
@@ -143,7 +148,7 @@ pub fn config_pane_title_band_for_tests(app: &App, width: u16) -> String {
 }
 
 /// The pane's own tab row, alone: the one line naming every group in
-/// [`shep_core::config::GROUP_ORDER`], found by its own `tab next group`
+/// [`shep_core::config::GROUP_ORDER`], found by its own `next / prev group`
 /// phrase rather than by a fixed index, so a chrome line gained or lost
 /// above it does not silently move which row this reads.
 ///
@@ -157,7 +162,7 @@ pub fn config_pane_tab_row_for_tests(app: &App, width: u16) -> String {
     lines
         .iter()
         .map(rendered)
-        .find(|line| line.contains("tab next group"))
+        .find(|line| line.contains("next / prev group"))
         .expect("the pane draws a tab row at this width")
 }
 
@@ -171,7 +176,7 @@ pub fn config_pane_draws_a_tab_row(app: &App, width: u16) -> bool {
     lines
         .iter()
         .map(rendered)
-        .any(|line| line.contains("tab next group"))
+        .any(|line| line.contains("next / prev group"))
 }
 
 /// Whether the pane's own merged frame includes the explanation panel at

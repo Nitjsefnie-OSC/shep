@@ -4,6 +4,13 @@
 //! key by key. The cases in this file are the round trip, the redaction that
 //! keeps a sheep's environment out of a `Debug` line, the `0600` the file
 //! reaches disk at, and the version gate.
+//!
+//! [`old_blobs`] is the half these cannot do: bytes a named release wrote,
+//! committed under `fixtures/handover/`, which a rename in this image cannot
+//! follow. Those fixtures carry nothing in flight, so [`old_blob_state`] is
+//! the same releases' bytes with every optional field filled in. Both check
+//! the bytes against the key set their release wrote, which
+//! [`old_blob_shape`] holds as data.
 
 use std::os::unix::fs::PermissionsExt;
 
@@ -13,6 +20,11 @@ use crate::handover::fixtures::{carried, entry_fixture};
 use crate::testing::test_paths;
 
 mod compat;
+mod disabled;
+mod dog_link;
+mod old_blob_shape;
+mod old_blob_state;
+mod old_blobs;
 
 fn handover_over(entry: &ProcessEntry) -> Handover {
     Handover {
@@ -117,9 +129,10 @@ fn debug_redacts_a_carried_sheeps_environment() {
         "CarriedSheep { id: 1, name: \"web\", instance: 0, pid: Some(100), restarts: 0, \
          epoch: 7, status: Online, last_exit: None, credentials: Resolved(None), fds: \
          CarriedFds { out_pipe: Some(11), err_pipe: Some(12), out_log: Some(13), err_log: \
-         Some(14), stdin: Some(15), channel: Some(16) }, pending_delete: Some(false), \
+         Some(14), stdin: Some(15), channel: Some(16), dog_link: None }, dog_topics: None, \
+         pending_delete: Some(false), \
          manual: None, reload: Some(None), ready_failed: Some(false), restart_due: None, \
-         dog: None, pending: None, pending_reidentifies: None, app: AppConfig { \
+         dog: None, pending: None, pending_reidentifies: None, disabled: None, app: AppConfig { \
          name: \"web\", script: \"./srv\", env: <1 vars>, .. } }"
     );
     // The whole blob too, which holds fields of its own.

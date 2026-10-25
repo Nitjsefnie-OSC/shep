@@ -88,14 +88,20 @@ fn the_default_home_resolves_from_the_platform_s_own_variable() {
 // --- Case 9 --------------------------------------------------------------
 
 #[cfg(unix)]
-/// The watched tree is its own [`TempDir`], never this case's `$SHEP_HOME`: a
-/// watch rooted there would see [`FIXTURE_PIDS`] grow on each spawn and
+/// The watched-tree boot both cases below share: a `watcher` sheep whose
+/// `cwd` is its own watched [`TempDir`], started, polled to `online`, and
+/// asserted to have zero restarts as the precondition. The two [`TempDir`]s
+/// and the [`DaemonGuard`] come back so the caller's teardown still owns
+/// them.
+///
+/// The watched tree is its own [`TempDir`], never this case's `$SHEP_HOME`:
+/// a watch rooted there would see [`FIXTURE_PIDS`] grow on each spawn and
 /// restart on its own sheep.
-#[test]
-fn a_write_under_a_watched_tree_restarts_the_sheep() {
+#[track_caller]
+fn boot_a_watched_flock() -> (TempDir, TempDir, DaemonGuard) {
     let dir = tempfile::tempdir().unwrap();
-    let home = dir.path();
     let watched = tempfile::tempdir().unwrap();
+    let home = dir.path();
     let script = write_test_script(&dir);
     let flockfile = write_flockfile(
         &dir,
@@ -113,6 +119,15 @@ fn a_write_under_a_watched_tree_restarts_the_sheep() {
 
     let before = poll_flock(home, |info| info["status"] == "online");
     assert_eq!(before["restarts"], 0, "precondition: {before}");
+
+    (dir, watched, guard)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_write_under_a_watched_tree_restarts_the_sheep() {
+    let (dir, watched, _guard) = boot_a_watched_flock();
+    let home = dir.path();
 
     std::fs::write(watched.path().join("app.txt"), "changed").unwrap();
 
@@ -133,26 +148,8 @@ fn a_write_under_a_watched_tree_restarts_the_sheep() {
 /// afterwards and its restart must land. Two writes, exactly one restart.
 #[test]
 fn a_write_to_a_dot_file_under_a_watched_tree_restarts_nothing() {
-    let dir = tempfile::tempdir().unwrap();
+    let (dir, watched, _guard) = boot_a_watched_flock();
     let home = dir.path();
-    let watched = tempfile::tempdir().unwrap();
-    let script = write_test_script(&dir);
-    let flockfile = write_flockfile(
-        &dir,
-        &format!(
-            "[[app]]\nname = \"watcher\"\nscript = '{}'\ncwd = '{}'\nwatch = true\n",
-            script.display(),
-            watched.path().display(),
-        ),
-    );
-    let mut guard = DaemonGuard::default();
-
-    let boot = shep(home).arg("start").arg(&flockfile).output().unwrap();
-    guard.adopt_home(home);
-    assert_success(&boot);
-
-    let before = poll_flock(home, |info| info["status"] == "online");
-    assert_eq!(before["restarts"], 0, "precondition: {before}");
 
     std::fs::write(watched.path().join(".hidden.swp"), "editor churn").unwrap();
     // Polls for the restart that must not come, for the same deadline the
@@ -227,6 +224,22 @@ fn a_wait_ready_sheep_goes_online_only_once_it_signals_ready() {
 // --- Case 12 -------------------------------------------------------------
 
 #[cfg(unix)]
+/// Asserts a `--format json` start refused with exit `4` and
+/// `invalid_config`, and that the error message names `needle`: the case
+/// pins the offending pattern or target quoted in the rejection, not the
+/// wording, which is the rejecter's.
+#[track_caller]
+fn assert_config_error_names(output: &Output, needle: &str) {
+    assert_json_error(output, 4, "invalid_config");
+    let err: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    let message = err["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(needle),
+        "the rejection must name {needle:?}: {err}"
+    );
+}
+
+#[cfg(unix)]
 /// Exit `4`, JSON on stderr, and the offending pattern in the message. Spans
 /// `normalize`'s rejection, the daemon's `InvalidConfig` over RPC, and the
 /// CLI's exit code. Asserted on the pattern, not the wording, which is
@@ -254,13 +267,7 @@ fn a_bad_cron_pattern_is_a_config_error() {
         .unwrap();
     guard.adopt_home(home);
 
-    assert_json_error(&output, 4, "invalid_config");
-    let err: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
-    let message = err["error"]["message"].as_str().unwrap_or_default();
-    assert!(
-        message.contains("not a cron"),
-        "the rejection must name the offending pattern: {err}"
-    );
+    assert_config_error_names(&output, "not a cron");
 
     graceful_kill(home);
 }
@@ -296,13 +303,7 @@ fn an_https_probe_target_is_a_config_error() {
         .unwrap();
     guard.adopt_home(home);
 
-    assert_json_error(&output, 4, "invalid_config");
-    let err: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
-    let message = err["error"]["message"].as_str().unwrap_or_default();
-    assert!(
-        message.contains("https://localhost:8443/health"),
-        "the rejection must name the offending target: {err}"
-    );
+    assert_config_error_names(&output, "https://localhost:8443/health");
 
     graceful_kill(home);
 }

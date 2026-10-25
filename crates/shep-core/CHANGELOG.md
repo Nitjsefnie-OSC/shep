@@ -10,6 +10,167 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-25
+
+### Added
+
+- Resolve secret references in a sheep's per-dog table
+- Move the key/value store under `shep kv` **(BREAKING)**
+- Add manifest v1 types and the `--shep-manifest` flag
+- Answer `--shep-manifest` from `Probe` **(BREAKING)**
+- Carry a dog's grants on DogSource and map every request to a permission **(BREAKING)**
+- Add RpcErrorCode::Forbidden and move the protocol to 12
+- Carry a dog's grants from shep.toml and say when a shepherd will not enforce them
+- Carry a proposed settings table to a dog
+- Record waiting, revoked and reviewed beside a dog's grants
+- Show a dog's access marks in the dogs table and JSON
+- Copy one sheep's env onto another's inside the shepherd
+- Take an inherited dog connection socket
+- Answer `--shep-manifest` from `Probe` with manifest v1 **(BREAKING)**
+- Spawn each dog holding a connection to the shepherd **(BREAKING)**
+- Serve each Windows dog over its own user-only pipe
+- Add ResetSheepField and an override record's template **(BREAKING)**
+- Drop a sheep field's override with ResetSheepField
+- Enforce a dog's grants on its own connection **(BREAKING)**
+- Drop an override with `shep unset` **(BREAKING)**
+- A dog can refuse a settings write before shep makes it
+- Never widen a dog's access silently on upgrade, and mark it in listings
+
+### Fixed
+
+- An older shepherd's sheep_dog_table is NotFound for an unknown sheep
+- Refuse manifest version 0
+- Clear the typos and docs CI checks on the permissions module
+- Keep a dog's grants out of its own reach
+- Grant ResetSheepField with flock edit
+- Address review on grant upgrade marks
+- Refuse an env copy whose reviewed changes no longer hold
+- Seal each env copy change so a swapped literal is refused
+- Copy a sheep env instead of refusing it
+
+### Performance
+
+- Check a log stamp's shape instead of parsing it per line
+- Buffer the bark ring rewrite so a full ring costs one write per buffer
+- Buffer the bark ring rewrite to one write per buffer
+
+
+## [0.16.1] - 2026-10-22
+
+
+## [0.16.0] - 2026-10-22
+
+### Added
+
+- Read a top-level hosts list from shep.toml
+- Add shep host to edit the hosts list in shep.toml
+- Add the one ssh destination grammar
+- Add the TailLog request and its LogTail answer
+- Answer TailLog from the sheep's own log file
+- Decode a status or dog source this build does not know **(BREAKING)**
+- Add a hosts list to shep.toml and shep host add, remove and list
+- Answer a request for the tail of one sheep's log
+
+### Fixed
+
+- Keep a whole first line and bound the tail read to the window
+- Spell the non-ASCII destination test sample so typos passes
+- Move sort_flock tests out of the over-long process.rs and drop 'catch-alls'
+
+
+## [0.15.2] - 2026-10-17
+
+### Fixed
+
+- Poll a readiness probe inside listen_timeout
+
+
+## [0.15.1] - 2026-10-16
+
+### Fixed
+
+- Name both group keys on the config pane's tab row
+
+
+## [0.15.0] - 2026-10-15
+
+### Added
+
+- Let a sheep send a dog a note that is not a metric sample **(BREAKING)**
+- ProcessInfo carries whether a sheep's app turns the log stamp off
+
+### Changed
+
+- Apply table rows carry their reaches-running answer
+
+### Fixed
+
+- Trim tcp probe targets the way http ones are trimmed
+- Refuse a null or a datetime where a Flockfile key needs a table
+- Bleats keeps an app's own timestamp in the file tail of a stamps-off sheep
+
+
+## [0.14.0] - 2026-10-14
+
+
+## [0.13.0] - 2026-10-13
+
+### Added
+
+- A channel metric can carry a type, labels and help text **(BREAKING)**
+- Add enable and disable requests, a Disabled error code and ProcessInfo.disabled
+
+
+## [0.12.5] - 2026-10-07
+
+### Fixed
+
+- Refuse a frame that leads with an event key and carries a reply key
+
+### Performance
+
+- Decode a server frame without buffering it first
+
+
+## [0.12.4] - 2026-10-06
+
+
+## [0.12.3] - 2026-10-02
+
+
+## [0.12.2] - 2026-10-02
+
+
+## [0.12.1] - 2026-10-02
+
+### Added
+
+- Give a sheep's dogs row its own tab
+
+### Fixed
+
+- Refuse dog: null and pin DeclaredApp's redacted Debug
+
+
+## [0.12.0] - 2026-09-30
+
+### Added
+
+- Derive Default for MemSize and UpDuration
+- Let a dog's --version answer ask for the shepherd channel **(BREAKING)**
+- Record on an adopted DogSource whether it asked for the channel **(BREAKING)**
+- Name a dog's missing channel in its own trigger outcome
+- Add [daemon] channel_dogs to shep.toml **(BREAKING)**
+
+### Changed
+
+- Unify borrowed-to-owned name conversion in graph.rs
+
+### Performance
+
+- Compile glob-to-regex selectors once, not twice
+
+
 ## [0.11.0] - 2026-09-29
 
 ### Fixed
