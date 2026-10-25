@@ -560,7 +560,7 @@ mod tests {
         assert!(ENV_NOT_WRITTEN.contains("shep import env"));
     }
 
-    /// The two keys the shepherd refuses, each with the verb that does it.
+    /// The three paths a copy refuses, each with the verb that does it.
     #[test]
     fn name_instances_and_the_whole_dogs_map_each_say_why() {
         let instances = parse("web.instances", &flock()).unwrap_err();
