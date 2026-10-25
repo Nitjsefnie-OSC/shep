@@ -71,23 +71,54 @@ mod tests {
         }
     }
 
-    /// `"/[/"` is one of the only three inputs the selector grammar rejects.
-    #[tokio::test]
-    async fn a_malformed_selector_is_a_local_usage_error() {
+    /// Runs the verb against a fake daemon that captures envelopes.
+    ///
+    /// The same shape as `commands::trigger`'s helper, so the two verbs'
+    /// tests read alike.
+    async fn run(
+        args: &SignalArgs,
+    ) -> (
+        ExitCode,
+        Vec<u8>,
+        Vec<u8>,
+        tokio::sync::mpsc::Receiver<shep_core::protocol::Envelope>,
+    ) {
         let dir = tempfile::tempdir().unwrap();
         let path = shep_client::testing::control_address(dir.path());
-        let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
+        let (client, envelopes) = fake_client_capturing_envelopes(&path).await;
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
-            signal(&client, &mut streams, &args("/[/", "hup")).await
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
+            signal(&client, &mut streams, args).await
         };
+        (code, out, err, envelopes)
+    }
+
+    /// Runs the verb against a fake daemon scripted to answer with an RPC
+    /// error. A second helper rather than a flag on [`run`]: the two fake
+    /// daemons come from different factories.
+    async fn run_replying_err(
+        args: &SignalArgs,
+        code: RpcErrorCode,
+        message: &str,
+    ) -> (ExitCode, Vec<u8>, Vec<u8>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = shep_client::testing::control_address(dir.path());
+        let (client, _served) = fake_client_replying_err(&path, code, message).await;
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let exit = {
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
+            signal(&client, &mut streams, args).await
+        };
+        (exit, out, err)
+    }
+
+    /// `"/[/"` is one of the only three inputs the selector grammar rejects.
+    #[tokio::test]
+    async fn a_malformed_selector_is_a_local_usage_error() {
+        let (code, _out, _err, mut envelopes) = run(&args("/[/", "hup")).await;
         assert_eq!(code, ExitCode::Usage);
         assert!(
             envelopes.try_recv().is_err(),
@@ -97,20 +128,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_bad_signal_name_never_reaches_the_wire() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = shep_client::testing::control_address(dir.path());
-        let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
-            signal(&client, &mut streams, &args("web", "SIGHUPP")).await
-        };
+        let (code, out, err, mut envelopes) = run(&args("web", "SIGHUPP")).await;
         assert_eq!(code, ExitCode::Usage);
         assert!(
             envelopes.try_recv().is_err(),
@@ -122,21 +140,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_not_found_reply_exits_not_found_rather_than_being_swallowed() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = shep_client::testing::control_address(dir.path());
-        let (client, _served) =
-            fake_client_replying_err(&path, RpcErrorCode::NotFound, "no sheep matched").await;
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
-            signal(&client, &mut streams, &args("nonexistent", "hup")).await
-        };
+        let (code, out, _err) = run_replying_err(
+            &args("nonexistent", "hup"),
+            RpcErrorCode::NotFound,
+            "no sheep matched",
+        )
+        .await;
         assert_eq!(code, ExitCode::NotFound);
         assert!(out.is_empty());
     }
@@ -145,18 +154,7 @@ mod tests {
     /// meaningless against an already-canonical name.
     #[tokio::test]
     async fn the_request_carries_the_selector_and_the_canonical_signal_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = shep_client::testing::control_address(dir.path());
-        let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        let _ = signal(&client, &mut streams, &args("web", "hup")).await;
+        let (_code, _out, _err, mut envelopes) = run(&args("web", "hup")).await;
 
         let envelope = envelopes.recv().await.unwrap();
         assert_eq!(
@@ -172,20 +170,7 @@ mod tests {
     /// `match` has no arm for.
     #[tokio::test]
     async fn an_unrecognised_response_exits_internal() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = shep_client::testing::control_address(dir.path());
-        let (client, _envelopes) = fake_client_capturing_envelopes(&path).await;
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
-            signal(&client, &mut streams, &args("web", "hup")).await
-        };
+        let (code, out, err, _envelopes) = run(&args("web", "hup")).await;
         assert_eq!(code, ExitCode::Internal);
         assert!(out.is_empty());
         assert!(!err.is_empty());
