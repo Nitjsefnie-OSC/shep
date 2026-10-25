@@ -92,6 +92,12 @@ fn changes_of(reply: Result<Response, RpcError>) -> Vec<EnvCopyChange> {
     }
 }
 
+/// `changes` as the shepherd lists them with the seals taken off, for
+/// comparing against what a test writes out by hand.
+fn unsealed(changes: Vec<EnvCopyChange>) -> Vec<EnvCopyChange> {
+    changes.into_iter().map(|change| change.sealed(0)).collect()
+}
+
 fn stored_env(h: &Harness, name: &str) -> serde_json::Value {
     shep_core::overrides::get(&h.ctx.paths.overrides, name)
         .unwrap()
@@ -117,7 +123,7 @@ async fn a_merge_copies_every_key_and_shows_only_references() {
         assert!(!wire.contains(literal), "{literal} leaked: {wire}");
     }
     assert_eq!(
-        changes_of(reply),
+        unsealed(changes_of(reply)),
         vec![
             EnvCopyChange::new(
                 "B",
@@ -319,4 +325,40 @@ async fn a_write_whose_reviewed_changes_still_hold_is_applied() {
         changes_of(copy_expecting(&h, 3, false, &[], false, Some(reviewed.clone())).await);
     assert_eq!(applied, reviewed);
     assert_eq!(stored_env(&h, "api")["B"], "web-literal");
+}
+
+/// Two redacted values look alike, so the seal is what notices a literal
+/// swapped for another, on the target or on the source, between the dry run
+/// and the write.
+#[tokio::test(start_paused = true)]
+async fn a_literal_swapped_since_the_review_is_refused() {
+    for (id, edited) in [(3, "api"), (5, "web")] {
+        let h = harness(vec![ProcScript::never_exits(), ProcScript::never_exits()]);
+        start_pair(&h).await;
+        let reviewed = changes_of(copy(&h, 2, false, &[], true).await);
+
+        let swapped = reply_of(
+            dispatch(
+                envelope(
+                    id,
+                    Request::SetSheepEnv {
+                        name: edited.to_string(),
+                        key: "B".to_string(),
+                        value: Some("swapped".to_string().into()),
+                    },
+                ),
+                &h.ctx,
+            )
+            .await,
+        );
+        assert!(swapped.result.is_ok(), "{:?}", swapped.result);
+        let before = stored_env(&h, "api");
+
+        let err = copy_expecting(&h, id + 1, false, &[], false, Some(reviewed))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidConfig, "{edited}: {err:?}");
+        assert!(err.message.contains('B'), "{edited}: {err:?}");
+        assert_eq!(stored_env(&h, "api"), before, "nothing was written");
+    }
 }

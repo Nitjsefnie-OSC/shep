@@ -201,7 +201,8 @@ pub enum Request {
     /// `expect` is the change list a dry run answered, sent back with the
     /// write. The shepherd computes the list again from what the two sheep
     /// hold now, and refuses with [`RpcErrorCode::InvalidConfig`], writing
-    /// nothing, when it is not the one named. Without it, an edit between
+    /// nothing, when it is not the one named, a value swapped for another
+    /// included (see [`EnvCopyChange::seal`]). Without it, an edit between
     /// the two requests changes what lands. Absent on the wire when `None`.
     ///
     /// Answers [`Response::SheepEnvCopied`], or

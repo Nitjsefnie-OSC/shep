@@ -185,17 +185,20 @@ fn copy_sheep_env_expect_wire_v12() {
         replace: false,
         except: Vec::new(),
         dry_run: false,
-        expect: Some(vec![crate::protocol::EnvCopyChange::new(
-            "PADDOCK_KEY",
-            crate::protocol::EnvCopyKind::Added,
-            None,
-            Some("{{secret:PADDOCK_KEY}}".to_string()),
-        )]),
+        expect: Some(vec![
+            crate::protocol::EnvCopyChange::new(
+                "PADDOCK_KEY",
+                crate::protocol::EnvCopyKind::Added,
+                None,
+                Some("{{secret:PADDOCK_KEY}}".to_string()),
+            )
+            .sealed(7),
+        ]),
     };
     let json = serde_json::to_string(&request).unwrap();
     assert_eq!(
         json,
-        r#"{"kind":"copy_sheep_env","from":"web","to":"api","replace":false,"except":[],"dry_run":false,"expect":[{"key":"PADDOCK_KEY","kind":"added","old":null,"new":"{{secret:PADDOCK_KEY}}"}]}"#
+        r#"{"kind":"copy_sheep_env","from":"web","to":"api","replace":false,"except":[],"dry_run":false,"expect":[{"key":"PADDOCK_KEY","kind":"added","old":null,"new":"{{secret:PADDOCK_KEY}}","seal":7}]}"#
     );
     assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
     let without = r#"{"kind":"copy_sheep_env","from":"web","to":"api","replace":false,"except":[],"dry_run":false}"#;

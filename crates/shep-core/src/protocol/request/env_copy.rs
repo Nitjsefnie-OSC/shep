@@ -23,7 +23,10 @@ pub enum EnvCopyKind {
 /// as written, and `<redacted>` for every other value. The values themselves
 /// never leave the shepherd, as `SheepConfig` never sends them.
 ///
-/// `Debug` is derived: nothing here is a value.
+/// `seal` is what lets a write tell two redacted values apart: see the field.
+///
+/// `Debug` is derived: nothing here is a value, and `seal` is a keyed
+/// fingerprint that says nothing about one.
 // wire format: changing field names is a breaking change
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -36,6 +39,16 @@ pub struct EnvCopyChange {
     pub old: Option<String>,
     /// What the target holds afterwards, `None` for a removed key.
     pub new: Option<String>,
+    /// A fingerprint of the real `old` and `new`, keyed by the shepherd that
+    /// answered and meaningful only to it.
+    ///
+    /// Two redacted values look alike, so a copy sent back with the list
+    /// it reviewed would otherwise not notice one literal swapped for
+    /// another. The key is fresh for each shepherd process, so the seal
+    /// reveals nothing about a value, and a list sealed by an earlier
+    /// shepherd no longer matches. `0` when absent on the wire.
+    #[serde(default)]
+    pub seal: u64,
 }
 
 impl EnvCopyChange {
@@ -52,6 +65,14 @@ impl EnvCopyChange {
             kind,
             old,
             new,
+            seal: 0,
         }
+    }
+
+    /// This change with `seal` as its fingerprint.
+    #[must_use]
+    pub fn sealed(mut self, seal: u64) -> Self {
+        self.seal = seal;
+        self
     }
 }

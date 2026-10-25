@@ -36,25 +36,28 @@ fn sheep_env_copied_response_wire_v12() {
                 EnvCopyKind::Added,
                 None,
                 Some("{{secret:PADDOCK_KEY}}".to_string()),
-            ),
+            )
+            .sealed(11),
             EnvCopyChange::new(
                 "PORT",
                 EnvCopyKind::Changed,
                 Some("<redacted>".to_string()),
                 Some("<redacted>".to_string()),
-            ),
+            )
+            .sealed(12),
             EnvCopyChange::new(
                 "OLD",
                 EnvCopyKind::Removed,
                 Some("<redacted>".to_string()),
                 None,
-            ),
+            )
+            .sealed(13),
         ],
     };
     let json = serde_json::to_string(&response).unwrap();
     assert_eq!(
         json,
-        r#"{"kind":"sheep_env_copied","data":{"from":"web","to":"api","changes":[{"key":"PADDOCK_KEY","kind":"added","old":null,"new":"{{secret:PADDOCK_KEY}}"},{"key":"PORT","kind":"changed","old":"<redacted>","new":"<redacted>"},{"key":"OLD","kind":"removed","old":"<redacted>","new":null}]}}"#
+        r#"{"kind":"sheep_env_copied","data":{"from":"web","to":"api","changes":[{"key":"PADDOCK_KEY","kind":"added","old":null,"new":"{{secret:PADDOCK_KEY}}","seal":11},{"key":"PORT","kind":"changed","old":"<redacted>","new":"<redacted>","seal":12},{"key":"OLD","kind":"removed","old":"<redacted>","new":null,"seal":13}]}}"#
     );
     assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
 }

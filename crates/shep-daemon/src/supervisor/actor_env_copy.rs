@@ -1,6 +1,8 @@
 //! Copying one sheep's env onto another's, inside the shepherd.
 
 use std::collections::BTreeSet;
+use std::hash::{BuildHasher, Hash, Hasher, RandomState};
+use std::sync::OnceLock;
 
 use shep_core::protocol::{EnvCopyChange, EnvCopyKind};
 use shep_core::secrets::shown_env_value;
@@ -36,9 +38,9 @@ impl<R: ProcessRunner> Actor<R> {
     ///   the store is read, for [`Self::handle_set_sheep_env`]'s reason, and
     ///   for `from` because a dog's env is not a pane's to read either.
     /// - [`SupervisorError::EnvChanged`] - `expect` is not the change list the
-    ///   two sheep give now. Raised before anything is written, so a key
-    ///   another client edited since the caller's dry run is never replaced
-    ///   or removed unseen.
+    ///   two sheep give now, a value swapped for another included. Raised
+    ///   before anything is written, so a key another client edited since the
+    ///   caller's dry run is never replaced or removed unseen.
     /// - [`SupervisorError::InvalidEnv`] - the resulting config is one
     ///   `normalize` refuses. Nothing was written.
     /// - [`SupervisorError::Overrides`] - the store could not be read or
@@ -121,6 +123,19 @@ impl<R: ProcessRunner> Actor<R> {
     }
 }
 
+/// A fingerprint of the real values a change moves between, under a key that
+/// lives as long as this process.
+///
+/// A redacted value cannot say whether it is still the one that was reviewed;
+/// this can, and tells a client nothing about the value.
+fn seal(old: Option<&String>, new: Option<&String>) -> u64 {
+    static KEY: OnceLock<RandomState> = OnceLock::new();
+    let mut hasher = KEY.get_or_init(RandomState::new).build_hasher();
+    old.hash(&mut hasher);
+    new.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// The keys whose change is in one list and not in the other, in key order.
 fn differing_keys(reviewed: &[EnvCopyChange], now: &[EnvCopyChange]) -> String {
     let keys: BTreeSet<&str> = reviewed
@@ -146,12 +161,15 @@ fn diff(before: &BTreeMap<String, String>, after: &BTreeMap<String, String>) -> 
                 (Some(_), None) => EnvCopyKind::Removed,
                 (None, None) => return None,
             };
-            Some(EnvCopyChange::new(
-                key.as_str(),
-                kind,
-                old.map(|value| shown_env_value(value)),
-                new.map(|value| shown_env_value(value)),
-            ))
+            Some(
+                EnvCopyChange::new(
+                    key.as_str(),
+                    kind,
+                    old.map(|value| shown_env_value(value)),
+                    new.map(|value| shown_env_value(value)),
+                )
+                .sealed(seal(old, new)),
+            )
         })
         .collect()
 }
