@@ -225,6 +225,10 @@ mod tests {
         );
     }
 
+    /// The four tools the gate can withhold, named once for both halves of
+    /// the gate test below.
+    const CONTROL_TOOLS: [&str; 4] = ["start_sheep", "stop_sheep", "restart_sheep", "reload_sheep"];
+
     /// Five tools with the gate shut, nine with it open; the four that
     /// appear are named, since a count alone would pass a duplicated read
     /// tool.
@@ -237,7 +241,7 @@ mod tests {
             .map(|tool| tool.name.to_string())
             .collect();
         assert_eq!(shut.len(), 5, "read-only: {shut:?}");
-        for absent in ["start_sheep", "stop_sheep", "restart_sheep", "reload_sheep"] {
+        for absent in CONTROL_TOOLS {
             assert!(
                 !shut.contains(&absent.to_string()),
                 "{absent} must not exist"
@@ -251,7 +255,7 @@ mod tests {
             .map(|tool| tool.name.to_string())
             .collect();
         assert_eq!(open.len(), 9, "gate open: {open:?}");
-        for present in ["start_sheep", "stop_sheep", "restart_sheep", "reload_sheep"] {
+        for present in CONTROL_TOOLS {
             assert!(open.contains(&present.to_string()), "{present} must exist");
         }
     }
