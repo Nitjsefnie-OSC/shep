@@ -167,12 +167,12 @@ impl From<&shep_client::spawn::SpawnError> for ExitCode {
     }
 }
 
-/// The [`std::process::ExitCode`] a process exits with to report this code:
+/// The `std::process::ExitCode` a process exits with to report this code:
 /// the variant's own discriminant, so the number an operator sees is the one
-/// `docs/specs/shep-v1.md` §9 states and [`ExitCode::code_str`] spells.
+/// `docs/specs/shep-v1.md` §9 states and `ExitCode::code_str` spells.
 ///
 /// The only conversion the other way: every one above reads a number a
-/// `shep_client` error chose and names the [`ExitCode`] for it, and this one
+/// `shep_client` error chose and names the `ExitCode` for it, and this one
 /// hands that choice to the OS.
 impl From<ExitCode> for std::process::ExitCode {
     fn from(code: ExitCode) -> Self {
