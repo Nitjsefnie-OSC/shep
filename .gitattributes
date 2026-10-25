@@ -45,6 +45,14 @@ crates/shep-cli/tests/fixtures/gallery-logs/api-err.log text eol=lf
 # vendors these bytes and gofmt wants LF.
 crates/shep-channel/wire/channel.go text eol=lf
 
+# Read at test runtime by `cli::help`'s
+# `the_readme_names_the_same_verb_groups_as_help_does`, which compares the
+# README's grouped verb listing byte for byte against `HELP_TEMPLATE`. A
+# CRLF checkout makes the fence marker ` ```text\n ` unreadable, so the test
+# cannot find the block at all: three Windows jobs red on a README that is
+# byte-identical on every other platform.
+README.md text eol=lf
+
 # `include_str!`ed as a byte-exact fixture in `dog::metrics::exposition`'s
 # `a_full_flock_renders_exactly_the_bytes_the_baseline_did`, which compares
 # it against a string `render` builds at runtime with `\n`. `text=auto`
