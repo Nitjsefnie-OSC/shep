@@ -3,6 +3,39 @@
 
 use super::*;
 
+/// Start `args` through `shep`, hand the home to `guard` before anything that
+/// can panic after the spawn, and wait for the sheep to come online with a
+/// pid. Returns its `flock` row.
+///
+/// Every handover case opens the same way, and the row is where each one
+/// reads its pid and its `out_file` back.
+#[track_caller]
+pub(crate) fn start_a_sheep_and_wait_online(
+    guard: &mut DaemonGuard,
+    home: &Path,
+    args: &[&str],
+) -> serde_json::Value {
+    // Register the home before unwrapping. `output()` can fail after the CLI
+    // autostarted a daemon. A panic before the adoption would leave that
+    // daemon in no guard.
+    let attempt = shep(home).args(args).output();
+    guard.adopt_home(home);
+    let boot = match attempt {
+        Ok(boot) => boot,
+        Err(e) => panic!("`shep` could not run at {}: {e}", home.display()),
+    };
+    assert_success(&boot);
+
+    let row = poll_flock(home, |info| {
+        info["status"] == "online" && !info["pid"].is_null()
+    });
+    assert!(
+        row["status"] == "online" && row["pid"].as_u64().is_some(),
+        "the sheep must come online with a pid within {FLOCK_DEADLINE:?}: {row}"
+    );
+    row
+}
+
 /// Writes a script that counts from 1 upwards on stdout, one number per line,
 /// forever.
 ///
@@ -78,24 +111,18 @@ fn a_sheep_keeps_its_pid_and_its_log_across_a_daemon_reload() {
     let script = write_counting_script(&dir);
     let mut guard = DaemonGuard::default();
 
-    let started = shep(dir.path())
-        .arg("--format")
-        .arg("json")
-        .arg("start")
-        .arg(&script)
-        .arg("--name")
-        .arg("counter")
-        .output()
-        .unwrap();
-    guard.adopt_home(dir.path());
-    assert_success(&started);
-
-    let before = poll_flock(dir.path(), |info| {
-        info["status"] == "online" && !info["pid"].is_null()
-    });
-    let pid_before = before["pid"]
-        .as_u64()
-        .unwrap_or_else(|| panic!("an online sheep reports a pid: {before}"));
+    let before = start_a_sheep_and_wait_online(
+        &mut guard,
+        dir.path(),
+        &[
+            "--format",
+            "json",
+            "start",
+            script.to_str().unwrap(),
+            "--name",
+            "counter",
+        ],
+    );
     let out_file = PathBuf::from(
         before["out_file"]
             .as_str()
@@ -118,8 +145,7 @@ fn a_sheep_keeps_its_pid_and_its_log_across_a_daemon_reload() {
         info["status"] == "online" && !info["pid"].is_null()
     });
     assert_eq!(
-        after["pid"].as_u64(),
-        Some(pid_before),
+        after["pid"], before["pid"],
         "a moved pid means the sheep was respawned, which is the stop arm: {after}"
     );
 
@@ -203,24 +229,18 @@ fn a_bad_shep_toml_refuses_the_reload_and_leaves_the_flock_supervised() {
     let script = write_test_script(&dir);
     let mut guard = DaemonGuard::default();
 
-    let started = shep(dir.path())
-        .arg("--format")
-        .arg("json")
-        .arg("start")
-        .arg(&script)
-        .arg("--name")
-        .arg("sheep")
-        .output()
-        .unwrap();
-    guard.adopt_home(dir.path());
-    assert_success(&started);
-
-    let before = poll_flock(dir.path(), |info| {
-        info["status"] == "online" && !info["pid"].is_null()
-    });
-    let pid_before = before["pid"]
-        .as_u64()
-        .unwrap_or_else(|| panic!("an online sheep reports a pid: {before}"));
+    let before = start_a_sheep_and_wait_online(
+        &mut guard,
+        dir.path(),
+        &[
+            "--format",
+            "json",
+            "start",
+            script.to_str().unwrap(),
+            "--name",
+            "sheep",
+        ],
+    );
 
     write_shep_toml(&dir, "[daemon]\nmax_cron_sleep = \"soon\"\n");
 
@@ -247,8 +267,7 @@ fn a_bad_shep_toml_refuses_the_reload_and_leaves_the_flock_supervised() {
     let sheep = &sheep_rows(&envelope["data"])[0];
     assert_eq!(sheep["status"], "online", "still supervised: {sheep}");
     assert_eq!(
-        sheep["pid"].as_u64(),
-        Some(pid_before),
+        sheep["pid"], before["pid"],
         "the refusal must happen before anything is signalled: {sheep}"
     );
 
@@ -267,24 +286,18 @@ fn a_refused_dog_migration_refuses_the_reload_and_leaves_the_flock_supervised() 
     let script = write_test_script(&dir);
     let mut guard = DaemonGuard::default();
 
-    let started = shep(dir.path())
-        .arg("--format")
-        .arg("json")
-        .arg("start")
-        .arg(&script)
-        .arg("--name")
-        .arg("sheep")
-        .output()
-        .unwrap();
-    guard.adopt_home(dir.path());
-    assert_success(&started);
-
-    let before = poll_flock(dir.path(), |info| {
-        info["status"] == "online" && !info["pid"].is_null()
-    });
-    let pid_before = before["pid"]
-        .as_u64()
-        .unwrap_or_else(|| panic!("an online sheep reports a pid: {before}"));
+    let before = start_a_sheep_and_wait_online(
+        &mut guard,
+        dir.path(),
+        &[
+            "--format",
+            "json",
+            "start",
+            script.to_str().unwrap(),
+            "--name",
+            "sheep",
+        ],
+    );
 
     write_shep_toml(&dir, "[dog.metrics]\nbind = \"127.0.0.1:19616\"\n");
     std::fs::write(
@@ -316,8 +329,7 @@ fn a_refused_dog_migration_refuses_the_reload_and_leaves_the_flock_supervised() 
     let sheep = &sheep_rows(&envelope["data"])[0];
     assert_eq!(sheep["status"], "online", "still supervised: {sheep}");
     assert_eq!(
-        sheep["pid"].as_u64(),
-        Some(pid_before),
+        sheep["pid"], before["pid"],
         "the refusal must happen before anything is signalled: {sheep}"
     );
 
@@ -335,24 +347,18 @@ fn a_bad_shep_toml_an_env_var_would_rescue_is_still_refused() {
     let script = write_test_script(&dir);
     let mut guard = DaemonGuard::default();
 
-    let started = shep(dir.path())
-        .arg("--format")
-        .arg("json")
-        .arg("start")
-        .arg(&script)
-        .arg("--name")
-        .arg("sheep")
-        .output()
-        .unwrap();
-    guard.adopt_home(dir.path());
-    assert_success(&started);
-
-    let before = poll_flock(dir.path(), |info| {
-        info["status"] == "online" && !info["pid"].is_null()
-    });
-    let pid_before = before["pid"]
-        .as_u64()
-        .unwrap_or_else(|| panic!("an online sheep reports a pid: {before}"));
+    let before = start_a_sheep_and_wait_online(
+        &mut guard,
+        dir.path(),
+        &[
+            "--format",
+            "json",
+            "start",
+            script.to_str().unwrap(),
+            "--name",
+            "sheep",
+        ],
+    );
 
     // Below MIN_CRON_SLEEP (1s): valid TOML, refused only at DaemonConfig's
     // own validation pass.
@@ -382,8 +388,7 @@ fn a_bad_shep_toml_an_env_var_would_rescue_is_still_refused() {
     let sheep = &sheep_rows(&envelope["data"])[0];
     assert_eq!(sheep["status"], "online", "still supervised: {sheep}");
     assert_eq!(
-        sheep["pid"].as_u64(),
-        Some(pid_before),
+        sheep["pid"], before["pid"],
         "the refusal must happen before anything is signalled: {sheep}"
     );
 

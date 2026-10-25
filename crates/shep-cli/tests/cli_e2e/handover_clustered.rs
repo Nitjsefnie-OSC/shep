@@ -334,22 +334,13 @@ fn a_channel_sheep_still_answers_a_trigger_across_a_daemon_reload() {
     );
     let mut guard = DaemonGuard::default();
 
-    let started = shep(dir.path())
-        .arg("start")
-        .arg(&flockfile)
-        .output()
-        .unwrap();
-    guard.adopt_home(dir.path());
-    assert_success(&started);
-
     // `online` rather than `starting`, which only the child's own readiness
     // line over fd 3 can produce.
-    let before = poll_flock(dir.path(), |info| {
-        info["status"] == "online" && !info["pid"].is_null()
-    });
-    let pid_before = before["pid"]
-        .as_u64()
-        .unwrap_or_else(|| panic!("an online sheep reports a pid: {before}"));
+    let before = start_a_sheep_and_wait_online(
+        &mut guard,
+        dir.path(),
+        &["start", flockfile.to_str().unwrap()],
+    );
     let answered = trigger_ping(dir.path());
     assert_eq!(
         answered["kind"], "replied",
@@ -367,8 +358,7 @@ fn a_channel_sheep_still_answers_a_trigger_across_a_daemon_reload() {
         info["status"] == "online" && !info["pid"].is_null()
     });
     assert_eq!(
-        after["pid"].as_u64(),
-        Some(pid_before),
+        after["pid"], before["pid"],
         "a moved pid means the sheep was respawned, which is the stop arm: {after}"
     );
 
