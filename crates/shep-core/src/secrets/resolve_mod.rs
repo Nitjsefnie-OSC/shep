@@ -210,7 +210,7 @@ mod tests {
         let view = SecretView::new(
             "production".to_string(),
             BTreeMap::new(),
-            vercel_production(),
+            vercel_env("production"),
         );
 
         assert!(matches!(
@@ -245,7 +245,11 @@ mod tests {
     /// push's keys permanently missing the moment the first push lands.
     #[test]
     fn a_namespace_pushed_for_another_environment_is_not_populated_for_this_one() {
-        let view = SecretView::new("staging".to_string(), BTreeMap::new(), vercel_production());
+        let view = SecretView::new(
+            "staging".to_string(),
+            BTreeMap::new(),
+            vercel_env("production"),
+        );
 
         assert!(
             matches!(
@@ -267,7 +271,7 @@ mod tests {
         let view = SecretView::new(
             "production".to_string(),
             BTreeMap::new(),
-            vercel_production(),
+            vercel_env("production"),
         );
 
         assert!(matches!(
@@ -285,7 +289,11 @@ mod tests {
     /// would be for a `production` one.
     #[test]
     fn an_all_slot_push_makes_a_genuinely_missing_key_permanent() {
-        let view = SecretView::new("staging".to_string(), BTreeMap::new(), vercel_all());
+        let view = SecretView::new(
+            "staging".to_string(),
+            BTreeMap::new(),
+            vercel_env(ALL_ENVIRONMENTS),
+        );
 
         assert!(matches!(
             view.resolve(&SecretRef {
@@ -301,7 +309,11 @@ mod tests {
     /// never received its own push.
     #[test]
     fn an_all_slot_push_resolves_its_key_for_every_environment() {
-        let view = SecretView::new("staging".to_string(), BTreeMap::new(), vercel_all());
+        let view = SecretView::new(
+            "staging".to_string(),
+            BTreeMap::new(),
+            vercel_env(ALL_ENVIRONMENTS),
+        );
 
         assert!(matches!(
             view.resolve(&SecretRef {

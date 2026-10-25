@@ -12,6 +12,7 @@ use shep_core::paths::ShepPaths;
 use std::path::Path;
 use std::time::Instant;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 /// The UI loop.
 ///
@@ -23,7 +24,7 @@ use tokio::sync::mpsc;
 /// forever, so every arm above the heartbeat is disabled once it runs dry;
 /// arm 4's is live, since an empty `FuturesUnordered` fills again. The redraw
 /// runs after the `select!`, gated on `dirty` and [`MIN_REDRAW`]; the feed
-/// and the lamb fetch ride that same gate. Ten arguments, hence the
+/// and the lamb fetch ride that same gate. Eight arguments, hence the
 /// `#[allow]`.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_ui<B: Backend, S, L>(
@@ -33,18 +34,13 @@ pub async fn run_ui<B: Backend, S, L>(
     mut msgs: mpsc::Receiver<Msg>,
     polls: mpsc::Sender<()>,
     requests: mpsc::Sender<super::app::Sent>,
-    // The resolved layout, read only by `Effect::LoadSecrets`.
+    // The resolved layout. `paths.home` is `$SHEP_HOME` as this invocation
+    // resolved it, which `Effect::LoadDogPane` hands the schema probe:
+    // `commands::dogs::ask` sets `SHEP_HOME` for the probed candidate, so a
+    // home other than `--home`'s could point a probe at the live daemon's
+    // socket instead. Cloned into each `spawn_blocking` closure that outlives
+    // this stack frame.
     paths: ShepPaths,
-    // `$SHEP_HOME` as this invocation resolved it. Only `Effect::LoadDogPane`
-    // reads it: `commands::dogs::ask` sets `SHEP_HOME` for the probed
-    // candidate, so a home other than `--home`'s could point a schema probe
-    // at the live daemon's socket instead.
-    home: std::path::PathBuf,
-    // The settings screen's own read target. Two owned `PathBuf`s rather than
-    // `&ShepPaths`, so a test can hand this loop an arbitrary pair, and cloned
-    // into each `spawn_blocking` closure that outlives this stack frame.
-    daemon_config: std::path::PathBuf,
-    socket_default: std::path::PathBuf,
     mut local: L,
 ) -> Terminal<B>
 where
@@ -234,6 +230,8 @@ where
         // Nothing to apply, and not a spin risk: an unbound keypress needs a
         // fresh keystroke, and each source retires once, ever.
         let Some(msg) = msg else { continue };
+        // `Quit` leaves the loop below and nothing reads this after it.
+        dirty = true;
 
         match app.update(msg) {
             Effect::Quit => break,
@@ -245,7 +243,6 @@ where
                 let _ = polls.try_send(());
                 // `r` means "tell me again", so it refreshes the panes too.
                 lambs_dirty = true;
-                dirty = true;
             }
             // Not the read. A held `j` reaches an ordinary terminal as twenty
             // to thirty Press events a second, so a synchronous 128 KiB read
@@ -254,13 +251,11 @@ where
             Effect::RefreshFeed => {
                 feed_dirty = true;
                 log_size_dirty = true;
-                dirty = true;
             }
             Effect::RefreshSelected => {
                 feed_dirty = true;
                 lambs_dirty = true;
                 log_size_dirty = true;
-                dirty = true;
             }
             Effect::Send(sent) => {
                 // `try_send`, not `send`: blocking the UI on a full channel
@@ -273,7 +268,6 @@ where
                     // construction.
                     let _ = app.update(Msg::Unsent { sent });
                 }
-                dirty = true;
             }
             // Off this task, unlike the arm above: `try_send` would drop
             // the tail of a batch deeper than the channel, and this task
@@ -283,15 +277,14 @@ where
             // and nothing is dropped for merely being full.
             Effect::SendAll(batch) => {
                 inflight.push(Box::pin(send_batch(requests.clone(), batch)));
-                dirty = true;
             }
             // Off this task: `spawn_blocking` even though the read takes no
             // lock, and pushed into `inflight` rather than awaited, as
             // `Effect::WriteSetting` does. The style is `app.style()`, already
             // resolved by `run_argv`, so the STYLE LEVEL row agrees.
             Effect::LoadSettings => {
-                let path = daemon_config.clone();
-                let socket_default = socket_default.clone();
+                let path = paths.daemon_config.clone();
+                let socket_default = paths.socket.clone();
                 let style = app.style();
                 let handle = tokio::task::spawn_blocking(move || {
                     crate::commands::settings::load_settings(&path, &socket_default, style)
@@ -299,13 +292,9 @@ where
                 // Pushed, not awaited. The `Msg` is built inside the wrapper
                 // so the arm that drains `inflight` stays one line.
                 inflight.push(Box::pin(async move {
-                    let result = handle
-                        .await
-                        .map_err(|err| err.to_string())
-                        .and_then(|inner| inner.map_err(|err| err.to_string()));
+                    let result = join_blocking(handle).await;
                     Msg::Settings { result }
                 }));
-                dirty = true;
             }
             // Off this task for the same reason `Effect::WriteSetting` is:
             // the store's own lock (`ShepToml::try_edit`'s cousin over
@@ -346,7 +335,6 @@ where
                         result,
                     }
                 }));
-                dirty = true;
             }
             // Off this task for `Effect::LoadSettings`'s reason: a read that
             // takes no lock still stalls the redraw, the tick and the bus
@@ -376,7 +364,6 @@ where
                         value: handle.await.ok().flatten().map(RevealedValue),
                     }
                 }));
-                dirty = true;
             }
             // `apply_setting` takes `ShepToml::try_edit`'s lock, which blocks
             // with no deadline, so the handle goes into `inflight` rather than
@@ -387,30 +374,26 @@ where
                 ticket,
                 authority: _authority,
             } => {
-                let path = daemon_config.clone();
+                let path = paths.daemon_config.clone();
                 let for_msg = edit.clone();
                 let handle = tokio::task::spawn_blocking(move || {
                     crate::commands::settings::apply_setting(&path, &edit)
                 });
                 inflight.push(Box::pin(async move {
-                    let result = handle
-                        .await
-                        .map_err(|err| err.to_string())
-                        .and_then(|inner| inner.map_err(|err| err.to_string()));
+                    let result = join_blocking(handle).await;
                     Msg::SettingWritten {
                         edit: for_msg,
                         ticket,
                         result,
                     }
                 }));
-                dirty = true;
             }
             // Off this task: an adopted dog's schema probe spawns its own
             // binary and can block up to `VERSION_BUDGET`, which would
             // freeze the redraw and bus drain if awaited inline. `Silent`
             // and `Unreadable` both mean no pane here.
             Effect::LoadDogPane { name, adopted_path } => {
-                let home = home.clone();
+                let home = paths.home.clone();
                 let handle = tokio::task::spawn_blocking(move || {
                     let schema = match (crate::dog::builtin_schema(&name), adopted_path.as_deref())
                     {
@@ -449,14 +432,13 @@ where
                         result: Err(format!("the schema probe failed: {err}")),
                     })
                 }));
-                dirty = true;
             }
             // Off this task for `Effect::LoadDogPane`'s reason, with every
             // dog asked once, all at the same time.
             // A probe that panicked lists no dog, which leaves every table
             // read-only rather than editable through a schema nobody read.
             Effect::LoadSheepDogs { sheep, ask } => {
-                let (config, home) = (daemon_config.clone(), home.clone());
+                let (config, home) = (paths.daemon_config.clone(), paths.home.clone());
                 let handle = tokio::task::spawn_blocking(move || {
                     let budget = crate::commands::dogs::VERSION_BUDGET;
                     super::probe_sheep_dogs::probe_sheep_dogs(&config, &home, budget)
@@ -465,7 +447,6 @@ where
                     let dogs = handle.await.unwrap_or_default();
                     Msg::SheepDogs { sheep, ask, dogs }
                 }));
-                dirty = true;
             }
             // `dogs::enable_in_config`/`dogs::disable_in_config` take
             // `ShepToml`'s own lock, which blocks with no deadline, so this
@@ -476,7 +457,7 @@ where
                 ticket,
                 authority: _authority,
             } => {
-                let path = daemon_config.clone();
+                let path = paths.daemon_config.clone();
                 let for_msg = edit.clone();
                 let handle = tokio::task::spawn_blocking(move || {
                     if edit.enable {
@@ -492,17 +473,13 @@ where
                 // message, so the daemon half of a dog toggle goes out exactly
                 // as an ordinary key's `Effect::Send` does.
                 inflight.push(Box::pin(async move {
-                    let result = handle
-                        .await
-                        .map_err(|err| err.to_string())
-                        .and_then(|inner| inner);
+                    let result = join_blocking(handle).await;
                     Msg::DogWritten {
                         edit: for_msg,
                         ticket,
                         result,
                     }
                 }));
-                dirty = true;
             }
             // `super::secrets::set`/`super::secrets::unset` take `secrets.json.lock`,
             // which acquires with no deadline, for `Effect::WriteSetting`'s
@@ -522,13 +499,9 @@ where
                     None => shep_core::secrets::unset(&store, &edit.key, &edit.environment),
                 });
                 inflight.push(Box::pin(async move {
-                    let result = handle
-                        .await
-                        .map_err(|err| err.to_string())
-                        .and_then(|inner| inner.map_err(|err| err.to_string()));
+                    let result = join_blocking(handle).await;
                     Msg::SecretWritten { result }
                 }));
-                dirty = true;
             }
             // Straight to `io::stdout()` through `term`, not `terminal`
             // (`ratatui::Terminal`): a `TestBackend` verifies nothing here.
@@ -536,19 +509,26 @@ where
             // pipe, and the pane's wording already says sent, not arrived.
             Effect::CopyToClipboard(value) => {
                 let _ = super::term::copy_to_clipboard(&value.0);
-                dirty = true;
             }
-            Effect::None => dirty = true,
+            Effect::None => {}
         }
     }
 
     terminal
 }
 
+/// A `spawn_blocking` handle's result with a join failure and the task's own
+/// error both read as a message.
+async fn join_blocking<T, E: ToString>(handle: JoinHandle<Result<T, E>>) -> Result<T, String> {
+    handle
+        .await
+        .map_err(|err| err.to_string())
+        .and_then(|inner| inner.map_err(|err| err.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
 
-    use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
@@ -646,9 +626,6 @@ mod tests {
                 poll_tx,
                 request_tx,
                 test_paths(dir.path()),
-                dir.path().to_path_buf(),
-                config.clone(),
-                socket_default,
                 FakeLocal::default(),
             ),
         )
@@ -744,9 +721,6 @@ mod tests {
                 poll_tx,
                 request_tx,
                 paths.clone(),
-                dir.path().to_path_buf(),
-                paths.daemon_config.clone(),
-                paths.socket.clone(),
                 FakeLocal::default(),
             ),
         )
@@ -811,10 +785,7 @@ mod tests {
                 msg_rx,
                 poll_tx,
                 request_tx,
-                test_paths(Path::new("/tmp/shep-lookout-tests")),
-                PathBuf::from("/tmp/shep-lookout-tests"),
-                PathBuf::from("/tmp/shep-lookout-tests/shep.toml"),
-                PathBuf::from("/tmp/shep-lookout-tests/run/shep.sock"),
+                shared_test_paths(),
                 local,
             ),
         )
