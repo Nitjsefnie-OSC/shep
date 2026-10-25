@@ -182,6 +182,25 @@ impl<R: ProcessRunner> Actor<R> {
                     reply.send(self.handle_set_sheep_env_batch(&name, &entries, force, dry_run));
                 false
             }
+            Command::CopySheepEnv {
+                from,
+                to,
+                replace,
+                except,
+                dry_run,
+                expect,
+                reply,
+            } => {
+                let _ = reply.send(self.handle_copy_sheep_env(
+                    &from,
+                    &to,
+                    replace,
+                    &except,
+                    dry_run,
+                    expect.as_deref(),
+                ));
+                false
+            }
             Command::SetSheepField {
                 name,
                 key,

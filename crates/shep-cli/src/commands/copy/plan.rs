@@ -32,6 +32,22 @@ pub(crate) enum Write {
         /// The table the target holds afterwards.
         table: DogTable,
     },
+    /// The source's whole env, through `Request::CopySheepEnv`.
+    ///
+    /// The shepherd reads both envs and merges them, so the write carries the
+    /// source's name, the flags and the change list the operator reviewed,
+    /// and never a value.
+    Env {
+        /// The sheep the shepherd reads the env from.
+        from: String,
+        /// Whether the target ends up with exactly the source's keys.
+        replace: bool,
+        /// Keys the copy leaves as the target had them.
+        except: Vec<String>,
+        /// The change list the operator is shown, sent back so the shepherd
+        /// refuses a write whose own list differs.
+        expect: Vec<shep_core::protocol::EnvCopyChange>,
+    },
 }
 
 /// What one key ends up as.

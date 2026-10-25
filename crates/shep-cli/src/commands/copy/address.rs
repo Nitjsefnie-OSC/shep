@@ -27,6 +27,10 @@ use super::CopyRefusal;
 /// The one path root that is not an `AppConfig` field name.
 const DOGS: &str = "dogs";
 
+/// The `AppConfig` field a copy takes through the shepherd, not through the
+/// config a client reads.
+const ENV: &str = "env";
+
 /// The flock's names, split the way an address needs them.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct FlockNames {
@@ -53,6 +57,9 @@ pub(crate) enum ConfigPath {
         /// The field name.
         name: String,
     },
+    /// The sheep's whole env. The shepherd reads both sides, because a client
+    /// is never sent the values.
+    Env,
     /// One dog's table, or a key inside it. An empty `keys` is the whole
     /// table.
     Dog {
@@ -63,11 +70,22 @@ pub(crate) enum ConfigPath {
     },
 }
 
+/// The refusal for a verb that writes one key at a time and has no way to
+/// write a sheep's env.
+///
+/// `shep copy` takes `env` through the shepherd; `shep set` and `shep unset`
+/// do not.
+pub(crate) const ENV_NOT_WRITTEN: &str = "`env` is not written here: a client is never sent a \
+    sheep's env values. `shep copy <sheep>.env <other>.env` copies one sheep's env onto \
+    another's, `shep import env` writes a `.env` into a sheep's env, and `shep secret` holds the \
+    values a Flockfile refers to";
+
 impl ConfigPath {
     /// The path as an operator writes it after the sheep name.
     pub(crate) fn dotted(&self) -> String {
         match self {
             Self::Field { name } => name.clone(),
+            Self::Env => ENV.to_string(),
             Self::Dog { dog, keys } => {
                 let mut out = format!("{DOGS}.{dog}");
                 for key in keys {
@@ -250,13 +268,8 @@ pub(crate) fn path_of(
     }
 
     let field = first.as_str();
-    if field == "env" {
-        return Err(CopyRefusal::Refused(
-            "`env` is not copied: a client is never sent a sheep's env values, so there is \
-             nothing here to read. `shep import env` writes a `.env` into a sheep's env, and \
-             `shep secret` holds the values a Flockfile refers to"
-                .to_string(),
-        ));
+    if field == ENV {
+        return Ok(ConfigPath::Env);
     }
     if apply_group(field) == ApplyGroup::Structural {
         return Err(CopyRefusal::Refused(format!(
@@ -536,13 +549,20 @@ mod tests {
         ));
     }
 
-    /// The three keys the shepherd refuses, each with the verb that does it.
     #[test]
-    fn env_name_instances_and_the_whole_dogs_map_each_say_why() {
-        let env = parse("web.env", &flock()).unwrap_err();
-        assert!(env.message().contains("shep import env"), "{env}");
-        assert!(env.message().contains("shep secret"), "{env}");
+    fn env_is_a_path_of_its_own() {
+        assert_eq!(parse("web.env", &flock()).unwrap().path, ConfigPath::Env);
+    }
 
+    #[test]
+    fn a_verb_that_cannot_write_env_names_the_one_that_can() {
+        assert!(ENV_NOT_WRITTEN.contains("shep copy"));
+        assert!(ENV_NOT_WRITTEN.contains("shep import env"));
+    }
+
+    /// The three paths a copy refuses, each with the verb that does it.
+    #[test]
+    fn name_instances_and_the_whole_dogs_map_each_say_why() {
         let instances = parse("web.instances", &flock()).unwrap_err();
         assert!(
             instances.message().contains("shep stock web"),

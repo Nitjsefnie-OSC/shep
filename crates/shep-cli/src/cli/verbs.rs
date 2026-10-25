@@ -445,14 +445,16 @@ pub enum Commands {
     /// `~/.ssh/config` aliases, users, ports and ProxyJump all apply. Reads
     /// and writes that file directly and never connects to a machine.
     Host(HostArgs),
-    /// Copy one setting, or one dog's table, from one sheep onto another.
+    /// Copy one setting, one dog's table, or a sheep's env from one sheep onto
+    /// another.
     ///
     /// Each side is an address: a sheep name, then a path in its config.
     ///
     /// `shep copy web.restart_delay api.restart_delay` copies one field.
     /// `shep copy web.dogs.kelpie api.dogs.kelpie` copies a dog's whole table.
     /// `shep copy web.dogs.kelpie.rulings api.dogs.kelpie.rulings` copies one
-    /// key or sub-table inside it.
+    /// key or sub-table inside it. `shep copy web.env api.env` copies every env
+    /// key.
     ///
     /// A dog name and a key inside a table may each contain a dot, and each is
     /// read as the longest name the copy's tables actually hold: `web.dogs.foo.bar`
@@ -463,7 +465,7 @@ pub enum Commands {
     /// The path is the same on both sides: a copy moves values, and
     /// `web.restart_delay` onto `api.kill_timeout` is two different settings.
     ///
-    /// A dog table merges by default. Keys the source has overwrite the
+    /// A dog table and an env merge by default. Keys the source has overwrite the
     /// target's, and keys only the target has stay. `--replace` makes the
     /// target exactly the source at that path. `--except <key>` leaves one key
     /// out, named under the path you are copying: a dog's `git.checkout` names
@@ -471,14 +473,16 @@ pub enum Commands {
     /// to a sheep. A copy refuses when one side holds something that is not a
     /// table where the copy has to write through one.
     ///
-    /// `env` and secrets are not copied: a client is never sent a sheep's env
-    /// values, so there is nothing to read. `shep import env` writes a `.env`
-    /// into a sheep's env, and `shep secret` holds the values a Flockfile
-    /// refers to. `name`, `instances` and the whole `dogs` map are refused for
-    /// the same reason the shepherd refuses them.
+    /// The shepherd copies `env`, so no value reaches this client. A
+    /// `{{secret:NAME}}` value is copied as the reference and never resolved.
+    /// The change list and the JSON envelope show a reference as itself and
+    /// every other value as `<redacted>`. The copied keys wait for the
+    /// target's next spawn. `name`, `instances` and the whole `dogs` map are
+    /// refused for the same reason the shepherd refuses them.
     ///
     /// Nothing is written until you confirm. The change list prints first,
-    /// naming every key added, changed or removed with its old and new value.
+    /// naming every key added, changed or removed with its old and new value
+    /// (an env value is redacted).
     /// With `--format json` that list prints on stderr, so stdout stays the one
     /// envelope the run writes after the answer. `--yes` skips the question,
     /// `--dry-run` prints the list and writes nothing, and with no terminal to

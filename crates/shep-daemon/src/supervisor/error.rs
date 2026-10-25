@@ -123,6 +123,22 @@ pub enum SupervisorError {
     /// operator `Restart`. Maps to
     /// [`RpcErrorCode::Disabled`](shep_core::protocol::RpcErrorCode::Disabled).
     Disabled(String),
+    /// A `CopySheepEnv` named a sheep the flock does not hold; carries that
+    /// name.
+    ///
+    /// Its own variant because the copy reads one sheep and writes another,
+    /// so an empty answer would not say which name was wrong. Maps to
+    /// [`RpcErrorCode::NotFound`](shep_core::protocol::RpcErrorCode::NotFound).
+    NoSuchSheep(String),
+    /// A `CopySheepEnv` write whose change list is not the one the caller
+    /// reviewed; carries which keys differ.
+    ///
+    /// Another client edited one of the two sheep between the dry run and
+    /// the write. Nothing was written. Maps to
+    /// [`RpcErrorCode::InvalidConfig`](shep_core::protocol::RpcErrorCode::InvalidConfig),
+    /// like [`Self::InvalidEnv`]: the caller can ask again from a fresh dry
+    /// run.
+    EnvChanged(String),
     /// The actor has shut down; its mailbox is closed.
     EngineStopped,
 }
@@ -144,6 +160,11 @@ impl fmt::Display for SupervisorError {
             Self::Disabled(name) => write!(
                 f,
                 "{name} is disabled; `shep enable {name}` clears that and starts it"
+            ),
+            Self::NoSuchSheep(name) => write!(f, "no sheep named {name}"),
+            Self::EnvChanged(keys) => write!(
+                f,
+                "the env changed since the copy was reviewed ({keys}); nothing was written"
             ),
             Self::EngineStopped => f.write_str("supervisor engine has shut down"),
         }

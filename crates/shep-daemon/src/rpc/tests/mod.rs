@@ -196,6 +196,7 @@ mod dog_secrets;
 mod dog_secrets_rotation;
 mod dog_table_events;
 mod dog_tables;
+mod env_copy;
 mod lambs_staleness;
 mod log_tail;
 mod misc_verbs;

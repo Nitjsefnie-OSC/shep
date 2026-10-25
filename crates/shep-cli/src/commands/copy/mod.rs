@@ -1,11 +1,13 @@
-//! `shep copy`: one setting, or one dog's whole table, from one sheep onto
-//! another.
+//! `shep copy`: one setting, one dog's whole table, or a sheep's env, from one
+//! sheep onto another.
 //!
 //! Three requests do the talking. `Request::ListFlock` resolves the two names
 //! against the flock, `Request::SheepConfig` reads each side, and the write is
 //! the request the plan turns into: [`Request::SetSheepField`] for a field,
-//! [`Request::SetSheepDogSettings`] for a dog's table. There is no copy
-//! request, so everything those refuse this refuses, with the same reason.
+//! [`Request::SetSheepDogSettings`] for a dog's table, so everything those
+//! refuse this refuses, with the same reason. `env` is the exception: a client
+//! is never sent env values, so [`mod@env`] plans and writes it through
+//! [`Request::CopySheepEnv`], and the shepherd does the merge.
 //!
 //! The order is resolve, read, plan, print, ask, write. Nothing is sent until
 //! the operator has seen every key the copy touches, which is also why a
@@ -22,6 +24,7 @@
 
 pub(crate) mod address;
 pub(crate) mod confirm;
+pub(crate) mod env;
 pub(crate) mod plan;
 pub(crate) mod report;
 
@@ -46,8 +49,7 @@ use report::{finish, print_changes, report_for, shows_changes_first};
 /// Why a copy stopped before it wrote anything.
 ///
 /// Every variant carries the sentence the operator reads, because the reason
-/// is the remedy: `env` names `shep import env`, an instance count names
-/// `shep stock`, and a missing source names the path that is missing.
+/// is the remedy: an instance count names `shep stock`, and a missing source names the path that is missing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CopyRefusal {
     /// An address or a flag is malformed, or the two sides name different
@@ -178,9 +180,20 @@ pub(crate) async fn copy(
         return refusal.report(streams);
     }
 
-    let plan = match build_plan(&from, &to, &except, args.replace, &source, &target) {
-        Ok(plan) => plan,
-        Err(refusal) => return refusal.report(streams),
+    let plan = if from.path == ConfigPath::Env {
+        let sides = plan::Sides {
+            source: &from.sheep,
+            target: &to.sheep,
+        };
+        match env::plan_env(client, streams, sides, &args.except, args.replace).await {
+            Ok(plan) => plan,
+            Err(code) => return code,
+        }
+    } else {
+        match build_plan(&from, &to, &except, args.replace, &source, &target) {
+            Ok(plan) => plan,
+            Err(refusal) => return refusal.report(streams),
+        }
     };
 
     let path = from.path.dotted();
@@ -310,8 +323,8 @@ pub(crate) async fn flock_names(
 
 /// One sheep's config as JSON, which is the shape a plan reads.
 ///
-/// `env` is already emptied by the shepherd, which is what makes `env` a
-/// refusal here rather than a copy of something that is not there.
+/// `env` is emptied by the shepherd: the values of a copy's env never reach
+/// this config, and [`mod@env`] asks the shepherd to do that copy.
 ///
 /// `pub(crate)`: `shep get` reads the same answer for the sheep half of an
 /// address.
@@ -393,6 +406,10 @@ fn build_plan(
             }
             Ok(plan::plan_field(name, source, target))
         }
+        ConfigPath::Env => Err(CopyRefusal::Usage(
+            "the env of a sheep is planned by the shepherd, not from the configs read here"
+                .to_string(),
+        )),
         ConfigPath::Dog { dog, keys } => plan::plan_dog(
             plan::Sides {
                 source: &from.sheep,
@@ -444,6 +461,12 @@ async fn write_plan(
                 Err(err) => Err(client_error(streams, &err)),
             }
         }
+        Write::Env {
+            from,
+            replace,
+            except,
+            expect,
+        } => env::write_env(client, streams, target, &from, replace, &except, expect).await,
         Write::DogTable { dog, table } => {
             match ask_dog(client, paths, &dog, table.as_map(), Some(target)).await {
                 Ok(()) => {}
@@ -692,7 +715,6 @@ mod tests {
         );
 
         for (path, expected) in [
-            ("web.env", "shep import env"),
             ("web.name", "different sheep"),
             ("web.instances", "shep stock web"),
             ("web.dogs", "web.dogs.<dog>"),

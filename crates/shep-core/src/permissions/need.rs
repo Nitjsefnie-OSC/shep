@@ -83,6 +83,7 @@ pub fn need<'r>(request: &'r Request, caller: &str) -> Need<'r> {
         | Request::ResetSheepField { .. }
         | Request::SetSheepEnv { .. }
         | Request::SetSheepEnvBatch { .. }
+        | Request::CopySheepEnv { .. }
         | Request::SetSmit { .. } => one(P::FlockEdit),
         Request::TailLog { .. } => one(P::LogsRead),
         Request::Reopen { .. } | Request::Flush { .. } => one(P::LogsManage),

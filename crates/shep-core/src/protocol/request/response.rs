@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::DogTable;
 
 use super::{
-    ActionReply, DogSectionToml, LineReply, LogTail, ProcessInfo, SheepApplied, SheepConfigView,
-    SheepDrift, SheepRefusal, SignalReply,
+    ActionReply, DogSectionToml, EnvCopyChange, LineReply, LogTail, ProcessInfo, SheepApplied,
+    SheepConfigView, SheepDrift, SheepRefusal, SignalReply,
 };
 
 // Named by intra-doc links and by nothing rustc compiles, so the
@@ -146,6 +146,19 @@ pub enum Response {
         unchanged: Vec<String>,
         /// Keys that held a different value.
         collisions: Vec<String>,
+    },
+    /// What a [`Request::CopySheepEnv`] did, or would have done.
+    ///
+    /// Key names, and values only as [`EnvCopyChange`] allows: a reference as
+    /// written, anything else redacted. Never the resulting env map (IR-41).
+    SheepEnvCopied {
+        /// The sheep the env was read from.
+        from: String,
+        /// The sheep the env was written to.
+        to: String,
+        /// One entry per key the copy touches, in key order. Empty when `to`
+        /// already holds everything the copy would write.
+        changes: Vec<EnvCopyChange>,
     },
     /// Answer to `SetSheepField`: which field moved, and whether the
     /// running child has it.

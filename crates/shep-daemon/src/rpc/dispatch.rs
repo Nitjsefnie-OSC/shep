@@ -598,6 +598,32 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
                 Err(err) => reply(Err(rpc_error(&err))),
             }
         }
+        Request::CopySheepEnv {
+            from,
+            to,
+            replace,
+            except,
+            dry_run,
+            expect,
+        } => match ctx
+            .supervisor
+            .copy_sheep_env(&from, &to, replace, except, dry_run, expect)
+            .await
+        {
+            // Recorded for `SetSheepEnv`'s reason. `app` is `None` for a dry
+            // run and for a copy with nothing to change.
+            Ok(copy) => {
+                if let Some(app) = copy.app {
+                    ctx.registry.record(&[app]);
+                }
+                reply(Ok(Response::SheepEnvCopied {
+                    from,
+                    to,
+                    changes: copy.changes,
+                }))
+            }
+            Err(err) => reply(Err(rpc_error(&err))),
+        },
         Request::SetSheepField { name, key, value } => {
             match ctx.supervisor.set_sheep_field(&name, &key, value).await {
                 // Recorded exactly as `SetSheepEnv` records its own, and
