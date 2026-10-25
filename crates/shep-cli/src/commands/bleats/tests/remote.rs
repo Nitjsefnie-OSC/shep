@@ -95,12 +95,7 @@ async fn run_into(
     };
     let mut out = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt: format,
-        };
+        let mut streams = Streams::bare(&mut out, err, format);
         tokio::time::timeout(
             RUN_TIMEOUT,
             bleats_over(&client, &mut streams, false, args, host, interrupt),

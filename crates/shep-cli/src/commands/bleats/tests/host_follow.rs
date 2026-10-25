@@ -2,6 +2,10 @@
 //! answering and the operator's Ctrl+C arrive together. `bleats_over` takes
 //! the host as an argument, and a fake shepherd stands in for the ssh hop,
 //! which cannot be scripted here.
+//!
+//! Not on [`run_bleats`]: every run here is `bleats_over` under a host and
+//! an injected interrupt, and each one names its own way out in its expect
+//! message. They build their `Streams` with [`Streams::bare`].
 
 use super::*;
 
@@ -32,12 +36,7 @@ async fn host_follow(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         tokio::time::timeout(
             RUN_TIMEOUT,
             bleats_over(&client, &mut streams, quiet, args, Some("amp2"), interrupt),
@@ -110,12 +109,7 @@ async fn host_follow_over_a_link_that_closes(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         tokio::time::timeout(
             RUN_TIMEOUT,
             bleats_over(
@@ -184,12 +178,7 @@ async fn a_refusal_over_a_host_is_not_read_as_the_operators_interrupt() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         tokio::time::timeout(
             RUN_TIMEOUT,
             bleats_over(
@@ -219,12 +208,7 @@ async fn a_host_link_that_closes_under_an_interrupt_flushes_the_backlog_it_print
     let mut err: Vec<u8> = Vec::new();
     let (code, reached) = {
         let mut buffered = std::io::BufWriter::new(&mut sink);
-        let mut streams = Streams {
-            out: &mut buffered,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut buffered, &mut err, Format::Table);
         write_line(&mut streams, 1, "web", None, "out", "backlog")
             .expect("a Vec never fails a write");
         let mut interrupt = std::future::ready(());
@@ -266,12 +250,7 @@ async fn host_run_over_a_shepherd_that_never_answers(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         tokio::time::timeout(
             RUN_TIMEOUT,
             bleats_over(&client, &mut streams, false, args, Some("amp2"), async {

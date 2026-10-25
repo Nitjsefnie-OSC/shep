@@ -2,6 +2,12 @@
 //! through a live [`shep_client::EventStream`], from name resolution and
 //! selector filtering through the shutdown, lag and dropped notices a
 //! follow can end on.
+//!
+//! Every run here goes through [`run_bleats`], or [`run_bleats_quiet`]
+//! where the test is about `quiet`. The two that cannot are the `ctrl_c`
+//! test, which ends its follow with an injected interrupt rather than a
+//! closed connection, and the broken-pipe test, which hands `Streams` a
+//! writer that always fails.
 
 use super::*;
 
@@ -30,23 +36,7 @@ async fn ids_resolve_to_names_from_one_listing_and_unknown_ids_render_bare() {
         .await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("all")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
-    let out = String::from_utf8(out).unwrap();
+    let (_code, out, _err) = run_bleats(&client, &follow_args("all"), Format::Table).await;
 
     assert!(out.contains("web") && out.contains("hello"));
     assert!(
@@ -85,20 +75,8 @@ async fn err_and_out_filter_the_two_streams() {
             .await;
         daemon.close_after_subscribe().await;
 
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
-            tokio::time::timeout(RUN_TIMEOUT, bleats(&client, &mut streams, false, &args))
-                .await
-                .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-        }
-        let rendered = String::from_utf8(out).unwrap();
+        let (_code, rendered, _err) = run_bleats(&client, &args, Format::Table).await;
+
         assert!(
             rendered.contains(kept),
             "{kept} should have survived: {rendered}"
@@ -133,23 +111,7 @@ async fn a_selector_filters_client_side_on_the_resolved_id_set() {
         .await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("web")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
-    let out = String::from_utf8(out).unwrap();
+    let (_code, out, _err) = run_bleats(&client, &follow_args("web"), Format::Table).await;
 
     assert!(out.contains("from-web"));
     assert!(
@@ -185,23 +147,7 @@ async fn a_multi_instance_apps_follow_labels_its_lines_with_the_slot() {
         .await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("web")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
-    let out = String::from_utf8(out).unwrap();
+    let (_code, out, _err) = run_bleats(&client, &follow_args("web"), Format::Table).await;
 
     assert!(
         out.contains("web:0 | from-slot-0"),
@@ -234,23 +180,7 @@ async fn a_selector_narrowed_to_one_instance_does_not_change_its_label() {
         .await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("web:0")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
-    let out = String::from_utf8(out).unwrap();
+    let (_code, out, _err) = run_bleats(&client, &follow_args("web:0"), Format::Table).await;
 
     assert!(
         out.contains("web:0 | from-slot-0"),
@@ -275,23 +205,7 @@ async fn a_single_instance_app_with_a_slot_on_its_row_still_follows_bare() {
         .await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("web")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
-    let out = String::from_utf8(out).unwrap();
+    let (_code, out, _err) = run_bleats(&client, &follow_args("web"), Format::Table).await;
 
     assert!(
         out.contains("web | hello"),
@@ -325,23 +239,7 @@ async fn a_multi_instance_apps_followed_stderr_line_carries_its_slot_too() {
         .await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("web")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
-    let out = String::from_utf8(out).unwrap();
+    let (_code, out, _err) = run_bleats(&client, &follow_args("web"), Format::Table).await;
 
     assert!(
         out.contains("web:1 | boom"),
@@ -414,23 +312,7 @@ async fn a_name_missing_from_the_cache_has_no_instance_label() {
         .await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("all")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
-    let out = String::from_utf8(out).unwrap();
+    let (_code, out, _err) = run_bleats(&client, &follow_args("all"), Format::Table).await;
 
     assert!(
         out.contains("99 | orphan"),
@@ -446,6 +328,9 @@ async fn a_name_missing_from_the_cache_has_no_instance_label() {
 /// The stream stays open for the whole test, so only the injected
 /// interrupt can end this follow; ignoring it hangs and the timeout
 /// fails the test.
+///
+/// Not on [`run_bleats`]: `bleats_with_signal` and `join!` hold the
+/// buffers while the interrupt arm races the follow.
 #[tokio::test]
 async fn ctrl_c_during_a_follow_exits_success() {
     let dir = tempfile::tempdir().unwrap();
@@ -462,12 +347,7 @@ async fn ctrl_c_during_a_follow_exits_success() {
     let (interrupt_tx, interrupt_rx) = tokio::sync::oneshot::channel::<()>();
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: crate::style::Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
 
     let args = follow_args("all");
     let follow = bleats_with_signal(&client, &mut streams, false, &args, async {
@@ -502,26 +382,11 @@ async fn a_daemon_shutdown_mid_follow_is_announced_before_the_stream_ends() {
     daemon.push(BusEvent::DaemonShutdown).await; // scripted: emitted after Subscribe
     daemon.close_after_subscribe().await; // scripted: after Subscribe is served
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("all")),
-        )
-        .await
-        .expect("a shutdown mid-follow must end the follow, not hang")
-    };
+    let (code, _out, err) = run_bleats(&client, &follow_args("all"), Format::Table).await;
 
     assert_eq!(code, ExitCode::DaemonUnreachable);
     assert!(
-        String::from_utf8(err).unwrap().contains("shutting down"),
+        err.contains("shutting down"),
         "the shutdown notice is what distinguishes this from the connection simply ending"
     );
 }
@@ -534,26 +399,11 @@ async fn a_stream_that_just_ends_reports_no_shutdown_notice() {
     daemon.reply_to_list(vec![info(1, "web")]);
     daemon.close_after_subscribe().await; // no DaemonShutdown event at all
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("all")),
-        )
-        .await
-        .expect("the connection ending must end the follow, not hang")
-    };
+    let (code, _out, err) = run_bleats(&client, &follow_args("all"), Format::Table).await;
 
     assert_eq!(code, ExitCode::DaemonUnreachable);
     assert!(
-        !String::from_utf8(err).unwrap().contains("shutting down"),
+        !err.contains("shutting down"),
         "a notice the daemon never sent must not be invented"
     );
 }
@@ -571,22 +421,8 @@ async fn quiet_suppresses_the_daemon_shutdown_notice_but_not_the_exit_code() {
     daemon.push(BusEvent::DaemonShutdown).await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, true, &follow_args("all")),
-        )
-        .await
-        .expect("a shutdown mid-follow must end the follow, not hang")
-    };
+    let (code, _out, err) =
+        run_bleats_quiet(&client, &follow_args("all"), Format::Table, true).await;
 
     assert_eq!(
         code,
@@ -594,7 +430,7 @@ async fn quiet_suppresses_the_daemon_shutdown_notice_but_not_the_exit_code() {
         "quiet must not change the exit code, only whether the notice prints"
     );
     assert!(
-        String::from_utf8(err).unwrap().is_empty(),
+        err.is_empty(),
         "quiet must suppress the shutdown notice entirely"
     );
 }
@@ -616,23 +452,9 @@ async fn quiet_does_not_suppress_a_sheeps_own_line() {
         .await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, true, &follow_args("all")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
-    let out = String::from_utf8(out).unwrap();
+    let (_code, out, _err) =
+        run_bleats_quiet(&client, &follow_args("all"), Format::Table, true).await;
+
     assert!(
         out.contains("web") && out.contains("hello"),
         "quiet must never touch a sheep's own line: {out}"
@@ -664,32 +486,13 @@ async fn a_lag_notice_reaches_stderr_and_the_follow_continues() {
         .await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("all")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
+    let (_code, out, err) = run_bleats(&client, &follow_args("all"), Format::Table).await;
 
-    let stderr = String::from_utf8(err).unwrap();
     assert!(
-        stderr.contains("dropped") || stderr.contains("lagged"),
-        "a lag must be told, not swallowed: {stderr}"
+        err.contains("dropped") || err.contains("lagged"),
+        "a lag must be told, not swallowed: {err}"
     );
-    assert!(
-        String::from_utf8(out).unwrap().contains("after"),
-        "a lag ends the gap, not the follow"
-    );
+    assert!(out.contains("after"), "a lag ends the gap, not the follow");
 }
 
 /// Fails if `BusEvent::Dropped` falls into `handle_event`'s `_ =>
@@ -708,33 +511,17 @@ async fn a_dropped_notice_reaches_stderr_worded_for_the_daemon_side_cause() {
     daemon.push(BusEvent::Dropped { count: 5 }).await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("all")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
+    let (_code, _out, err) = run_bleats(&client, &follow_args("all"), Format::Table).await;
 
-    let stderr = String::from_utf8(err).unwrap();
     assert!(
-        stderr.contains("daemon") && stderr.contains('5'),
-        "a daemon-side Dropped must not be silently swallowed: {stderr}"
+        err.contains("daemon") && err.contains('5'),
+        "a daemon-side Dropped must not be silently swallowed: {err}"
     );
     assert!(
-        !stderr.contains("locally"),
+        !err.contains("locally"),
         "Dropped is the daemon's queue overflowing, not this client \
              falling behind reading its own socket — reusing the `Lagged` \
-             arm's wording would blame the wrong side: {stderr}"
+             arm's wording would blame the wrong side: {err}"
     );
 }
 
@@ -755,23 +542,8 @@ async fn json_format_renders_the_pinned_six_key_line_shape() {
         .await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Json,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args("all")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
-    let out = String::from_utf8(out).unwrap();
+    let (_code, out, _err) = run_bleats(&client, &follow_args("all"), Format::Json).await;
+
     let line = out.lines().next().expect("one JSON line was rendered");
     let json: serde_json::Value = serde_json::from_str(line).unwrap();
     let obj = json.as_object().expect("a bleats JSON line is an object");
@@ -811,6 +583,9 @@ impl io::Write for BrokenPipeWriter {
 ///
 /// The write fails on the very first event, well before
 /// `close_after_subscribe` could end the stream.
+///
+/// Not on [`run_bleats`]: this run's stdout is the always-failing writer,
+/// not a buffer.
 #[tokio::test]
 async fn a_broken_pipe_while_writing_a_line_exits_success() {
     let dir = tempfile::tempdir().unwrap();
@@ -828,18 +603,13 @@ async fn a_broken_pipe_while_writing_a_line_exits_success() {
     let mut out = BrokenPipeWriter;
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         tokio::time::timeout(
             RUN_TIMEOUT,
             bleats(&client, &mut streams, false, &follow_args("all")),
         )
         .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging")
+        .expect("the scripted run ends on its own, not by hanging")
     };
 
     assert_eq!(
