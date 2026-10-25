@@ -847,15 +847,22 @@ mod tests {
         assert!(!format!("{app:?}").contains("super-secret-token"));
     }
 
+    /// The `AppConfig` property table of the Flockfile schema, owned because
+    /// the schema value is a local a borrow could not outlive.
+    fn app_props() -> serde_json::Map<String, serde_json::Value> {
+        crate::config::flockfile_schema_json()
+            .to_value()
+            .pointer("/$defs/AppConfig/properties")
+            .and_then(serde_json::Value::as_object)
+            .cloned()
+            .expect("app config properties must exist")
+    }
+
     /// The path fields are the ones an operator gets wrong, and the ones the
     /// type table cannot describe. Each states what it takes.
     #[test]
     fn the_path_fields_state_what_they_accept() {
-        let schema = crate::config::flockfile_schema_json().to_value();
-        let props = schema
-            .pointer("/$defs/AppConfig/properties")
-            .and_then(serde_json::Value::as_object)
-            .expect("app config properties must exist");
+        let props = app_props();
         for name in ["cwd", "script", "out_file", "err_file"] {
             let accepts = props[name]["init"]["accepts"].as_array();
             assert!(
@@ -868,11 +875,7 @@ mod tests {
     /// Every entry carries both halves, so nothing renders half a line.
     #[test]
     fn every_neighbour_entry_carries_a_field_and_a_note() {
-        let schema = crate::config::flockfile_schema_json().to_value();
-        let props = schema
-            .pointer("/$defs/AppConfig/properties")
-            .and_then(serde_json::Value::as_object)
-            .expect("app config properties must exist");
+        let props = app_props();
         for (name, prop) in props {
             let Some(entries) = prop["init"]["neighbours"].as_array() else {
                 continue;
@@ -918,11 +921,7 @@ mod tests {
     /// the one claim a config can be checked against directly.
     #[test]
     fn every_suggested_value_is_one_normalize_accepts() {
-        let schema = crate::config::flockfile_schema_json().to_value();
-        let props = schema
-            .pointer("/$defs/AppConfig/properties")
-            .and_then(serde_json::Value::as_object)
-            .expect("app config properties must exist");
+        let props = app_props();
         for (field, prop) in props {
             let Some(values) = prop["init"]["suggest"].as_array() else {
                 continue;
@@ -947,11 +946,7 @@ mod tests {
     /// field writes any more.
     #[test]
     fn the_refusal_table_and_the_schema_name_the_same_clauses() {
-        let schema = crate::config::flockfile_schema_json().to_value();
-        let props = schema
-            .pointer("/$defs/AppConfig/properties")
-            .and_then(serde_json::Value::as_object)
-            .expect("app config properties must exist");
+        let props = app_props();
         let in_schema: Vec<(&str, &str)> = props
             .iter()
             .filter_map(|(field, prop)| Some((field.as_str(), prop["init"]["refuses"].as_array()?)))
