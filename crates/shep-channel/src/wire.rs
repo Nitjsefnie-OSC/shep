@@ -233,22 +233,28 @@ pub enum ShepherdMessage {
 
 #[cfg(test)]
 mod tests {
+    use core::fmt::Debug;
+
+    use serde::de::DeserializeOwned;
+
     use super::*;
 
     // Fixtures pinned from spec §7. Round-tripped both ways so a silent
     // drift fails loudly.
 
+    #[track_caller]
+    fn assert_round_trip<T>(fixture: &str, value: &T)
+    where
+        T: Serialize + DeserializeOwned + PartialEq + Debug,
+    {
+        assert_eq!(&serde_json::from_str::<T>(fixture).unwrap(), value);
+        assert_eq!(serde_json::to_string(value).unwrap(), fixture);
+    }
+
     #[test]
     fn ready_wire_fixture_round_trips() {
         let fixture = r#"{"kind":"ready"}"#;
-        assert_eq!(
-            serde_json::from_str::<ChildMessage>(fixture).unwrap(),
-            ChildMessage::Ready
-        );
-        assert_eq!(
-            serde_json::to_string(&ChildMessage::Ready).unwrap(),
-            fixture
-        );
+        assert_round_trip(fixture, &ChildMessage::Ready);
     }
 
     #[test]
@@ -261,8 +267,7 @@ mod tests {
             labels: BTreeMap::new(),
             help: None,
         };
-        assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
-        assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+        assert_round_trip(fixture, &msg);
     }
 
     /// Field order on the wire is `name, value, type, labels, help`.
@@ -279,8 +284,7 @@ mod tests {
             labels: [("model".to_string(), "qwen".to_string())].into(),
             help: Some("Requests waiting for the lease.".to_string()),
         };
-        assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
-        assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+        assert_round_trip(fixture, &msg);
     }
 
     #[test]
@@ -293,8 +297,7 @@ mod tests {
             labels: BTreeMap::new(),
             help: None,
         };
-        assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
-        assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+        assert_round_trip(fixture, &msg);
     }
 
     /// No fallback to gauge: the daemon drops the line as malformed.
@@ -319,8 +322,7 @@ mod tests {
             body: "ok".to_string(),
             id: None,
         };
-        assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
-        assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+        assert_round_trip(fixture, &msg);
     }
 
     #[test]
@@ -331,21 +333,13 @@ mod tests {
             body: "ok".to_string(),
             id: Some(7),
         };
-        assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
-        assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+        assert_round_trip(fixture, &msg);
     }
 
     #[test]
     fn shutdown_wire_fixture_round_trips() {
         let fixture = r#"{"kind":"shutdown"}"#;
-        assert_eq!(
-            serde_json::from_str::<ShepherdMessage>(fixture).unwrap(),
-            ShepherdMessage::Shutdown
-        );
-        assert_eq!(
-            serde_json::to_string(&ShepherdMessage::Shutdown).unwrap(),
-            fixture
-        );
+        assert_round_trip(fixture, &ShepherdMessage::Shutdown);
     }
 
     /// Checks both directions: serialize and deserialize.
@@ -357,11 +351,7 @@ mod tests {
             params: None,
             id: 7,
         };
-        assert_eq!(serde_json::to_string(&bare_msg).unwrap(), bare);
-        assert_eq!(
-            serde_json::from_str::<ShepherdMessage>(bare).unwrap(),
-            bare_msg
-        );
+        assert_round_trip(bare, &bare_msg);
 
         let with_params = r#"{"kind":"action","name":"set-log-level","params":"debug","id":8}"#;
         let with_params_msg = ShepherdMessage::Action {
@@ -369,14 +359,7 @@ mod tests {
             params: Some("debug".to_string()),
             id: 8,
         };
-        assert_eq!(
-            serde_json::to_string(&with_params_msg).unwrap(),
-            with_params
-        );
-        assert_eq!(
-            serde_json::from_str::<ShepherdMessage>(with_params).unwrap(),
-            with_params_msg
-        );
+        assert_round_trip(with_params, &with_params_msg);
     }
 
     #[test]
@@ -386,8 +369,7 @@ mod tests {
             pid: 4312,
             label: LambLabel::new("worker 1").unwrap(),
         };
-        assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
-        assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+        assert_round_trip(fixture, &msg);
     }
 
     /// The clearing form: an absent key would be a malformed frame instead.
@@ -413,8 +395,7 @@ mod tests {
             name: "lease.web.want.1760500000".to_string(),
             value: 1.0,
         };
-        assert_eq!(serde_json::from_str::<ChildMessage>(fixture).unwrap(), msg);
-        assert_eq!(serde_json::to_string(&msg).unwrap(), fixture);
+        assert_round_trip(fixture, &msg);
     }
 
     #[test]
