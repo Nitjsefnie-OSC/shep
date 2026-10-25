@@ -54,6 +54,17 @@ impl RearmFixture {
     }
 }
 
+impl Drop for RearmFixture {
+    // Aborting the group tasks unregisters their watchers, so a test's root
+    // tempdir is never deleted under a live watch. Tests declare their roots
+    // before the fixture so it drops first.
+    fn drop(&mut self) {
+        std::mem::take(&mut self.registry.groups)
+            .into_values()
+            .for_each(NameExtras::abort);
+    }
+}
+
 /// The `web` app the cron-and-watch cases arm: an hourly cron and a
 /// filesystem watch rooted at `root`.
 fn cron_watch_app(root: &Path) -> ResolvedApp {
@@ -69,8 +80,8 @@ fn cron_watch_app(root: &Path) -> ResolvedApp {
 /// group-scoped config when they are built.
 #[tokio::test(start_paused = true)]
 async fn rearm_name_replaces_a_live_group_task() {
-    let mut fixture = RearmFixture::new();
     let root = tempfile::tempdir().unwrap();
+    let mut fixture = RearmFixture::new();
     let app = cron_watch_app(root.path());
     let entry = fixture.start_and_arm(&app).await;
 
@@ -120,8 +131,8 @@ async fn rearm_name_replaces_a_live_group_task() {
 /// watcher.
 #[tokio::test(start_paused = true)]
 async fn rearm_name_leaves_the_group_armed() {
-    let mut fixture = RearmFixture::new();
     let root = tempfile::tempdir().unwrap();
+    let mut fixture = RearmFixture::new();
     let app = cron_watch_app(root.path());
     let entry = fixture.start_and_arm(&app).await;
 
@@ -150,9 +161,9 @@ async fn rearm_name_leaves_the_group_armed() {
 
 #[tokio::test(start_paused = true)]
 async fn rearm_name_leaves_another_apps_group_alone() {
-    let mut fixture = RearmFixture::new();
     let web_root = tempfile::tempdir().unwrap();
     let worker_root = tempfile::tempdir().unwrap();
+    let mut fixture = RearmFixture::new();
     let web = app_with("web", |app| {
         app.watch = true;
         app.cwd = Some(web_root.path().display().to_string());
@@ -215,8 +226,8 @@ async fn rearm_name_leaves_another_apps_group_alone() {
 /// itself.
 #[tokio::test(start_paused = true)]
 async fn rearm_name_rebuilds_a_multi_instance_group_exactly_once() {
-    let mut fixture = RearmFixture::new();
     let root = tempfile::tempdir().unwrap();
+    let mut fixture = RearmFixture::new();
     let app = app_with("web", |app| {
         app.instances = 2;
         app.cron_restart = Some("0 * * * *".to_string());
