@@ -50,10 +50,13 @@ pub enum ExitCode {
     /// one sheep ended `errored`. A flock that emptied cleanly, every sheep
     /// `stopped`, exits `Success` instead.
     FlockEmpty = 11,
-    /// This binary and the running shepherd are different versions of shep.
+    /// This binary and the shepherd it reached disagree about shep.
     ///
-    /// The handshake succeeded and only the crate versions differ, the state
-    /// `cargo install shep` leaves behind. A wire disagreement is
+    /// The handshake succeeded. Over the local socket this is the state
+    /// `cargo install shep` leaves behind: the crate versions differ and the
+    /// wire does not. Over `--host` it is the other way round, a shepherd
+    /// speaking a protocol this build does not, since that host has its own
+    /// install. A handshake the peer refused outright is
     /// [`ExitCode::ProtocolMismatch`] instead. Never returned for `kill`,
     /// `daemon reload` or `ping`, which are how an operator gets out of it,
     /// nor for `flock`, `describe` or `bleats`, which only read and warn on
