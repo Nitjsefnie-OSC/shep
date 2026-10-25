@@ -198,8 +198,9 @@ pub(crate) fn silence_note(
             "silent  `{name}`'s process is up and it has never answered this shepherd. The \
              shepherd answering this listing is too old to say whether it has given up on the \
              dog or is still waiting for it -- run `shep bleats {name}` for the dog's own \
-             account, and `shep daemon reload` to bring the running shepherd up to the shep \
-             that is installed, which can answer."
+             account, and `shep {remedy}` to bring the running shepherd up to the shep \
+             that is installed, which can answer.",
+            remedy = crate::version_guard::VERSION_SKEW_REMEDY,
         ),
     })
 }
@@ -363,6 +364,16 @@ mod tests {
             distinct.len(),
             notes.len(),
             "three states, three sentences: {notes:?}"
+        );
+
+        // The stale-shepherd arm's remedy must come from the same constant
+        // the version guard speaks, so the guard can never refuse the
+        // command this note recommends.
+        let remedy = format!("`shep {}`", crate::version_guard::VERSION_SKEW_REMEDY);
+        assert!(
+            notes[0].contains(&remedy),
+            "the None arm names the guard's own remedy {remedy:?}: {}",
+            notes[0]
         );
     }
 
