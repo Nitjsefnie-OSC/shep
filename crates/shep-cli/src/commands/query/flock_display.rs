@@ -50,7 +50,7 @@ pub fn flock_from_roll(streams: &mut Streams<'_>, paths: &ShepPaths) -> ExitCode
             roll.apps
                 .into_iter()
                 .map(|entry| RolledSheep {
-                    name: entry.app.name.clone(),
+                    name: entry.app.name,
                     instances: entry.instances_running,
                     status: "stopped",
                 })

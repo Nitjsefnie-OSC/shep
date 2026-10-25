@@ -37,14 +37,7 @@ const STATUS_ORDER: [ProcStatus; 7] = [
 /// Joins already-resolved `faces` into one row, indented five columns to
 /// match `welcome.rs`'s own face row, each face separated by [`GAP`].
 fn faces_row(faces: &[&'static str]) -> String {
-    let mut line = String::from("     ");
-    for (i, face) in faces.iter().enumerate() {
-        if i > 0 {
-            line.push_str(GAP);
-        }
-        line.push_str(face);
-    }
-    line
+    format!("     {}", faces.join(GAP))
 }
 
 /// A row of `count` faces, all one `status` (at least one, capped at
