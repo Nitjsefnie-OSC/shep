@@ -147,6 +147,21 @@ impl SecretsPane {
             .collect()
     }
 
+    /// The selected row as an owned [`SecretRow`], but only when the pane
+    /// currently draws it: `None` for the `+ new key` affordance, for a row
+    /// a standing fold hides, and for a `selected` past the rows.
+    ///
+    /// Both halves of the check every write path needs, in one call: that
+    /// `selected` names a row on screen, and that the row exists. Owned
+    /// rather than borrowed, so a caller can hold the row while it reaches
+    /// back into the pane.
+    pub(super) fn selected_visible_row(&self) -> Option<SecretRow> {
+        if !self.visible_row_indices().contains(&self.selected) {
+            return None;
+        }
+        self.model.rows.get(self.selected).cloned()
+    }
+
     /// Whether `selected` names the `+ new key` row rather than a real one:
     /// one past every index [`Self::visible_row_indices`] can ever hand
     /// back.

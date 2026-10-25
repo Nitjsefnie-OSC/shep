@@ -269,6 +269,30 @@ pub trait Render: Serialize {
     const PRIORITIES: &'static [u8] = &[];
 }
 
+/// Writes `value` to `out` as one JSON line: the serialized value, then a
+/// newline.
+///
+/// The one place a `--format json` envelope reaches a writer. Every
+/// envelope in this module ([`emit`], [`emit_partial`], [`emit_flock`],
+/// [`emit_described`], [`emit_error`] and [`emit_notice`]) ends its line
+/// through here, so the newline rule is decided once: a change to it
+/// (pretty-printing, a trailing space, no newline) moves every verb's bytes
+/// at once rather than some of them. `bleats` stays outside, as the module
+/// docs say: a follow has no end, so it has no envelope to end.
+///
+/// Compact [`serde_json`] output, which is what every one of those sites
+/// has always written.
+///
+/// # Errors
+/// The underlying write failed.
+pub(crate) fn write_json_line<T: Serialize + ?Sized>(
+    out: &mut dyn io::Write,
+    value: &T,
+) -> io::Result<()> {
+    serde_json::to_writer(&mut *out, value)?;
+    writeln!(out)
+}
+
 /// Renders `data` to `out` as `fmt` calls for, boxed or plain per `style`.
 ///
 /// Called by every command in `commands/` once it has a real payload to
@@ -291,8 +315,7 @@ pub fn emit<T: Render>(
                 command,
                 data,
             };
-            serde_json::to_writer(&mut *out, &envelope)?;
-            writeln!(out)
+            write_json_line(&mut *out, &envelope)
         }
         Format::Table => write!(out, "{}", table_of(&data, style)),
     }
@@ -417,8 +440,7 @@ pub fn emit_partial<T: Render>(
         data,
         refused,
     };
-    serde_json::to_writer(&mut *out, &envelope)?;
-    writeln!(out)
+    write_json_line(&mut *out, &envelope)
 }
 
 /// Turns the result of an `emit`/`emit_error` write into the exit code that
@@ -477,6 +499,21 @@ pub(crate) mod tests {
             data: sample_flock(),
         };
         insta::assert_json_snapshot!(out);
+    }
+
+    /// The one write every `--format json` envelope goes through: the
+    /// value's compact JSON, then exactly one newline, and nothing between
+    /// them. The literal is the spec: `--format json` is one object per
+    /// invocation, so a second newline (or none) is a shape change.
+    #[test]
+    fn write_json_line_ends_one_line_with_a_newline() {
+        #[derive(Serialize)]
+        struct OneLine {
+            name: &'static str,
+        }
+        let mut out = Vec::new();
+        write_json_line(&mut out, &OneLine { name: "web" }).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "{\"name\":\"web\"}\n");
     }
 
     /// Pins the fleet envelope's exact shape: a local row, a row from `amp2`,
