@@ -229,12 +229,7 @@ mod tests {
         let mut out_buf = Vec::new();
         let mut err_buf = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out_buf,
-                err: &mut err_buf,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out_buf, &mut err_buf, Format::Table);
             import(&mut streams, args)
         };
         (code, out_buf, err_buf)

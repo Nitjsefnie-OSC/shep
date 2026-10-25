@@ -119,12 +119,7 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = crate::output::Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = crate::output::Streams::bare(&mut out, &mut err, Format::Table);
         let mut ask = |reader: &mut dyn BufRead| {
             confirm(&mut streams, "web", "api", "dogs.kelpie", 2, reader)
         };
