@@ -292,6 +292,26 @@ pub(crate) fn split_assignments(targets: &[String]) -> (BTreeMap<String, String>
     (env, rest)
 }
 
+/// Reads `path` as a Flockfile in `format`, and gives every app that set no
+/// `cwd` the file's own directory
+///
+/// The one body the two tiers of [`resolve_target_declared`] that name a
+/// recognised extension share: the `--flockfile` tier, and the tier that
+/// recognises the same extension on its own. They read, parse and default
+/// the cwd identically, and only the tier above them differs.
+///
+/// # Errors
+/// - [`TargetError::Read`] if `path` could not be read.
+/// - [`TargetError::Flockfile`] if the source failed Flockfile validation.
+fn load_flockfile(path: &Path, format: FlockFormat) -> Result<Vec<DeclaredApp>, TargetError> {
+    let source = std::fs::read_to_string(path).map_err(|source| TargetError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let apps = Flockfile::parse_declared(&source, format)?;
+    Ok(default_cwd_to_flockfile_dir(apps, path))
+}
+
 /// Resolves `target` into the [`AppConfig`]s `start` should register
 ///
 /// Fixed precedence, do not widen: `-` is Flockfile JSON on `stdin`, then
@@ -345,14 +365,7 @@ pub(crate) fn resolve_target_declared(
             Ok(Flockfile::parse_declared(&source, FlockFormat::Json)?)
         }
         (_, format) if as_flockfile => match format {
-            Some(format) => {
-                let source = std::fs::read_to_string(path).map_err(|source| TargetError::Read {
-                    path: path.to_path_buf(),
-                    source,
-                })?;
-                let apps = Flockfile::parse_declared(&source, format)?;
-                Ok(default_cwd_to_flockfile_dir(apps, path))
-            }
+            Some(format) => load_flockfile(path, format),
             None if path.extension().and_then(|e| e.to_str()) == Some("js") => {
                 let json = evaluate_js_flockfile(path, JS_EVAL_BUDGET)?;
                 let apps = Flockfile::parse_declared(&json, FlockFormat::Json)?;
@@ -362,14 +375,7 @@ pub(crate) fn resolve_target_declared(
                 path: path.to_path_buf(),
             }),
         },
-        (_, Some(format)) => {
-            let source = std::fs::read_to_string(path).map_err(|source| TargetError::Read {
-                path: path.to_path_buf(),
-                source,
-            })?;
-            let apps = Flockfile::parse_declared(&source, format)?;
-            Ok(default_cwd_to_flockfile_dir(apps, path))
-        }
+        (_, Some(format)) => load_flockfile(path, format),
         // Absolutised against the CLI's cwd, which is where `exists` is
         // answered. The daemon would otherwise resolve it against its own.
         _ if path.exists() => {

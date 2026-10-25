@@ -70,7 +70,7 @@ pub(crate) fn run_argv(argv: Vec<OsString>) -> std::process::ExitCode {
         Ok(runtime) => runtime,
         Err(err) => {
             eprintln!("shep: could not start an async runtime: {err}");
-            return std::process::ExitCode::from(ExitCode::Failure as u8);
+            return ExitCode::Failure.into();
         }
     };
     let cli = match parsed {
@@ -106,9 +106,9 @@ pub(crate) fn run_argv(argv: Vec<OsString>) -> std::process::ExitCode {
         std::env::var_os("COLORTERM").as_deref(),
         output::terminal_width(),
     );
-    std::process::ExitCode::from(
-        runtime.block_on(run(cli, style, (configured, style_source))) as u8,
-    )
+    runtime
+        .block_on(run(cli, style, (configured, style_source)))
+        .into()
 }
 
 #[cfg(test)]
