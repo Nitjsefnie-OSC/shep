@@ -12,17 +12,13 @@ mod tests {
     use super::super::MIN_REDRAW;
     use super::super::ui_event_loop::run_ui;
 
-    use std::path::Path;
     use std::time::{Duration, Instant};
 
     use ratatui::Terminal;
 
-    use super::super::app::{App, Control, Msg};
+    use super::super::app::Msg;
     use tokio::sync::mpsc;
 
-    use super::super::theme::Palette;
-
-    use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
@@ -80,12 +76,7 @@ mod tests {
             let _ = msg_tx.send(Msg::Key(KeyPress::Quit)).await;
         });
 
-        let app = App::new(
-            Palette::detect(None, None, None),
-            Control::ReadOnly,
-            "/tmp/shep".to_string(),
-            Instant::now(),
-        );
+        let app = read_only_app();
         let terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
         let _ = tokio::time::timeout(
             Duration::from_secs(5),
@@ -96,10 +87,7 @@ mod tests {
                 msg_rx,
                 poll_tx,
                 request_tx,
-                test_paths(Path::new("/tmp/shep-lookout-tests")),
-                PathBuf::from("/tmp/shep-lookout-tests"),
-                PathBuf::from("/tmp/shep-lookout-tests/shep.toml"),
-                PathBuf::from("/tmp/shep-lookout-tests/run/shep.sock"),
+                shared_test_paths(),
                 local,
             ),
         )
