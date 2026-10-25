@@ -290,22 +290,22 @@ async fn tail_log_files(
     // One file, one read. Several instances can resolve to one path: every
     // `merge_logs` app does, and so does any app that set `out_file`
     // explicitly.
-    let mut seen_paths: HashSet<String> = HashSet::new();
+    // Every path here is a `&str` borrowed out of `cache`, which outlives
+    // this function, so neither set keys on an owned copy.
+    let mut seen_paths: HashSet<&str> = HashSet::new();
     let mut seen_notices: HashSet<String> = HashSet::new();
 
     // Whether a path is shared between several rows, over the whole cache
     // rather than the matched subset: a selector narrowing to one row must
     // not hide that the file is still shared.
-    let mut path_owners: HashMap<(&'static str, String), usize> = HashMap::new();
+    let mut path_owners: HashMap<(&'static str, &str), usize> = HashMap::new();
     for info in cache.values() {
         for (stream_name, path) in [
             ("out", info.out_file.as_deref()),
             ("err", info.err_file.as_deref()),
         ] {
             if let Some(path) = path {
-                *path_owners
-                    .entry((stream_name, path.to_string()))
-                    .or_insert(0) += 1;
+                *path_owners.entry((stream_name, path)).or_insert(0) += 1;
             }
         }
     }
@@ -325,17 +325,13 @@ async fn tail_log_files(
                 path_unknown_notice(streams, quiet, &mut seen_notices, name, stream);
                 continue;
             };
-            if !seen_paths.insert(path.to_string()) {
+            if !seen_paths.insert(path) {
                 continue;
             }
             // Only label a backlog line with a slot when this path belongs to
             // exactly one row: instances sharing one file interleave in it and
             // no line says who wrote it.
-            let shared = path_owners
-                .get(&(stream_name, path.to_string()))
-                .copied()
-                .unwrap_or(0)
-                > 1;
+            let shared = path_owners.get(&(stream_name, path)).copied().unwrap_or(0) > 1;
             let label_instance = if !shared && instance_count(cache, name) > 1 {
                 info.instance
             } else {
@@ -382,6 +378,34 @@ fn stop_a_read(source: LogSource<'_>) -> impl FnOnce(&mut Streams<'_>, &RequestE
     move |streams, err| source.stop(streams, err)
 }
 
+/// Handles one followed log line, shared by the `LogOut` and `LogErr` arms
+/// of [`handle_event`], which differ only in `stream` and `suppressed`.
+///
+/// `stream` is `"out"` or `"err"`, the sheep stream the line came from.
+/// `suppressed` is the flag saying the operator asked not to see it:
+/// `args.err` for an out line, `args.out` for an err one.
+///
+/// Eight parameters: the follow's read-only context plus the two things
+/// the two arms differ in.
+#[allow(clippy::too_many_arguments)]
+fn handle_log_line(
+    streams: &mut Streams<'_>,
+    cache: &HashMap<u32, ProcessInfo>,
+    counts: &HashMap<String, usize>,
+    selector: &ProcessSelector,
+    id: u32,
+    line: &str,
+    stream: &'static str,
+    suppressed: bool,
+) -> io::Result<()> {
+    if !suppressed && selector_allows(selector, cache, id) {
+        let name = resolved_name(cache, id);
+        let instance = resolved_instance(cache, counts, id);
+        write_line(streams, id, &name, instance, stream, line)?;
+    }
+    Ok(())
+}
+
 /// Handles one [`BusEvent`] already known to be `Ok` (a `Lagged` item is
 /// handled by the caller, not here).
 ///
@@ -400,20 +424,10 @@ fn handle_event(
 ) -> io::Result<()> {
     match event {
         BusEvent::LogOut { id, line } => {
-            if !args.err && selector_allows(selector, cache, id) {
-                let name = resolved_name(cache, id);
-                let instance = resolved_instance(cache, counts, id);
-                write_line(streams, id, &name, instance, "out", &line)?;
-            }
-            Ok(())
+            handle_log_line(streams, cache, counts, selector, id, &line, "out", args.err)
         }
         BusEvent::LogErr { id, line } => {
-            if !args.out && selector_allows(selector, cache, id) {
-                let name = resolved_name(cache, id);
-                let instance = resolved_instance(cache, counts, id);
-                write_line(streams, id, &name, instance, "err", &line)?;
-            }
-            Ok(())
+            handle_log_line(streams, cache, counts, selector, id, &line, "err", args.out)
         }
         BusEvent::Dropped { count } => {
             // Worded apart from the `Lagged` arm below: `Dropped` is the
