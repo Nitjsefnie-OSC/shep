@@ -221,15 +221,34 @@ mod tests {
         )
     }
 
+    /// The workspace root, only when this build really sits inside this
+    /// repo's checkout.
+    ///
+    /// Two ancestors up is not proof of that on its own: a crate extracted
+    /// from a registry or from a `cargo vendor` tree has two ancestors too,
+    /// and the one that exists there is a crates.io source index or a vendor
+    /// directory rather than this repo. The marker is the root `Cargo.toml`
+    /// this checkout writes, the one that opens a `[workspace]` table and
+    /// names `crates/shep-cli` among its members. A foreign workspace that
+    /// vendors this crate names its own paths there instead, and a registry
+    /// or vendor root names no manifest at all. The one layout it cannot
+    /// tell apart is a foreign checkout that copies this crate to this same
+    /// `crates/shep-cli` member path: there the assertion fires and names
+    /// the README it compared.
+    fn workspace_root() -> Option<PathBuf> {
+        let dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+        let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
+        (manifest.contains("[workspace]") && manifest.contains("crates/shep-cli"))
+            .then(|| dir.to_path_buf())
+    }
+
     /// Reads the workspace root's `README.md`, or `None` outside the
-    /// workspace checkout -- see [`workspace_web_dir`] for why a published
-    /// crate has no such file to read.
+    /// workspace checkout -- see [`workspace_root`] for what counts as one.
     ///
     /// # Panics
     /// Inside the workspace, if the file cannot be read.
     fn read_workspace_readme() -> Option<String> {
-        let dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
-        dir.is_dir().then_some(())?;
+        let dir = workspace_root()?;
         Some(
             std::fs::read_to_string(dir.join("README.md")).unwrap_or_else(|err| {
                 panic!("README.md exists in the workspace but could not be read: {err}")
@@ -261,7 +280,7 @@ mod tests {
     /// something reads it back.
     ///
     /// Skips outside the workspace checkout -- see
-    /// [`read_workspace_readme`].
+    /// [`read_workspace_readme`] and [`workspace_root`].
     #[test]
     fn the_readme_names_the_same_verb_groups_as_help_does() {
         let Some(readme) = read_workspace_readme() else {
