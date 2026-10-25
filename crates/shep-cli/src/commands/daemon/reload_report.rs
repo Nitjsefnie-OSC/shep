@@ -194,12 +194,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             report_reload_waiting(
                 &client,
                 &mut streams,
@@ -239,12 +234,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             report_reload_waiting(
                 &client,
                 &mut streams,
@@ -284,12 +274,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             // The forcing mechanism as well as the assertion: a budget that
             // is never consulted would hang the suite instead of failing.
             tokio::time::timeout(

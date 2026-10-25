@@ -318,12 +318,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             install(&mut streams, &plan_for_test(&home), Privilege::Unprivileged)
         };
         assert_ne!(code, ExitCode::Success);
@@ -346,12 +341,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             // Root: an unprivileged run would refuse for the other reason
             // first, never exercising the home check.
             install(&mut streams, &plan_for_test(&missing), Privilege::Root)
@@ -388,12 +378,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             report(&mut streams, "startup", steps)
         };
         assert_eq!(code, ExitCode::Failure);

@@ -221,12 +221,7 @@ mod tests {
     ) -> (ExitCode, String, String, Vec<Request>) {
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, fmt);
         let code = delete(
             &mut streams,
             &Link::Local(paths),
@@ -385,12 +380,7 @@ mod tests {
         let mut err = Vec::new();
 
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             delete_with(
                 &mut streams,
                 None,
