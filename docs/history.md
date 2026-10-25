@@ -280,6 +280,18 @@ listed. Every other verb, `lookout` and `whistle` included, stays at
 `Enforce`: a pane and a tool can write. `every_exempt_verb_is_one_of_the_documented_recovery_verbs`
 now pins `flock` at `Warn`, and `add` is still `Enforce`.
 
+**And the guard stopped being one rule for both links.** Over `--host` a
+crate-version difference refuses nothing. `skew_of` compares
+`HelloAck::protocol` against `PROTOCOL_VERSION`, equal rather than against
+`MIN_SUPPORTED`, because the host at the other end of the link has its own
+install: the half-replaced machine the crate comparison exists for cannot
+exist across ssh, and a fleet upgrades one host at a time. Same protocol and
+a different version: the verb runs, and one `version_skew` notice goes to
+stderr. Another protocol: exit 12, both numbers named, remedy
+`ssh <dest> shep daemon reload`. The local socket is unchanged, and so are
+`Exempt` and `Warn`. `version_guard/tests.rs` pins each side of the table and
+`fleet/tests.rs` pins it across a `hosts` list.
+
 **`PROTOCOL_VERSION` and `MIN_SUPPORTED` moved to 8 on 2026-09-07, for
 `AppConfig::environment`.** Not for `Request::PutSecrets` and
 `Response::SecretsPut`, which arrived on the same branch and moved nothing.

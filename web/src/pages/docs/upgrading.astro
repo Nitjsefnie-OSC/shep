@@ -103,6 +103,12 @@ import Callout from "../../components/docs/Callout.astro";
       command.
     </Callout>
     <p class="fine">
+      Over <code>--host</code> the check is the protocol, not the version: an
+      older shep on the same protocol is written to, with one{" "}
+      <code>version_skew</code> notice. Another protocol refuses, naming both
+      numbers.
+    </p>
+    <p class="fine">
       An older <code>shep</code> re-running{" "}
       <code>shep start &lt;Flockfile&gt;</code> gets the shepherd's refusal on
       a disabled sheep's row and stops there, so the rest of the file does
@@ -110,18 +116,15 @@ import Callout from "../../components/docs/Callout.astro";
     </p>
     <p class="fine">
       <code>shep start &lt;Flockfile&gt;</code> used to be the one verb that
-      did not refuse cleanly across that skew: applying a Flockfile to a
-      running flock is additive, so the protocol number did not move for
-      it, and the handshake passed while the shepherd then ended the
-      connection on an envelope it could not read. It refuses cleanly now,
-      because the <code>--reset</code> flag's own wire spelling changed and
-      that is not additive the same way, so the protocol number moved with
-      it. The number is 5 now: it moved twice more since, once for a set
-      of live config-editing requests and once for a provider dog's own
-      way to push into the <a href="/docs/secrets">secrets store</a>, and
-      both bumped even though the new requests were additive, for the same
-      reason the rename did. Reloading first is still the whole fix either
-      way.
+      did not refuse cleanly across that skew: applying a Flockfile is
+      additive, so the number did not move, and the handshake passed while
+      the shepherd then ended the connection on an envelope it could not
+      read. It refuses cleanly now, because the <code>--reset</code> flag's
+      own wire spelling changed, which is not additive. The number moved
+      twice more since, for live config-editing requests and for a provider
+      dog's way to push into the <a href="/docs/secrets">secrets store</a>,
+      both additive bumps for the reason the rename was one. Reloading first
+      is still the whole fix either way.
     </p>
 
     <h2 id="going-back">Going back to an older version</h2>
