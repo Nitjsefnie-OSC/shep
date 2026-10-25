@@ -55,18 +55,16 @@ pub(crate) fn dispatch_adopted_dog(
     // An adopted dog is a local binary: running it here for a `--host` the
     // operator aimed elsewhere would be the substitution `--host` refuses.
     if host_before(&argv[1..index]).is_some() {
-        return Some(std::process::ExitCode::from(
-            refuse_host(format_before(&argv[1..index])) as u8,
-        ));
+        return Some(refuse_host(format_before(&argv[1..index])).into());
     }
-    let dog_argv = argv[index + 1..].to_vec();
+    let dog_argv = &argv[index + 1..];
     // A dog that declared its subcommands gets shep's own help page for them;
     // every other invocation, and every dog that declared nothing, is passed
     // through to the binary as it always was.
-    if let Some(code) = crate::adopted_help::describe_dog(name, &path, &paths.home, &dog_argv) {
-        return Some(std::process::ExitCode::from(code as u8));
+    if let Some(code) = crate::adopted_help::describe_dog(name, &path, &paths.home, dog_argv) {
+        return Some(code.into());
     }
-    Some(run_adopted_dog(&path, &paths.home, name, &dog_argv))
+    Some(run_adopted_dog(&path, &paths.home, name, dog_argv))
 }
 
 /// Scans `prefix`, the argv tokens before the one clap could not place, for
@@ -188,7 +186,7 @@ fn run_adopted_dog(
         Ok(status) => std::process::ExitCode::from(dog_exit_code(status)),
         Err(err) => {
             eprintln!("shep: could not run adopted dog {}: {err}", path.display());
-            std::process::ExitCode::from(ExitCode::Failure as u8)
+            ExitCode::Failure.into()
         }
     }
 }
