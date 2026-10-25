@@ -309,7 +309,7 @@ fn actor_with_a_sheep_and_a_dog(
     let mut sheep = HashMap::new();
     for (id, name, dog) in [
         (SHEEP_ID, "web", None),
-        (DOG_ID, "bark", Some(DogSource::BuiltIn)),
+        (DOG_ID, "bark", Some(DogSource::BuiltIn { grants: None })),
     ] {
         let app = app_with(name, |config| config.fold = Some("svc".to_string()));
         let mut entry = armed_entry(id, 0, 1111 + id, app, &paths);
@@ -360,7 +360,7 @@ fn a_listing_reports_where_a_dog_came_from() {
 
     assert_eq!(
         to_info(&actor.sheep[&DOG_ID].entry, &actor.smits).dog,
-        Some(DogSource::BuiltIn)
+        Some(DogSource::BuiltIn { grants: None })
     );
     assert_eq!(
         to_info(&actor.sheep[&SHEEP_ID].entry, &actor.smits).dog,
@@ -899,8 +899,7 @@ fn carried_owed_a_restart(
     CarriedSheep::from_entry(&entry, 0, CarriedFds::none(), false, None, false, due)
 }
 
-/// A carried sheep with no descriptors to rebuild, which is every case
-/// below that does not open real pipes.
+/// A carried sheep with no descriptors to rebuild, for every case below that opens no pipes.
 #[cfg(unix)]
 fn without_handles(carried: CarriedSheep) -> crate::handover::adopt::AdoptedSheep {
     crate::handover::adopt::AdoptedSheep {
@@ -911,6 +910,7 @@ fn without_handles(carried: CarriedSheep) -> crate::handover::adopt::AdoptedShee
         err_log: None,
         stdin_pipe: None,
         channel: None,
+        dog_link: None,
     }
 }
 
@@ -1084,7 +1084,7 @@ fn established(
             .map(|(key, value)| (key.to_string(), value))
             .collect(),
         declared: keys.iter().map(|key| (*key).to_string()).collect(),
-        declared_env: BTreeSet::new(),
+        ..Default::default()
     }
 }
 

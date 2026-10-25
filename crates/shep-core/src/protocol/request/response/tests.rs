@@ -1,7 +1,7 @@
 use super::super::process::sample_info;
 use super::super::{
-    ActionOutcome, DogSource, ExitInfo, Lamb, LineOutcome, Reply, Request, RpcError, RpcErrorCode,
-    SignalOutcome,
+    ActionOutcome, DogSource, EnvCopyChange, EnvCopyKind, ExitInfo, Lamb, LineOutcome, Reply,
+    Request, RpcError, RpcErrorCode, SignalOutcome,
 };
 use super::*;
 use crate::config::AppConfig;
@@ -20,6 +20,44 @@ fn sheep_env_batch_response_wire_v8() {
     assert_eq!(
         json,
         r#"{"kind":"sheep_env_batch","data":{"name":"web","set":["A"],"unchanged":["B"],"collisions":[]}}"#
+    );
+    assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+}
+
+/// All three kinds, a reference shown as written and a value redacted.
+#[test]
+fn sheep_env_copied_response_wire_v12() {
+    let response = Response::SheepEnvCopied {
+        from: "web".to_string(),
+        to: "api".to_string(),
+        changes: vec![
+            EnvCopyChange::new(
+                "PADDOCK_KEY",
+                EnvCopyKind::Added,
+                None,
+                Some("{{secret:PADDOCK_KEY}}".to_string()),
+            )
+            .sealed(11),
+            EnvCopyChange::new(
+                "PORT",
+                EnvCopyKind::Changed,
+                Some("<redacted>".to_string()),
+                Some("<redacted>".to_string()),
+            )
+            .sealed(12),
+            EnvCopyChange::new(
+                "OLD",
+                EnvCopyKind::Removed,
+                Some("<redacted>".to_string()),
+                None,
+            )
+            .sealed(13),
+        ],
+    };
+    let json = serde_json::to_string(&response).unwrap();
+    assert_eq!(
+        json,
+        r#"{"kind":"sheep_env_copied","data":{"from":"web","to":"api","changes":[{"key":"PADDOCK_KEY","kind":"added","old":null,"new":"{{secret:PADDOCK_KEY}}","seal":11},{"key":"PORT","kind":"changed","old":"<redacted>","new":"<redacted>","seal":12},{"key":"OLD","kind":"removed","old":"<redacted>","new":null,"seal":13}]}}"#
     );
     assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
 }
@@ -73,6 +111,7 @@ fn reply_wire_snapshots() {
                 id: 7,
                 name: "otel".to_string(),
                 dog: Some(DogSource::Adopted {
+                    grants: None,
                     path: "/usr/local/bin/shep-otel".to_string(),
                     channel: false,
                 }),
@@ -93,7 +132,7 @@ fn reply_wire_snapshots() {
             result: Ok(Response::DogStarted(ProcessInfo {
                 id: 4,
                 name: "metrics".to_string(),
-                dog: Some(DogSource::BuiltIn),
+                dog: Some(DogSource::BuiltIn { grants: None }),
                 ..sample_info()
             })),
         },
@@ -299,6 +338,7 @@ fn reply_wire_snapshots() {
                 ProcessInfo::builder(10, "log-rotate", ProcStatus::Online)
                     .pid(Some(208_341))
                     .dog(Some(DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-log-rotate".to_string(),
                         channel: false,
                     }))
@@ -313,6 +353,7 @@ fn reply_wire_snapshots() {
                 ProcessInfo::builder(10, "log-rotate", ProcStatus::Online)
                     .pid(Some(208_341))
                     .dog(Some(DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-log-rotate".to_string(),
                         channel: false,
                     }))
@@ -514,8 +555,21 @@ fn reply_wire_snapshots() {
                 reason: "Is a directory (os error 21)".to_string(),
             })),
         },
+        Reply {
+            id: 49,
+            result: Ok(Response::SheepDogTable {
+                table: Some(DogTable::from(serde_json::Map::from_iter([(
+                    "env".to_string(),
+                    serde_json::json!({ "TOKEN": "resolved" }),
+                )]))),
+            }),
+        },
+        Reply {
+            id: 50,
+            result: Ok(Response::SheepDogTable { table: None }),
+        },
     ];
-    insta::assert_json_snapshot!("reply_wire_v11", replies);
+    insta::assert_json_snapshot!("reply_wire_v12", replies);
 }
 
 /// The additive claim on `SheepFieldSet::warning` has three halves and
@@ -626,5 +680,24 @@ fn a_flock_reply_with_one_row_of_unknown_status_still_decodes() {
                 ..sample_info()
             },
         ])
+    );
+}
+
+/// IR-41: the reply prints how many keys the table holds and no value.
+#[test]
+fn sheep_dog_table_debug_prints_no_value() {
+    const SENTINEL: &str = "sentinel-7f3a9c";
+    let table = Response::SheepDogTable {
+        table: Some(DogTable::from(serde_json::Map::from_iter([(
+            "token".to_string(),
+            serde_json::json!(SENTINEL),
+        )]))),
+    };
+    let rendered = format!("{table:?}");
+    assert_eq!(rendered, "SheepDogTable { table: Some(DogTable(<1 key>)) }");
+    assert!(!rendered.contains(SENTINEL));
+    assert_eq!(
+        format!("{:?}", Response::SheepDogTable { table: None }),
+        "SheepDogTable { table: None }"
     );
 }

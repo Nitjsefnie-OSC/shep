@@ -26,6 +26,52 @@ async fn shutdown_kills_all_and_stops_the_engine() {
     assert!(handle.list_checked().await.is_err());
 }
 
+// A handle outlives the engine it talked to. Every call after a shutdown
+// answers `EngineStopped` rather than parking on a reply nobody will send:
+// `list_checked` carries a plain reply and `stop` a `Result` one, and the
+// two map the dead mailbox the same way.
+#[tokio::test(start_paused = true)]
+async fn a_call_after_shutdown_reports_engine_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = AppConfig::minimal("web", "./srv");
+    let (handle, _runner, _rx) =
+        started_apps(&dir, vec![app], vec![ProcScript::never_exits()], 64).await;
+
+    handle.shutdown().await;
+
+    assert!(
+        matches!(
+            handle.list_checked().await,
+            Err(SupervisorError::EngineStopped)
+        ),
+        "a listing after shutdown must report the actor gone"
+    );
+    assert!(
+        matches!(
+            handle.stop(ProcessSelector::All).await,
+            Err(SupervisorError::EngineStopped)
+        ),
+        "a command whose reply is already a `Result` must report the actor \
+         gone the same way"
+    );
+}
+
+// Both methods swallow every failure by design: `shutdown` is a no-op once
+// the actor is gone, and `forget_smits` answers even then, since its caller
+// is a connection tail with no use for a failure. Neither may panic on the
+// dropped send or the dropped reply.
+#[tokio::test(start_paused = true)]
+async fn a_second_shutdown_and_a_forget_after_it_never_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = AppConfig::minimal("web", "./srv");
+    let (handle, _runner, _rx) =
+        started_apps(&dir, vec![app], vec![ProcScript::never_exits()], 64).await;
+
+    handle.shutdown().await;
+    handle.shutdown().await;
+    handle.forget_smits(ConnId::next()).await;
+}
+
 async fn drain_kinds(
     rx: &mut tokio::sync::broadcast::Receiver<SharedEvent>,
 ) -> Vec<(u32, ProcessEventKind)> {

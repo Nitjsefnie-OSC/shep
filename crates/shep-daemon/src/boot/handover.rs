@@ -89,7 +89,7 @@ pub(crate) fn successor_handover() -> Result<Option<Successor>, BootError> {
 ///
 /// - [`BootError::Adopt`] if a descriptor the blob names is not open in this
 ///   process, or is not the kind of object it was named as.
-pub(super) fn rehydrate(carried: Successor, paths: &ShepPaths) -> Result<Rehydrated, BootError> {
+pub(super) fn rehydrate(carried: Successor) -> Result<Rehydrated, BootError> {
     let (blob, written) = match carried {
         Successor::Arrived(arrival) => {
             let blob = crate::handover::claim(arrival)
@@ -104,13 +104,14 @@ pub(super) fn rehydrate(carried: Successor, paths: &ShepPaths) -> Result<Rehydra
     if let Some(path) = written {
         crate::handover::adopt::discard_blob(&path);
     }
-    let _ = paths;
     let reloads = blob.reloads().to_vec();
-    Ok((
-        PidfileLock::from_locked(adopted.pidfile),
-        Listener::from_unix_listener(adopted.listener),
-        (adopted.sheep, counters, reloads),
-    ))
+    Ok(Rehydrated {
+        lock: PidfileLock::from_locked(adopted.pidfile),
+        listener: Listener::from_unix_listener(adopted.listener),
+        flock: adopted.sheep,
+        counters,
+        reloads,
+    })
 }
 
 /// A handover this process was handed, and how it reached it.
@@ -148,18 +149,28 @@ fn successor_handover_at(path: &Path) -> Option<crate::handover::Handover> {
     }
 }
 
+/// How long a handover waits for each dog connection to reach a frame
+/// boundary before leaving it behind.
+const DOG_LINK_PARK: core::time::Duration = core::time::Duration::from_secs(1);
+
 /// What [`rehydrate`] rebuilds from a blob: the home's lock, the control
 /// listener, and the flock to install with the counters and the in-flight
 /// reloads it ran under.
-type Rehydrated = (
-    PidfileLock,
-    Listener,
-    (
-        Vec<crate::handover::adopt::AdoptedSheep>,
-        crate::handover::Counters,
-        Vec<crate::supervisor::CarriedReload>,
-    ),
-);
+///
+/// No `Debug`: `flock` carries each sheep's environment.
+pub(super) struct Rehydrated {
+    /// The home's pidfile lock, still held by the predecessor's `execve`.
+    pub(super) lock: PidfileLock,
+    /// The control listener, still bound by the predecessor's `execve`.
+    pub(super) listener: Listener,
+    /// Every sheep the predecessor carried, descriptors adopted into this
+    /// process.
+    pub(super) flock: Vec<crate::handover::adopt::AdoptedSheep>,
+    /// The id, deadline and stamp counters the predecessor ran under.
+    pub(super) counters: crate::handover::Counters,
+    /// The reloads in flight when the predecessor handed over.
+    pub(super) reloads: Vec<crate::supervisor::CarriedReload>,
+}
 
 /// Everything the SIGHUP task needs to replace this daemon's image.
 ///
@@ -175,6 +186,9 @@ pub(crate) struct HandoverSeam {
     pub(super) fds: crate::handover::DaemonFds,
     /// The home, for the blob's path.
     pub(super) paths: ShepPaths,
+    /// The connections the dogs hold to this shepherd, which the actor never
+    /// sees: the server tasks serving them own their descriptors.
+    pub(super) dog_links: crate::server::DogLinks,
 }
 
 /// Replace this process with a successor holding `seam`'s flock.
@@ -191,11 +205,20 @@ pub(crate) struct HandoverSeam {
 pub(super) async fn hand_over_now(
     seam: &HandoverSeam,
 ) -> Result<core::convert::Infallible, String> {
-    let (candidates, blob, parked) = seam
+    let (candidates, mut blob, parked) = seam
         .supervisor
         .handover_snapshot(seam.fds)
         .await
         .map_err(|err| format!("the supervisor could not describe its flock: {err}"))?;
+    // Held until this function returns, which is only ever on a refusal: the
+    // numbers written into the blob stay live sockets for as long as these
+    // duplicates are open. A dog that connected after the snapshot above is
+    // not in the blob and so not carried; it falls back to the control socket.
+    // The freeze parks the tasks serving the dogs on a frame boundary, so the
+    // blob neither changes nor splits a frame until the exec, or until a
+    // refusal thaws them below.
+    let dog_links = seam.dog_links.freeze(DOG_LINK_PARK).await;
+    blob.carry_dog_links(&dog_links);
     let refusal = match hand_over_carrying(&candidates, &blob, seam) {
         Ok(never) => match never {},
         Err(refusal) => refusal,
@@ -204,6 +227,7 @@ pub(super) async fn hand_over_now(
     // sends a resume, so without this the flock logs nothing through the
     // graceful stop the caller falls back to. Here rather than in
     // `exec_into`'s error path: this is where every way out meets.
+    seam.dog_links.thaw();
     parked.resume().await;
     Err(refusal)
 }
@@ -303,6 +327,7 @@ mod tests {
                 pidfile: -1,
             },
             paths: paths.clone(),
+            dog_links: crate::server::DogLinks::default(),
         };
         let refusal = hand_over_now(&seam)
             .await
@@ -361,6 +386,7 @@ mod tests {
                 pidfile: -2,
             },
             paths: paths.clone(),
+            dog_links: crate::server::DogLinks::default(),
         };
         let refusal = hand_over_now(&seam)
             .await
@@ -440,6 +466,7 @@ mod tests {
                 pidfile: -1,
             },
             paths: paths.clone(),
+            dog_links: crate::server::DogLinks::default(),
         };
         let refusal = hand_over_now(&seam)
             .await
@@ -529,6 +556,7 @@ mod tests {
                 pidfile: -1,
             },
             paths: paths.clone(),
+            dog_links: crate::server::DogLinks::default(),
         };
         let refusal = hand_over_now(&seam)
             .await
@@ -588,6 +616,7 @@ mod tests {
             err_log: None,
             stdin_pipe: None,
             channel: None,
+            dog_link: None,
         }
     }
 
@@ -604,10 +633,11 @@ mod tests {
     fn a_carried_dog_does_not_reach_the_muster_roll() {
         let flock = vec![
             carried_for_the_roll("web", None),
-            carried_for_the_roll("metrics", Some(DogSource::BuiltIn)),
+            carried_for_the_roll("metrics", Some(DogSource::BuiltIn { grants: None })),
             carried_for_the_roll(
                 "log-rotate",
                 Some(DogSource::Adopted {
+                    grants: None,
                     path: "/opt/bin/shep-log-rotate".to_string(),
                     channel: false,
                 }),

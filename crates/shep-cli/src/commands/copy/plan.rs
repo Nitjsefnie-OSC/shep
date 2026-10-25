@@ -32,6 +32,22 @@ pub(crate) enum Write {
         /// The table the target holds afterwards.
         table: DogTable,
     },
+    /// The source's whole env, through `Request::CopySheepEnv`.
+    ///
+    /// The shepherd reads both envs and merges them, so the write carries the
+    /// source's name, the flags and the change list the operator reviewed,
+    /// and never a value.
+    Env {
+        /// The sheep the shepherd reads the env from.
+        from: String,
+        /// Whether the target ends up with exactly the source's keys.
+        replace: bool,
+        /// Keys the copy leaves as the target had them.
+        except: Vec<String>,
+        /// The change list the operator is shown, sent back so the shepherd
+        /// refuses a write whose own list differs.
+        expect: Vec<shep_core::protocol::EnvCopyChange>,
+    },
 }
 
 /// What one key ends up as.
@@ -260,7 +276,10 @@ pub(crate) fn except_paths(raw: &[String]) -> Result<Vec<Vec<String>>, CopyRefus
 
 /// The value at `keys` under `root`, `None` when any step is missing or is
 /// not a table.
-fn walk<'a>(root: &'a Value, keys: &[String]) -> Option<&'a Value> {
+///
+/// `pub(crate)`: `shep set` reads the old value at the same path `copy` walks
+/// (issue #1096), and one walk is what keeps the two verbs naming one key.
+pub(crate) fn walk<'a>(root: &'a Value, keys: &[String]) -> Option<&'a Value> {
     let mut node = root;
     for key in keys {
         node = node.as_object()?.get(key)?;
@@ -274,7 +293,9 @@ fn walk<'a>(root: &'a Value, keys: &[String]) -> Option<&'a Value> {
 /// would have to turn into a table. Writing through a scalar or an array is a
 /// change to that value, and the caller reports it or refuses it rather than
 /// making it on the way to the key it was asked to write.
-fn set_path(root: &mut Value, keys: &[String], value: Value) -> Result<(), String> {
+///
+/// `pub(crate)`: `shep set` writes through the same rule (issue #1096).
+pub(crate) fn set_path(root: &mut Value, keys: &[String], value: Value) -> Result<(), String> {
     write_at(root, keys, "", value)
 }
 
@@ -436,7 +457,9 @@ fn nested_excepts(except: &[Vec<String>], key: &str) -> Vec<Vec<String>> {
 
 /// Every key that differs between `before` and `after`, as dotted paths under
 /// `key`. A key holding the same value on both sides is no change.
-fn collect_changes(
+///
+/// `pub(crate)`: `shep set` prints the same old-and-new list (issue #1096).
+pub(crate) fn collect_changes(
     before: Option<&Value>,
     after: Option<&Value>,
     key: &str,

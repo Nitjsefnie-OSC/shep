@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::task::{Context, Poll};
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -104,17 +104,9 @@ async fn a_last_line_written_before_the_sheep_task_lets_go_reaches_the_file() {
         drop(pump.err_writer);
         drop(pump.logs);
 
-        let settled = timeout(PUMP_DEADLINE, async {
-            while !fs::read_to_string(&pump.out_path)
-                .unwrap_or_default()
-                .contains("last-words")
-            {
-                tokio::time::sleep(Duration::from_millis(2)).await;
-            }
-        })
-        .await;
+        let settled = wait_for_file_to_contain(&pump.out_path, "last-words").await;
         assert!(
-            settled.is_ok(),
+            settled,
             "attempt {attempt}: the pump dropped the line it had not read yet, \
              leaving {:?}",
             fs::read_to_string(&pump.out_path)
@@ -145,22 +137,34 @@ async fn a_last_line_survives_the_control_channel_closing_with_the_logs() {
         drop(pump.ctl);
         drop(pump.logs);
 
-        let settled = timeout(PUMP_DEADLINE, async {
-            while !fs::read_to_string(&pump.out_path)
-                .unwrap_or_default()
-                .contains("last-words")
-            {
-                tokio::time::sleep(Duration::from_millis(2)).await;
-            }
-        })
-        .await;
+        let settled = wait_for_file_to_contain(&pump.out_path, "last-words").await;
         assert!(
-            settled.is_ok(),
+            settled,
             "attempt {attempt}: the pump took an exit that skips the drain, \
              leaving {:?}",
             fs::read_to_string(&pump.out_path)
         );
     }
+}
+
+/// Whether `path` holds `needle` in its text before [`PUMP_DEADLINE`] runs
+/// out, polling every 2ms.
+///
+/// The two `a_last_line_` races share the wait and keep their own verdict:
+/// each names the exit it blames and its attempt number, which a shared
+/// assertion could not say. Reads through `unwrap_or_default`, since a pump
+/// that never opened the path is one of the outcomes worth reporting.
+async fn wait_for_file_to_contain(path: &Path, needle: &str) -> bool {
+    timeout(PUMP_DEADLINE, async {
+        while !fs::read_to_string(path)
+            .unwrap_or_default()
+            .contains(needle)
+        {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .is_ok()
 }
 
 /// A sink standing in for the [`tokio::fs::File`] a real [`LogFile`]
@@ -205,6 +209,32 @@ impl AsyncWrite for WriteCounter {
     }
 }
 
+/// A [`LogFile`] writing through `sink`, for the cases that drive one
+/// directly rather than through [`PumpHarness`].
+///
+/// The one place these tests name [`LogFile`]'s fields, and generic over the
+/// sink for the same reason [`LogFile`] is: a case that counts the writes
+/// reaching a stream hands in a [`WriteCounter`], a case that wants a real
+/// file hands in the [`tokio::fs::File`] it opened. Neither goes through
+/// [`LogFile::open`], which is the one that swallows a failed open, and
+/// neither is the unix-only [`LogFile::from_file`], which exists for a handle
+/// a handover carried.
+///
+/// The record lock is the one any other handle on `path` takes, the handle is
+/// the production [`LOG_BUFFER`] over `sink`, and an empty `stamp` with
+/// `Some(Stamper::default())` is what [`LogFile::open`] builds for a stamped
+/// sheep: the scratch string every line is joined in.
+fn buffered_log<W: AsyncWrite + Unpin>(path: &Path, sink: W) -> LogFile<W> {
+    LogFile {
+        record: record_lock(path),
+        path: path.to_path_buf(),
+        handle: Some(BufWriter::with_capacity(LOG_BUFFER, sink)),
+        buffered_since: None,
+        stamp: String::new(),
+        stamper: Some(Stamper::default()),
+    }
+}
+
 /// Fails if an appended line still costs one write to the file.
 ///
 /// `tokio::fs::File` hands each write to the blocking pool: 32.8 us of
@@ -224,14 +254,7 @@ async fn a_run_of_lines_costs_one_write_per_bufferful_not_one_per_line() {
     let lines = 3 * LOG_BUFFER / LINE_BYTES;
 
     let sink = WriteCounter::default();
-    let mut log = LogFile {
-        record: record_lock(std::path::Path::new("test")),
-        path: PathBuf::from("counted.log"),
-        handle: Some(BufWriter::with_capacity(LOG_BUFFER, sink.clone())),
-        buffered_since: None,
-        stamp: String::new(),
-        stamper: Some(Stamper::default()),
-    };
+    let mut log = buffered_log(Path::new("counted.log"), sink.clone());
     for _ in 0..lines {
         log.append(LINE).await;
     }
@@ -272,14 +295,7 @@ async fn a_run_of_lines_costs_one_write_per_bufferful_not_one_per_line() {
 async fn a_line_from_a_sheep_that_then_goes_quiet_still_reaches_its_file() {
     const LINE: &str = "the-only-line";
     let sink = WriteCounter::default();
-    let mut log = LogFile {
-        record: record_lock(std::path::Path::new("test")),
-        path: PathBuf::from("quiet.log"),
-        handle: Some(BufWriter::with_capacity(LOG_BUFFER, sink.clone())),
-        buffered_since: None,
-        stamp: String::new(),
-        stamper: Some(Stamper::default()),
-    };
+    let mut log = buffered_log(Path::new("quiet.log"), sink.clone());
 
     log.append(LINE).await;
     assert_eq!(
@@ -651,7 +667,16 @@ async fn a_stream_that_has_ended_is_still_reopened() {
     // stdout at EOF with stderr still live: what a child that closes one
     // stream early leaves behind, and what the pump holds in between the
     // two EOFs of an ordinary exit.
-    drop(pump.out_writer);
+    //
+    // `shutdown` rather than `drop`: the reopen below is a method on the
+    // harness, and moving a writer out of it leaves `pump` partly moved,
+    // which no method call can borrow. A duplex writer's `shutdown`
+    // closes its write end, which is what gives the pump's reader its
+    // EOF.
+    pump.out_writer
+        .shutdown()
+        .await
+        .expect("a duplex stream's write end must close");
     let_the_duplex_pump_settle().await;
 
     // Deleted rather than renamed, so the reopen is the only thing that
@@ -659,15 +684,7 @@ async fn a_stream_that_has_ended_is_still_reopened() {
     fs::remove_file(&pump.out_path).unwrap();
     fs::remove_file(&pump.err_path).unwrap();
 
-    let (done, ack) = oneshot::channel();
-    pump.ctl
-        .send(LogCtl::Reopen { done })
-        .await
-        .expect("a pump with one live stream still reads its control channel");
-    let outcome = timeout(PUMP_DEADLINE, ack)
-        .await
-        .expect("a reopen must be acknowledged")
-        .expect("the pump must answer rather than drop the acknowledgement");
+    let outcome = pump.reopen_for_answer().await;
     assert_eq!(
         outcome,
         Ok(()),
@@ -807,25 +824,21 @@ async fn a_flush_lands_both_streams_and_keeps_writing_afterwards() {
 /// that answered without asking would swallow the only signal a
 /// sheep's log went unwritten.
 ///
-/// Driven against a [`LogFile`] directly, not [`PumpHarness`]: a
-/// read-only handle makes the write fail deterministically, since
-/// `write(2)` on `O_RDONLY` is `EBADF` for every uid.
+/// Driven against a [`LogFile`] directly, not [`PumpHarness`]: a handle
+/// opened for reading alone makes the write fail deterministically on every
+/// platform, since `write(2)` on `O_RDONLY` is `EBADF` for every uid and
+/// `WriteFile` on a handle opened without write access is refused.
+///
+/// Built through [`buffered_log`] rather than [`LogFile::from_file`], so the
+/// case runs on Windows too: what it pins is [`LogFile::flush`] asking the
+/// handle it holds, which is true of any handle.
 #[tokio::test]
 async fn a_flush_reports_the_write_its_file_never_took() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("out.log");
     fs::write(&path, "").unwrap();
-    let mut log = LogFile {
-        record: record_lock(std::path::Path::new("test")),
-        path: path.clone(),
-        handle: Some(BufWriter::with_capacity(
-            LOG_BUFFER,
-            tokio::fs::File::open(&path).await.unwrap(),
-        )),
-        buffered_since: None,
-        stamp: String::new(),
-        stamper: Some(Stamper::default()),
-    };
+    let file = tokio::fs::File::open(&path).await.unwrap();
+    let mut log = buffered_log(&path, file);
 
     // Swallowed by design: the pump keeps draining a child whose log
     // it cannot write. The failure is owed at the flush instead.

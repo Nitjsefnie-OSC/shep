@@ -12,7 +12,7 @@ use super::*;
 fn dog(name: &str) -> crate::dogs::DogSpec {
     crate::dogs::DogSpec {
         name: name.to_string(),
-        source: DogSource::BuiltIn,
+        source: DogSource::BuiltIn { grants: None },
     }
 }
 
@@ -42,12 +42,15 @@ async fn a_snapshot_carries_every_dog_that_is_not_parked_and_leaves_one_that_is(
         .await
         .unwrap();
     // Running, and enabled: the ordinary carried dog.
-    sup.start_dog(dog_app("metrics", &paths), DogSource::BuiltIn)
-        .await
-        .unwrap();
+    sup.start_dog(
+        dog_app("metrics", &paths),
+        DogSource::BuiltIn { grants: None },
+    )
+    .await
+    .unwrap();
     // `Stopped` with no mark, which is the shape `shep stop` leaves.
     sup.register_dogs_at_rest(
-        vec![(dog_app("bark", &paths), DogSource::BuiltIn)],
+        vec![(dog_app("bark", &paths), DogSource::BuiltIn { grants: None })],
         BTreeSet::new(),
     )
     .await
@@ -57,6 +60,7 @@ async fn a_snapshot_carries_every_dog_that_is_not_parked_and_leaves_one_that_is(
         vec![(
             dog_app("log-rotate", &paths),
             DogSource::Adopted {
+                grants: None,
                 path: "/opt/bin/shep-log-rotate".to_string(),
                 channel: false,
             },
@@ -77,8 +81,8 @@ async fn a_snapshot_carries_every_dog_that_is_not_parked_and_leaves_one_that_is(
         carried,
         [
             ("api", None),
-            ("metrics", Some(DogSource::BuiltIn)),
-            ("bark", Some(DogSource::BuiltIn)),
+            ("metrics", Some(DogSource::BuiltIn { grants: None })),
+            ("bark", Some(DogSource::BuiltIn { grants: None })),
         ],
         "a parked dog belongs to the successor's file, not to this flock's blob"
     );
@@ -105,9 +109,12 @@ async fn a_snapshot_carries_a_disabled_dog_that_still_holds_a_process() {
     sup.start(vec![normalize(AppConfig::minimal("api", "./srv")).unwrap()])
         .await
         .unwrap();
-    sup.start_dog(dog_app("metrics", &paths), DogSource::BuiltIn)
-        .await
-        .unwrap();
+    sup.start_dog(
+        dog_app("metrics", &paths),
+        DogSource::BuiltIn { grants: None },
+    )
+    .await
+    .unwrap();
     sup.register_at_rest(vec![dog_app("metrics", &paths)], names(&["metrics"]))
         .await
         .unwrap();
@@ -125,7 +132,10 @@ async fn a_snapshot_carries_a_disabled_dog_that_still_holds_a_process() {
         .collect();
     assert_eq!(
         carried,
-        [("api", None), ("metrics", Some(DogSource::BuiltIn))],
+        [
+            ("api", None),
+            ("metrics", Some(DogSource::BuiltIn { grants: None }))
+        ],
         "a marked dog still holding a process must cross the exec described"
     );
 }
@@ -150,7 +160,7 @@ async fn a_successor_stops_a_carried_dog_its_config_no_longer_enables() {
                     entry.status = ProcStatus::Stopped;
                 })),
                 without_handles(carried("metrics", 1, Some(pid), |entry| {
-                    entry.dog = Some(DogSource::BuiltIn);
+                    entry.dog = Some(DogSource::BuiltIn { grants: None });
                 })),
             ],
             counters(2),
@@ -210,7 +220,7 @@ async fn a_successor_leaves_a_carried_dog_its_config_still_enables_running() {
     let sup = SupervisorBuilder::new(TokioRunner::new(), paths.clone(), events)
         .spawn_adopted(
             vec![without_handles(carried("metrics", 1, Some(pid), |entry| {
-                entry.dog = Some(DogSource::BuiltIn);
+                entry.dog = Some(DogSource::BuiltIn { grants: None });
             }))],
             counters(2),
             Vec::new(),
@@ -244,7 +254,7 @@ async fn a_successor_marks_a_carried_dog_it_stopped_and_the_config_dropped() {
     let sup = SupervisorBuilder::new(TokioRunner::new(), paths.clone(), events)
         .spawn_adopted(
             vec![without_handles(carried("metrics", 1, None, |entry| {
-                entry.dog = Some(DogSource::BuiltIn);
+                entry.dog = Some(DogSource::BuiltIn { grants: None });
                 entry.status = ProcStatus::Stopped;
             }))],
             counters(2),
@@ -284,7 +294,7 @@ async fn a_successor_stops_a_carried_dog_whole_config_could_not_assemble() {
     let sup = SupervisorBuilder::new(TokioRunner::new(), paths.clone(), events)
         .spawn_adopted(
             vec![without_handles(carried("metrics", 1, Some(pid), |entry| {
-                entry.dog = Some(DogSource::BuiltIn);
+                entry.dog = Some(DogSource::BuiltIn { grants: None });
             }))],
             counters(2),
             Vec::new(),
@@ -294,6 +304,7 @@ async fn a_successor_stops_a_carried_dog_whole_config_could_not_assemble() {
     let unassemblable = crate::dogs::DogSpec {
         name: "metrics".to_string(),
         source: DogSource::Adopted {
+            grants: None,
             path: String::new(),
             channel: false,
         },

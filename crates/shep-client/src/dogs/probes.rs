@@ -1,8 +1,12 @@
-//! Answering shep's probes: the version flag and the schema flag.
+//! Answering shep's probes: the manifest flag, the version flag and the
+//! schema flag.
 
 use std::io::Write as _;
 
-use shep_core::dogs::{SCHEMA_FLAG, SHEP_CHANNEL_KEY, SHEP_PROTOCOL_KEY, VERSION_FLAG};
+use shep_core::dogs::manifest::{DogDependency, Manifest, Permission, Verb};
+use shep_core::dogs::{
+    MANIFEST_FLAG, SCHEMA_FLAG, SHEP_CHANNEL_KEY, SHEP_PROTOCOL_KEY, VERSION_FLAG,
+};
 
 use super::DogConfig;
 #[cfg(feature = "schema")]
@@ -98,25 +102,37 @@ pub fn probe_with_sheep<T: DogConfig, S: DogConfig>(name: &str, version: &str) {
 /// [`probe`] asks for nothing; build one of these only to ask. Call
 /// [`Self::answer`] as the first line of `main`, as [`probe`] would be.
 ///
+/// It answers [`MANIFEST_FLAG`] with a [`Manifest`] built from what the dog
+/// gives it, and the version and schema flags as an older shep asks them.
+///
 /// # Examples
 ///
 /// ```no_run
 /// # #[shep_client::dogs::dog_config]
 /// # #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 /// # struct MyDogConfig {}
+/// use shep_client::dogs::{Permission, Probe};
+///
 /// fn main() {
-///     shep_client::dogs::Probe::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+///     Probe::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
 ///         .ask_for_channel()
+///         .permission(Permission::new("flock.read", true, "lists the flock"))
 ///         .answer::<MyDogConfig>();
 ///     // ...normal startup, reached only when this run is not a probe.
 /// }
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 #[must_use = "a Probe answers nothing until `answer` is called"]
 pub struct Probe<'a> {
     name: &'a str,
     version: &'a str,
     channel: bool,
+    permissions: Vec<Permission>,
+    verb: Option<Verb>,
+    dogs: Vec<DogDependency>,
+    shep: Option<String>,
+    defaults: Option<String>,
+    validate: bool,
 }
 
 impl<'a> Probe<'a> {
@@ -126,6 +142,12 @@ impl<'a> Probe<'a> {
             name,
             version,
             channel: false,
+            permissions: Vec::new(),
+            verb: None,
+            dogs: Vec::new(),
+            shep: None,
+            defaults: None,
+            validate: false,
         }
     }
 
@@ -140,7 +162,48 @@ impl<'a> Probe<'a> {
         self
     }
 
-    /// Answers the version flag, or the schema flag with
+    /// Declares a permission the dog asks for, in the manifest only: the
+    /// version flag has no place for it.
+    pub fn permission(mut self, permission: Permission) -> Self {
+        self.permissions.push(permission);
+        self
+    }
+
+    /// Declares how `shep <name>` is described in `--help` and completion.
+    pub fn verb(mut self, verb: Verb) -> Self {
+        self.verb = Some(verb);
+        self
+    }
+
+    /// Declares another dog this one needs, at the versions it accepts.
+    pub fn depends_on_dog(mut self, dependency: DogDependency) -> Self {
+        self.dogs.push(dependency);
+        self
+    }
+
+    /// Declares the oldest shep this dog supports, as a version.
+    pub fn depends_on_shep(mut self, minimum: impl Into<String>) -> Self {
+        self.shep = Some(minimum.into());
+        self
+    }
+
+    /// Declares the TOML text of the dog's own section, which `shep adopt`
+    /// writes when the dog has none yet.
+    pub fn defaults(mut self, toml: impl Into<String>) -> Self {
+        self.defaults = Some(toml.into());
+        self
+    }
+
+    /// Declares that the dog validates a proposed settings table before it
+    /// is written. It answers over the shepherd channel, so it also needs
+    /// [`Self::ask_for_channel`], and [`validate_answer`](super::validate_answer)
+    /// is the call that answers.
+    pub const fn validate(mut self) -> Self {
+        self.validate = true;
+        self
+    }
+
+    /// Answers the manifest flag, the version flag, or the schema flag with
     /// [`config_schema::<T>`](config_schema), and returns when this run is
     /// not a probe.
     ///
@@ -150,7 +213,7 @@ impl<'a> Probe<'a> {
     /// 0, before `main` opens anything.
     #[cfg(feature = "schema")]
     pub fn answer<T: DogConfig + schemars::JsonSchema>(self) {
-        self.answering(schema_answer::<T>);
+        self.answering(|| Some(config_schema::<T>().into()));
     }
 
     /// [`Self::answer`], for a dog that also publishes a schema for its
@@ -166,22 +229,12 @@ impl<'a> Probe<'a> {
         T: DogConfig + schemars::JsonSchema,
         S: DogConfig + schemars::JsonSchema,
     {
-        self.answering(schema_answer_with_sheep::<T, S>);
+        self.answering(|| Some(config_schema_with_sheep::<T, S>().into()));
     }
 
-    /// The body both answers share: the schema rendered by `schema` only
-    /// when it is asked for.
-    #[cfg(feature = "schema")]
-    fn answering(self, schema: fn() -> String) {
-        match first_argument().as_deref() {
-            Some(VERSION_FLAG) => answer(&self.version_answer()),
-            Some(SCHEMA_FLAG) => answer(&schema()),
-            _ => (),
-        }
-    }
-
-    /// Answers the version flag, and returns when this run is not a probe.
-    /// With the `schema` feature off, the schema flag exits without printing.
+    /// Answers the manifest flag without `settings` and the version flag,
+    /// and returns when this run is not a probe. With the `schema` feature
+    /// off, the schema flag exits without printing.
     ///
     /// # Exits
     ///
@@ -189,11 +242,7 @@ impl<'a> Probe<'a> {
     /// 0, before `main` opens anything.
     #[cfg(not(feature = "schema"))]
     pub fn answer<T: DogConfig>(self) {
-        match first_argument().as_deref() {
-            Some(VERSION_FLAG) => answer(&self.version_answer()),
-            Some(SCHEMA_FLAG) => std::process::exit(0),
-            _ => (),
-        }
+        self.answering(|| None);
     }
 
     /// [`Self::answer`], since with the `schema` feature off there is no
@@ -206,6 +255,46 @@ impl<'a> Probe<'a> {
     #[cfg(not(feature = "schema"))]
     pub fn answer_with_sheep<T: DogConfig, S: DogConfig>(self) {
         self.answer::<T>();
+    }
+
+    /// The body every answer shares: the schema is rendered by `schema`
+    /// only when a flag asks for it.
+    fn answering(self, schema: impl FnOnce() -> Option<serde_json::Value>) {
+        if let Some(text) = self.reply(first_argument().as_deref(), schema) {
+            answer(&text);
+        }
+    }
+
+    /// What `flag` is answered with, whole, or `None` when it is not a
+    /// probe.
+    ///
+    /// The schema flag answers nothing when `schema` returns `None`, which
+    /// shep reads as a dog with no schema.
+    fn reply(
+        &self,
+        flag: Option<&str>,
+        schema: impl FnOnce() -> Option<serde_json::Value>,
+    ) -> Option<String> {
+        match flag? {
+            VERSION_FLAG => Some(self.version_answer()),
+            SCHEMA_FLAG => Some(schema().map(|schema| rendered(&schema)).unwrap_or_default()),
+            MANIFEST_FLAG => Some(rendered(&self.manifest(schema()))),
+            _ => None,
+        }
+    }
+
+    /// The manifest, with `settings` the schema the schema flag answers.
+    fn manifest(&self, settings: Option<serde_json::Value>) -> Manifest {
+        let mut manifest = Manifest::new(self.name, self.version, crate::PROTOCOL_VERSION);
+        manifest.channel = self.channel;
+        manifest.settings = settings;
+        manifest.defaults.clone_from(&self.defaults);
+        manifest.permissions.clone_from(&self.permissions);
+        manifest.verb.clone_from(&self.verb);
+        manifest.depends.dogs.clone_from(&self.dogs);
+        manifest.depends.shep.clone_from(&self.shep);
+        manifest.validate = self.validate;
+        manifest
     }
 
     /// The `--version` answer, whole, ending in a newline.
@@ -247,32 +336,18 @@ fn answer(text: &str) -> ! {
     std::process::exit(0);
 }
 
-/// The `--schema` answer, whole, ending in a newline.
-#[cfg(feature = "schema")]
-fn schema_answer<T: DogConfig + schemars::JsonSchema>() -> String {
-    rendered(&config_schema::<T>())
-}
-
-/// `schema` as the schema flag prints it: pretty JSON and a newline.
-#[cfg(feature = "schema")]
-fn rendered(schema: &schemars::Schema) -> String {
-    // The same expectation shep-core's own schema printer holds: a schemars
-    // `Schema` is a `serde_json::Value` already, so serializing it cannot
-    // meet a type serde_json has no representation for.
-    let json = serde_json::to_string_pretty(schema).expect("a schemars Schema always serializes");
+/// `value` as the schema and manifest flags print it: pretty JSON and a
+/// newline.
+fn rendered(value: &impl serde::Serialize) -> String {
+    // A schemars `Schema` is a `serde_json::Value` already and a `Manifest`
+    // holds only strings, numbers and values, so serializing cannot meet a
+    // type serde_json has no representation for.
+    let json = serde_json::to_string_pretty(value).expect("these always serialize to JSON");
     format!("{json}\n")
 }
 
-/// The `--schema` answer for [`Probe::answer_with_sheep`], whole, ending
-/// in a newline.
-#[cfg(feature = "schema")]
-fn schema_answer_with_sheep<T, S>() -> String
-where
-    T: DogConfig + schemars::JsonSchema,
-    S: DogConfig + schemars::JsonSchema,
-{
-    rendered(&config_schema_with_sheep::<T, S>())
-}
+#[cfg(all(test, feature = "schema"))]
+mod manifest_tests;
 
 #[cfg(test)]
 mod tests {

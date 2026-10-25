@@ -401,48 +401,6 @@ half. Its entry, and every other item this section used to hold, is now in
 
 ## Known debt, recorded rather than built
 
-### The Windows shepherd channel has no DACL, and the random name is not one
-
-`tokio_runner.rs` creates the channel pipe with the DEFAULT security
-descriptor, which on Windows grants read to Everyone and restricts write, and
-the `accept` that follows authenticates nobody. The 128 random bits in the
-name were added against that, and they close less than the comment there
-originally claimed.
-
-**Prediction versus observation.** The nonce means a hostile local account
-cannot park itself on a name it worked out in advance. It does not stop that
-account WATCHING: the pipe namespace enumerates to any unprivileged local
-user. Measured on Windows 10, from a non-elevated PowerShell,
-`[System.IO.Directory]::GetFiles("//./pipe/")` returned 190 names. An account
-polling that in a loop sees `shep-channel-<pid>-<n>-<nonce>` appear in the
-window between `Listener::bind` and the child's own open, and can connect
-first. What it gets is daemon-to-child frames plus a `wait_ready` sheep that
-never goes online, so: disclosure of whatever an app puts on its channel, and
-a local denial of service against startup.
-
-**Why it is not fixed here.** A restrictive descriptor means
-`ServerOptions::create_with_security_attributes_raw`, which takes a raw
-pointer to a `SECURITY_ATTRIBUTES` this code would have to build, and
-`shep-core` is `#![forbid(unsafe_code)]`. The transport seam would have to
-grow a way to pass a descriptor down, and the descriptor itself would have to
-be built behind `shep_daemon::sys_windows`, which is the only place on that
-platform allowed to write `unsafe`. That is a real design change to the seam
-rather than a one-line fix, which is why it is written down rather than
-squeezed into the Windows tier's own pull request.
-
-**Severity, honestly: this is recorded, not queued.** It needs an attacker
-already running code as a DIFFERENT account on the same machine, winning a
-millisecond race, against a Windows install running shep. The maintainer's read, and it
-is the right one: a shep-on-Windows user who also has a hostile local account
-on the same box is close to a nonexistent population, and the fix costs a
-redesign of the transport seam plus new unsafe FFI. Do not spend that on
-this. It is written down because the docs used to imply a random name was a
-security boundary, and a false claim in published docs is worth correcting
-whatever the exploit likelihood. The claim is fixed. The DACL is a someday.
-
-Tracked as https://github.com/shep-pm/shep/issues/350.
-
-
 ### What the reload-readiness fix does NOT cover -- open, 2026-08-28
 
 Three residuals, recorded because each was a deliberate stopping point rather
@@ -588,13 +546,13 @@ job was to find the friction rather than resolve it.
 
 Tracked as https://github.com/shep-pm/shep/issues/355.
 
-### A third-party dog has no way to ship its own defaults
+### ~~A third-party dog has no way to ship its own defaults~~ -- done, 2026-10-24
 
 Raised 2026-08-20 while designing `shep-log-rotate`, the first fully external
 dog. `shep adopt <name> <path>` vets, registers, enables and starts in one
 command, and then the operator has an adopted dog with no `[<name>]`
 section in `dogs.toml` and nothing telling them what its knobs are. The
-README is the only answer today.
+README was the only answer.
 
 The maintainer asked whether a dog's repo could ship a `Flockfile.toml` that `shep adopt`
 reads. It cannot: `RawFlockfile` is `deny_unknown_fields` over exactly
@@ -604,17 +562,16 @@ file, committed in a service's repo, describing what to supervise. `shep.toml`
 is the daemon's, one per machine, holding dogs, style and interpreters. A dog's
 registration belongs to the machine.
 
-**Deferred deliberately.** The near-term answer costs shep nothing: a dog
-prints its own commented defaults (`the-dog --print-config >> shep.toml`),
-which is the same shape `shep init` gives a Flockfile, and it puts the
-documentation of a dog's options where its defaults already live.
-
-**The trust question is what any real design has to answer.** A `Dogfile.toml`
-that `adopt` reads means shep parsing a file the dog's author wrote and merging
-it into the operator's `shep.toml`. That is a larger step than "run this
-binary", and `adopt`'s existing vetting ritual exists because this boundary is
-taken seriously. Worth revisiting if a dog ecosystem appears; not worth
-pre-building for one dog.
+**Built as the manifest's `defaults` field** (#1073, #1086): a dog answers
+`--shep-manifest` with TOML text for its own section, and `shep adopt`
+writes it as `[<name>]` in `dogs.toml` when the file holds no section for
+the dog, and never over one that exists. The trust question was answered by
+the route rather than by a new file: the defaults arrive through the
+manifest probe `adopt` already runs on the vetted binary and caches by its
+sha256, so shep parses no file the dog's author wrote. The
+`--print-config`-style flag this deferral recommended as the near-term
+answer is no longer needed, and `docs/dogs.md` and the writing-a-dog page
+say so.
 
 Tracked as https://github.com/shep-pm/shep/issues/356.
 
@@ -851,62 +808,29 @@ built on this branch.
 
 Tracked as https://github.com/shep-pm/shep/issues/359.
 
-### A promoted dog cannot handshake during the restore, open, 2026-09-06
+### ~~A promoted dog cannot handshake during the restore~~ -- done, 2026-10-23
 
-`[daemon] boot_first_dogs` spawns a dog ahead of the muster restore, so a
-log-rotation dog is running before a sheep starts writing. The spawn happens
-there, and the link does not. `boot` binds the control socket and hands back a
-`RunningDaemon` without serving it: `RpcServer::serve` runs inside
-`RunningDaemon::run`, after `boot` returns and so after the restore. A dog
-connecting during the restore sits in the listen backlog with nothing
-accepting behind it.
+`[daemon] boot_first_dogs` spawns a dog ahead of the muster restore, but the
+control socket was only served after it: `RpcServer::serve` runs inside
+`RunningDaemon::run`. A promoted dog's first connect sat in the backlog,
+timed out at `HANDSHAKE_TIMEOUT`, exited `daemon_unreachable` and was
+restarted, a restart it had not earned (#360).
 
-`shep-client`'s `HANDSHAKE_TIMEOUT` is five seconds, and
-`ReconnectingClient`'s first connection is not supervised, on its own rule
-that a socket nobody answers is the caller's error rather than a handover.
-So `DogRuntime::start` returns `ConnectError::HandshakeTimeout`, the dog
-exits `daemon_unreachable`, and the shepherd restarts it. Driven against a
-live daemon, on the boot-order page's own worked example, a three-app
-unprobed chain that costs 6.17 seconds:
+Each supervised dog is now spawned holding a connection of its own, a
+socketpair end on fd 4 named in `SHEP_DOG_FD`, and the shepherd serves it
+from spawn through `serve_dog_links`, before and apart from the listener.
+`DogRuntime::start` uses it when the variable is set and falls back to the
+socket when it is not, or when the link is lost. The decision is "A dog gets
+a connection of its own, served from its spawn" in `docs/decisions.md`.
 
-```
-20:44:31.584 [shep] shep started this dog; its process is pid 43781
-20:44:36.594 shep dog metrics: no shepherd answered at the socket: the handshake did not complete within 5s
-20:44:36.595 [shep] this dog's process exited with code 5
-20:44:37.589 [shep] shep accepted this dog's handshake; it is registered with this shepherd as `metrics`, on protocol 6
-```
+A handover carries the link: its descriptor and the dog's subscription travel
+in the blob, and the successor serves it without a `Hello` and re-arms the
+subscription after a `daemon.dropped` notice (#1088, "A handover carries each
+dog's connection" in `docs/decisions.md`).
 
-The dog heals itself the moment serving starts, and `shep flock` then shows
-a restart it did not earn. What it does not do is rotate a log during the
-restore, which is the window the promotion exists to cover. A longer restore
-costs one more cycle every five seconds, and no cycle is ever fatal: a
-five-second run is a stable exit against the 1s `min_uptime` default, so the
-`max_restarts` budget resets each time and the dog never errors.
-
-It is not `DOG_SILENCE_BUDGET`, which is also five seconds and reads like the
-culprit. `spawn_silent_dog_watch` is spawned after the restore, and its
-`PeerContacts` starts warming there too, so its earliest verdict lands about
-ten seconds after the restore ends, by which time the dog has handshaken.
-The two budgets carry the same number and answer different questions.
-
-The options, none of them free:
-
-1. Retry the first connect inside `DogRuntime::start`. That reverses what
-   `ReconnectingClient::connect` documents, and it needs a bound, since a dog
-   retrying forever can no longer report a socket nothing is ever going to
-   answer. Any bound is a guess at the length of a restore nobody knows in
-   advance. Every third-party dog on the same SDK inherits whichever answer.
-2. Serve before the restore. `boot`'s rustdoc argues the current order one
-   invariant at a time: readiness reported after the restore is the honest
-   answer to `Type=notify`, and a client connecting during the restore waits
-   with it instead of reading a half-restored flock. Serving first gives up
-   both.
-3. Accept it, and say so where an operator reads it. Promotion buys a dog a
-   spawn that runs first, not a link that works first, and it only holds for
-   a flock that restores inside five seconds. `boot-order.astro` now says
-   that much either way.
-
-Tracked as https://github.com/shep-pm/shep/issues/360.
+What it does not cover: a dog started by hand has no link and still waits for
+the listener. A frame in flight at the exec, and events published between the
+exec and the re-arm, are lost.
 
 ## Ideas, recorded but not designed
 

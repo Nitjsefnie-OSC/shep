@@ -141,11 +141,13 @@ pub fn spawn_cron_worker(
                         | SupervisorError::Disabled(_)
                         | SupervisorError::InvalidEnv(_)
                         | SupervisorError::InvalidField(_)
-                        | SupervisorError::Overrides(_)),
+                        | SupervisorError::Overrides(_)
+                        | SupervisorError::NoSuchSheep(_)
+                        | SupervisorError::EnvChanged(_)),
                     ) => {
-                        // None of these ten can arrive here. A restart
+                        // None of these twelve can arrive here. A restart
                         // writes no logs, reloads nothing, scales nothing,
-                        // and names no dog, field or override. Named rather
+                        // and names no dog, field, override or second sheep. Named rather
                         // than a catch-all, so a new variant fails to compile.
                         tracing::warn!(name, %err, "cron-triggered restart reported an unrelated failure");
                     }

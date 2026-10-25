@@ -242,6 +242,7 @@ mod tests {
                 reload_deadline_ms: None,
                 disabled: None,
                 log_timestamps: None,
+                access: None,
             },
             manually: false,
             at_ms: 1_700_000_000_000,

@@ -155,6 +155,59 @@ fn set_sheep_env_batch_wire_v8() {
     assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
 }
 
+/// The request names two sheep and carries no value: the shepherd reads the
+/// source's env itself.
+#[test]
+fn copy_sheep_env_wire_v12() {
+    let request = Request::CopySheepEnv {
+        from: "web".to_string(),
+        to: "api".to_string(),
+        replace: true,
+        except: vec!["PORT".to_string()],
+        dry_run: false,
+        expect: None,
+    };
+    let json = serde_json::to_string(&request).unwrap();
+    assert_eq!(
+        json,
+        r#"{"kind":"copy_sheep_env","from":"web","to":"api","replace":true,"except":["PORT"],"dry_run":false}"#
+    );
+    assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+}
+
+/// The reviewed change list rides along on a write, and its absence is what
+/// an earlier client's request looks like.
+#[test]
+fn copy_sheep_env_expect_wire_v12() {
+    let request = Request::CopySheepEnv {
+        from: "web".to_string(),
+        to: "api".to_string(),
+        replace: false,
+        except: Vec::new(),
+        dry_run: false,
+        expect: Some(vec![
+            crate::protocol::EnvCopyChange::new(
+                "PADDOCK_KEY",
+                crate::protocol::EnvCopyKind::Added,
+                None,
+                Some("{{secret:PADDOCK_KEY}}".to_string()),
+            )
+            .sealed(7),
+        ]),
+    };
+    let json = serde_json::to_string(&request).unwrap();
+    assert_eq!(
+        json,
+        r#"{"kind":"copy_sheep_env","from":"web","to":"api","replace":false,"except":[],"dry_run":false,"expect":[{"key":"PADDOCK_KEY","kind":"added","old":null,"new":"{{secret:PADDOCK_KEY}}","seal":7}]}"#
+    );
+    assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+    let without = r#"{"kind":"copy_sheep_env","from":"web","to":"api","replace":false,"except":[],"dry_run":false}"#;
+    assert!(matches!(
+        serde_json::from_str::<Request>(without).unwrap(),
+        Request::CopySheepEnv { expect: None, .. }
+    ));
+}
+
 /// Additive, so the floor does not move. Guards against a reflexive
 /// raise. The ceiling is pinned once, by `protocol::tests`, and moves
 /// for reasons unrelated to this variant.
@@ -234,7 +287,7 @@ fn request_wire_snapshots() {
             12,
             Request::EnableDog {
                 name: "metrics".to_string(),
-                source: DogSource::BuiltIn,
+                source: DogSource::BuiltIn { grants: None },
             },
         ),
         envelope(
@@ -491,14 +544,23 @@ fn request_wire_snapshots() {
                 lines: 50,
             },
         ),
+        // Paired with `dog_sheep_settings` (35): one sheep's table for one
+        // dog, resolved.
+        envelope(
+            40,
+            Request::SheepDogSettingsResolved {
+                name: "web".to_string(),
+                dog: "deploy".to_string(),
+            },
+        ),
     ];
-    insta::assert_json_snapshot!("request_wire_v11", requests);
+    insta::assert_json_snapshot!("request_wire_v12", requests);
 }
 
 /// The request names a sheep and a stream. A `path` key here would make the
 /// shepherd a reader of arbitrary files.
 #[test]
-fn tail_log_request_wire_v11() {
+fn tail_log_request_wire_v12() {
     assert_eq!(
         serde_json::to_string(&Request::TailLog {
             id: 3,
@@ -580,5 +642,24 @@ fn the_enable_and_disable_requests_and_their_replies_have_their_own_tags() {
     assert_eq!(
         serde_json::to_string(&Response::Enabled(vec![])).unwrap(),
         r#"{"kind":"enabled","data":[]}"#
+    );
+}
+
+#[test]
+fn sheep_dog_settings_resolved_serializes_as_its_own_kind() {
+    assert_eq!(
+        serde_json::to_string(&Request::SheepDogSettingsResolved {
+            name: "web".to_string(),
+            dog: "deploy".to_string(),
+        })
+        .unwrap(),
+        r#"{"kind":"sheep_dog_settings_resolved","name":"web","dog":"deploy"}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&Request::DogSheepSettings {
+            dog: "deploy".to_string()
+        })
+        .unwrap(),
+        r#"{"kind":"dog_sheep_settings","dog":"deploy"}"#
     );
 }

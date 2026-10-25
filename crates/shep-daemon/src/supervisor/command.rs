@@ -229,6 +229,25 @@ pub(crate) enum Command {
         /// or the override store could not be read or written.
         reply: oneshot::Sender<Result<Option<EnvBatch>, SupervisorError>>,
     },
+    /// One sheep's env copied onto another's. See
+    /// [`Actor::handle_copy_sheep_env`].
+    CopySheepEnv {
+        /// The sheep whose env is read.
+        from: String,
+        /// The sheep whose env is written.
+        to: String,
+        /// Make the target's env exactly the source's.
+        replace: bool,
+        /// Keys left as the target had them.
+        except: Vec<String>,
+        /// Compute the change list and write nothing.
+        dry_run: bool,
+        /// The change list the caller reviewed, which the write must match.
+        expect: Option<Vec<shep_core::protocol::EnvCopyChange>>,
+        /// Answers the change list, or an error when either name is no sheep,
+        /// is a dog's, or the result will not normalize or be stored.
+        reply: oneshot::Sender<Result<EnvCopy, SupervisorError>>,
+    },
     /// See [`Actor::handle_set_sheep_field`].
     SetSheepField {
         /// The sheep's name, not a selector, for [`Self::Scale`]'s reason.
@@ -244,6 +263,15 @@ pub(crate) enum Command {
         /// written.
         reply: oneshot::Sender<Result<Option<FieldSet>, SupervisorError>>,
     },
+    /// See [`Actor::handle_reset_sheep_field`].
+    ResetSheepField {
+        /// The sheep's name, not a selector, for [`Self::Scale`]'s reason.
+        name: String,
+        /// The `AppConfig` field whose override to drop.
+        key: String,
+        /// Answers as [`Self::SetSheepField`] does.
+        reply: oneshot::Sender<Result<Option<FieldSet>, SupervisorError>>,
+    },
     /// Reads one dog's table off every sheep carrying one. See
     /// [`Actor::handle_dog_sheep_settings`].
     DogSheepSettings {
@@ -251,6 +279,17 @@ pub(crate) enum Command {
         dog: String,
         /// Answers sheep name to table, empty when no sheep carries one.
         reply: oneshot::Sender<BTreeMap<String, DogTable>>,
+    },
+    /// Reads one sheep's table for one dog, with the environment its
+    /// references resolve in. See [`Actor::handle_sheep_dog_read`].
+    SheepDogRead {
+        /// The sheep's name, not a selector, for [`Self::Scale`]'s reason.
+        name: String,
+        /// Which dog's table to read.
+        dog: String,
+        /// Answers the table and environment, or `None` when no sheep has
+        /// that name. A dog's own name has none.
+        reply: oneshot::Sender<Option<SheepDogRead>>,
     },
     /// Sets or removes one dog's table on one sheep. See
     /// [`Actor::handle_set_sheep_dog_settings`].

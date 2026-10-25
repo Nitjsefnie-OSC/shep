@@ -21,8 +21,12 @@
 //! shepherd.flush(std::time::Duration::from_secs(2)).unwrap();
 //! ```
 //!
-//! - A slow handler delays the next message: the reader thread runs
-//!   handlers itself. `action_timeout` (default 3s) sets the budget.
+//! - An action's handler runs on a thread of its own, so a slow one does
+//!   not delay the messages behind it. Up to 32 run at once, and past that
+//!   the reader answers actions itself. Every reply carries the id of the
+//!   action it answers, so a reply lands on the right trigger whatever
+//!   order the handlers finish in. `action_timeout` (default 3s) is still
+//!   the budget one handler gets.
 //! - `metric` and `note` drop under backpressure. `ready` and a reply block
 //!   for room instead, since losing either is worse.
 //! - Sending queues; a writer thread does the writing. An app that ends
@@ -32,9 +36,11 @@
 //!   process on its own.
 
 #![doc(test(attr(deny(warnings))))]
-// Not `forbid`: `endpoint` needs unsafe to reach the channel. Two blocks
-// on unix probe the inherited descriptor and then take it. One on
-// Windows peeks a pipe's buffer. Each carries its own `// SAFETY:` comment.
+// Not `forbid`: `endpoint` needs unsafe to reach the channel. Three blocks
+// on unix probe an inherited descriptor and then take it: the channel's
+// own, and a dog's connection to its shepherd, which `shep-client` cannot
+// adopt itself. One on Windows peeks a pipe's buffer. Each carries its own
+// `// SAFETY:` comment.
 #![deny(unsafe_code)]
 
 #[cfg(feature = "client")]
@@ -61,6 +67,8 @@ mod wire;
 pub use channel::Channel;
 #[cfg(feature = "client")]
 pub use dispatch::{ActionHandler, ShutdownHandler};
+#[cfg(all(feature = "client", unix))]
+pub use endpoint::take_inherited_socket;
 #[cfg(feature = "client")]
 pub use endpoint::{Endpoint, FD_VAR, PIPE_VAR, VERSION_VAR, discover};
 #[cfg(feature = "client")]

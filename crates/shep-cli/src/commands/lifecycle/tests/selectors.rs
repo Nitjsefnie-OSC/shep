@@ -4,25 +4,17 @@ use super::*;
 /// entries, so the two differ by row count as well as by content.
 #[tokio::test]
 async fn a_lifecycle_verb_renders_the_whole_flock_as_a_table() {
-    use shep_client::testing::fake_client_on;
     use shep_core::protocol::ProcessInfo;
     use shep_core::status::ProcStatus;
 
-    let dir = tempfile::tempdir().unwrap();
-    let address = shep_client::testing::control_address(dir.path());
-    let (client, daemon) = fake_client_on(&address).await;
+    let (_dir, client, daemon) = a_daemon_on_a_tempdir().await;
     daemon.reply_to_list(a_flock_with_a_dog());
 
     let mut out = Vec::new();
     let mut err = Vec::new();
     let touched = vec![ProcessInfo::builder(1, "koji", ProcStatus::Stopped).build()];
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         render_outcome(&client, &mut streams, "stop", FlockRows(touched)).await
     };
 
@@ -67,25 +59,17 @@ async fn a_lifecycle_verb_renders_the_whole_flock_as_a_table() {
 /// listing rather than fetching one and discarding it.
 #[tokio::test]
 async fn the_json_surface_keeps_the_rows_the_verb_touched() {
-    use shep_client::testing::fake_client_on;
     use shep_core::protocol::ProcessInfo;
     use shep_core::status::ProcStatus;
 
-    let dir = tempfile::tempdir().unwrap();
-    let address = shep_client::testing::control_address(dir.path());
-    let (client, daemon) = fake_client_on(&address).await;
+    let (_dir, client, daemon) = a_daemon_on_a_tempdir().await;
     daemon.reply_to_list(a_flock_with_a_dog());
 
     let mut out = Vec::new();
     let mut err = Vec::new();
     let touched = vec![ProcessInfo::builder(1, "koji", ProcStatus::Stopped).build()];
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Json,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
         render_outcome(&client, &mut streams, "stop", FlockRows(touched)).await
     };
 
@@ -183,11 +167,11 @@ fn an_instance_selector_reaches_a_dog() {
 
     let flock = vec![
         ProcessInfo::builder(0, "metrics", ProcStatus::Online)
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .instance(Some(0))
             .build(),
         ProcessInfo::builder(1, "metrics", ProcStatus::Online)
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .instance(Some(1))
             .build(),
     ];
@@ -276,7 +260,7 @@ fn an_all_that_matched_nothing_counts_sheep_and_not_dogs() {
 
     let all = ProcessSelector::parse("all").unwrap();
     let dogs_only = [ProcessInfo::builder(0, "log-rotate", ProcStatus::Online)
-        .dog(Some(DogSource::BuiltIn))
+        .dog(Some(DogSource::BuiltIn { grants: None }))
         .build()];
 
     let said = selector_miss("all", &all, &dogs_only).expect("a miss is reported");
@@ -301,22 +285,13 @@ fn an_all_that_matched_nothing_counts_sheep_and_not_dogs() {
 /// "matched nothing" to an exit code lives in `load_one`.
 #[tokio::test]
 async fn a_start_on_an_empty_fold_exits_not_found_without_a_start_request() {
-    use shep_client::testing::fake_client_on;
-
-    let dir = tempfile::tempdir().unwrap();
-    let address = shep_client::testing::control_address(dir.path());
-    let (client, daemon) = fake_client_on(&address).await;
+    let (_dir, client, daemon) = a_daemon_on_a_tempdir().await;
     daemon.reply_to_list(a_foldable_flock());
 
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         start(
             &client,
             &mut streams,
@@ -344,12 +319,9 @@ async fn a_start_on_an_empty_fold_exits_not_found_without_a_start_request() {
 /// replaced.
 #[tokio::test]
 async fn a_target_naming_a_running_sheep_leaves_it_alone() {
-    use shep_client::testing::fake_client_on;
     use shep_core::status::ProcStatus;
 
-    let dir = tempfile::tempdir().unwrap();
-    let path = shep_client::testing::control_address(dir.path());
-    let (client, daemon) = fake_client_on(&path).await;
+    let (_dir, client, daemon) = a_daemon_on_a_tempdir().await;
     daemon.reply_to_list(vec![
         shep_core::protocol::ProcessInfo::builder(7, "api-auth", ProcStatus::Online).build(),
     ]);
@@ -357,12 +329,7 @@ async fn a_target_naming_a_running_sheep_leaves_it_alone() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         start(
             &client,
             &mut streams,

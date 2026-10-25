@@ -75,10 +75,7 @@ pub(crate) fn bind_socket(paths: &ShepPaths, socket: &Path) -> Result<Listener, 
                     pid: read_pidfile(paths)?,
                 })
             }
-            Err(source) => Err(BootError::Io {
-                path: socket.to_path_buf(),
-                source,
-            }),
+            Err(source) => Err(BootError::io(socket, source)),
         };
     }
 
@@ -114,25 +111,14 @@ pub(crate) fn bind_socket(paths: &ShepPaths, socket: &Path) -> Result<Listener, 
                             ErrorKind::ConnectionRefused | ErrorKind::NotFound
                         ) =>
                     {
-                        std::fs::remove_file(socket).map_err(|source| BootError::Io {
-                            path: socket.to_path_buf(),
-                            source,
-                        })?;
-                        Listener::bind(socket).map_err(|source| BootError::Io {
-                            path: socket.to_path_buf(),
-                            source,
-                        })
+                        std::fs::remove_file(socket)
+                            .map_err(|source| BootError::io(socket, source))?;
+                        Listener::bind(socket).map_err(|source| BootError::io(socket, source))
                     }
-                    Err(source) => Err(BootError::Io {
-                        path: socket.to_path_buf(),
-                        source,
-                    }),
+                    Err(source) => Err(BootError::io(socket, source)),
                 }
             }
-            Err(source) => Err(BootError::Io {
-                path: socket.to_path_buf(),
-                source,
-            }),
+            Err(source) => Err(BootError::io(socket, source)),
         }
     }
 }

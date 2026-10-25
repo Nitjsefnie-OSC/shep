@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::LevelRule;
 use crate::status::ProcStatus;
 
-use super::DogSource;
+use super::{DogAccess, DogSource};
 
 // Named by intra-doc links and by nothing rustc compiles, so the
 // import is behind `cfg(doc)` rather than flagged unused.
@@ -278,6 +278,12 @@ pub struct ProcessInfo {
     /// every daemon before it wrote. Additive, like [`Self::disabled`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_timestamps: Option<bool>,
+    /// The marks on a dog's access: undeclared, not reviewed, permissions
+    /// waiting. `None` for a sheep and in a reply from the shepherd, which
+    /// does not know them; the CLI that prints a listing fills it in from
+    /// `shep.toml`. Additive, like [`Self::disabled`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<DogAccess>,
 }
 
 /// Orders one flock listing the way every operator-facing surface presents
@@ -334,6 +340,7 @@ impl ProcessInfo {
                 reload_deadline_ms: None,
                 disabled: None,
                 log_timestamps: None,
+                access: None,
             },
         }
     }
@@ -506,6 +513,12 @@ impl ProcessInfoBuilder {
         self
     }
 
+    /// Sets the marks on this dog's access; `None` for a sheep.
+    pub fn access(mut self, access: Option<DogAccess>) -> Self {
+        self.info.access = access;
+        self
+    }
+
     /// Finishes the row.
     #[must_use]
     pub fn build(self) -> ProcessInfo {
@@ -567,6 +580,7 @@ pub(super) fn sample_info() -> ProcessInfo {
         // `None` for the same reason, its shape pinned by
         // `a_stamps_off_flag_is_absent_from_the_wire_until_set`.
         log_timestamps: None,
+        access: None,
     }
 }
 
@@ -666,10 +680,10 @@ mod tests {
         // be changed: it feeds pinned snapshots.
         assert_eq!(
             ProcessInfo::builder(1, "metrics", ProcStatus::Online)
-                .dog(Some(DogSource::BuiltIn))
+                .dog(Some(DogSource::BuiltIn { grants: None }))
                 .build()
                 .dog,
-            Some(DogSource::BuiltIn),
+            Some(DogSource::BuiltIn { grants: None }),
             "an empty `dog` setter body is invisible to the comparison above"
         );
 
@@ -808,7 +822,7 @@ mod tests {
         let fixture = r#"{"id":1,"name":"metrics","status":"online","pid":42,"restarts":0,"uptime_ms":10,"fold":null,"out_file":null,"err_file":null,"cpu_percent":null,"memory_bytes":null,"dog":{"kind":"built_in"},"lambs":null,"last_exit":null,"smit":null,"instance":0}"#;
         let info: ProcessInfo = serde_json::from_str(fixture).unwrap();
         assert_eq!(info.handshook, None);
-        assert_eq!(info.dog, Some(DogSource::BuiltIn));
+        assert_eq!(info.dog, Some(DogSource::BuiltIn { grants: None }));
     }
 
     /// The fixture carries `handshook: false`, the case that matters: `None`

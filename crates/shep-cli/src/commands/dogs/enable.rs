@@ -5,6 +5,7 @@ use std::path::Path;
 
 use shep_client::Client;
 use shep_core::paths::ShepPaths;
+use shep_core::permissions::Grants;
 use shep_core::protocol::{DogSource, Request, Response};
 
 use crate::commands::rpc::{client_error, unexpected_response};
@@ -12,8 +13,14 @@ use crate::commands::shep_toml::{ShepToml, ShepTomlError};
 use crate::exit::ExitCode;
 use crate::output::{DogActionStatus, Streams};
 
+use super::consent::{Input, Verdict, consent_from, review};
+use super::depends::warn_of_unmet_depends;
+use super::grants::warn_if_unenforced;
+use super::second_look::second_look;
+use super::vet::{VERSION_BUDGET, fail_adopt, read_manifest};
 use super::{
-    NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, emit_dog_action, fail_config,
+    DECLINED_STATUS, NO_SHEPHERD_ENABLE_STATUS, connect_or_absent, dog_source, emit_dog_action,
+    fail_config,
 };
 
 /// [`enable`]'s own failure, so its `try_edit` closure can refuse from
@@ -57,9 +64,31 @@ impl From<ShepTomlError> for EnableRefusal {
 // clippy's 128-byte threshold there.
 #[cfg_attr(windows, allow(clippy::result_large_err))]
 pub(crate) fn enable_in_config(path: &Path, name: &str) -> Result<DogSource, EnableRefusal> {
+    enable_granting(path, name, None)
+}
+
+/// [`enable_in_config`], recording `grants` for the dog in the same write
+/// when there are any, so the source it returns carries them.
+///
+/// # Errors
+/// As [`enable_in_config`].
+#[cfg_attr(windows, allow(clippy::result_large_err))]
+fn enable_granting(
+    path: &Path,
+    name: &str,
+    grants: Option<&Grants>,
+) -> Result<DogSource, EnableRefusal> {
     ShepToml::try_edit(path, |cfg| {
-        let source = dog_source(cfg, name);
-        if matches!(source, DogSource::BuiltIn) && !crate::dog::BUILT_IN_DOGS.contains(&name) {
+        // `grants` answers a question asked against a read taken before this
+        // write. A grant another shep wrote since stands.
+        if let Some(grants) = grants
+            && cfg.granted(name)?.is_none()
+        {
+            cfg.set_granted(name, grants)?;
+        }
+        let source = dog_source(cfg, name, cfg.granted(name)?);
+        if matches!(source, DogSource::BuiltIn { .. }) && !crate::dog::BUILT_IN_DOGS.contains(&name)
+        {
             return Err(EnableRefusal::UnknownDog {
                 adopted: cfg.adopted_dog_names(),
             });
@@ -71,19 +100,135 @@ pub(crate) fn enable_in_config(path: &Path, name: &str) -> Result<DogSource, Ena
 
 /// `shep enable <name>`: writes the config, and starts the dog if a
 /// shepherd is running.
-pub async fn enable(streams: &mut Streams<'_>, paths: &ShepPaths, name: &str) -> ExitCode {
-    let source = match enable_in_config(&paths.daemon_config, name) {
+///
+/// An adopted dog that has never been granted anything and is not yet
+/// enabled is asked about first ([`ask_before_first_enable`]); `yes` is
+/// `--yes`, which answers that question.
+pub async fn enable(
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    name: &str,
+    yes: bool,
+) -> ExitCode {
+    enable_asking(streams, paths, name, yes, &mut Input::stdin()).await
+}
+
+/// [`enable`], asking at `input` rather than at this process's stdin.
+pub(super) async fn enable_asking(
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    name: &str,
+    yes: bool,
+    input: &mut Input,
+) -> ExitCode {
+    if let Err(code) = second_look(streams, paths, name, yes, input) {
+        return code;
+    }
+    let grants = match ask_before_first_enable(streams, paths, name, yes, input) {
+        Ok(grants) => grants,
+        Err(code) => return code,
+    };
+    let source = match enable_granting(&paths.daemon_config, name, grants.as_ref()) {
         Ok(source) => source,
         Err(EnableRefusal::Config(err)) => return fail_config(streams, &err),
         Err(EnableRefusal::UnknownDog { adopted }) => {
             return fail_enable_unknown_dog(streams, name, &adopted);
         }
     };
+    warn_of_unmet_depends_of(streams, paths, name, &source);
     let client = match connect_or_absent(paths, streams).await {
         Ok(client) => client,
         Err(code) => return code,
     };
     enable_after_config(streams, name, &source, client.as_ref()).await
+}
+
+/// The first enable of a dog: shows what it declares and asks whether to
+/// grant it.
+///
+/// "First" is a dog with no `dog_grants` entry that is not already enabled:
+/// one an operator declined at `shep adopt`, hand-wrote into
+/// `[daemon.adopted_dogs]`, or a built-in nobody has enabled. A built-in
+/// declares itself with no probe ([`crate::dog::builtin_manifest`]) and asks
+/// like any other. A name that is no dog is left for [`enable_in_config`] to
+/// refuse. A config
+/// that cannot be read is reported here: carrying on would enable the dog
+/// without the question.
+///
+/// `Ok` holds the grants to record with the enable; `Ok(None)` is nothing to
+/// record, either because no question was due or because the dog is
+/// undeclared and keeps full access.
+///
+/// # Errors
+/// The [`ExitCode`] to stop with, already reported: a refusal, or a no, which
+/// leaves the dog disabled with nothing granted.
+fn ask_before_first_enable(
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    name: &str,
+    yes: bool,
+    input: &mut Input,
+) -> Result<Option<Grants>, ExitCode> {
+    let cfg =
+        ShepToml::read_only(&paths.daemon_config).map_err(|err| fail_config(streams, &err))?;
+    let binary = cfg.adopted_dog_path(name);
+    if binary.is_none() && crate::dog::builtin_manifest(name).is_none() {
+        return Ok(None);
+    }
+    let already_decided = !matches!(cfg.granted(name), Ok(None));
+    if already_decided || cfg.enabled_dog_names().iter().any(|dog| dog == name) {
+        return Ok(None);
+    }
+    // A built-in is this binary, so it declares itself with no probe.
+    let manifest = match &binary {
+        Some(binary) => read_manifest(binary, &paths.home, name, VERSION_BUDGET)
+            .map_err(|refusal| fail_adopt(streams, binary, &refusal))?
+            .manifest()
+            .cloned(),
+        None => crate::dog::builtin_manifest(name),
+    };
+    let reviewed =
+        review(manifest.as_ref()).map_err(|refusal| refusal.report(streams, name, "enabled"))?;
+    match consent_from(streams, name, "enable", &reviewed, yes, input)? {
+        Verdict::Grant(grants) => Ok(grants),
+        Verdict::Declined => {
+            let source = dog_source(&cfg, name, None);
+            Err(emit_dog_action(
+                streams,
+                "enable",
+                name,
+                source,
+                DECLINED_STATUS,
+            ))
+        }
+    }
+}
+
+/// Warns, for an adopted dog, of what its manifest needs and is missing.
+///
+/// A built-in dog has no binary to read. The manifest comes from the cache
+/// when this binary has been read before, so a dog adopted by an older shep,
+/// or rebuilt since, is asked once more. A dog with no readable manifest
+/// earns nothing here.
+fn warn_of_unmet_depends_of(
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    name: &str,
+    source: &DogSource,
+) {
+    let DogSource::Adopted { path, .. } = source else {
+        return;
+    };
+    let Ok(read) = read_manifest(Path::new(path), &paths.home, name, VERSION_BUDGET) else {
+        return;
+    };
+    let Some(manifest) = read.manifest() else {
+        return;
+    };
+    let adopted = ShepToml::read_only(&paths.daemon_config)
+        .map(|cfg| cfg.adopted_dog_names())
+        .unwrap_or_default();
+    warn_of_unmet_depends(streams, name, manifest, &adopted);
 }
 
 /// Renders [`enable`]'s refusal of a name that names no dog.
@@ -92,7 +237,11 @@ pub async fn enable(streams: &mut Streams<'_>, paths: &ShepPaths, name: &str) ->
 /// the refusal was decided under, and empty where nothing has been adopted.
 /// [`ExitCode::InvalidConfig`] rather than [`ExitCode::Usage`]: the name is
 /// one the daemon config cannot resolve, not a malformed argument.
-fn fail_enable_unknown_dog(streams: &mut Streams<'_>, name: &str, adopted: &[String]) -> ExitCode {
+pub(super) fn fail_enable_unknown_dog(
+    streams: &mut Streams<'_>,
+    name: &str,
+    adopted: &[String],
+) -> ExitCode {
     let valid: Vec<String> = crate::dog::BUILT_IN_DOGS
         .iter()
         .map(|built_in| format!("{built_in:?}"))
@@ -125,7 +274,7 @@ pub(crate) fn join_with_and(items: &[String]) -> String {
 /// stale socket file and a daemon that was never started are not
 /// distinguished, so a provisioning script can configure a host before
 /// starting anything.
-async fn enable_after_config(
+pub(super) async fn enable_after_config(
     streams: &mut Streams<'_>,
     name: &str,
     source: &DogSource,
@@ -147,13 +296,16 @@ async fn enable_after_config(
         source: source.clone(),
     };
     match client.request(request).await {
-        Ok(Response::DogStarted(info)) => emit_dog_action(
-            streams,
-            "enable",
-            name,
-            source.clone(),
-            DogActionStatus::Acted(info.status.into()),
-        ),
+        Ok(Response::DogStarted(info)) => {
+            warn_if_unenforced(streams, name, source, client.daemon().protocol);
+            emit_dog_action(
+                streams,
+                "enable",
+                name,
+                source.clone(),
+                DogActionStatus::Acted(info.status.into()),
+            )
+        }
         Ok(_unrecognised) => unexpected_response(streams),
         Err(err) => client_error(streams, &err),
     }
@@ -219,7 +371,7 @@ mod tests {
 
         let source = enable_in_config(&path, "metrics").unwrap();
 
-        assert!(matches!(source, DogSource::BuiltIn));
+        assert!(matches!(source, DogSource::BuiltIn { .. }));
         assert!(
             ShepToml::read_only(&path)
                 .unwrap()
@@ -266,7 +418,13 @@ mod tests {
             let mut streams = streams(&mut out, &mut err);
             streams.fmt = Format::Json;
 
-            let code = enable_after_config(&mut streams, "bark", &DogSource::BuiltIn, client).await;
+            let code = enable_after_config(
+                &mut streams,
+                "bark",
+                &DogSource::BuiltIn { grants: None },
+                client,
+            )
+            .await;
 
             assert_eq!(code, ExitCode::Success);
             let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -296,7 +454,7 @@ mod tests {
         let _ = enable_after_config(
             &mut streams(&mut out, &mut err),
             "metrics",
-            &DogSource::BuiltIn,
+            &DogSource::BuiltIn { grants: None },
             Some(&client),
         )
         .await;
@@ -306,7 +464,7 @@ mod tests {
             sent.body,
             Request::EnableDog {
                 name: "metrics".to_string(),
-                source: DogSource::BuiltIn,
+                source: DogSource::BuiltIn { grants: None },
             }
         );
     }
@@ -337,7 +495,7 @@ mod tests {
 
             let mut out = Vec::new();
             let mut err = Vec::new();
-            let code = enable(&mut streams(&mut out, &mut err), &paths, "otel").await;
+            let code = enable(&mut streams(&mut out, &mut err), &paths, "otel", true).await;
 
             assert_eq!(code, ExitCode::Success);
             let envelope = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
@@ -349,6 +507,7 @@ mod tests {
                 Request::EnableDog {
                     name: "otel".to_string(),
                     source: DogSource::Adopted {
+                        grants: None,
                         path: "/usr/local/bin/shep-otel".to_string(),
                         channel,
                     },
@@ -371,7 +530,7 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = enable(&mut streams(&mut out, &mut err), &paths, "metrics").await;
+        let code = enable(&mut streams(&mut out, &mut err), &paths, "metrics", true).await;
 
         assert_eq!(code, ExitCode::Success);
         let written = std::fs::read_to_string(&paths.daemon_config).unwrap();
@@ -401,7 +560,7 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = enable(&mut streams(&mut out, &mut err), &paths, "metrics").await;
+        let code = enable(&mut streams(&mut out, &mut err), &paths, "metrics", true).await;
 
         assert_ne!(code, ExitCode::Success);
         let text = String::from_utf8(err).unwrap();
@@ -420,7 +579,7 @@ mod tests {
         let paths = ShepPaths::resolve(&|_| None, dir.path());
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = enable(&mut streams(&mut out, &mut err), &paths, "metrics").await;
+        let code = enable(&mut streams(&mut out, &mut err), &paths, "metrics", true).await;
 
         assert_eq!(code, ExitCode::Success);
         let written = std::fs::read_to_string(&paths.daemon_config).unwrap();
@@ -441,7 +600,7 @@ mod tests {
         let paths = ShepPaths::resolve(&|_| None, dir.path());
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = enable(&mut streams(&mut out, &mut err), &paths, "pydog").await;
+        let code = enable(&mut streams(&mut out, &mut err), &paths, "pydog", true).await;
 
         assert_eq!(code, ExitCode::InvalidConfig);
         let text = String::from_utf8(err).unwrap();
@@ -476,7 +635,7 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = enable(&mut streams(&mut out, &mut err), &paths, "pydog").await;
+        let code = enable(&mut streams(&mut out, &mut err), &paths, "pydog", true).await;
 
         assert_eq!(code, ExitCode::InvalidConfig);
         let text = String::from_utf8(err).unwrap();
@@ -500,7 +659,7 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = enable(&mut streams(&mut out, &mut err), &paths, "otel").await;
+        let code = enable(&mut streams(&mut out, &mut err), &paths, "otel", true).await;
 
         assert_eq!(code, ExitCode::Success, "{}", String::from_utf8_lossy(&err));
         let written = std::fs::read_to_string(&paths.daemon_config).unwrap();
@@ -534,7 +693,7 @@ mod tests {
         let code = enable_after_config(
             &mut streams(&mut out, &mut err),
             "bark",
-            &DogSource::BuiltIn,
+            &DogSource::BuiltIn { grants: None },
             Some(&client),
         )
         .await;

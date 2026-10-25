@@ -43,7 +43,7 @@ use tokio::sync::{mpsc, watch};
 use shep_core::paths::ShepPaths;
 
 #[cfg(unix)]
-use self::handover::{HandoverSeam, apps_for_the_roll, rehydrate, successor_handover};
+use self::handover::{HandoverSeam, Rehydrated, apps_for_the_roll, rehydrate, successor_handover};
 use self::pidfile::PidfileLock;
 use self::signals::install_signals;
 use self::socket::{DaemonReady, bind_socket, socket_path, write_ready};
@@ -197,12 +197,11 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
     // 1. Signal handlers, before the socket or anything else observable
     //    exists.
     let (shutdown, shutdown_rx) = watch::channel(false);
-    let shutdown = Arc::new(shutdown);
     #[cfg(unix)]
     let (signals, connect_supervisor, connect_handover) =
-        install_signals(Arc::clone(&shutdown), paths.clone())?;
+        install_signals(shutdown.clone(), paths.clone())?;
     #[cfg(windows)]
-    let (signals, connect_supervisor) = install_signals(Arc::clone(&shutdown), paths.clone())?;
+    let (signals, connect_supervisor) = install_signals(shutdown.clone(), paths.clone())?;
 
     // 2. Layout, then claim $SHEP_HOME before touching the socket: that is
     //    what closes the concurrent-boot race a bare probe-then-recover
@@ -215,8 +214,14 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
     #[cfg(unix)]
     let (mut pidfile_lock, listener, inherited) = match successor_handover()? {
         Some(carried) => {
-            let (lock, listener, flock) = rehydrate(carried, &paths)?;
-            (lock, listener, Some(flock))
+            let Rehydrated {
+                lock,
+                listener,
+                flock,
+                counters,
+                reloads,
+            } = rehydrate(carried)?;
+            (lock, listener, Some((flock, counters, reloads)))
         }
         None => (
             PidfileLock::acquire(&paths)?,
@@ -275,6 +280,13 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         pushed = ?provider_secrets.pushed(),
         "provider namespaces restored from the secrets cache"
     );
+    // Taken before the runner moves into the supervisor. `None` for a runner
+    // that opens no dog connections.
+    let dog_links = runner.dog_links();
+    // One table, two owners: the server tasks enter every connection they
+    // serve and the SIGHUP task reads them out to carry across the exec.
+    #[cfg(unix)]
+    let dog_link_table = crate::server::DogLinks::default();
     let mut builder = SupervisorBuilder::new(runner, paths.clone(), events.clone())
         .extras(extras)
         .provider_secrets(Arc::clone(&provider_secrets));
@@ -332,6 +344,7 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
             pidfile: pidfile_lock.as_raw_fd(),
         },
         paths: paths.clone(),
+        dog_links: dog_link_table.clone(),
     }));
 
     let registry = FlockRegistry::new();
@@ -368,6 +381,51 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         .partition(|spec| options.boot_first_dogs.contains(&spec.name));
     let dog_names: Vec<String> = options.dogs.iter().map(|dog| dog.name.clone()).collect();
 
+    // Starts empty and is not carried across a handover: a successor has
+    // refused nobody.
+    let dog_refusals = crate::dogs::DogRefusals::new();
+    // Also not carried, so a successor must not claim a pid it has never seen
+    // never called. `PEER_CONTACT_WARMUP` is what makes starting empty safe:
+    // until the map has listened long enough for an absence to mean
+    // something it answers `Contact::Unknown` rather than `Contact::None`.
+    let peer_contacts = crate::dogs::PeerContacts::new();
+
+    // Built ahead of the first dog, which is spawned holding a connection to
+    // this shepherd: the context is what answers it, and the control socket's
+    // listener is not served until the restore below has finished.
+    let ctx = RpcContext {
+        supervisor: supervisor.clone(),
+        events: events.clone(),
+        registry: registry.clone(),
+        snapshot_path: paths.snapshot.clone(),
+        dogs_config: paths.dogs_config.clone(),
+        known_dogs: known_dog_grants(&options),
+        dog_names: dog_names.clone(),
+        boot_first_dogs: options.boot_first_dogs.clone(),
+        paths: paths.clone(),
+        daemon_version: env!("CARGO_PKG_VERSION").to_string(),
+        dog_refusals: dog_refusals.clone(),
+        peer_contacts: peer_contacts.clone(),
+        pid,
+        shutdown: shutdown.clone(),
+        stats,
+        // Starts its own tick here rather than riding the supervisor's
+        // extras: those are armed and disarmed per sheep, and this reads
+        // the machine whether the flock is empty or not.
+        host: crate::host::HostState::real(),
+        provider_secrets,
+        host_environment: host_environment.clone(),
+    };
+    if let Some(links) = dog_links {
+        tokio::spawn(crate::server::serve_dog_links(
+            links,
+            ctx.clone(),
+            #[cfg(unix)]
+            dog_link_table,
+            shutdown.subscribe(),
+        ));
+    }
+
     // Never fails the boot: a dog that cannot be spawned is a monitoring gap
     // rather than an outage, so `spawn_enabled_dogs` warns and carries on.
     crate::dogs::spawn_enabled_dogs(&first, &paths, &supervisor, &events).await;
@@ -391,14 +449,6 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
 
     crate::dogs::spawn_enabled_dogs(&rest, &paths, &supervisor, &events).await;
 
-    // Starts empty and is not carried across a handover: a successor has
-    // refused nobody.
-    let dog_refusals = crate::dogs::DogRefusals::new();
-    // Also not carried, so a successor must not claim a pid it has never seen
-    // never called. `PEER_CONTACT_WARMUP` is what makes starting empty safe:
-    // until the map has listened long enough for an absence to mean
-    // something it answers `Contact::Unknown` rather than `Contact::None`.
-    let peer_contacts = crate::dogs::PeerContacts::new();
     // Spawned at every boot, a successor's included, rather than anchored to a
     // dog's own spawn. It restarts a dog that has been running without ever
     // answering this shepherd; the tradeoff is argued at `record_silent_dog`.
@@ -427,30 +477,6 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
         registry.clone(),
         events.subscribe(),
     );
-
-    let ctx = RpcContext {
-        supervisor,
-        events,
-        registry,
-        snapshot_path: paths.snapshot.clone(),
-        dogs_config: paths.dogs_config.clone(),
-        known_dogs: crate::rpc::KnownDogs::new(known_dog_names(&options)),
-        dog_names,
-        boot_first_dogs: options.boot_first_dogs.clone(),
-        paths: paths.clone(),
-        daemon_version: env!("CARGO_PKG_VERSION").to_string(),
-        dog_refusals,
-        peer_contacts,
-        pid,
-        shutdown,
-        stats,
-        // Starts its own tick here rather than riding the supervisor's
-        // extras: those are armed and disarmed per sheep, and this reads
-        // the machine whether the flock is empty or not.
-        host: crate::host::HostState::real(),
-        provider_secrets,
-        host_environment,
-    };
 
     // 5. A failure is a `warn!` and the boot continues: only systemd's view
     //    is wrong. Unix only, since `$NOTIFY_SOCKET` is a unix datagram
@@ -491,14 +517,16 @@ pub(crate) async fn boot_with_sweep<R: ProcessRunner>(
     })
 }
 
-/// Every dog name `options` makes known: the known list plus the enabled one.
-fn known_dog_names(options: &BootOptions) -> std::collections::BTreeSet<String> {
-    options
-        .known_dogs
-        .iter()
-        .chain(&options.dogs)
-        .map(|spec| spec.name.clone())
-        .collect()
+/// Every dog `options` makes known, with the grants its source carries: the
+/// known list plus the enabled one.
+fn known_dog_grants(options: &BootOptions) -> crate::rpc::KnownDogs {
+    crate::rpc::KnownDogs::with_grants(
+        options
+            .known_dogs
+            .iter()
+            .chain(&options.dogs)
+            .map(|spec| (spec.name.clone(), spec.source.grants().cloned())),
+    )
 }
 
 /// The cron sleep bound this boot runs with: [`BootOptions::max_cron_sleep`],

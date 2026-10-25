@@ -1,9 +1,13 @@
-//! The probe contract between shep and a dog: the flag names, the grammar
-//! of the `shep-` key lines, and the schema's secret marker key.
+//! The contract between shep and a dog: the flag names, the grammar of the
+//! `shep-` key lines, the schema's secret marker key, and the [`validate`]
+//! trigger a dog answers before shep writes its settings.
 //!
 //! Shared by `shep-cli`'s `adopt` (the asker) and `shep_client::dogs::probe`
 //! (the answerer), so the two agree by construction rather than by copying
 //! a doc snippet.
+
+pub mod manifest;
+pub mod validate;
 
 /// The flag a candidate is spawned with when shep asks for its version; the
 /// contract `docs/dogs.md` publishes. Read by `shep-cli`'s `adopt`, answered
@@ -14,6 +18,12 @@ pub const VERSION_FLAG: &str = "--version";
 /// schema. Asked by `shep-cli`'s `adopt` on the same terms as
 /// [`VERSION_FLAG`]: a dog that answers nothing is refused nothing.
 pub const SCHEMA_FLAG: &str = "--schema";
+
+/// The flag a candidate is spawned with when shep asks it to describe itself
+/// whole: one JSON [`manifest::Manifest`] on stdout. A dog that exits
+/// non-zero, prints nothing or prints something that is not a manifest has
+/// none, and is asked [`VERSION_FLAG`] and [`SCHEMA_FLAG`] instead.
+pub const MANIFEST_FLAG: &str = "--shep-manifest";
 
 /// The key a `--version` answer states its protocol under.
 ///
@@ -35,6 +45,29 @@ pub const SHEP_CHANNEL_KEY: &str = "shep-channel";
 /// Set on every run shep makes of an adopted dog: supervised, `shep <name>`
 /// and the probes. A built-in dog reads its name from argv instead.
 pub const DOG_NAME_VAR: &str = "SHEP_DOG_NAME";
+
+/// The variable that names the descriptor a supervised dog was spawned with
+/// an open connection to its shepherd on.
+///
+/// Unix only, and set on every supervised dog. A process nothing supervised
+/// has no such variable and connects on the control socket, where it acts as
+/// the operator. See [`DOG_LINK_FD`]. Windows has no inherited descriptor and
+/// uses [`DOG_LINK_PIPE_VAR`] instead.
+pub const DOG_LINK_FD_VAR: &str = "SHEP_DOG_FD";
+
+/// The variable that names the pipe a supervised dog on Windows opens to reach
+/// its shepherd, the way `$SHEP_CHANNEL_PIPE` names the channel's.
+///
+/// Windows only, and set on every supervised dog in place of
+/// [`DOG_LINK_FD_VAR`]. The shepherd creates the pipe before the dog starts,
+/// under a security descriptor that admits only its own user, and serves it
+/// from then on. A process nothing supervised has no such variable and
+/// connects on the control pipe, where it acts as the operator.
+pub const DOG_LINK_PIPE_VAR: &str = "SHEP_DOG_PIPE";
+
+/// The descriptor number a dog's connection arrives on, beside the shepherd
+/// channel's fd 3.
+pub const DOG_LINK_FD: i32 = 4;
 
 /// The schemars extension key that marks a config field as a credential.
 /// Written by the `dog_config` attribute. A typo fails silently: the schema

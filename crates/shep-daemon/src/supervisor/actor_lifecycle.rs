@@ -126,6 +126,7 @@ impl<R: ProcessRunner> Actor<R> {
         let slot = self.sheep.get(&id).expect("respawn: unknown id");
         let app = slot.entry.spec.clone();
         let instance = slot.entry.instance;
+        let dog_link = slot.entry.dog.is_some();
         // Computed ahead of the mutable borrow below.
         let next_epoch = slot.epoch + 1;
         let spec = match assemble(
@@ -135,11 +136,10 @@ impl<R: ProcessRunner> Actor<R> {
             credentials,
             &self.secret_view(&app),
         ) {
-            Ok(spec) => spec,
+            Ok(spec) => SpawnSpec { dog_link, ..spec },
             Err(err) => return self.refuse_spawn(id, manually, &err),
         };
-        let source = ReadinessSource::of(app.config())
-            .expect("ResolvedApp already passed ProbeTarget::parse in normalize");
+        let source = ReadinessSource::of_normalized(app.config());
         let gated = !matches!(source, ReadinessSource::Heuristic);
         // Read before the move below: a gated app's readiness task wants the
         // same timeout the spawn just used, and `app` is what hands it over.
@@ -242,23 +242,7 @@ impl<R: ProcessRunner> Actor<R> {
             .sheep
             .get_mut(&id)
             .expect("respawn: entry vanished mid-respawn");
-        slot.entry.status = ProcStatus::Errored;
-        slot.entry.pid = None;
-        slot.entry.started_at = None;
-        // Cleared, because nothing exited here: leaving the previous process's
-        // code would show a sheep that once crashed with 1 as still crashing
-        // with 1 while it is failing to start at all.
-        slot.entry.last_exit = None;
-        // `log_ctl` is the one handle here left in place, for the reason on
-        // `SheepSlot::log_ctl`: a send to a pump that ended already fails, so
-        // clearing it would record that fact twice.
-        slot.ctl = None;
-        // Already `None` on every route into a respawn, written anyway so that
-        // "these two go together" is visible at each site.
-        slot.to_child = None;
-        slot.signals = None;
-        slot.to_stdin = None;
-        slot.ready_tx = None;
+        slot.clear_lifecycle(ProcStatus::Errored);
         let info = to_info(&slot.entry, &self.smits);
         self.emit(ProcessEventKind::Errored, info.clone(), manually);
         // The same terminal status `Decision::Errored` reaches, and it needs
@@ -307,20 +291,7 @@ impl<R: ProcessRunner> Actor<R> {
         }
         tracing::warn!(id, %err, "spawn refused; waiting to try again");
         let epoch = slot.epoch;
-        slot.entry.status = ProcStatus::WaitingRestart;
-        slot.entry.pid = None;
-        slot.entry.started_at = None;
-        // Nothing exited here, so the previous process's code would read as
-        // a crash this sheep is still repeating; `respawn_failed` clears it
-        // for the same reason.
-        slot.entry.last_exit = None;
-        // `log_ctl` is left in place as in `respawn_failed`, for the reason on
-        // `SheepSlot::log_ctl`.
-        slot.ctl = None;
-        slot.to_child = None;
-        slot.signals = None;
-        slot.to_stdin = None;
-        slot.ready_tx = None;
+        slot.clear_lifecycle(ProcStatus::WaitingRestart);
         // The wall-clock half of the timer below, which is what a handover
         // successor re-arms from.
         slot.restart_due = SystemTime::now()
@@ -462,7 +433,8 @@ impl<R: ProcessRunner> Actor<R> {
     /// name is the only thing the two have in common.
     fn built_in_dog_name(&self, id: u32) -> Option<String> {
         let slot = self.sheep.get(&id)?;
-        (slot.entry.dog == Some(DogSource::BuiltIn)).then(|| slot.entry.spec.config().name.clone())
+        matches!(slot.entry.dog, Some(DogSource::BuiltIn { .. }))
+            .then(|| slot.entry.spec.config().name.clone())
     }
 
     /// [`Self::begin_manual`]'s per-id aggregation, taking the matched ids

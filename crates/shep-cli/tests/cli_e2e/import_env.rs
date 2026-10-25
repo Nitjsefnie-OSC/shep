@@ -103,11 +103,7 @@ fn import_env_splits_a_dotenv_between_the_two_stores() {
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let combined = combined_output(&output);
     assert!(
         !combined.contains("hunter2") && !combined.contains("8080"),
         "a value reached an output stream: {combined}"
@@ -527,11 +523,7 @@ fn import_env_dry_run_writes_nothing() {
     );
     // The dry run is the path that prints a row per key, so it is the one
     // where a value would show up if a row ever grew one.
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let combined = combined_output(&output);
     assert!(
         !combined.contains("hunter2") && !combined.contains("8080"),
         "a value reached an output stream: {combined}"
@@ -571,11 +563,7 @@ fn import_env_refuses_a_reserved_variable_before_either_store_is_written() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(4), "{output:?}");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let combined = combined_output(&output);
     assert!(
         !combined.contains("sk_live_abcdef"),
         "the value reached an output stream: {combined}"

@@ -13,7 +13,7 @@ async fn env_batch_harness() -> Harness {
     start_app(&h, AppConfig::minimal("web", "./srv")).await;
     h.ctx
         .supervisor
-        .start_dog(dog_app("bark"), DogSource::BuiltIn)
+        .start_dog(dog_app("bark"), DogSource::BuiltIn { grants: None })
         .await
         .unwrap();
     h
@@ -52,7 +52,7 @@ async fn a_batch_writes_every_key_under_one_lock() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([
                 ("A".to_string(), "1".to_string()),
                 ("B".to_string(), "2".to_string()),
@@ -76,13 +76,13 @@ async fn an_identical_value_is_unchanged_rather_than_a_collision() {
     let entries = BTreeMap::from([("A".to_string(), "1".to_string())]);
     h.ctx
         .supervisor
-        .set_sheep_env_batch("web".to_string(), entries.clone(), false, false)
+        .set_sheep_env_batch("web", entries.clone(), false, false)
         .await
         .unwrap();
     let batch = h
         .ctx
         .supervisor
-        .set_sheep_env_batch("web".to_string(), entries, false, false)
+        .set_sheep_env_batch("web", entries, false, false)
         .await
         .unwrap()
         .expect("web exists");
@@ -97,7 +97,7 @@ async fn a_collision_without_force_writes_nothing_at_all() {
     h.ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("A".to_string(), "1".to_string())]),
             false,
             false,
@@ -108,7 +108,7 @@ async fn a_collision_without_force_writes_nothing_at_all() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([
                 ("A".to_string(), "2".to_string()),
                 ("B".to_string(), "9".to_string()),
@@ -136,7 +136,7 @@ async fn force_overwrites_and_reports_the_collision_in_both_lists() {
     h.ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("A".to_string(), "1".to_string())]),
             false,
             false,
@@ -147,7 +147,7 @@ async fn force_overwrites_and_reports_the_collision_in_both_lists() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("A".to_string(), "2".to_string())]),
             true,
             false,
@@ -167,7 +167,7 @@ async fn a_dry_run_answers_and_writes_nothing() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("A".to_string(), "1".to_string())]),
             false,
             true,
@@ -196,7 +196,7 @@ async fn a_dry_run_refuses_what_the_real_send_would_refuse() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("SHEP_NAME".to_string(), "nope".to_string())]),
             false,
             true,
@@ -220,7 +220,7 @@ async fn a_refused_collision_reports_rather_than_validating() {
     h.ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([("A".to_string(), "1".to_string())]),
             false,
             false,
@@ -231,7 +231,7 @@ async fn a_refused_collision_reports_rather_than_validating() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "web".to_string(),
+            "web",
             BTreeMap::from([
                 ("A".to_string(), "2".to_string()),
                 ("SHEP_NAME".to_string(), "nope".to_string()),
@@ -256,13 +256,13 @@ async fn a_batch_that_changes_nothing_parks_nothing() {
     let entries = BTreeMap::from([("A".to_string(), "1".to_string())]);
     h.ctx
         .supervisor
-        .set_sheep_env_batch("web".to_string(), entries.clone(), false, false)
+        .set_sheep_env_batch("web", entries.clone(), false, false)
         .await
         .unwrap();
     let batch = h
         .ctx
         .supervisor
-        .set_sheep_env_batch("web".to_string(), entries, false, false)
+        .set_sheep_env_batch("web", entries, false, false)
         .await
         .unwrap()
         .expect("web exists");
@@ -278,7 +278,7 @@ async fn a_batch_refuses_a_dog_and_an_unknown_name() {
     assert!(
         h.ctx
             .supervisor
-            .set_sheep_env_batch("absent".to_string(), entries.clone(), false, false)
+            .set_sheep_env_batch("absent", entries.clone(), false, false)
             .await
             .unwrap()
             .is_none()
@@ -286,7 +286,7 @@ async fn a_batch_refuses_a_dog_and_an_unknown_name() {
     let err = h
         .ctx
         .supervisor
-        .set_sheep_env_batch("bark".to_string(), entries, false, false)
+        .set_sheep_env_batch("bark", entries, false, false)
         .await
         .unwrap_err();
     assert!(matches!(err, SupervisorError::IsADog(_)));
@@ -304,12 +304,7 @@ async fn a_batch_refuses_a_dog_and_an_unknown_name() {
 async fn every_pane_door_refuses_a_dog_and_leaves_the_store_untouched() {
     let h = env_batch_harness().await;
 
-    let err = h
-        .ctx
-        .supervisor
-        .sheep_config("bark".to_string())
-        .await
-        .unwrap_err();
+    let err = h.ctx.supervisor.sheep_config("bark").await.unwrap_err();
     assert!(matches!(err, SupervisorError::IsADog(_)), "{err:?}");
     assert_store_untouched(&h, "bark");
 
@@ -317,8 +312,8 @@ async fn every_pane_door_refuses_a_dog_and_leaves_the_store_untouched() {
         .ctx
         .supervisor
         .set_sheep_env(
-            "bark".to_string(),
-            "PATH".to_string(),
+            "bark",
+            "PATH",
             Some(EnvValue::from("/tmp/evil".to_string())),
         )
         .await
@@ -330,7 +325,7 @@ async fn every_pane_door_refuses_a_dog_and_leaves_the_store_untouched() {
         .ctx
         .supervisor
         .set_sheep_env_batch(
-            "bark".to_string(),
+            "bark",
             BTreeMap::from([("PATH".to_string(), "/tmp/evil".to_string())]),
             false,
             false,
@@ -343,11 +338,7 @@ async fn every_pane_door_refuses_a_dog_and_leaves_the_store_untouched() {
     let err = h
         .ctx
         .supervisor
-        .set_sheep_field(
-            "bark".to_string(),
-            "script".to_string(),
-            serde_json::json!("/tmp/evil"),
-        )
+        .set_sheep_field("bark", "script", serde_json::json!("/tmp/evil"))
         .await
         .unwrap_err();
     assert!(matches!(err, SupervisorError::IsADog(_)), "{err:?}");

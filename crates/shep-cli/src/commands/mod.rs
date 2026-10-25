@@ -37,6 +37,8 @@ pub mod secret;
 pub(crate) mod selector;
 pub mod serve;
 pub(crate) mod settings;
+pub(crate) mod settings_read;
+pub(crate) mod settings_write;
 pub(crate) mod shep_toml;
 pub mod signal;
 // `shep startup` installs a boot-time unit: systemd, launchd, openrc, or a

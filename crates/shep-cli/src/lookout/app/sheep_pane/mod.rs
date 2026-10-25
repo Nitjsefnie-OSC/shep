@@ -165,7 +165,7 @@ mod tests {
         app.update(Msg::Snapshot {
             rows: vec![
                 ProcessInfo::builder(90, "otel", ProcStatus::Online)
-                    .dog(Some(DogSource::BuiltIn))
+                    .dog(Some(DogSource::BuiltIn { grants: None }))
                     .build(),
             ],
             at: t0,
@@ -209,11 +209,56 @@ mod tests {
         assert!(matches!(app.body(), Body::FlockTable));
     }
 
-    /// Ahead of the mutation check below: if `on_sheep_config` branched on
-    /// the current body instead of `ConfigFor`, this reply would refill the
-    /// sheep pane it found on screen rather than open the editor `e` asked
-    /// for, since the pane is still `Body::Sheep` while the reply is in
-    /// flight.
+    /// The routing `ConfigFor` exists for. `↵` asks for the pane's own
+    /// config while the pane is still `Body::Sheep`, so a reply routed by
+    /// what is on screen would land in the editor instead: the pane would
+    /// sit there with an empty column forever, and an editing pane the
+    /// operator never asked for would take the screen.
+    #[test]
+    fn a_reply_to_the_sheep_panes_own_read_fills_its_column_and_opens_no_editor() {
+        let mut app = fixture_with_two_sheep();
+        let effect = app.update(Msg::Key(KeyPress::Confirm));
+        assert_eq!(
+            effect,
+            Effect::Send(Sent::SheepConfig {
+                name: "alpha".to_string()
+            })
+        );
+        assert!(
+            app.sheep_pane().unwrap().config().is_none(),
+            "the column has nothing to draw until the reply lands"
+        );
+
+        app.update(Msg::Replied {
+            sent: Sent::SheepConfig {
+                name: "alpha".to_string(),
+            },
+            result: Ok(Response::SheepConfig(Box::new(
+                fixtures::sheep_config_view(),
+            ))),
+        });
+
+        assert!(
+            matches!(app.body(), Body::Sheep(_)),
+            "the pane the read belongs to stays up"
+        );
+        assert!(
+            app.config_pane().is_none(),
+            "a read the pane asked for opens no editor"
+        );
+        let pane = app.sheep_pane().expect("still the sheep pane");
+        let config = pane.config().expect("the reply filled the pane's column");
+        assert_eq!(
+            config.name, "web",
+            "the pane holds the view the reply carried"
+        );
+        assert!(
+            crate::lookout::view::sheep::column_len(pane.config()) > 1,
+            "1 is the line the column draws while it has no config at all"
+        );
+    }
+
+    /// `esc` backs out of the sheep pane to the dashboard.
     #[test]
     fn escape_closes_the_sheep_pane() {
         let mut app = fixture_with_two_sheep();

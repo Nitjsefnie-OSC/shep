@@ -1,57 +1,78 @@
+use super::origin::{Attribution, Origin, Side};
 use super::peer_auth::ConnError;
 #[cfg(unix)]
 use super::peer_auth::{check_peer, daemon_uid, peer_pid};
 use super::server_lifecycle::{CONN_QUEUE, HANDSHAKE_TIMEOUT_MS};
-use crate::bus::spawn_forwarder;
-use crate::rpc::{Outcome, RpcContext, dispatch};
+use super::tracked_codec::TrackedCodec;
+use crate::bus::TopicFilter;
+use crate::rpc::{Outcome, RpcContext, check_carried, dispatch, spawn_checked_forwarder};
 use crate::supervisor::ConnId;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use core::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use shep_core::protocol::{
-    Envelope, Hello, HelloAck, HelloReply, MIN_SUPPORTED, PROTOCOL_VERSION, RpcError, RpcErrorCode,
-    codec, decode_frame, encode_frame,
+    BusEvent, Envelope, Hello, HelloAck, HelloReply, MIN_SUPPORTED, PROTOCOL_VERSION, RpcError,
+    RpcErrorCode, codec, decode_frame, encode_frame,
 };
 use shep_core::transport::{ServerReadHalf, ServerStream};
+use std::io;
 use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-type Frames = FramedRead<ServerReadHalf, LengthDelimitedCodec>;
+type Frames = FramedRead<ServerReadHalf, TrackedCodec>;
 
 // The ordering here is load-bearing (see `handshake` and `converse` below):
 // auth before a single byte is read from the peer, the handshake before any
 // request, and the writer task joined on every exit path so a protocol-skew
 // refusal is guaranteed to reach the wire before the socket closes.
 pub(super) async fn handle_conn(stream: ServerStream, ctx: RpcContext) -> Result<(), ConnError> {
+    serve_conn(stream, ctx, Origin::Socket).await
+}
+
+/// [`handle_conn`] for a connection whose `origin` is already known.
+pub(super) async fn serve_conn(
+    stream: ServerStream,
+    ctx: RpcContext,
+    origin: Origin,
+) -> Result<(), ConnError> {
     // Unix only. On Windows the pipe's own ACL refuses a foreign user's
     // open-for-write before a byte reaches this function, so the equivalent
     // check has already happened in the kernel.
     #[cfg(unix)]
-    check_peer(&stream, daemon_uid())?;
+    if origin.checks_peer() {
+        check_peer(&stream, daemon_uid())?;
+    }
     // Read once here and carried down to the handshake: this is what lets the
     // silence ladder tell a dog that never reached the socket from one that
     // reached it and would not say who it was. `None` on Windows.
     #[cfg(unix)]
-    let peer = peer_pid(&stream);
+    let peer = origin.pid(peer_pid(&stream));
     #[cfg(not(unix))]
-    let peer: Option<u32> = None;
+    let peer: Option<u32> = origin.pid(None);
     // Recorded before a byte is read: a peer that connects and then says
-    // nothing at all has still reached this daemon.
-    if let Some(pid) = peer {
+    // nothing at all has still reached this daemon. A link is opened by this
+    // daemon, not by the dog, so its contact waits for a frame in `handshake`.
+    if origin.contacts_on_open()
+        && let Some(pid) = peer
+    {
         ctx.peer_contacts.connected(pid);
     }
     // Minted after the peer check, not before: a connection refused for its
     // uid never reaches a handler, so it has nothing to scope.
     let conn = ConnId::next();
     let (read_half, write_half) = shep_core::transport::split(stream);
-    let mut frames = FramedRead::new(read_half, codec());
+    let mut frames = FramedRead::new(read_half, TrackedCodec::new(codec()));
     let (out_tx, out_rx) = mpsc::channel::<Bytes>(CONN_QUEUE);
-    let writer = tokio::spawn(write_loop(FramedWrite::new(write_half, codec()), out_rx));
+    let writer = tokio::spawn(write_loop(
+        FramedWrite::new(write_half, codec()),
+        out_rx,
+        origin.clone(),
+    ));
 
-    let outcome = converse(&mut frames, &out_tx, conn, peer, &ctx).await;
+    let outcome = converse(&mut frames, &out_tx, conn, peer, &origin, &ctx).await;
 
     // Drop the sender and join the writer on every path: a protocol-skew
     // refusal is written by that task, so returning early would close the
@@ -70,11 +91,26 @@ async fn converse(
     out: &mpsc::Sender<Bytes>,
     conn: ConnId,
     peer: Option<u32>,
+    origin: &Origin,
     ctx: &RpcContext,
 ) -> Result<(), ConnError> {
-    handshake(frames, out, peer, ctx).await?;
     let mut forwarder: Option<JoinHandle<()>> = None;
-    let outcome = read_loop(frames, out, conn, ctx, &mut forwarder).await;
+    if let Some(topics) = origin.resumed() {
+        forwarder = resume(out, peer, origin, ctx, topics).await?;
+    } else {
+        handshake(frames, out, peer, origin, ctx).await?;
+    }
+    let mut attribution = Attribution::new(origin);
+    let outcome = read_loop(
+        frames,
+        out,
+        conn,
+        ctx,
+        origin,
+        &mut forwarder,
+        &mut attribution,
+    )
+    .await;
     // Every path out of `read_loop` lands here, and a live forwarder must be
     // aborted rather than dropped: dropping a `JoinHandle` detaches the task,
     // which keeps its clone of `out` alive, which keeps `write_loop` from ever
@@ -90,20 +126,29 @@ async fn read_loop(
     out: &mpsc::Sender<Bytes>,
     conn: ConnId,
     ctx: &RpcContext,
+    origin: &Origin,
     forwarder: &mut Option<JoinHandle<()>>,
+    attribution: &mut Attribution,
 ) -> Result<(), ConnError> {
-    while let Some(frame) = frames.next().await {
+    while let Some(frame) = next_frame(frames, origin).await {
         let frame = frame?; // oversize/short frame ends the connection
         let envelope: Envelope = decode_frame(&frame).map_err(ConnError::Decode)?;
-        match dispatch(envelope, conn, ctx).await {
+        attribution.note(ctx, &envelope.body);
+        match dispatch(envelope, conn, origin.bound_dog(), ctx).await {
             Outcome::Reply(reply) => send(out, &reply).await?,
             Outcome::Subscribe { reply, filter } => {
+                // Recorded ahead of the reply: a handover's snapshot then never
+                // says less than the dog has been told.
+                origin.subscribed(filter.patterns()).await;
                 send(out, &reply).await?; // ordered ahead of any event by the queue
                 // A second Subscribe REPLACES the first: spec §6 gives a
                 // connection one topic list, not a growing union.
-                if let Some(old) =
-                    forwarder.replace(spawn_forwarder(&ctx.events, filter, out.clone()))
-                {
+                if let Some(old) = forwarder.replace(spawn_checked_forwarder(
+                    ctx,
+                    origin.bound_dog(),
+                    filter,
+                    out.clone(),
+                )) {
                     old.abort();
                 }
             }
@@ -117,20 +162,92 @@ async fn read_loop(
     Ok(())
 }
 
+/// Picks up a connection whose dog shook hands with the shepherd this one
+/// replaced
+///
+/// No `Hello` is read: the dog sent it once, to the predecessor, and its next
+/// frame is a request. What the handshake would have recorded is recorded
+/// here, since the silence watch and the refusal ledger start empty in a
+/// successor and would otherwise read a dog that is talking as one that never
+/// has. Its subscription died with the predecessor's memory, so it is armed
+/// again from `topics`, after a [`BusEvent::Dropped`] notice: events were
+/// published between the exec and now, and a dog that sees no end to its
+/// stream would not know to ask for them.
+///
+/// The notice's count is 1, the least that is true: the number lost is
+/// unknowable from here.
+async fn resume(
+    out: &mpsc::Sender<Bytes>,
+    peer: Option<u32>,
+    origin: &Origin,
+    ctx: &RpcContext,
+    topics: &[String],
+) -> Result<Option<JoinHandle<()>>, ConnError> {
+    if let Some(pid) = peer {
+        ctx.peer_contacts.connected(pid);
+        ctx.peer_contacts.named_a_dog(pid);
+    }
+    if let Some(dog) = origin.dog(None) {
+        // Not narrated, unlike a handshake: the dog was accepted by the
+        // predecessor, and this is the same connection continuing.
+        ctx.dog_refusals.handshook(dog);
+    }
+    if topics.is_empty() {
+        return Ok(None);
+    }
+    // The grants this shepherd read may be narrower than the ones the dog
+    // subscribed under, and the stream would otherwise outlive the narrowing.
+    // Refused whole, as a fresh `Subscribe` is, and recorded as empty so the
+    // next handover does not carry it on.
+    if let Some(dog) = origin.bound_dog()
+        && let Err(refusal) = check_carried(ctx, dog, topics).await
+    {
+        tracing::warn!(%dog, reason = %refusal.message, "a carried dog subscription is outside its grants");
+        origin.subscribed(&[]).await;
+        return Ok(None);
+    }
+    let filter = match TopicFilter::new(topics) {
+        Ok(filter) => filter,
+        Err(error) => {
+            // Compiled once already, by the predecessor that accepted it.
+            tracing::warn!(%error, "a carried dog subscription no longer compiles");
+            return Ok(None);
+        }
+    };
+    send(out, &BusEvent::Dropped { count: 1 }).await?;
+    Ok(Some(spawn_checked_forwarder(
+        ctx,
+        origin.bound_dog(),
+        filter,
+        out.clone(),
+    )))
+}
+
 async fn handshake(
     frames: &mut Frames,
     out: &mpsc::Sender<Bytes>,
     peer: Option<u32>,
+    origin: &Origin,
     ctx: &RpcContext,
 ) -> Result<(), ConnError> {
-    let frame = tokio::time::timeout(Duration::from_millis(HANDSHAKE_TIMEOUT_MS), frames.next())
-        .await
-        .map_err(|_| ConnError::HandshakeTimeout)?
-        .ok_or(ConnError::NoHandshake)??;
+    let frame = tokio::time::timeout(
+        Duration::from_millis(HANDSHAKE_TIMEOUT_MS),
+        next_frame(frames, origin),
+    )
+    .await
+    .map_err(|_| ConnError::HandshakeTimeout)?
+    .ok_or(ConnError::NoHandshake)??;
+    if !origin.contacts_on_open()
+        && let Some(pid) = peer
+    {
+        ctx.peer_contacts.connected(pid);
+    }
     let hello: Hello = decode_frame(&frame).map_err(ConnError::Decode)?;
+    // The connection's identity where it has one, else what the peer claimed.
+    let dog = origin.dog(hello.dog_name.as_deref());
     // Ahead of the protocol check: this records what the peer sent, not what
     // this daemon made of it. A dog refused on skew still named itself.
-    if hello.dog_name.is_some()
+    if dog.is_some()
         && let Some(pid) = peer
     {
         ctx.peer_contacts.named_a_dog(pid);
@@ -157,7 +274,7 @@ async fn handshake(
         // to be restarted still learns why. `dog_name` is `None` for every
         // client that is not a dog: the name travels only on
         // `ReconnectingClient`, which no `shep` verb uses.
-        match &hello.dog_name {
+        match dog {
             Some(dog) => {
                 crate::dogs::record_refused_dog(
                     dog,
@@ -193,7 +310,7 @@ async fn handshake(
     }
     // A dog that got in is not stale, including after the restart it was just
     // given, which is the case that has to clear.
-    if let Some(dog) = &hello.dog_name {
+    if let Some(dog) = dog {
         // Only the transition is narrated: a dog reconnects after a handover
         // or a daemon restart, and a line per connection would bury its own
         // output in its own log.
@@ -208,6 +325,10 @@ async fn handshake(
             );
         }
     }
+    // Ahead of the ack, for the same reason as a subscription: a successor
+    // that did not know the dog had greeted would wait for a `Hello` that is
+    // never coming.
+    origin.greeted().await;
     let ack: HelloReply = Ok(HelloAck {
         daemon_version: ctx.daemon_version.clone(),
         protocol: PROTOCOL_VERSION,
@@ -217,11 +338,48 @@ async fn handshake(
     send(out, &ack).await
 }
 
+/// The next frame off `frames`, parking first while a handover has frozen
+/// this connection
+///
+/// Parks only on a frame boundary: a frame whose bytes are partly read stays
+/// being read, because the bytes taken off the socket would not survive the
+/// exec and the successor would start in the middle of it.
+async fn next_frame(frames: &mut Frames, origin: &Origin) -> Option<Result<BytesMut, io::Error>> {
+    loop {
+        if frames.decoder().holding() {
+            return frames.next().await;
+        }
+        tokio::select! {
+            biased;
+            () = origin.frozen() => {
+                // A cancelled read may have taken the start of a frame.
+                if !frames.decoder().holding() {
+                    origin.park(Side::Reader).await;
+                }
+            }
+            frame = frames.next() => return frame,
+        }
+    }
+}
+
+/// Writes the frames queued on `rx`, a batch at a time, parking between
+/// batches while a handover has frozen `origin`'s connection so that it never
+/// execs with a frame half on the wire.
 async fn write_loop<W: AsyncWrite + Unpin>(
     mut sink: FramedWrite<W, LengthDelimitedCodec>,
     mut rx: mpsc::Receiver<Bytes>,
+    origin: Origin,
 ) {
-    while let Some(first) = rx.recv().await {
+    loop {
+        let first = tokio::select! {
+            biased;
+            () = origin.frozen() => {
+                origin.park(Side::Writer).await;
+                continue;
+            }
+            first = rx.recv() => first,
+        };
+        let Some(first) = first else { return };
         // `send` is feed plus flush, one flush per frame. What is already
         // queued shares one flush, taken before waiting again. The batch is
         // capped: `try_recv` never yields, so a producer that refills the

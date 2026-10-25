@@ -15,8 +15,8 @@ use crate::vocabulary::{Reported, Role};
 
 /// Splits a listing into runs of one app's adjacent rows, keyed on NAME.
 ///
-/// Sound only because `sort_flock` orders by (name, instance, id). The
-/// `slotted` rule stays with each caller.
+/// Sound only because `sort_flock` orders by (name, instance, id). Whether a
+/// group is slotted is [`is_slotted`]'s call.
 pub(crate) fn name_groups(items: &[ProcessInfo]) -> impl Iterator<Item = &[ProcessInfo]> {
     let mut at = 0;
     std::iter::from_fn(move || {
@@ -32,6 +32,13 @@ pub(crate) fn name_groups(items: &[ProcessInfo]) -> impl Iterator<Item = &[Proce
         at = end;
         Some(group)
     })
+}
+
+/// Whether a group of one app's rows is slotted: more than one instance,
+/// every one reporting its slot. A group missing a slot cannot be grouped
+/// under a header row or get the `web:0` suffix.
+pub(crate) fn is_slotted(group: &[ProcessInfo]) -> bool {
+    group.len() > 1 && group.iter().all(|p| p.instance.is_some())
 }
 
 /// An app's summed CPU/MEM/RESTARTS and its earliest UPTIME, shared by
@@ -88,7 +95,30 @@ pub(crate) fn group_row(group: &[ProcessInfo], totals: &GroupTotals) -> Vec<Stri
             .map_or_else(|| "-".to_string(), crate::output::human_bytes),
         crate::output::human_duration(totals.uptime_ms),
         first.fold.clone().unwrap_or_else(|| "-".to_string()),
-        first.smit.clone().unwrap_or_else(|| "-".to_owned()),
+        first.smit.clone().unwrap_or_else(|| "-".to_string()),
+    ]
+}
+
+/// The eight cells every process row reads straight off a [`ProcessInfo`],
+/// in header order: STATUS, PID, RESTARTS, EXIT, CFG, CPU, MEM, UPTIME.
+/// [`slot_row`] and [`plain_row`] each place their own ID, NAME, FOLD and
+/// SMIT around it.
+fn process_cells(p: &ProcessInfo) -> [String; 8] {
+    [
+        // Never a dog, but through `Reported` anyway so this cell has one
+        // spelling, on the plain path as on the boxed one.
+        reported(p).word(),
+        p.pid.map_or_else(|| "-".to_string(), |pid| pid.to_string()),
+        p.restarts.to_string(),
+        exit_cell(p.pid, p.last_exit),
+        // A real per-instance fact, unlike FOLD/SMIT in the callers: a load
+        // can park a different set of fields on each slot.
+        cfg_cell(p.pending.as_deref(), p.overridden.as_deref()),
+        p.cpu_percent
+            .map_or_else(|| "-".to_string(), |cpu| format!("{cpu:.1}%")),
+        p.memory_bytes
+            .map_or_else(|| "-".to_string(), crate::output::human_bytes),
+        crate::output::human_duration(p.uptime_ms),
     ]
 }
 
@@ -100,56 +130,29 @@ pub(crate) fn slot_row(p: &ProcessInfo) -> Vec<String> {
     let slot = p
         .instance
         .map_or_else(String::new, |s| format!(" \u{21b3} :{s}"));
-    vec![
-        p.id.to_string(),
-        slot,
-        // Never a dog, but through `Reported` anyway so this cell has one
-        // spelling.
-        reported(p).word(),
-        p.pid.map_or_else(|| "-".to_string(), |pid| pid.to_string()),
-        p.restarts.to_string(),
-        exit_cell(p.pid, p.last_exit),
-        // A real per-instance fact, unlike FOLD/SMIT below: a load can park
-        // a different set of fields on each slot.
-        cfg_cell(p.pending.as_deref(), p.overridden.as_deref()),
-        p.cpu_percent
-            .map_or_else(|| "-".to_string(), |cpu| format!("{cpu:.1}%")),
-        p.memory_bytes
-            .map_or_else(|| "-".to_string(), crate::output::human_bytes),
-        crate::output::human_duration(p.uptime_ms),
-        String::new(),
-        String::new(),
-    ]
+    let mut row = vec![p.id.to_string(), slot];
+    row.extend(process_cells(p));
+    row.extend([String::new(), String::new()]);
+    row
 }
 
 /// One line per process: an app with one instance, a mixed group missing a
 /// slot, or a flat style.
 ///
-/// `slotted` earns the `web:0` suffix: more than one instance, every one
-/// reporting its slot. Anything else leaves NAME alone.
+/// `slotted` ([`is_slotted`]) earns the `web:0` suffix. Anything else
+/// leaves NAME alone.
 pub(crate) fn plain_row(p: &ProcessInfo, slotted: bool) -> Vec<String> {
     let name = match (slotted, p.instance) {
         (true, Some(slot)) => format!("{}:{slot}", p.name),
         _ => p.name.clone(),
     };
-    vec![
-        p.id.to_string(),
-        name,
-        // `Reported`, not `p.status`: the plain path must say what the boxed
-        // one does.
-        reported(p).word(),
-        p.pid.map_or_else(|| "-".to_string(), |pid| pid.to_string()),
-        p.restarts.to_string(),
-        exit_cell(p.pid, p.last_exit),
-        cfg_cell(p.pending.as_deref(), p.overridden.as_deref()),
-        p.cpu_percent
-            .map_or_else(|| "-".to_string(), |cpu| format!("{cpu:.1}%")),
-        p.memory_bytes
-            .map_or_else(|| "-".to_string(), crate::output::human_bytes),
-        crate::output::human_duration(p.uptime_ms),
+    let mut row = vec![p.id.to_string(), name];
+    row.extend(process_cells(p));
+    row.extend([
         p.fold.clone().unwrap_or_else(|| "-".to_string()),
-        p.smit.clone().unwrap_or_else(|| "-".to_owned()),
-    ]
+        p.smit.clone().unwrap_or_else(|| "-".to_string()),
+    ]);
+    row
 }
 
 /// What one row's STATUS column reports: the lifecycle status, unless this
@@ -180,9 +183,8 @@ pub(crate) fn silence_note(p: &ProcessInfo) -> Option<String> {
 /// The group's status: the shared word when every instance agrees, else a
 /// count per state. Plain text either way; see [`group_row`].
 pub(crate) fn group_status(group: &[ProcessInfo]) -> String {
-    let first = reported(&group[0]);
-    if group.iter().all(|p| reported(p) == first) {
-        return first.word();
+    if let Some(shared) = uniform_status(group) {
+        return shared.word();
     }
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for p in group {
@@ -195,6 +197,14 @@ pub(crate) fn group_status(group: &[ProcessInfo]) -> String {
         .join(", ")
 }
 
+/// The one [`Reported`] every instance in the group agrees on, or `None`
+/// when they disagree. Shared by [`group_status`] and [`group_paint`]'s
+/// STATUS arm, which need the same answer in different shapes.
+fn uniform_status(group: &[ProcessInfo]) -> Option<Reported> {
+    let first = reported(&group[0]);
+    group.iter().all(|p| reported(p) == first).then_some(first)
+}
+
 /// The treatment a group's header row wears: RESTARTS, CPU and MEM read
 /// [`GroupTotals`], and STATUS colours only when every slot agrees.
 ///
@@ -205,14 +215,7 @@ pub(crate) fn group_paint(header: &str, group: &[ProcessInfo], totals: &GroupTot
         "FOLD" => Paint::Role(Role::Ink3),
         // No `Reported::of`: a dog is never stocked to several instances,
         // so no group this branch can see has a handshake to report.
-        "STATUS" => {
-            let first = reported(&group[0]);
-            if group.iter().all(|p| reported(p) == first) {
-                Paint::Status(first)
-            } else {
-                Paint::Default
-            }
-        }
+        "STATUS" => uniform_status(group).map_or(Paint::Default, Paint::Status),
         "RESTARTS" => Paint::Role(restarts_role(totals.restarts)),
         "CPU" => Paint::Role(cpu_role(totals.cpu)),
         "MEM" => Paint::Role(mem_role(totals.memory)),
@@ -304,6 +307,11 @@ pub(crate) fn process_info_paint(header: &str, p: &ProcessInfo) -> Paint {
             .dog
             .as_ref()
             .map_or(Paint::Default, |source| Paint::Role(source_role(source))),
+        // A mark is worth a glance, never a fault; `-` reaches the dash rule.
+        "ACCESS" => match p.access.as_ref() {
+            Some(access) if !access.is_clear() => Paint::Role(Role::Butter),
+            _ => Paint::Default,
+        },
         // PID and SMIT reach the dash rule: a real value is plain, an
         // absent one is muted.
         _ => Paint::Default,
@@ -318,7 +326,7 @@ pub(crate) fn process_info_paint(header: &str, p: &ProcessInfo) -> Paint {
 /// never a fault.
 pub(crate) fn source_role(source: &DogSource) -> Role {
     match source {
-        DogSource::BuiltIn => Role::Ink3,
+        DogSource::BuiltIn { .. } => Role::Ink3,
         _ => Role::Butter,
     }
 }
@@ -546,10 +554,46 @@ mod tests {
     use shep_core::protocol::DogSource;
     use shep_core::status::ProcStatus;
 
-    use crate::output::{DogRows, Render};
+    use crate::output::{DogRows, FlockRows, Render};
 
+    use super::super::process::tests::full_presentation;
     use super::super::tests::{coloured, painted, sample_dog, sample_info};
     use super::*;
+
+    /// The `slotted` rule decides whether an app groups under a header row
+    /// or takes plain rows: more than one instance, every one reporting its
+    /// slot.
+    #[test]
+    fn a_slotted_group_needs_two_rows_and_every_slot_reported() {
+        let slot = |id: u32, instance: Option<u32>| {
+            ProcessInfo::builder(id, "web", ProcStatus::Online)
+                .instance(instance)
+                .build()
+        };
+
+        // One instance is never slotted, even with its slot reported.
+        let rendered = FlockRows(vec![slot(1, Some(0))]).rows_for(full_presentation(), true);
+        assert_eq!(rendered.len(), 1, "one plain row");
+        assert_eq!(rendered[0][0], "1", "and a plain row keeps its id");
+
+        // Two instances, one missing its slot: not slotted, so no group
+        // header and no suffix.
+        let rendered =
+            FlockRows(vec![slot(1, Some(0)), slot(2, None)]).rows_for(full_presentation(), true);
+        assert_eq!(rendered.len(), 2, "two plain rows, no group header");
+        assert_eq!(rendered[0][0], "1");
+        assert_eq!(rendered[1][0], "2");
+        assert_eq!(rendered[0][1], "web", "and no `web:0` suffix");
+
+        // Two instances, both reporting slots: a group header plus one
+        // slot row per instance.
+        let rendered =
+            FlockRows(vec![slot(1, Some(0)), slot(2, Some(1))]).rows_for(full_presentation(), true);
+        assert_eq!(rendered.len(), 3, "one group row plus two slot rows");
+        assert_eq!(rendered[0][0], "", "the group header has no id");
+        assert_eq!(rendered[1][0], "1", "the slot rows keep their ids");
+        assert_eq!(rendered[2][0], "2");
+    }
 
     /// A pending field an operator cannot see is a silent divergence.
     #[test]
@@ -702,17 +746,22 @@ mod tests {
     /// usually has a perfectly healthy dog.
     #[test]
     fn source_draws_the_trust_line_and_never_paints_a_working_dog_red() {
-        assert_eq!(source_role(&DogSource::BuiltIn), Role::Ink3);
+        assert_eq!(
+            source_role(&DogSource::BuiltIn { grants: None }),
+            Role::Ink3
+        );
         assert_eq!(
             source_role(&DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
                 channel: false,
             }),
             Role::Butter
         );
         assert_ne!(
-            source_role(&DogSource::BuiltIn),
+            source_role(&DogSource::BuiltIn { grants: None }),
             source_role(&DogSource::Adopted {
+                grants: None,
                 path: "/x".to_string(),
                 channel: false,
             }),
@@ -784,7 +833,7 @@ mod tests {
             ProcStatus::WaitingRestart,
         ];
         let handshooks = [None, Some(false), Some(true)];
-        let dogs = [None, Some(DogSource::BuiltIn)];
+        let dogs = [None, Some(DogSource::BuiltIn { grants: None })];
 
         for dog in &dogs {
             for &handshook in &handshooks {

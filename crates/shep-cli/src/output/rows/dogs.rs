@@ -2,7 +2,7 @@
 //! `shep enable`/`disable`/`adopt`/`rehome` render.
 
 use serde::Serialize;
-use shep_core::protocol::{DogSource, ProcessInfo};
+use shep_core::protocol::{DogAccess, DogSource, ProcessInfo};
 
 use crate::output::Render;
 use crate::style::Presentation;
@@ -19,6 +19,26 @@ fn source_cell(source: Option<&DogSource>) -> String {
     source.map_or(EMPTY, |source| source.into()).to_owned()
 }
 
+/// The ACCESS column's cell: the marks `access` carries, or `-` for a dog
+/// with nothing to flag.
+///
+/// Names stay in the JSON. The cell says which of the three states, because
+/// a column has room for words and not for a list of permissions.
+fn access_cell(access: Option<&DogAccess>) -> String {
+    let Some(access) = access.filter(|access| !access.is_clear()) else {
+        return EMPTY.to_owned();
+    };
+    [
+        (access.undeclared, "undeclared"),
+        (access.not_reviewed, "not reviewed"),
+        (!access.waiting.is_empty(), "waiting"),
+    ]
+    .into_iter()
+    .filter_map(|(on, word)| on.then_some(word))
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
 /// The dogs half of a flock listing: the `ProcessInfo`s whose `dog` marker
 /// is set.
 ///
@@ -28,7 +48,7 @@ fn source_cell(source: Option<&DogSource>) -> String {
 /// ```text
 /// common:  ID  NAME  STATUS  PID  RESTARTS  EXIT  CPU  MEM  UPTIME
 /// sheep:   ... + FOLD  SMIT
-/// dogs:    ... + SOURCE
+/// dogs:    ... + SOURCE  ACCESS
 /// ```
 ///
 /// `FOLD` and `SMIT` are impossible for a dog rather than empty: a dog
@@ -41,6 +61,7 @@ impl Render for DogRows {
     fn headers() -> &'static [&'static str] {
         &[
             "ID", "NAME", "STATUS", "PID", "RESTARTS", "EXIT", "CPU", "MEM", "UPTIME", "SOURCE",
+            "ACCESS",
         ]
     }
 
@@ -65,6 +86,7 @@ impl Render for DogRows {
                     crate::output::human_duration(p.uptime_ms),
                     // `None` is unreachable: callers filter on `dog.is_some()`.
                     source_cell(p.dog.as_ref()),
+                    access_cell(p.access.as_ref()),
                 ]
             })
             .collect()
@@ -85,7 +107,7 @@ impl Render for DogRows {
     /// # Panics
     /// If `header` is not one of `Self::headers()`'s own values.
     #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
+    fn json_key_for(header: &str) -> String {
         match header {
             "ID" => "id",
             "NAME" => "name",
@@ -97,8 +119,10 @@ impl Render for DogRows {
             "MEM" => "memory_bytes",
             "UPTIME" => "uptime_ms",
             "SOURCE" => "dog",
+            "ACCESS" => "access",
             other => panic!("DogRows::headers() does not include {other:?}"),
         }
+        .to_owned()
     }
 
     const JSON_ONLY: &'static [&'static str] = &[
@@ -135,8 +159,9 @@ impl Render for DogRows {
 
     // Parallel to `headers()`. The nine shared columns carry the numbers
     // `FlockRows` gives them, so both tables narrow in the same order.
-    // SOURCE takes FOLD's `7`.
-    const PRIORITIES: &'static [u8] = &[0, 0, 0, 2, 4, 6, 5, 3, 1, 7];
+    // SOURCE takes FOLD's `7`; ACCESS ties EXIT's `6` and, being later, goes
+    // first of the two. The JSON always carries it.
+    const PRIORITIES: &'static [u8] = &[0, 0, 0, 2, 4, 6, 5, 3, 1, 7, 6];
 }
 
 /// `DogActionRow`'s STATUS cell and the SHEPHERD cell beside it, as one
@@ -240,7 +265,7 @@ impl Render for DogActionRow {
     /// # Panics
     /// If `header` is not one of `Self::headers()`'s own values.
     #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
+    fn json_key_for(header: &str) -> String {
         match header {
             "NAME" => "name",
             "SOURCE" => "source",
@@ -248,11 +273,11 @@ impl Render for DogActionRow {
             "STATUS" => "status",
             other => panic!("DogActionRow::headers() does not include {other:?}"),
         }
+        .to_owned()
     }
     // Parallel to `headers()`. SOURCE drops before SHEPHERD, and a 4-column
     // table loses only one of the two.
     const PRIORITIES: &'static [u8] = &[0, 7, 6, 0];
-    const JSON_ONLY: &'static [&'static str] = &[];
 }
 
 #[cfg(test)]
@@ -269,10 +294,11 @@ pub(crate) mod tests {
     #[test]
     fn the_source_column_names_a_kind_and_leaves_the_path_to_json() {
         let rows = DogRows(vec![
-            dog_info("metrics", DogSource::BuiltIn),
+            dog_info("metrics", DogSource::BuiltIn { grants: None }),
             dog_info(
                 "otel",
                 DogSource::Adopted {
+                    grants: None,
                     path: "/usr/local/bin/shep-otel".to_string(),
                     channel: false,
                 },
@@ -294,9 +320,12 @@ pub(crate) mod tests {
     #[test]
     fn dog_rows_do_not_drift() {
         assert_no_drift(
-            &DogRows(vec![dog_info("metrics", DogSource::BuiltIn)]),
+            &DogRows(vec![dog_info(
+                "metrics",
+                DogSource::BuiltIn { grants: None },
+            )]),
             |j| &j[0],
-            &["UPTIME", "CPU", "MEM", "SOURCE", "EXIT"],
+            &["UPTIME", "CPU", "MEM", "SOURCE", "EXIT", "ACCESS"],
         );
     }
 
@@ -306,7 +335,7 @@ pub(crate) mod tests {
         assert_no_drift(
             &DogActionRow::new(
                 "metrics",
-                DogSource::BuiltIn,
+                DogSource::BuiltIn { grants: None },
                 DogActionStatus::Acted("online"),
             ),
             |j| j,
@@ -320,7 +349,7 @@ pub(crate) mod tests {
         assert_no_drift(
             &DogActionRow::new(
                 "metrics",
-                DogSource::BuiltIn,
+                DogSource::BuiltIn { grants: None },
                 DogActionStatus::NoShepherd("not running; will not start with the next shepherd"),
             ),
             |j| j,
@@ -335,6 +364,7 @@ pub(crate) mod tests {
             &DogActionRow::new(
                 "otel",
                 DogSource::Adopted {
+                    grants: None,
                     path: "/usr/local/bin/shep-otel".to_string(),
                     channel: false,
                 },
@@ -352,7 +382,7 @@ pub(crate) mod tests {
     fn the_shepherd_cell_and_key_come_from_the_status_variant() {
         let acted = DogActionRow::new(
             "metrics",
-            DogSource::BuiltIn,
+            DogSource::BuiltIn { grants: None },
             DogActionStatus::Acted("online"),
         );
         assert_eq!(acted.rows()[0][2], "true");
@@ -364,7 +394,7 @@ pub(crate) mod tests {
 
         let absent = DogActionRow::new(
             "metrics",
-            DogSource::BuiltIn,
+            DogSource::BuiltIn { grants: None },
             DogActionStatus::NoShepherd("no shepherd running; the config was written"),
         );
         assert_eq!(absent.rows()[0][2], "false");
@@ -386,6 +416,7 @@ pub(crate) mod tests {
             &DogActionRow::new(
                 "otel",
                 DogSource::Adopted {
+                    grants: None,
                     path: "/usr/local/bin/shep-otel".to_string(),
                     channel: false,
                 },
@@ -452,6 +483,7 @@ pub(crate) mod tests {
         let acted = DogActionRow::new(
             "log-rotate",
             DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
                 channel: false,
             },
@@ -468,7 +500,7 @@ pub(crate) mod tests {
         let sentence = "no shepherd running; the config was written";
         let unacted = DogActionRow::new(
             "log-rotate",
-            DogSource::BuiltIn,
+            DogSource::BuiltIn { grants: None },
             DogActionStatus::NoShepherd(sentence),
         );
         let row = &unacted.rows_for(coloured(), true)[0];
@@ -481,7 +513,7 @@ pub(crate) mod tests {
     fn a_dog_action_row_leaves_the_name_and_the_shepherd_column_plain() {
         let row = &DogActionRow::new(
             "log-rotate",
-            DogSource::BuiltIn,
+            DogSource::BuiltIn { grants: None },
             DogActionStatus::NoShepherd("no shepherd running"),
         )
         .rows_for(coloured(), true)[0];
@@ -511,6 +543,7 @@ pub(crate) mod tests {
         let adopted = DogActionRow::new(
             "otel",
             DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-otel".to_string(),
                 channel: false,
             },

@@ -52,7 +52,7 @@ pub use rows::{
     HostRows, ImportEnvRow, ImportEnvRows, ImportRow, ImportRows, KillRow, KvEntry, KvRows,
     KvUnsetRow, LabelledLambRows, LambRows, RolledSheep, RolledSheepRows, SavedRollRow,
     SecretKeyRow, SecretKeyRows, SecretSlotRow, SecretStatus, SecretValueRow, SentLineRows,
-    SignalledRows, StartupStep, StartupSteps, TriggeredRows,
+    SetReport, SettingsAnswer, SignalledRows, StartupStep, StartupSteps, TriggeredRows,
 };
 pub use table::{human_bytes, human_duration, local_timestamp, render_table};
 
@@ -83,11 +83,12 @@ pub struct OutputEnvelope<'a, T> {
 
 /// The two streams a command writes to.
 ///
-/// Production wires the process's own; tests wire a pair of `Vec<u8>`, which
-/// is what makes every renderer assertion hermetic and safe under the
-/// parallel `cargo test` gate. `&mut dyn Write` has no `Debug`, so this needs
-/// a manual one: print `Streams { .. }` and nothing else (pinned by this
-/// module's own `streams_debug_is_the_redacted_placeholder` test).
+/// Production wires the process's own; tests build a pair of `Vec<u8>`
+/// through `Streams::bare`, which is what makes every renderer assertion
+/// hermetic and safe under the parallel `cargo test` gate. `&mut dyn Write`
+/// has no `Debug`, so this needs a manual one: print `Streams { .. }` and
+/// nothing else (pinned by this module's own
+/// `streams_debug_is_the_redacted_placeholder` test).
 pub struct Streams<'a> {
     /// Rendered command output: what `emit` writes to.
     ///
@@ -164,6 +165,36 @@ impl Streams<'_> {
     }
 }
 
+/// The constructor the command tests build their streams from, test-only
+/// because production has no reason to want a fixed presentation: it wires
+/// the process's own streams and the level the operator resolved, in
+/// `dispatch.rs`.
+///
+/// `BARE` because these tests assert on words, not colour: a fixture that
+/// carried a real presentation would pin escape bytes into assertions meant
+/// to survive a style change.
+///
+/// Takes `&mut dyn io::Write` rather than `&mut Vec<u8>` so a test can hand
+/// it a writer that fails, or one that discards, as well as a buffer; a
+/// `Vec<u8>` coerces at the call site.
+#[cfg(test)]
+impl<'a> Streams<'a> {
+    /// A `Streams` that writes to `out` and `err` exactly as given, at
+    /// [`Presentation::BARE`] and format `fmt`.
+    pub(crate) fn bare(
+        out: &'a mut dyn io::Write,
+        err: &'a mut dyn io::Write,
+        fmt: Format,
+    ) -> Self {
+        Self {
+            out,
+            err,
+            style: Presentation::BARE,
+            fmt,
+        }
+    }
+}
+
 /// Implemented once per command payload. The two methods are the only
 /// place a field's presence is decided; `rows::assert_no_drift` compares
 /// `headers()` against the serialized keys per payload, so a field added
@@ -195,14 +226,26 @@ pub trait Render: Serialize {
     fn rows_for(&self, _presentation: Presentation, _status_word: bool) -> Vec<Vec<String>> {
         self.rows()
     }
-    /// Table header -> JSON key, the documented name mapping
-    /// (`UPTIME` -> `uptime_ms`, and so on).
+    /// Table header -> JSON key.
     ///
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    fn json_key_for(header: &str) -> &'static str;
+    /// Defaults to the lowercased header, which is the whole mapping for
+    /// every table whose JSON key is its header spelled in lowercase. A table
+    /// whose key is renamed overrides it, and an override keeps the contract
+    /// this method used to state for every impl: it panics on a header
+    /// outside its own `headers()`. `FlockRows` maps `EXIT` -> `last_exit`
+    /// and `UPTIME` -> `uptime_ms`, `BarkRows` maps `WHEN` -> `at_ms`.
+    ///
+    /// The default never panics, and no rendering path calls it: every call
+    /// site sits in `rows`' anti-drift tests, which pass only values taken
+    /// from `Self::headers()` and compare the mapped set against the keys the
+    /// payload really serializes. A header with no key, or a key with no
+    /// header, fails there.
+    fn json_key_for(header: &str) -> String {
+        header.to_lowercase()
+    }
     /// Serialized fields that legitimately have no column, each with a
-    /// comment giving the reason. Usually empty.
+    /// comment giving the reason. Empty by default: an impl names the
+    /// constant only when it has entries to name, each with its reason.
     ///
     /// This constant is the only thing standing between an unmapped
     /// `Serialize` field and a silently-widened, unreviewed pass of
@@ -210,7 +253,7 @@ pub trait Render: Serialize {
     /// keys matches, never why a field belongs here. Every entry an impl
     /// adds must carry its own inline `//` comment stating that reason
     /// (`"note", // internal only, never shown to a user`).
-    const JSON_ONLY: &'static [&'static str];
+    const JSON_ONLY: &'static [&'static str] = &[];
 
     /// Per-column drop priority for [`table::render_boxed`], parallel to
     /// [`Self::headers`]: index `i` here is the priority of column `i`
@@ -417,7 +460,10 @@ pub(crate) mod tests {
     /// One sheep (`"web"`), one dog (`"bark"`): the smallest listing that
     /// exercises `emit_flock`'s split, shared by the three tests below.
     pub(crate) fn mixed_listing() -> Vec<ProcessInfo> {
-        vec![sheep_info("web"), dog_info("bark", DogSource::BuiltIn)]
+        vec![
+            sheep_info("web"),
+            dog_info("bark", DogSource::BuiltIn { grants: None }),
+        ]
     }
 
     /// Pins the JSON envelope's exact shape (`--format json` is a stability
@@ -508,7 +554,7 @@ pub(crate) mod tests {
     /// stopped restarting, `Some(false)` for one it is still waiting on,
     /// `None` for a shepherd too old to have an opinion.
     pub(crate) fn silent_dog(name: &str, given_up: Option<bool>) -> ProcessInfo {
-        let mut info = dog_info(name, DogSource::BuiltIn);
+        let mut info = dog_info(name, DogSource::BuiltIn { grants: None });
         info.status = ProcStatus::Online;
         info.handshook = Some(false);
         info.dog_stale = given_up;
@@ -529,6 +575,36 @@ pub(crate) mod tests {
             fmt: Format::Table,
         };
         assert_eq!(format!("{streams:?}"), "Streams { .. }");
+    }
+
+    /// `Streams::bare` is what every command test builds its streams from,
+    /// so it must hand each buffer to the field the caller named: a test
+    /// that reads `out` would otherwise pass on what the command wrote to
+    /// `err`. Both writes go through the struct's own methods, so this
+    /// pins the fields and not just the constructor.
+    #[test]
+    fn bare_streams_write_to_the_buffers_given_and_carry_their_format() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let (fmt, style) = {
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
+            streams.note("OUT", "to-out");
+            streams.aside("ERR", "to-err");
+            (streams.fmt, streams.style)
+        };
+
+        let out_text = String::from_utf8(out).unwrap();
+        let err_text = String::from_utf8(err).unwrap();
+        assert!(
+            out_text.contains("to-out") && !out_text.contains("to-err"),
+            "`out` must hold only what the command wrote to stdout: {out_text:?}"
+        );
+        assert!(
+            err_text.contains("to-err") && !err_text.contains("to-out"),
+            "`err` must hold only what the command wrote to stderr: {err_text:?}"
+        );
+        assert_eq!(fmt, Format::Json);
+        assert_eq!(style, Presentation::BARE);
     }
 
     #[test]

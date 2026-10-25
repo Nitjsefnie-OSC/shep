@@ -41,8 +41,11 @@ The whole vocabulary, and whether it exists yet.
 | stock | change how many instances of an app run (the stocking rate) | `shep stock <name> <count>` (alias `scale`) | yes |
 | signal | send a signal to one sheep's own process | `shep signal <selector> <signal>` | yes |
 | whisper | write a line to a sheep's stdin | `shep whisper <selector> <line>` (alias `sendline`) | yes |
-| set / get / unset | the flat key-value junk drawer | `shep set`, `shep get`, `shep unset` | yes |
-| copy | move one setting, or one dog's table for a sheep, from one sheep onto another | `shep copy <from>.<path> <to>.<path>` | yes |
+| kv store | the flat key-value junk drawer | `shep kv get`, `shep kv set`, `shep kv unset` | yes |
+| get | read one sheep's settings, or one dog's own section, as TOML | `shep get <name>[.<path>]` | yes |
+| set | change one setting of a sheep or a dog | `shep set <name>[.<path>] <value>` | yes |
+| unset | drop a sheep field's override, or remove a key from a dog's settings | `shep unset <name>[.<path>]` | yes |
+| copy | move one setting, one dog's table for a sheep, or a sheep's env, from one sheep onto another | `shep copy <from>.<path> <to>.<path>` | yes |
 
 Sheepdogs and sheep were separate ideas from the start, so "dog" never means
 the daemon. The shepherd is the shepherd. Dogs are plugins that work for it.

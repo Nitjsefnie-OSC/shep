@@ -308,6 +308,7 @@ mod tests {
                     reload_deadline_ms: None,
                     disabled: None,
                     log_timestamps: None,
+                    access: None,
                 },
                 manually: false,
                 at_ms: 1_700_000_000_000,
@@ -405,7 +406,7 @@ mod tests {
             sheep: "web".to_string(),
         });
 
-        insta::assert_json_snapshot!("bus_event_wire_v11", events);
+        insta::assert_json_snapshot!("bus_event_wire_v12", events);
     }
 
     #[test]

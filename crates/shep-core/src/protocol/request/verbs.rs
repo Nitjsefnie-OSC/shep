@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{AppConfig, DeclaredApp, DogTable, ResetDepth};
 
-use super::{DogSectionToml, DogSource, EnvValue, LogStream, SelectorSpec, Smit};
+use super::{DogSectionToml, DogSource, EnvCopyChange, EnvValue, LogStream, SelectorSpec, Smit};
 
 // Named by intra-doc links and by nothing rustc compiles, so the
 // import is behind `cfg(doc)` rather than flagged unused.
@@ -183,6 +183,48 @@ pub enum Request {
         /// Report what would happen and write nothing.
         dry_run: bool,
     },
+    /// Copies one sheep's env onto another's, inside the shepherd.
+    ///
+    /// Its own request because a client is never sent an env value
+    /// ([`Self::SheepConfig`]), so it has no map to hand to
+    /// [`Self::SetSheepEnvBatch`]. The shepherd reads `from`'s env itself and
+    /// writes it to `to` as operator overrides, a `{{secret:...}}` value as
+    /// the reference and never resolved.
+    ///
+    /// Merges: `to` keeps its own keys and `from`'s overwrite them. `replace`
+    /// makes `to`'s env exactly `from`'s instead, removing the keys only `to`
+    /// had. A key in `except` is left as `to` had it under either.
+    ///
+    /// `dry_run` computes the change list and writes nothing. Parks for the
+    /// next spawn, exactly as [`Self::SetSheepEnv`] does.
+    ///
+    /// `expect` is the change list a dry run answered, sent back with the
+    /// write. The shepherd computes the list again from what the two sheep
+    /// hold now, and refuses with [`RpcErrorCode::InvalidConfig`], writing
+    /// nothing, when it is not the one named, a value swapped for another
+    /// included (see [`EnvCopyChange::seal`]). Without it, an edit between
+    /// the two requests changes what lands. Absent on the wire when `None`.
+    ///
+    /// Answers [`Response::SheepEnvCopied`], or
+    /// [`RpcErrorCode::NotFound`] when either name is no sheep. Not a protocol
+    /// bump: a shepherd that has never heard of this one decodes
+    /// [`Self::Unrecognized`] and refuses by name.
+    CopySheepEnv {
+        /// The sheep whose env is read.
+        from: String,
+        /// The sheep whose env is written.
+        to: String,
+        /// Make `to`'s env exactly `from`'s, removing what only `to` had.
+        replace: bool,
+        /// Keys left as `to` had them.
+        except: Vec<String>,
+        /// Report what would happen and write nothing.
+        dry_run: bool,
+        /// The change list the caller reviewed; the write is refused when
+        /// the shepherd's own differs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expect: Option<Vec<EnvCopyChange>>,
+    },
     /// Sets one config field on one sheep, recorded as an operator
     /// override.
     ///
@@ -237,6 +279,29 @@ pub enum Request {
         /// make. Widening that protection is a change to [`AppConfig`]'s
         /// `Debug`, not to this field.
         value: serde_json::Value,
+    },
+    /// Drops the operator's override of one config field, so the value the
+    /// Flockfile gave it comes back.
+    ///
+    /// [`Self::SetSheepField`]'s undo. The value that returns is the one the
+    /// field held before the operator spoke for it: the Flockfile's value as
+    /// of the last load that named the field, or the value the sheep was
+    /// created with. A field overridden before that was recorded goes back to
+    /// the built-in default.
+    ///
+    /// Refuses the keys [`Self::SetSheepField`] refuses, and refuses a key the
+    /// operator has not overridden: there is nothing to drop, and a silent
+    /// no-op would read as success. The apply classification governs the
+    /// restored value exactly as it governs a set one.
+    ///
+    /// Answers [`Response::SheepFieldReset`], or
+    /// [`RpcErrorCode::NotFound`] when no sheep has that name.
+    ResetSheepField {
+        /// The sheep's name, not a selector, for [`Self::SheepConfig`]'s
+        /// reason.
+        name: String,
+        /// The [`AppConfig`] field whose override to drop.
+        key: String,
     },
     /// One dog's `[app.dogs.<name>]` table, for every sheep carrying one.
     ///
@@ -498,6 +563,28 @@ pub enum Request {
     DogConfigResolved {
         /// The dog's name: the config key, not a selector
         name: String,
+    },
+    /// Ask for one sheep's `[app.dogs.<dog>]` table with every
+    /// `{{secret:...}}` reference replaced by its value, resolved in that
+    /// sheep's own `environment` (the shepherd's when the sheep sets none)
+    ///
+    /// For a dog that consumes a per-sheep credential. [`Self::DogSheepSettings`]
+    /// is unchanged and serves the references as written. One sheep at a
+    /// time, so one sheep's bad reference refuses only its own table and
+    /// nothing resolves a credential nobody asked for. A reference that
+    /// cannot resolve fails the request with [`RpcErrorCode::InvalidConfig`],
+    /// naming the sheep, the dog, the key path and the reference, never a
+    /// value. Nothing is written.
+    ///
+    /// Answers [`Response::SheepDogTable`], [`RpcErrorCode::NotFound`] when no
+    /// sheep has `name`, and the same for a dog's own name. Not a protocol
+    /// bump, as [`Self::DogConfigResolved`] was not.
+    SheepDogSettingsResolved {
+        /// The sheep's name, not a selector, for [`Self::SheepConfig`]'s
+        /// reason.
+        name: String,
+        /// Which dog's table to read.
+        dog: String,
     },
     /// Start one dog now, marking it as coming from `source`
     EnableDog {

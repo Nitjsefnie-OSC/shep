@@ -16,7 +16,15 @@ set -euo pipefail
 # Clean environment: clap renders an `[env: VAR=]` line showing the
 # variable's CURRENT value, so a generator run with e.g. SHEP_HOME set would
 # bake that path into the published reference.
-shep() { env -u SHEP_HOME -u SHEP_STYLE -u NO_COLOR "$BIN" "$@"; }
+#
+# HOME points at an empty directory rather than merely being left alone:
+# `shep --help` lists the adopted dogs registered in the operator's own
+# `~/.shep/shep.toml`, and a published reference must not carry the dogs from
+# whichever machine last regenerated it. USERPROFILE is the same variable
+# under Git Bash and WSL.
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "$SCRATCH"' EXIT
+shep() { env -u SHEP_HOME -u SHEP_STYLE -u NO_COLOR HOME="$SCRATCH" USERPROFILE="$SCRATCH" "$BIN" "$@"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -50,10 +58,12 @@ fi
 # `every_listed_verb_has_a_block_in_the_committed_reference` fails when this
 # array has grown and nobody re-ran this script.
 VERBS=(
-  start add serve stop restart reload delete stock flock dogs enable disable
+  start add serve stop restart reload delete stock flock dogs "dogs grant"
+  "dogs revoke" enable disable
   adopt describe trigger signal whisper fold bleats lookout whistle
-  reopen flush barks set get unset secret "secret set" "secret get"
-  "secret unset" "secret list" host "host add" "host remove" "host list" copy
+  reopen flush barks kv "kv get" "kv set" "kv unset" secret "secret set"
+  "secret get" "secret unset" "secret list" host "host add" "host remove"
+  "host list" copy get set unset
   ping kill save muster runtime dev import "import pm2" "import env" startup
   unstartup completions init style welcome
 )

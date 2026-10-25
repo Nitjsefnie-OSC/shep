@@ -156,8 +156,18 @@ fn open_reportable_fds() -> ([std::fs::File; 6], crate::handover::CarriedFds) {
         err_log: Some(files[3].as_raw_fd()),
         stdin: Some(files[4].as_raw_fd()),
         channel: Some(files[5].as_raw_fd()),
+        dog_link: None,
     };
     (files, fds)
+}
+
+/// Turns a builder's borrowed name list into the owned names the runner stores.
+///
+/// Every name-list builder here takes `&[&str]` and writes into a
+/// `Mutex<Vec<String>>`, which the runner's own spawn and preflight checks
+/// read back by name.
+fn name_vec(names: &[&str]) -> Vec<String> {
+    names.iter().map(|n| n.to_string()).collect()
 }
 
 impl ScriptedRunner {
@@ -197,7 +207,7 @@ impl ScriptedRunner {
     #[cfg(unix)]
     #[must_use]
     pub fn with_a_pump_that_never_reports(self, names: &[&str]) -> Self {
-        *self.deaf_pump.lock().unwrap() = names.iter().map(|n| (*n).to_string()).collect();
+        *self.deaf_pump.lock().unwrap() = name_vec(names);
         self
     }
 
@@ -223,7 +233,7 @@ impl ScriptedRunner {
     /// alone cannot express that.
     #[must_use]
     pub fn failing_to_spawn(self, names: &[&str]) -> Self {
-        *self.fail_spawn.lock().unwrap() = names.iter().map(|n| (*n).to_string()).collect();
+        *self.fail_spawn.lock().unwrap() = name_vec(names);
         self
     }
 
@@ -233,7 +243,7 @@ impl ScriptedRunner {
     /// no other fake behaviour can enter.
     #[must_use]
     pub fn refusing(self, names: &[&str]) -> Self {
-        *self.refuse.lock().unwrap() = names.iter().map(|n| (*n).to_string()).collect();
+        *self.refuse.lock().unwrap() = name_vec(names);
         self
     }
 

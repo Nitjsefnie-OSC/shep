@@ -1,15 +1,21 @@
-//! `shep copy`: one setting, or one dog's whole table, from one sheep onto
-//! another.
+//! `shep copy`: one setting, one dog's whole table, or a sheep's env, from one
+//! sheep onto another.
 //!
 //! Three requests do the talking. `Request::ListFlock` resolves the two names
 //! against the flock, `Request::SheepConfig` reads each side, and the write is
 //! the request the plan turns into: [`Request::SetSheepField`] for a field,
-//! [`Request::SetSheepDogSettings`] for a dog's table. There is no copy
-//! request, so everything those refuse this refuses, with the same reason.
+//! [`Request::SetSheepDogSettings`] for a dog's table, so everything those
+//! refuse this refuses, with the same reason. `env` is the exception: a client
+//! is never sent env values, so [`mod@env`] plans and writes it through
+//! [`Request::CopySheepEnv`], and the shepherd does the merge.
 //!
 //! The order is resolve, read, plan, print, ask, write. Nothing is sent until
 //! the operator has seen every key the copy touches, which is also why a
-//! refusal never leaves a half-written sheep behind.
+//! refusal never leaves a half-written sheep behind. A copy that carries a
+//! dog's whole table asks that dog first, through the same
+//! [`crate::dog_settings::ask_dog`] `shep set` and the lookout dashboard ask
+//! through: the table the copy would leave behind is the table the dog is shown
+//! whether it declared `validate` or not.
 //!
 //! The table form prints the change list before the question, because that is
 //! what the question is asked beside. The JSON form prints one envelope at the
@@ -18,6 +24,7 @@
 
 pub(crate) mod address;
 pub(crate) mod confirm;
+pub(crate) mod env;
 pub(crate) mod plan;
 pub(crate) mod report;
 
@@ -25,10 +32,12 @@ use std::fmt;
 use std::io::IsTerminal as _;
 
 use shep_client::Client;
+use shep_core::paths::ShepPaths;
 use shep_core::protocol::{Request, Response};
 
 use crate::cli::{CopyArgs, Format};
 use crate::commands::rpc::{client_error, typed_request_error, unexpected_response};
+use crate::dog_settings::{AskFailure, ask_dog};
 use crate::exit::ExitCode;
 use crate::output::Streams;
 
@@ -40,8 +49,7 @@ use report::{finish, print_changes, report_for, shows_changes_first};
 /// Why a copy stopped before it wrote anything.
 ///
 /// Every variant carries the sentence the operator reads, because the reason
-/// is the remedy: `env` names `shep import env`, an instance count names
-/// `shep stock`, and a missing source names the path that is missing.
+/// is the remedy: an instance count names `shep stock`, and a missing source names the path that is missing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CopyRefusal {
     /// An address or a flag is malformed, or the two sides name different
@@ -53,6 +61,11 @@ pub(crate) enum CopyRefusal {
     MissingSource(String),
     /// A key this verb never copies, in the reason the shepherd gives for it.
     Refused(String),
+    /// The dog refused the table the copy would write, in its own words.
+    ///
+    /// Separate from [`Self::Refused`]: that is the shepherd refusing a key this
+    /// verb never carries, and this is the dog refusing what it was asked about.
+    ByDog(String),
 }
 
 impl CopyRefusal {
@@ -62,7 +75,8 @@ impl CopyRefusal {
             Self::Usage(message)
             | Self::UnknownSheep(message)
             | Self::MissingSource(message)
-            | Self::Refused(message) => message,
+            | Self::Refused(message)
+            | Self::ByDog(message) => message,
         }
     }
 
@@ -70,17 +84,23 @@ impl CopyRefusal {
     ///
     /// [`ExitCode::InvalidConfig`] for a refused key is the code the shepherd's
     /// own refusal of that key carries, so `copy` and the request it stands in
-    /// for exit alike.
-    const fn code(&self) -> ExitCode {
+    /// for exit alike. A dog's refusal of its own table takes the same code for
+    /// the same reason: `shep set` refuses it that way too.
+    ///
+    /// `pub(crate)`: `shep set` refuses the same keys with the same reasons
+    /// (issue #1096).
+    pub(crate) const fn code(&self) -> ExitCode {
         match self {
             Self::Usage(_) => ExitCode::Usage,
             Self::UnknownSheep(_) | Self::MissingSource(_) => ExitCode::NotFound,
-            Self::Refused(_) => ExitCode::InvalidConfig,
+            Self::Refused(_) | Self::ByDog(_) => ExitCode::InvalidConfig,
         }
     }
 
     /// Writes the refusal and hands back the code it wrote.
-    fn report(&self, streams: &mut Streams<'_>) -> ExitCode {
+    ///
+    /// `pub(crate)`: see [`Self::code`].
+    pub(crate) fn report(&self, streams: &mut Streams<'_>) -> ExitCode {
         streams.fail(self.code(), self.message())
     }
 }
@@ -95,11 +115,20 @@ impl core::error::Error for CopyRefusal {}
 
 /// `shep copy <from> <to>`.
 ///
+/// `paths` is this machine's `$SHEP_HOME`, which is where a dog's cached
+/// manifest says whether the copy has to ask that dog first.
+///
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`: a malformed address, a name
 /// no sheep answers, a key this verb refuses, a missing source, a refusal to
-/// write with no terminal to ask on, or a write the shepherd refused.
-pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &CopyArgs) -> ExitCode {
+/// write with no terminal to ask on, a dog refusing its own table, or a write
+/// the shepherd refused.
+pub(crate) async fn copy(
+    client: &Client,
+    streams: &mut Streams<'_>,
+    paths: &ShepPaths,
+    args: &CopyArgs,
+) -> ExitCode {
     let flock = match flock_names(client, streams).await {
         Ok(names) => names,
         Err(code) => return code,
@@ -151,9 +180,20 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
         return refusal.report(streams);
     }
 
-    let plan = match build_plan(&from, &to, &except, args.replace, &source, &target) {
-        Ok(plan) => plan,
-        Err(refusal) => return refusal.report(streams),
+    let plan = if from.path == ConfigPath::Env {
+        let sides = plan::Sides {
+            source: &from.sheep,
+            target: &to.sheep,
+        };
+        match env::plan_env(client, streams, sides, &args.except, args.replace).await {
+            Ok(plan) => plan,
+            Err(code) => return code,
+        }
+    } else {
+        match build_plan(&from, &to, &except, args.replace, &source, &target) {
+            Ok(plan) => plan,
+            Err(refusal) => return refusal.report(streams),
+        }
     };
 
     let path = from.path.dotted();
@@ -225,7 +265,7 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
         let message = format!("the plan named {} changes and no write", plan.changes.len());
         return streams.fail(ExitCode::Internal, &message);
     };
-    let pending = match write_plan(client, streams, &to.sheep, write).await {
+    let pending = match write_plan(client, streams, paths, &to.sheep, write).await {
         Ok(pending) => pending,
         Err(code) => return code,
     };
@@ -254,9 +294,16 @@ pub(crate) async fn copy(client: &Client, streams: &mut Streams<'_>, args: &Copy
 
 /// The flock's names, split into sheep and dogs.
 ///
+/// `pub(crate)`: `shep get` resolves an address against the same two name
+/// sets `shep copy` does, and one reader of `Request::ListFlock` is what
+/// keeps the two verbs agreeing on what a name is.
+///
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`.
-async fn flock_names(client: &Client, streams: &mut Streams<'_>) -> Result<FlockNames, ExitCode> {
+pub(crate) async fn flock_names(
+    client: &Client,
+    streams: &mut Streams<'_>,
+) -> Result<FlockNames, ExitCode> {
     match client.list_flock().await {
         Ok(info) => Ok(FlockNames {
             sheep: info
@@ -276,12 +323,15 @@ async fn flock_names(client: &Client, streams: &mut Streams<'_>) -> Result<Flock
 
 /// One sheep's config as JSON, which is the shape a plan reads.
 ///
-/// `env` is already emptied by the shepherd, which is what makes `env` a
-/// refusal here rather than a copy of something that is not there.
+/// `env` is emptied by the shepherd: the values of a copy's env never reach
+/// this config, and [`mod@env`] asks the shepherd to do that copy.
+///
+/// `pub(crate)`: `shep get` reads the same answer for the sheep half of an
+/// address.
 ///
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`.
-async fn read_config(
+pub(crate) async fn read_config(
     client: &Client,
     streams: &mut Streams<'_>,
     name: &str,
@@ -356,6 +406,10 @@ fn build_plan(
             }
             Ok(plan::plan_field(name, source, target))
         }
+        ConfigPath::Env => Err(CopyRefusal::Usage(
+            "the env of a sheep is planned by the shepherd, not from the configs read here"
+                .to_string(),
+        )),
         ConfigPath::Dog { dog, keys } => plan::plan_dog(
             plan::Sides {
                 source: &from.sheep,
@@ -373,11 +427,17 @@ fn build_plan(
 
 /// Sends the plan's write, and reports which keys wait for a respawn.
 ///
+/// A write that carries a dog's whole table is put past [`ask_dog`] first, the
+/// way `shep set` puts one: the copy replaces a dog's table on the target, and a
+/// dog that declared `validate` is shown the table it would end up with before
+/// anything is written.
+///
 /// # Errors
 /// The [`ExitCode`] already reported to `streams`.
 async fn write_plan(
     client: &Client,
     streams: &mut Streams<'_>,
+    paths: &ShepPaths,
     target: &str,
     write: Write,
 ) -> Result<Vec<String>, ExitCode> {
@@ -401,7 +461,32 @@ async fn write_plan(
                 Err(err) => Err(client_error(streams, &err)),
             }
         }
+        Write::Env {
+            from,
+            replace,
+            except,
+            expect,
+        } => env::write_env(client, streams, target, &from, replace, &except, expect).await,
         Write::DogTable { dog, table } => {
+            match ask_dog(client, paths, &dog, table.as_map(), Some(target)).await {
+                Ok(()) => {}
+                Err(AskFailure::Refused { reason }) => {
+                    return Err(CopyRefusal::ByDog(format!(
+                        "nothing was written: `{dog}` refused `{target}`'s table for `{dog}`: \
+                         {reason}"
+                    ))
+                    .report(streams));
+                }
+                // No dog said this one: shep could not read whether the dog
+                // wanted to be asked, or could not read what it answered.
+                Err(AskFailure::Unknown { reason }) => {
+                    return Err(
+                        CopyRefusal::Refused(format!("nothing was written: {reason}"))
+                            .report(streams),
+                    );
+                }
+                Err(AskFailure::Transport(err)) => return Err(client_error(streams, &err)),
+            }
             let request = Request::SetSheepDogSettings {
                 name: target.to_string(),
                 dog,
@@ -416,6 +501,8 @@ async fn write_plan(
     }
 }
 
+#[cfg(test)]
+mod validate_tests;
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -628,7 +715,6 @@ mod tests {
         );
 
         for (path, expected) in [
-            ("web.env", "shep import env"),
             ("web.name", "different sheep"),
             ("web.instances", "shep stock web"),
             ("web.dogs", "web.dogs.<dog>"),

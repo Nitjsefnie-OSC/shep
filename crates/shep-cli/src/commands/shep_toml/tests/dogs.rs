@@ -9,19 +9,12 @@ use super::*;
 fn enabling_a_dog_leaves_the_rest_of_the_file_exactly_as_it_was() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("shep.toml");
-    let original =
-        "# the shepherd's own knobs\n[daemon]\nlog_level = \"info\"  # chatty\nlog_json = false\n";
-    std::fs::write(&path, original).unwrap();
+    std::fs::write(&path, PRESERVATION_SEED).unwrap();
 
     ShepToml::try_edit(&path, |doc| doc.enable_dog("metrics")).unwrap();
 
     let written = std::fs::read_to_string(&path).unwrap();
-    assert!(written.contains("# the shepherd's own knobs"));
-    assert!(written.contains("# chatty"));
-    assert!(
-        written.find("log_level").unwrap() < written.find("log_json").unwrap(),
-        "key order survives"
-    );
+    assert_preserves_comments_and_key_order(&written);
 
     let cfg = DaemonConfig::load(Some(&written), &|_| None).unwrap();
     assert_eq!(cfg.daemon.enabled_dogs, vec!["metrics"]);
@@ -238,7 +231,7 @@ fn taking_dog_sections_keeps_an_inline_table_dog() {
 /// Three keys under `[daemon]` are written by the dog verbs and hand-edited
 /// by operators, and all three used to `.expect()` on a shape they did not
 /// write. `shep dog enable` on a file holding `daemon = "loud"` panicked,
-/// while `shep set daemon.log_json` refused the same file politely, because
+/// while `shep kv set daemon.log_json` refused the same file politely, because
 /// the scalar setters went through `section_table_mut` and these did not.
 ///
 /// One case each, and each asserts the file is left alone: a refusal that

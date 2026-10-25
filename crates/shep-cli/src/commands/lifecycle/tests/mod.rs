@@ -5,12 +5,12 @@
 //! same daemon fixture or wire helper.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use shep_client::testing::{
-    fake_client_answering, fake_client_capturing_envelopes, fake_client_needing_budget,
-    fake_client_replying_err,
+    FakeDaemon, fake_client_answering, fake_client_capturing_envelopes, fake_client_needing_budget,
+    fake_client_on, fake_client_replying_err,
 };
 use shep_client::{Client, RELOAD_DEADLINE, START_DEADLINE, STOP_DEADLINE};
 use shep_core::config::{AppConfig, FlockFormat, Flockfile, ResetDepth};
@@ -63,6 +63,23 @@ async fn next_start(
     }
 }
 
+/// The apps inside the envelope [`next_start`] handed back
+///
+/// Takes the envelope rather than the receiver: `#[track_caller]` is a
+/// no-op on an `async fn`, and a panic from here has to name the site that
+/// asked for a `Start`.
+///
+/// # Panics
+///
+/// If `envelope` is not a `Request::Start`.
+#[track_caller]
+fn start_apps(envelope: shep_core::protocol::Envelope) -> Vec<AppConfig> {
+    match envelope.body {
+        Request::Start { apps } => apps,
+        other => panic!("expected a Start request, got {other:?}"),
+    }
+}
+
 fn start_args(target: &str) -> StartArgs {
     StartArgs {
         targets: vec![target.to_string()],
@@ -97,6 +114,33 @@ fn node_available() -> bool {
     ok
 }
 
+/// A tempdir, a scripted fake daemon listening on its control address, and
+/// a client connected to that address
+///
+/// The `TempDir` comes back beside the pair: the socket lives inside it, so
+/// a caller that dropped it here would unlink a live listener's address.
+async fn a_daemon_on_a_tempdir() -> (tempfile::TempDir, Client, FakeDaemon) {
+    let dir = tempfile::tempdir().unwrap();
+    let address = shep_client::testing::control_address(dir.path());
+    let (client, daemon) = fake_client_on(&address).await;
+    (dir, client, daemon)
+}
+
+/// `dir`'s `Flockfile.toml`: one app named `zam`, with the one key these
+/// cases watch land on the wire
+///
+/// `max_restarts` is the declared key an `ApplyConfig` assertion reads, so
+/// the cases that need an app the flock already has share this literal.
+fn write_zam_flockfile(dir: &Path) -> PathBuf {
+    let path = dir.join("Flockfile.toml");
+    std::fs::write(
+        &path,
+        "[[app]]\nname = \"zam\"\nscript = \"./srv\"\nmax_restarts = 99\n",
+    )
+    .unwrap();
+    path
+}
+
 /// The flock a `render_outcome` test hands the fake: two sheep the verb
 /// did not touch, one it did, and a dog
 fn a_flock_with_a_dog() -> Vec<shep_core::protocol::ProcessInfo> {
@@ -108,6 +152,7 @@ fn a_flock_with_a_dog() -> Vec<shep_core::protocol::ProcessInfo> {
         ProcessInfo::builder(2, "rotom", ProcStatus::Online).build(),
         ProcessInfo::builder(3, "log-rotate", ProcStatus::Online)
             .dog(Some(DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/shep-log-rotate".to_string(),
                 channel: false,
             }))
@@ -131,7 +176,7 @@ fn a_foldable_flock() -> Vec<shep_core::protocol::ProcessInfo> {
             .build(),
         ProcessInfo::builder(2, "rotom", ProcStatus::Stopped).build(),
         ProcessInfo::builder(3, "log-rotate", ProcStatus::Online)
-            .dog(Some(DogSource::BuiltIn))
+            .dog(Some(DogSource::BuiltIn { grants: None }))
             .build(),
     ]
 }
@@ -229,12 +274,7 @@ async fn start_against_with_args(client: &Client, args: &StartArgs) -> (ExitCode
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         start(client, &mut streams, args, None, &BTreeMap::new()).await
     };
     (
@@ -266,12 +306,7 @@ async fn restart_against_in(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, fmt);
         restart_within(
             client,
             &mut streams,
@@ -320,12 +355,7 @@ async fn reload_against_in(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, fmt);
         reload(
             client,
             &mut streams,
@@ -449,12 +479,7 @@ async fn add_against_with_args(client: &Client, args: &StartArgs) -> (ExitCode, 
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         add(client, &mut streams, args, None, &BTreeMap::new()).await
     };
     (

@@ -1,9 +1,9 @@
 //! The caller's door into the actor.
 //!
 //! [`SupervisorHandle`] is the only way to reach a running supervisor: each
-//! method packs a [`Command`], sends it down the mailbox, and awaits the
-//! reply on a fresh oneshot. Cloning a handle is cheap and every clone talks
-//! to the same actor.
+//! method hands [`SupervisorHandle::call`] a [`Command`] to pack, and that
+//! one call is where a command meets the mailbox and its reply. Cloning a
+//! handle is cheap and every clone talks to the same actor.
 
 use super::*;
 
@@ -17,6 +17,30 @@ pub struct SupervisorHandle {
 }
 
 impl SupervisorHandle {
+    /// Packs the command `build` makes from the reply channel, sends it, and
+    /// awaits that reply.
+    ///
+    /// Every method here is this one with a different [`Command`] variant, so
+    /// what a dead actor costs each caller is decided once.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::EngineStopped`]: the actor's mailbox closed
+    ///   before the command landed, or the reply channel was dropped before
+    ///   it answered. A caller cannot tell the two apart, and nothing here
+    ///   can: both mean no answer is coming.
+    async fn call<R>(
+        &self,
+        build: impl FnOnce(oneshot::Sender<R>) -> Command,
+    ) -> Result<R, SupervisorError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Command(build(reply)))
+            .await
+            .map_err(|_| SupervisorError::EngineStopped)?;
+        rx.await.map_err(|_| SupervisorError::EngineStopped)
+    }
+
     /// Registers + spawns each app's instances.
     ///
     /// # Errors
@@ -57,17 +81,13 @@ impl SupervisorHandle {
         gate: BTreeSet<String>,
         policy: BatchPolicy,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Start {
-                apps,
-                policy,
-                gate,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::Start {
+            apps,
+            policy,
+            gate,
+            reply,
+        })
+        .await?
     }
 
     /// Registers each app as a flock member without starting it.
@@ -86,16 +106,12 @@ impl SupervisorHandle {
         apps: Vec<ResolvedApp>,
         disabled: BTreeSet<String>,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::RegisterAtRest {
-                apps,
-                disabled,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::RegisterAtRest {
+            apps,
+            disabled,
+            reply,
+        })
+        .await?
     }
 
     /// Registers each dog as a flock member without starting it.
@@ -113,16 +129,12 @@ impl SupervisorHandle {
         dogs: Vec<(ResolvedApp, DogSource)>,
         disabled: BTreeSet<String>,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::RegisterDogsAtRest {
-                dogs,
-                disabled,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::RegisterDogsAtRest {
+            dogs,
+            disabled,
+            reply,
+        })
+        .await?
     }
 
     /// Names the fields in which each app differs from the flock's own copy of
@@ -138,12 +150,8 @@ impl SupervisorHandle {
         &self,
         apps: Vec<ResolvedApp>,
     ) -> Result<Vec<SheepDrift>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::ConfigDrift { apps, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::ConfigDrift { apps, reply })
+            .await?
     }
 
     /// Merges each app a Flockfile declared into the sheep of the same name.
@@ -163,12 +171,8 @@ impl SupervisorHandle {
         apps: Vec<DeclaredApp>,
         reset: ResetDepth,
     ) -> Result<Vec<Applied>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::ApplyConfig { apps, reset, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::ApplyConfig { apps, reset, reply })
+            .await?
     }
 
     /// One sheep's effective config, for a pane about to edit it, or `None`
@@ -186,14 +190,13 @@ impl SupervisorHandle {
     ///   refusal itself.
     pub(crate) async fn sheep_config(
         &self,
-        name: String,
+        name: &str,
     ) -> Result<Option<SheepConfigView>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::SheepConfig { name, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::SheepConfig {
+            name: name.to_string(),
+            reply,
+        })
+        .await?
     }
 
     /// Sets `key` on `name`'s env, or removes it with `None`, recorded as an
@@ -222,21 +225,17 @@ impl SupervisorHandle {
     /// - [`SupervisorError::EngineStopped`] - the actor is gone.
     pub(crate) async fn set_sheep_env(
         &self,
-        name: String,
-        key: String,
+        name: &str,
+        key: &str,
         value: Option<EnvValue>,
     ) -> Result<Option<ResolvedApp>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::SetSheepEnv {
-                name,
-                key,
-                value,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::SetSheepEnv {
+            name: name.to_string(),
+            key: key.to_string(),
+            value,
+            reply,
+        })
+        .await?
     }
 
     /// Sets several env keys on one sheep as operator overrides, in one
@@ -258,7 +257,7 @@ impl SupervisorHandle {
     /// - [`SupervisorError::EngineStopped`] - the actor is gone.
     pub(crate) async fn set_sheep_env_batch(
         &self,
-        name: String,
+        name: &str,
         entries: BTreeMap<String, String>,
         force: bool,
         dry_run: bool,
@@ -267,18 +266,52 @@ impl SupervisorHandle {
             .into_iter()
             .map(|(key, value)| (key, EnvValue::from(value)))
             .collect();
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::SetSheepEnvBatch {
-                name,
-                entries,
-                force,
-                dry_run,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::SetSheepEnvBatch {
+            name: name.to_string(),
+            entries,
+            force,
+            dry_run,
+            reply,
+        })
+        .await?
+    }
+
+    /// Copies `from`'s env onto `to` as operator overrides, in one write.
+    ///
+    /// [`Actor::handle_copy_sheep_env`] states what `replace`, `except` and
+    /// `dry_run` do. [`EnvCopy::app`] is the config now parked for `to`'s next
+    /// spawn, and is `None` whenever nothing was written; `rpc/dispatch.rs`
+    /// hands it to the registry for [`Self::set_sheep_env`]'s reason.
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::NoSuchSheep`] - `from` or `to` is no sheep.
+    /// - [`SupervisorError::IsADog`] - `from` or `to` is a dog's.
+    /// - [`SupervisorError::InvalidEnv`] - `normalize` refuses the result.
+    /// - [`SupervisorError::EnvChanged`] - `expect` is not the change list the
+    ///   two sheep give now.
+    /// - [`SupervisorError::Overrides`] - the override store could not be
+    ///   read or written, so nothing was recorded and nothing parked.
+    /// - [`SupervisorError::EngineStopped`] - the actor is gone.
+    pub(crate) async fn copy_sheep_env(
+        &self,
+        from: &str,
+        to: &str,
+        replace: bool,
+        except: Vec<String>,
+        dry_run: bool,
+        expect: Option<Vec<shep_core::protocol::EnvCopyChange>>,
+    ) -> Result<EnvCopy, SupervisorError> {
+        self.call(|reply| Command::CopySheepEnv {
+            from: from.to_string(),
+            to: to.to_string(),
+            replace,
+            except,
+            dry_run,
+            expect,
+            reply,
+        })
+        .await?
     }
 
     /// Sets one config field on one sheep as an operator override.
@@ -297,21 +330,38 @@ impl SupervisorHandle {
     /// - [`SupervisorError::EngineStopped`] - the actor is gone.
     pub(crate) async fn set_sheep_field(
         &self,
-        name: String,
-        key: String,
+        name: &str,
+        key: &str,
         value: serde_json::Value,
     ) -> Result<Option<FieldSet>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::SetSheepField {
-                name,
-                key,
-                value,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::SetSheepField {
+            name: name.to_string(),
+            key: key.to_string(),
+            value,
+            reply,
+        })
+        .await?
+    }
+
+    /// Drops the operator's override of one config field on one sheep.
+    ///
+    /// [`Actor::handle_reset_sheep_field`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_sheep_field`], and [`SupervisorError::InvalidField`]
+    /// also when the operator holds no override of the key.
+    pub(crate) async fn reset_sheep_field(
+        &self,
+        name: &str,
+        key: &str,
+    ) -> Result<Option<FieldSet>, SupervisorError> {
+        self.call(|reply| Command::ResetSheepField {
+            name: name.to_string(),
+            key: key.to_string(),
+            reply,
+        })
+        .await?
     }
 
     /// `dog`'s table on every sheep carrying one, by sheep name. See
@@ -324,12 +374,24 @@ impl SupervisorHandle {
         &self,
         dog: String,
     ) -> Result<BTreeMap<String, DogTable>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::DogSheepSettings { dog, reply }))
+        self.call(|reply| Command::DogSheepSettings { dog, reply })
             .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)
+    }
+
+    /// `name`'s table for `dog` and the environment its references resolve
+    /// in. `Ok(None)` when no sheep has that name. See
+    /// [`Actor::handle_sheep_dog_read`].
+    ///
+    /// # Errors
+    ///
+    /// - [`SupervisorError::EngineStopped`] - the actor is gone.
+    pub(crate) async fn sheep_dog_read(
+        &self,
+        name: String,
+        dog: String,
+    ) -> Result<Option<SheepDogRead>, SupervisorError> {
+        self.call(|reply| Command::SheepDogRead { name, dog, reply })
+            .await
     }
 
     /// Sets `dog`'s table on `name`, or removes it with `None`, as an
@@ -354,17 +416,13 @@ impl SupervisorHandle {
         dog: String,
         table: Option<DogTable>,
     ) -> Result<Option<FieldSet>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::SetSheepDogSettings {
-                name,
-                dog,
-                table,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::SetSheepDogSettings {
+            name,
+            dog,
+            table,
+            reply,
+        })
+        .await?
     }
 
     /// Registers and starts one dog, marked as coming from `source`.
@@ -385,16 +443,12 @@ impl SupervisorHandle {
         app: ResolvedApp,
         source: DogSource,
     ) -> Result<ProcessInfo, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::StartDog {
-                app: Box::new(app),
-                source,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::StartDog {
+            app: Box::new(app),
+            source,
+            reply,
+        })
+        .await?
     }
 
     /// Stops every sheep matching `selector`.
@@ -407,12 +461,7 @@ impl SupervisorHandle {
         &self,
         selector: ProcessSelector,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Stop { selector, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::Stop { selector, reply }).await?
     }
 
     /// Disables the app of every sheep matching `selector` and stops it.
@@ -429,12 +478,9 @@ impl SupervisorHandle {
         &self,
         selector: ProcessSelector,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Disable { selector, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        let mut infos = rx.await.map_err(|_| SupervisorError::EngineStopped)??;
+        let mut infos = self
+            .call(|reply| Command::Disable { selector, reply })
+            .await??;
         for info in &mut infos {
             info.disabled = Some(true);
         }
@@ -453,12 +499,8 @@ impl SupervisorHandle {
     ///   A sheep holding the name is left alone.
     /// - [`SupervisorError::EngineStopped`]: the actor is gone.
     pub(crate) async fn disable_dog(&self, name: String) -> Result<Vec<u32>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::DisableDog { name, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::DisableDog { name, reply })
+            .await?
     }
 
     /// Clears the disabled mark on the app of every sheep matching `selector`
@@ -475,12 +517,8 @@ impl SupervisorHandle {
         &self,
         selector: ProcessSelector,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Enable { selector, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::Enable { selector, reply })
+            .await?
     }
 
     /// Restarts every sheep matching `selector`, resetting its restart budget.
@@ -529,16 +567,12 @@ impl SupervisorHandle {
         selector: ProcessSelector,
         origin: CommandOrigin,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Restart {
-                selector,
-                origin,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::Restart {
+            selector,
+            origin,
+            reply,
+        })
+        .await?
     }
 
     /// Restarts `id` on behalf of a memory breach or a liveness failure, if the
@@ -581,12 +615,8 @@ impl SupervisorHandle {
         &self,
         selector: ProcessSelector,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Reload { selector, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::Reload { selector, reply })
+            .await?
     }
 
     /// Stops + deregisters every sheep matching `selector`.
@@ -601,12 +631,8 @@ impl SupervisorHandle {
         &self,
         selector: ProcessSelector,
     ) -> Result<Vec<u32>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Delete { selector, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::Delete { selector, reply })
+            .await?
     }
 
     /// Sets `name`'s instance count. A partial scale-up answers `Ok` with
@@ -622,16 +648,12 @@ impl SupervisorHandle {
     /// - [`SupervisorError::ReloadInFlight`]: the app is mid-reload.
     /// - [`SupervisorError::EngineStopped`]: the actor is gone.
     pub(crate) async fn scale(&self, name: &str, count: u32) -> Result<Scaled, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Scale {
-                name: name.to_string(),
-                count,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::Scale {
+            name: name.to_string(),
+            count,
+            reply,
+        })
+        .await?
     }
 
     /// Attaches `smit` to the sheep called `sheep`, scoped to `conn`, or
@@ -650,17 +672,13 @@ impl SupervisorHandle {
         sheep: &str,
         smit: Option<Smit>,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::SetSmit {
-                conn,
-                sheep: sheep.to_string(),
-                smit,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::SetSmit {
+            conn,
+            sheep: sheep.to_string(),
+            smit,
+            reply,
+        })
+        .await?
     }
 
     /// Forgets every smit `conn` painted.
@@ -668,15 +686,9 @@ impl SupervisorHandle {
     /// A stopped engine has dropped every smit it held, so this answers even
     /// then; the caller is a connection tail with no use for a failure.
     pub(crate) async fn forget_smits(&self, conn: ConnId) {
-        let (reply, rx) = oneshot::channel();
-        if self
-            .tx
-            .send(Msg::Command(Command::ForgetSmits { conn, reply }))
-            .await
-            .is_ok()
-        {
-            let _ = rx.await;
-        }
+        let _ = self
+            .call(|reply| Command::ForgetSmits { conn, reply })
+            .await;
     }
 
     /// Reopens the log files of every sheep matching `selector`, and of every
@@ -695,12 +707,8 @@ impl SupervisorHandle {
         &self,
         selector: ProcessSelector,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Reopen { selector, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::Reopen { selector, reply })
+            .await?
     }
 
     /// Describes the whole flock for a daemon handover: one
@@ -720,12 +728,8 @@ impl SupervisorHandle {
         &self,
         fds: DaemonFds,
     ) -> Result<Snapshot, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::HandoverSnapshot { fds, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::HandoverSnapshot { fds, reply })
+            .await?
     }
 
     /// Whether this shepherd's flock could be handed to a successor in
@@ -739,12 +743,8 @@ impl SupervisorHandle {
     /// - [`SupervisorError::EngineStopped`]: the actor is gone.
     #[cfg(unix)]
     pub(crate) async fn handover_fitness(&self) -> Result<Fitness, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::HandoverFitness { reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::HandoverFitness { reply })
+            .await?
     }
 
     /// Empties the log files of every sheep matching `selector`: flushes every
@@ -763,12 +763,8 @@ impl SupervisorHandle {
         &self,
         selector: ProcessSelector,
     ) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Flush { selector, reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::Flush { selector, reply })
+            .await?
     }
 
     /// Sends `action` over the shepherd channel of every sheep matching
@@ -789,17 +785,13 @@ impl SupervisorHandle {
         action: String,
         params: Option<String>,
     ) -> Result<Vec<ActionReply>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Trigger {
-                selector,
-                action,
-                params,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::Trigger {
+            selector,
+            action,
+            params,
+            reply,
+        })
+        .await?
     }
 
     /// Delivers `sig` to the own process of every sheep matching `selector`,
@@ -819,16 +811,12 @@ impl SupervisorHandle {
         selector: ProcessSelector,
         sig: OperatorSignal,
     ) -> Result<Vec<SignalReply>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::Signal {
-                selector,
-                sig,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::Signal {
+            selector,
+            sig,
+            reply,
+        })
+        .await?
     }
 
     /// Writes `line` to every matched sheep's stdin, and answers with one row
@@ -847,16 +835,12 @@ impl SupervisorHandle {
         selector: ProcessSelector,
         line: String,
     ) -> Result<Vec<LineReply>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::SendLine {
-                selector,
-                line,
-                reply,
-            }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)?
+        self.call(|reply| Command::SendLine {
+            selector,
+            line,
+            reply,
+        })
+        .await?
     }
 
     /// Full flock listing, name-grouped (see [`Actor::snapshot_all`]).
@@ -865,12 +849,7 @@ impl SupervisorHandle {
     ///
     /// - [`SupervisorError::EngineStopped`]: the actor is gone.
     pub(crate) async fn list_checked(&self) -> Result<Vec<ProcessInfo>, SupervisorError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Msg::Command(Command::List { reply }))
-            .await
-            .map_err(|_| SupervisorError::EngineStopped)?;
-        rx.await.map_err(|_| SupervisorError::EngineStopped)
+        self.call(|reply| Command::List { reply }).await
     }
 
     /// Full flock listing, by name, then instance slot, then id
@@ -891,14 +870,6 @@ impl SupervisorHandle {
     /// Graceful engine shutdown: kill ladder on every online sheep, then
     /// stop the actor. A no-op if the actor is already gone.
     pub async fn shutdown(&self) {
-        let (reply, rx) = oneshot::channel();
-        if self
-            .tx
-            .send(Msg::Command(Command::Shutdown { reply }))
-            .await
-            .is_ok()
-        {
-            let _ = rx.await;
-        }
+        let _ = self.call(|reply| Command::Shutdown { reply }).await;
     }
 }

@@ -62,7 +62,12 @@ fn a_metrics_dog_answering(
     guard.adopt_home(home);
     assert_success(&mustered);
 
-    let enabled = shep(home).arg("enable").arg("metrics").output().unwrap();
+    let enabled = shep(home)
+        .arg("enable")
+        .arg("--yes")
+        .arg("metrics")
+        .output()
+        .unwrap();
     assert_success(&enabled);
     guard.adopt_dog_pid(wait_for_dog_pid(home, "metrics"));
 

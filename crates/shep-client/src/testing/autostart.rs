@@ -1,9 +1,7 @@
 use super::*;
 use crate::spawn::SpawnOptions;
-use shep_core::protocol::codec;
 use std::path::Path;
 use std::time::Duration;
-use tokio_util::codec::Framed;
 
 /// [`SpawnOptions`] tuned so `spawn.rs`'s tests finish in under a second on
 /// a real clock, since none of them may pause tokio's clock.
@@ -34,9 +32,7 @@ pub fn fast_opts() -> SpawnOptions {
 pub fn start_fake_daemon_answering_on(path: &Path) {
     let mut listener = bind(path);
     tokio::spawn(async move {
-        let stream = listener.accept().await.unwrap();
-        let mut frames = Framed::new(stream, codec());
-        let _hello = handshake(&mut frames, sample_ack()).await;
+        let _frames = accept_handshaked(&mut listener, sample_ack()).await;
         core::future::pending::<()>().await;
     });
 }

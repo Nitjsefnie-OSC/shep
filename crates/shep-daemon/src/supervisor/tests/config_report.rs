@@ -6,6 +6,23 @@
 
 use super::*;
 
+/// The identity this test process already runs under, the credential pair
+/// `own_user_name()` resolves to.
+#[cfg(unix)]
+fn own_creds() -> Credentials {
+    Credentials {
+        uid: nix::unistd::geteuid().as_raw(),
+        gid: None,
+    }
+}
+
+/// An identity no passwd lookup could produce, so a spawn carrying it is a
+/// spawn that reused a stored resolution.
+const SETTLED_CREDS: Credentials = Credentials {
+    uid: 4242,
+    gid: None,
+};
+
 /// A pending field an operator cannot see is a silent divergence.
 #[tokio::test(start_paused = true)]
 async fn to_info_reports_the_pending_fields_names_only() {
@@ -274,10 +291,7 @@ async fn promoting_a_user_change_re_resolves_credentials() {
 
     actor.advance_reload("web", VecDeque::from([0]));
 
-    let wanted = Credentials {
-        uid: nix::unistd::geteuid().as_raw(),
-        gid: None,
-    };
+    let wanted = own_creds();
     assert_eq!(
         actor.runner.spawned_as(0),
         Some(wanted),
@@ -312,12 +326,9 @@ async fn promoting_an_unrelated_change_keeps_the_resolved_identity() {
             app.user = Some(NO_SUCH_USER.to_string())
         })],
     );
-    // An unresolvable name makes reuse observable: this value cannot be
-    // re-derived, so a spawn carrying it is a spawn that reused it.
-    let settled = Credentials {
-        uid: 4242,
-        gid: None,
-    };
+    // An unresolvable name makes reuse observable: `SETTLED_CREDS` cannot
+    // be re-derived, so a spawn carrying it is a spawn that reused it.
+    let settled = SETTLED_CREDS;
     actor
         .sheep
         .get_mut(&0)
@@ -383,12 +394,8 @@ async fn promoting_an_unrelated_change_keeps_the_resolved_identity() {
 async fn a_sibling_that_has_not_promoted_yet_still_re_resolves_after_later_loads() {
     let dir = tempfile::tempdir().unwrap();
     let (mut actor, _enforcer) = actor_over(&dir, &[app_with("web", |app| app.instances = 3)]);
-    // The identity the three instances already run under, and one no lookup
-    // could produce, so a spawn carrying it is a spawn that reused it.
-    let settled = Credentials {
-        uid: 4242,
-        gid: None,
-    };
+    // The identity the three instances already run under.
+    let settled = SETTLED_CREDS;
     for id in [0, 1, 2] {
         actor
             .sheep
@@ -416,15 +423,12 @@ async fn a_sibling_that_has_not_promoted_yet_still_re_resolves_after_later_loads
 
     actor.respawn(1, true);
 
-    let wanted = Credentials {
-        uid: nix::unistd::geteuid().as_raw(),
-        gid: None,
-    };
+    let wanted = own_creds();
     assert_eq!(
         actor.runner.spawned_as(1),
         Some(wanted),
         "instance 1 has still never applied the `user` change, so its promotion must \
-         re-resolve; the settled 4242 here is the change being silently dropped"
+         re-resolve; `SETTLED_CREDS` here is the change being silently dropped"
     );
     assert_eq!(
         actor.sheep[&1].entry.spec.config().user,
@@ -489,10 +493,7 @@ async fn an_abandoned_reload_leaves_the_parked_config_where_it_was() {
 async fn an_abandoned_reload_leaves_the_drainees_identity_alone() {
     let dir = tempfile::tempdir().unwrap();
     let (mut actor, _enforcer) = actor_over(&dir, &[app_with("web", |_| {})]);
-    let settled = Credentials {
-        uid: 4242,
-        gid: None,
-    };
+    let settled = SETTLED_CREDS;
     actor
         .sheep
         .get_mut(&0)
@@ -692,10 +693,7 @@ async fn a_parked_config_and_its_reset_decision_survive_a_handover() {
 
     // The predecessor's entry: registered, not running, owed a `user`
     // change, and settled on an identity no lookup could produce.
-    let settled = Credentials {
-        uid: 4242,
-        gid: None,
-    };
+    let settled = SETTLED_CREDS;
     let entry = ProcessEntry {
         pending: Some(app_with("web", |app| app.user = Some(own_user_name()))),
         pending_reidentifies: true,
@@ -723,11 +721,8 @@ async fn a_parked_config_and_its_reset_decision_survive_a_handover() {
 
     assert_eq!(
         actor.runner.spawned_as(0),
-        Some(Credentials {
-            uid: nix::unistd::geteuid().as_raw(),
-            gid: None,
-        }),
-        "and promoting it must re-resolve: the settled 4242 here is the reset decision \
+        Some(own_creds()),
+        "and promoting it must re-resolve: `SETTLED_CREDS` here is the reset decision \
          lost in the blob, which is the identity change silently dropped"
     );
     assert_eq!(

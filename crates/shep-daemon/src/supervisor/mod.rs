@@ -78,6 +78,7 @@ mod actor_config;
 mod actor_core;
 mod actor_disable;
 mod actor_dog_tables;
+mod actor_env_copy;
 mod actor_exit;
 mod actor_lifecycle;
 mod actor_pane;
@@ -134,7 +135,9 @@ use tasks::{
     spawn_action_task, spawn_readiness_task, spawn_send_line_task, spawn_signal_task,
     spawn_trigger_task, spec_prober,
 };
-pub(crate) use types::{Applied, BatchPolicy, ConnId, DEFAULT_ENVIRONMENT, EnvBatch, FieldSet};
+pub(crate) use types::{
+    Applied, BatchPolicy, ConnId, DEFAULT_ENVIRONMENT, EnvBatch, EnvCopy, FieldSet, SheepDogRead,
+};
 use types::{PendingReply, Registration, Scaled, SheepCtl, Smits};
 use wire::{reload_eligible, restored_status, send_reply, swap_budget, to_info};
 // --- end module tree ---

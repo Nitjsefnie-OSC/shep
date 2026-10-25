@@ -15,26 +15,37 @@
 //! `#[cfg(unix)]` module could not own.
 
 mod dogs;
+#[cfg(test)]
+mod dogs_grant_tests;
 mod flock;
 mod help;
 mod hosts;
 mod import;
+mod kv;
 mod logs;
+mod settings;
 mod sheep;
 mod store;
 mod system;
+#[cfg(test)]
+mod unset_tests;
 mod verbs;
 
 use std::path::PathBuf;
 
 use shep_core::destination::Destination;
 
-use help::{HELP_TEMPLATE, version_text};
+use help::version_text;
 
-pub use dogs::{AdoptArgs, DisableArgs, DogArgs, DogsArgs, EnableArgs};
+// `crate::adopted_help` renders the registry's dogs into a copy of this
+// template; the template itself is what ships and stays hand-written.
+pub(crate) use help::HELP_TEMPLATE;
+
+pub use dogs::{AdoptArgs, DisableArgs, DogArgs, DogsArgs, DogsCommand, EnableArgs};
 pub use flock::{FlockArgs, FoldArgs, LookoutArgs};
 pub use hosts::{HostArgs, HostCommand};
 pub use import::{ImportArgs, ImportCommand, ImportEnvArgs, ImportPm2Args};
+pub use kv::{KvArgs, KvCommand, KvGetArgs, KvSetArgs, KvUnsetArgs};
 pub use logs::{BarksArgs, BleatsArgs, FlushArgs, ReopenArgs};
 // Two defaults whose only caller outside their own module is a test
 // elsewhere in the crate: lib.rs builds a `FlockArgs` by hand, and
@@ -44,11 +55,12 @@ pub use logs::{BarksArgs, BleatsArgs, FlushArgs, ReopenArgs};
 pub(crate) use flock::FOLLOW_INTERVAL_FLOOR_SECONDS;
 #[allow(unused_imports)]
 pub use logs::DEFAULT_BLEAT_LINES;
+pub use settings::{GetArgs, SetArgs, UnsetArgs};
 pub use sheep::{
     CopyArgs, ResetMode, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StockArgs, TriggerArgs,
     WhisperArgs,
 };
-pub use store::{KvGetArgs, KvSetArgs, KvUnsetArgs, SecretArgs, SecretCommand};
+pub use store::{SecretArgs, SecretCommand};
 pub use system::{
     CompletionArgs, DaemonArgs, DaemonCmd, DevArgs, DialStdioArgs, InitArgs, RuntimeArgs,
     StartupArgs, StyleArgs,
@@ -277,8 +289,9 @@ mod tests {
     /// `#![forbid(unsafe_code)]`, so nothing here can establish an ambient
     /// `$SHEP_HOME` and observe clap actually reading it. The next best
     /// thing, and the thing that actually matters for `$SHEP_HOME` to keep
-    /// working, is pinning that clap was *told* to read it: if `env =
-    /// "SHEP_HOME"` (`cli.rs:30`) is ever deleted, this fails.
+    /// working, is pinning that clap was *told* to read it: if
+    /// [`GlobalArgs::home`]'s `env = "SHEP_HOME"` attribute is ever
+    /// deleted, this fails.
     #[test]
     fn home_flag_is_wired_to_the_shep_home_env_var() {
         use clap::CommandFactory;

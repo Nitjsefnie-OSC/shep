@@ -190,7 +190,7 @@ import ShortVersion from "../../components/docs/ShortVersion.astro";
     <div class="rows">
       <div class="row"><span>both</span><span><code>ID NAME STATUS PID RESTARTS EXIT CPU MEM UPTIME</code></span></div>
       <div class="row"><span>sheep only</span><span><code>CFG FOLD SMIT</code></span></div>
-      <div class="row"><span>dogs only</span><span><code>SOURCE</code></span></div>
+      <div class="row"><span>dogs only</span><span><code>SOURCE ACCESS</code></span></div>
     </div>
     <CodeBlock label="shep flock">{`┌────┬────────┬──────────────┬───────┬──────────┬──────┬─────┬──────┬────────┬────────┬──────┐
 │ ID │ NAME   │ STATUS       │ PID   │ RESTARTS │ EXIT │ CFG │ CPU │ MEM  │ UPTIME │ FOLD   │ SMIT │
@@ -199,11 +199,11 @@ import ShortVersion from "../../components/docs/ShortVersion.astro";
 └────┴────────┴──────────────┴───────┴──────────┴──────┴─────┴─────┴──────┴────────┴────────┴──────┘
 
 Dogs
-┌────┬────────────┬──────────────┬───────┬──────────┬──────┬─────┬──────┬────────┬─────────┐
-│ ID │ NAME       │ STATUS       │ PID   │ RESTARTS │ EXIT │ CPU │ MEM  │ UPTIME │ SOURCE  │
-├────┼────────────┼──────────────┼───────┼──────────┼──────┼─────┼──────┼────────┼─────────┤
-│ 1  │ log-rotate │ (o.o) online │ 48207 │ 0        │ -    │ -   │ 6.6M │ 2s     │ adopted │
-└────┴────────────┴──────────────┴───────┴──────────┴──────┴─────┴──────┴────────┴─────────┘`}</CodeBlock>
+┌────┬────────────┬──────────────┬───────┬──────────┬──────┬─────┬──────┬────────┬─────────┬────────┐
+│ ID │ NAME       │ STATUS       │ PID   │ RESTARTS │ EXIT │ CPU │ MEM  │ UPTIME │ SOURCE  │ ACCESS │
+├────┼────────────┼──────────────┼───────┼──────────┼──────┼─────┼──────┼────────┼─────────┼────────┤
+│ 1  │ log-rotate │ (o.o) online │ 48207 │ 0        │ -    │ -   │ 6.6M │ 2s     │ adopted │ -      │
+└────┴────────────┴──────────────┴───────┴──────────┴──────┴─────┴──────┴────────┴─────────┴────────┘`}</CodeBlock>
     <p>
       <code>CFG</code>, <code>FOLD</code> and <code>SMIT</code> are missing
       from the dogs table because they are impossible for a dog rather than
@@ -211,6 +211,9 @@ Dogs
       <em>on</em> a sheep, and no Flockfile load ever reaches a dog, so
       nothing can park config on one. A column that reads <code>-</code> on
       every row teaches nothing.
+    </p>
+    <p>
+      <code>ACCESS</code> is in <a href="/docs/dog-grants#upgrading">grants</a>.
     </p>
     <p>
       Colours match too, column for column. Same face and status colour, same
@@ -244,14 +247,14 @@ Dogs
     </p>
     <p>
       Both of them send you to <code>shep bleats &lt;dog&gt;</code>, and that
-      is deliberate. The shepherd writes what it actually saw into the dog's
-      own log at the moment it gives up, and the fix follows from that. A
-      version skew is one cause: <code>cargo install</code> replaced the
-      binary on disk and the process still running is the old one, so a
-      reinstall and a <code>shep restart &lt;dog&gt;</code> fixes it. A dog
-      that reaches the shepherd on every connection and never names itself in
-      its handshake is another, and reinstalling the same build does nothing
-      at all for that one.
+      is deliberate. The shepherd writes what it saw into the dog's own log
+      when it gives up, and the fix follows from that. A version skew on
+      this machine is one cause: <code>cargo install</code> replaced the
+      binary on disk and the old one still runs, so a reinstall and a{" "}
+      <code>shep restart &lt;dog&gt;</code> fixes it. Over <code>--host</code>{" "}
+      only another protocol refuses. A dog that reaches the shepherd on every
+      connection and never names itself in its handshake is the other cause,
+      and reinstalling does nothing for it.
     </p>
     <p class="fine">
       Only <code>online</code> is replaced. <code>starting</code> already
@@ -296,7 +299,7 @@ Dogs
     <Callout variant="note">
       Seven tables carry no colour at all, deliberately: <code>describe</code>'s
       lamb tree (bar the muted <code>-</code> of an unlabelled lamb),{" "}
-      <code>delete</code>'s id list, <code>unset</code>'s count, the
+      <code>delete</code>'s id list, <code>kv unset</code>'s count, the
       two saved-roll tables, the KV store, and{" "}
       <code>shep dogs --available</code>. Each is either pure data shep has no
       opinion about, or a single column that is also the whole content, where

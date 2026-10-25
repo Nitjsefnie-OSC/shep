@@ -123,6 +123,13 @@ A credential need not sit in that file: a string value may be
 `Request::DogConfigResolved` receives the value, while `DogConfig` serves the
 reference as written. `dogs.toml` is never rewritten by either.
 
+A sheep's own `[app.dogs.<name>]` table takes the same references, for a
+credential that belongs to one sheep. `Request::SheepDogSettingsResolved
+{ name, dog }` answers that sheep's table with each one replaced, resolved in
+the sheep's own `environment` (the shepherd's when it sets none), and
+`DogSheepSettings` serves the table as written. A `shep-client` dog calls
+`sheep_dog_table(name, dog)`.
+
 **Editing `[<name>]` in `dogs.toml` does not reach a dog that is already
 running.** A running dog asked for its section once, at startup, and
 nothing pushes it a new one. `shep disable <name> && shep enable <name>`
@@ -158,10 +165,13 @@ automatically.** The first boot of a shep carrying this move reads any
 `[dog.<name>]` sections still in `shep.toml`, writes them into `dogs.toml`
 under their bare name, strikes them from `shep.toml`, and prints which
 dogs moved. Every boot after that finds nothing to do. `shep runtime` and
-`shep dev` migrate too: any boot does. If a name carries values in both
-files, the daemon refuses to boot rather than guess which is right, and
-`shep daemon reload` refuses before it signals the shepherd it was going
-to replace. Delete one of the two sections. The likeliest way to hit that
+`shep dev` migrate too: any boot does, and `shep adopt` of a dog whose
+manifest carries `defaults` migrates before writing them, so a legacy
+section moves instead of colliding with a seeded one. If a name carries
+values in both files, the daemon refuses to boot rather than guess which is
+right, `shep daemon reload` refuses before it signals the shepherd it was
+going to replace, and so does an `adopt` that would seed defaults into that
+home. Delete one of the two sections. The likeliest way to hit that
 is hand-writing `[dog.metrics]` back into `shep.toml` after it already
 migrated, so check `dogs.toml` first. An empty `[dog.<name>]`, which
 `shep enable` scaffolded before this move, is not a value and refuses
@@ -187,6 +197,79 @@ header, `["vercel.prod"]`, or the section never matches and `persist`
 silently falls back to its default of `true`. Ordinary TOML, and the same
 trap catches any dog name with a dot in it, not only a provider's
 namespace.
+
+## Grants
+
+A dog talks to the shepherd over its own connection and, by default, may ask
+for anything the CLI can. To keep an honest dog in bounds and make what it
+asks attributable, list what it may do in `shep.toml`. `shep adopt` and the
+first `shep enable` of a dog write the list for you after asking (below);
+the file holds:
+
+```toml
+[daemon.dog_grants.otel]
+granted = ["flock.read", "events:process."]
+```
+
+| Permission | Lets the dog |
+|---|---|
+| `flock.read` | look at the flock and its configuration |
+| `flock.control` | start, stop, restart and signal sheep |
+| `flock.edit` | add and delete sheep and change their configuration |
+| `logs.read` | read the end of a sheep's log |
+| `logs.manage` | reopen and flush logs |
+| `events:<prefix>` | subscribe to topics that begin with the prefix |
+| `secrets.read:<scope>` | read a sheep's dog settings with secrets resolved, in the environment the scope names |
+| `secrets.write:<namespace>` | push values into that namespace |
+| `dogs.control` | enable, disable and configure other dogs |
+| `dogs.trigger:<name>` | send an action to the named dog |
+| `shepherd.control` | stop the shepherd |
+
+- The table that maps every request to one permission is `shep_core::permissions::need`, an exhaustive match: a new request does not compile until it is placed.
+- A refusal is `RpcErrorCode::Forbidden`: ``dog `otel` was refused `stop`: it needs `flock.control`, which was not granted to it``.
+- No entry means undeclared and full access. `granted = []` grants nothing.
+- A dog always keeps its own `dogs.toml` section, its own sheep settings and the `config.dog.<name>` and `config.sheep.<name>` topics.
+- `Subscribe` is checked per topic against the `events:` prefixes, on the literal head of the pattern before its first glob character.
+- Grants are read at boot and sent with `EnableDog`. A name shep cannot read stops the boot, and `shep adopt` and `shep enable` refuse it with `invalid config` before they write or send anything. A shepherd below protocol 12 records them and enforces nothing; `shep adopt` and `shep enable` say so.
+- A reload re-reads the grants and checks each subscription a dog carried across it. One outside them is dropped whole, as a fresh `Subscribe` would be refused, and the dog hears no events on it until it asks again within its grants.
+- `shep adopt` and the first `shep enable` of a dog (no entry, not yet enabled) list the permissions its manifest declares with each reason, and ask `[y/N]`. The prompt says grants keep a dog's requests in bounds and do not confine it. A yes writes `granted` beside `adopted_dogs`; a no leaves the dog adopted and disabled with nothing granted, and the next `shep enable` asks again.
+- `--yes` grants everything declared and nothing else. With no terminal and no `--yes` the command changes nothing and exits 2 (usage).
+- A required permission this shep does not know refuses the adopt or enable (exit 4). An optional one is dropped with a warning and never granted.
+- A dog with no manifest prompts "declares nothing, runs with full access" and records no entry. A manifest that declares no permissions records `granted = []` without a question. A built-in dog is asked like any other, from a manifest built into the binary with no probe: `metrics` declares `flock.read`, `events:channel.metric` and `events:process.`; `bark` declares `flock.read`, `events:process.` and, optional, `events:log.`.
+- Grants keep an honest dog in bounds. They are not a sandbox: a dog runs as the operator and could open the control socket like the CLI.
+
+### Upgrades
+
+Neither a new shep nor a rebuilt dog widens access without the operator seeing it. The CLI keeps the record in the same `[daemon.dog_grants.<name>]` table; the shepherd still judges `granted` alone.
+
+```toml
+[daemon.dog_grants.otel]
+granted = ["flock.read"]
+waiting = ["events:process."]
+reviewed = false
+```
+
+- At daemon boot and at reload, and in `shep enable` and `shep dogs grant` for the dog they act on, the CLI compares each enabled or recorded dog's manifest with its entry.
+- An enabled dog with a manifest and no entry gets its declared list as `granted` with `reviewed = false`: granted at upgrade, not reviewed. A manifest that declares nothing is written as reviewed `granted = []`. This includes `metrics` and `bark` enabled before grants existed.
+- A dog with no manifest, or one that cannot be read, is left alone: undeclared, full access.
+- A dog with an entry whose manifest now declares a permission it holds neither as granted nor as revoked gets that permission in `waiting`. The dog keeps running on `granted`; `waiting` is never sent to the shepherd.
+- `shep dogs revoke` of a still-declared permission records it in `revoked`, so a later boot does not read it as new.
+- `shep enable` of a dog with `waiting` or `reviewed = false` lists what it holds and what waits, and asks. A yes grants the waiting permissions and clears the marks. A no, or no terminal without `--yes`, changes nothing and the dog carries on with its old grants.
+- `shep dogs grant <dog> <permission>` names one permission. It moves that permission out of `waiting`, clears `reviewed = false`, and says what still waits.
+- `reviewed` is written only as `false`, and `waiting` and `revoked` only when non-empty, so an entry the operator has dealt with is a plain `granted` list.
+- A rebuild under a running shepherd is noticed at the next boot, reload, `enable` or `grant`. `shep flock` and `shep dogs` only read.
+
+### Marks in listings
+
+`shep dogs` and `shep flock` (its Dogs table) show an `ACCESS` column, and `--format json` adds an `access` object to each dog row of this machine's flock:
+
+| Mark | Means |
+|---|---|
+| `undeclared` | no grants entry, an enabled dog with full access |
+| `not reviewed` | the list was written at upgrade and the operator has not re-enabled the dog or run `shep dogs grant` |
+| `waiting` | a newer build declares permissions the operator has not approved |
+
+`access` is `{"undeclared": bool, "not_reviewed": bool, "waiting": [string]}`. It is additive, so `SCHEMA_VERSION` and `PROTOCOL_VERSION` do not move, and it is absent on a sheep, on a row from `--host` and on fleet listings.
 
 ## When a dog starts
 
@@ -466,9 +549,9 @@ on `$PATH` (which is where `cargo install`/`go install` put it).
 every later boot or every `enable`. It refuses a path that does not
 exist, is not a file, has no execute bit for anyone, or is world-writable
 (the binary itself or its containing directory); it also refuses a name
-that already belongs to a built-in verb or alias, since a dog by that
-name could never be reached. It warns rather than refuses on a merely
-group-writable path. Passing all of that, it actually spawns the binary
+that already belongs to a built-in verb or alias, `help` included, since a
+dog by that name could never be reached. It warns rather than refuses on a
+merely group-writable path. Passing all of that, it actually spawns the binary
 and kills it immediately, because the only honest way to know whether this
 kernel can exec a file is to ask this kernel. The `--version` probe below
 is that spawn, so the exec proof and the version answer cost one child
@@ -483,9 +566,20 @@ Once adopted, `shep <name> [args...]` runs the dog directly — the same
 (never a `$PATH` scan). It's a second invocation mode, distinct from the
 one the shepherd itself uses: an adopted dog the shepherd starts gets no
 argv and two environment variables (`$SHEP_HOME` and `$SHEP_DOG_NAME`,
-below); a dog you name on the command line gets whatever you typed after
+below, and a third, `$SHEP_DOG_FD` on unix or `$SHEP_DOG_PIPE` on Windows); a dog you name on the command line gets whatever you typed after
 it, passed straight through, plus those same two. A built-in verb or alias
 always wins over a same-named dog.
+
+An adopted dog is part of shep's own listing from then on. It appears in the
+Dogs group of `shep --help`, with the `verb.description` its manifest
+declared beside its name, and shell completion offers it. An undeclared dog
+is listed bare: the listing says what is known and is silent about what
+isn't. A dog that declared `verb.subcommands` gets a shep-rendered page for
+them from `shep <name> --help`, and its binary never runs to answer that
+flag; a dog that declared none keeps `--help` as a pass-through like every
+other argument. Nothing in a manifest claims a top-level verb: the registry
+in `shep.toml` is what makes a name a dog, and a dog gets exactly
+`shep <name>`.
 
 No argv is the adopted case specifically. The two built-in dogs are
 started as `shep dog <name>` and read their own name from that argv, but
@@ -514,11 +608,32 @@ shepherd's `[daemon] environment` and then the `all` slot; `DogConfig` still
 gives the text as written, which is what an editor must read, since writing a
 resolved section back would put the credential into `dogs.toml`. A reference
 that cannot resolve fails the request with `InvalidConfig`, naming the
-section, the key path and the reference, never a value. Shep sets two
+section, the key path and the reference, never a value. For one sheep's
+table send `Request::SheepDogSettingsResolved { name, dog }`, which answers
+`SheepDogTable { table }` (`None` when the sheep has no table for `dog`),
+`NotFound` for an unknown sheep, and refuses with the sheep's name added to
+that text. Shep sets two
 variables of its own on a dog: `$SHEP_HOME`, which is how it finds that
 socket in the first place, and `$SHEP_DOG_NAME`, which is the `name` to put
-in that request. No `[<name>]` value ever rides along beside them, for
-the reason given above. A section's key is not one of its values.
+in that request. A supervised dog gets a third, `$SHEP_DOG_FD` on unix or
+`$SHEP_DOG_PIPE` on Windows, below. No `[<name>]` value ever rides along beside them, for the reason given
+above. A section's key is not one of its values.
+
+`$SHEP_DOG_FD` names a connection that is already open, as descriptor 4.
+It speaks the same protocol as the socket and is served from the dog's
+spawn, so it works during the muster restore, when the socket does not yet
+answer. The connection is the dog's identity: a `dog_name` sent on it is
+ignored. On unix it survives a shepherd upgrade: the same connection keeps
+working, and a subscription on it is re-armed after a `daemon.dropped` notice.
+Fall back to the socket when the variable is absent or the connection closes.
+A variable that is set but names no usable descriptor is a fault, not an
+absence. A dog started by hand has none.
+
+On Windows `$SHEP_DOG_PIPE` stands in for the descriptor: it names a pipe the
+shepherd created for this dog before it started, and the dog opens it by that
+name. Only the account the shepherd runs as can open it. Windows has no
+upgrade in place, so the pipe closes with the shepherd and the dog reconnects.
+`DogRuntime` does all of this.
 
 **Put that name in the `Hello` too, as `dog_name`.** Optional, and nothing
 breaks without it right up until the shepherd is replaced by one your binary
@@ -564,7 +679,7 @@ for a new one after a handover and reconciles whatever it missed. See
 "When the shepherd goes away" below for what a dog does when no successor
 answers.
 
-Those two are what shep ADDS, not the whole environment. A dog is a
+Those are what shep ADDS, not the whole environment. A dog is a
 supervised process like any other, so it also starts from the small base
 every sheep gets: `PATH`, plus whichever of `HOME`, `USER`, `LANG` and `TZ`
 the shepherd itself has, plus `SHEP_INSTANCE`, `SHEP_NAME` and
@@ -605,7 +720,9 @@ There is no sandbox here, and it would be a mistake to assume one: **an
 adopted dog runs at the shepherd's own trust level, with no isolation
 beyond it.** That is the same trust an ordinary sheep in your Flockfile
 already has, so adopting a dog does not grant anything beyond what any
-process your own config already starts could do. It is an honest
+process your own config already starts could do. An operator can list what a
+dog may ask of the shepherd (see [Grants](#grants)); that keeps an honest
+dog in bounds and is not a sandbox. It is an honest
 comparison, not a hand-wave: you were already trusting whatever you point
 a Flockfile's `script` at, and a third-party dog is held to no higher bar
 than that.
@@ -672,8 +789,8 @@ the ordinary case, not a skew, and comparing the two would report every
 dog that exists.
 
 A candidate gets one second to exit and another to have its output read,
-and an adopt runs two probes, so roughly four seconds is the worst case. Its
-process group is killed either way, so a dog that ignores both flags and
+and an adopt runs up to three probes, so roughly six seconds is the worst case.
+Its process group is killed either way, so a dog that ignores every flag and
 runs costs that time and is adopted with an unknown protocol. It cannot
 hang the `adopt` that is vetting it.
 
@@ -720,7 +837,7 @@ a signal, adds one line to its `--version` answer:
 
 ```
 shep-otel 0.2.0
-shep-protocol: 11
+shep-protocol: 12
 shep-channel: true
 ```
 
@@ -878,6 +995,79 @@ which daemon, and a version comparison standing in for one would report
 dogs that are fine. What catches it is the dog's own CI building against
 a current `shep-core`, which is where both published dogs' breakage was
 already visible and unread.
+
+## Answering `--shep-manifest`
+
+One flag describes the dog whole: `--shep-manifest`, answered on stdout with
+one JSON object, manifest v1. `shep adopt` asks it first. `--version` and
+`--schema` stay as they are, for a dog built against an older shep and for an
+older shep adopting this one, and `shep adopt` asks them when a dog answers no
+manifest.
+
+| Field | Meaning |
+| --- | --- |
+| `manifest` | The version, `1`. |
+| `name`, `version`, `protocol` | Who the dog is, and the wire protocol it speaks. |
+| `channel` | Whether it asks for the shepherd channel. |
+| `settings` | The JSON Schema `--schema` answers, byte for byte. |
+| `defaults` | TOML text for the dog's own section. `shep adopt` writes it as that section in `dogs.toml` when the dog has none. |
+| `permissions` | Each with `name`, `required` and `reason`. |
+| `verb` | `description`, and `subcommands` each with `name` and `about`. |
+| `depends` | `dogs`, each with `name` and a version range `version`; `shep`, the oldest shep supported. |
+| `validate` | Whether the dog validates a proposed settings table over its channel, through `shep.validate`. Needs `channel`: `shep adopt` refuses a manifest declaring it without. |
+
+`manifest`, `name`, `version` and `protocol` are required; the rest default
+to nothing declared. A reader ignores a field it does not know, so a later
+manifest reads on an older shep. Output that is not a manifest, or a
+non-zero exit, means the dog has none: it is adopted through `--version` and
+`--schema`, as before.
+
+`shep adopt` takes the version, protocol, channel ask and schema from the
+manifest when there is one. It caches the manifest in `$SHEP_HOME/manifests`
+under the binary's sha256, so a build is asked once and a rebuilt binary is
+asked again. When the manifest carries `defaults` and `dogs.toml` holds no
+section for the dog, `shep adopt` writes them as that section; a section the
+operator already wrote is never touched, a `defaults` that is not valid
+TOML is a warning, not a refusal, and a `dogs.toml` that is not valid TOML
+refuses the adopt rather than being replaced. A dog that declares no `defaults` writes
+nothing, and no dog needs a `--print-config`-style flag of its own to ship
+them any more. `shep adopt` and `shep enable` warn, and go ahead, when a dog
+in `depends` is not adopted or `depends.shep` is newer than this shep. A
+dependency's own version is not checked.
+
+`verb` is read from that same cache, never by asking the binary again: a help
+screen or a completion script must not spawn a dog. `shep completions` builds
+its script from the registry as it stands at generation time, so adopting a
+dog means generating the script again.
+
+What shep prints of a manifest is one line of text. A placeholder brace, a
+line break or an escape in a `verb.description` or a subcommand's `about`
+goes, an escape's printable tail surviving as inert text, and a subcommand
+whose name is not one word is neither listed nor completed. A manifest is
+written by whoever built the dog, and its text reaches a template clap parses
+and a completion script a shell reads.
+
+A completion word is code before it is text. `clap_complete` writes
+subcommand names into its scripts with no quoting: bash gets them inside
+`opts="…"` and inside `case` patterns, fish inside `-n "…"`, and zsh escapes
+its help text while writing the name raw. So a name reaches a completion
+script only when it is a word a shell takes as a bare word: letters of any
+script and digits, separated by `-`, `_` or `.`, starting on a letter or
+digit. A dog named `$(touch>x)` stays in `shep --help` and still runs, and is
+not completed.
+
+`Probe` builds it from what the dog already gives it. `permission`, `verb`,
+`depends_on_dog`, `depends_on_shep`, `defaults` and `validate` add what it
+declares:
+
+```rust
+use shep_client::dogs::{Permission, Probe};
+
+Probe::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    .ask_for_channel()
+    .permission(Permission::new("flock.read", true, "lists the flock"))
+    .answer::<MyDogConfig>();
+```
 
 ## Answering `--schema`
 

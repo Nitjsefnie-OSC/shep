@@ -590,7 +590,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1250,7 +1250,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1869,7 +1869,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2083,7 +2083,7 @@ dependencies = [
 
 [[package]]
 name = "shep"
-version = "0.16.1"
+version = "0.17.0"
 dependencies = [
  "anstyle",
  "assert_cmd",
@@ -2104,6 +2104,7 @@ dependencies = [
  "ring",
  "rmcp",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "shep-client",
@@ -2124,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "shep-channel"
-version = "0.16.1"
+version = "0.17.0"
 dependencies = [
  "command-fds",
  "serde",
@@ -2135,17 +2136,18 @@ dependencies = [
 
 [[package]]
 name = "shep-cli"
-version = "0.16.1"
+version = "0.17.0"
 
 [[package]]
 name = "shep-client"
-version = "0.16.1"
+version = "0.17.0"
 dependencies = [
  "futures-util",
  "nix 0.29.0",
  "schemars",
  "serde",
  "serde_json",
+ "shep-channel",
  "shep-core",
  "shep-macros",
  "tempfile",
@@ -2157,7 +2159,7 @@ dependencies = [
 
 [[package]]
 name = "shep-core"
-version = "0.16.1"
+version = "0.17.0"
 dependencies = [
  "annotate-snippets",
  "anstyle",
@@ -2190,7 +2192,7 @@ dependencies = [
 
 [[package]]
 name = "shep-daemon"
-version = "0.16.1"
+version = "0.17.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -2221,7 +2223,7 @@ dependencies = [
 
 [[package]]
 name = "shep-examples"
-version = "0.16.1"
+version = "0.17.0"
 dependencies = [
  "nix 0.29.0",
  "shep-channel",
@@ -2229,7 +2231,7 @@ dependencies = [
 
 [[package]]
 name = "shep-handover"
-version = "0.16.1"
+version = "0.17.0"
 dependencies = [
  "nix 0.29.0",
  "serde",
@@ -2240,7 +2242,7 @@ dependencies = [
 
 [[package]]
 name = "shep-macros"
-version = "0.16.1"
+version = "0.17.0"
 dependencies = [
  "proc-macro2",
  "quote 1.0.47",
@@ -2319,7 +2321,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2445,7 +2447,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2467,7 +2469,7 @@ dependencies = [
  "parking_lot",
  "rustix",
  "signal-hook",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2477,7 +2479,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2621,9 +2623,9 @@ checksum = "9e1c906769ad99c88eaa54e728060edef082f8e358ff32030cb7c7d315e81109"
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
 dependencies = [
  "bytes",
  "libc",
@@ -3131,7 +3133,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

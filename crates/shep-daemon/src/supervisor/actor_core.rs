@@ -182,6 +182,25 @@ impl<R: ProcessRunner> Actor<R> {
                     reply.send(self.handle_set_sheep_env_batch(&name, &entries, force, dry_run));
                 false
             }
+            Command::CopySheepEnv {
+                from,
+                to,
+                replace,
+                except,
+                dry_run,
+                expect,
+                reply,
+            } => {
+                let _ = reply.send(self.handle_copy_sheep_env(
+                    &from,
+                    &to,
+                    replace,
+                    &except,
+                    dry_run,
+                    expect.as_deref(),
+                ));
+                false
+            }
             Command::SetSheepField {
                 name,
                 key,
@@ -191,9 +210,17 @@ impl<R: ProcessRunner> Actor<R> {
                 let _ = reply.send(self.handle_set_sheep_field(&name, &key, &value));
                 false
             }
+            Command::ResetSheepField { name, key, reply } => {
+                let _ = reply.send(self.handle_reset_sheep_field(&name, &key));
+                false
+            }
             // Both answered during a shutdown, as the pane's doors above are.
             Command::DogSheepSettings { dog, reply } => {
                 let _ = reply.send(self.handle_dog_sheep_settings(&dog));
+                false
+            }
+            Command::SheepDogRead { name, dog, reply } => {
+                let _ = reply.send(self.handle_sheep_dog_read(&name, &dog));
                 false
             }
             Command::SetSheepDogSettings {

@@ -343,8 +343,9 @@ async fn fetch(client: &Client) -> Result<Answer, Failure> {
 ///
 /// `host` is parsed as a [`Destination`] before ssh sees it, so a hand-edited
 /// entry that would read as an ssh option is that host's failure alone. A
-/// skew is treated as `guard` treats it for a single `--host`: a warning for
-/// a read verb, a refusal for one that enforces.
+/// skew is treated as `guard` treats it for a single `--host`: a notice for a
+/// read verb, and for a verb that writes whatever that link refuses, which
+/// over ssh is only another protocol. See `crate::version_guard::skew_of`.
 async fn ask_host(
     host: &str,
     ssh: &SshOptions,
@@ -359,7 +360,7 @@ async fn ask_host(
         let client = Client::connect_ssh_with(destination.as_str(), ssh)
             .await
             .map_err(|e| Failure::of_connect(&e))?;
-        let answer = match host_skew(&client, destination.as_str(), guard) {
+        let answer = match host_skew(&client, guard) {
             Ok(skew) => fetch(&client)
                 .await
                 .map(|answer| HostAnswer { answer, skew }),

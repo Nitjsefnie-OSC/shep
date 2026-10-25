@@ -116,6 +116,7 @@ mod tests {
             channel: true,
             stdin: false,
             credentials: None,
+            dog_link: false,
         }
     }
 

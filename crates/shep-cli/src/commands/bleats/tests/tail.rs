@@ -1,6 +1,10 @@
 //! The `--no-follow` path: tailing each matched sheep's log files on disk
 //! and never touching the bus, plus the backlog a `--follow` prints before
 //! it subscribes.
+//!
+//! Every run here goes through [`run_bleats`] except the two that call
+//! [`tail_log_files`] directly, which hand `Streams` a cache they built
+//! themselves and never dial a client.
 
 use super::*;
 
@@ -28,23 +32,8 @@ async fn no_follow_reads_the_files_and_never_the_bus() {
         })
         .await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own")
-    };
-    let rendered = String::from_utf8(out).unwrap();
+    let (code, rendered, _err) =
+        run_bleats(&client, &no_follow_args_out("all"), Format::Table).await;
 
     assert_eq!(code, ExitCode::Success);
     assert!(rendered.contains("from-the-file"));
@@ -81,25 +70,11 @@ async fn a_stamps_off_sheeps_own_timestamp_survives_the_file_tail() {
     sheep.log_timestamps = Some(false);
     daemon.reply_to_list(vec![sheep]);
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own");
-    }
+    let (_code, rendered, _err) =
+        run_bleats(&client, &no_follow_args_out("all"), Format::Table).await;
 
     assert_eq!(
-        String::from_utf8(out).unwrap(),
+        rendered,
         format!("web | {line}\n"),
         "a stamps-off sheep's file holds its lines as it wrote them"
     );
@@ -128,24 +103,8 @@ async fn a_stamps_off_sheep_prints_the_same_line_from_the_file_and_from_the_bus(
         .await;
     daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args_out("all")),
-        )
-        .await
-        .expect("close_after_subscribe ends the follow deterministically, not by hanging");
-    }
+    let (_code, rendered, _err) = run_bleats(&client, &follow_args_out("all"), Format::Table).await;
 
-    let rendered = String::from_utf8(out).unwrap();
     let want = format!("web | {line}");
     assert_eq!(
         rendered.lines().collect::<Vec<_>>(),
@@ -173,26 +132,11 @@ async fn a_stamped_sheeps_shepherd_stamp_still_comes_off_the_file_tail() {
     sheep.out_file = Some(out_path);
     daemon.reply_to_list(vec![sheep]);
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own");
-    }
+    let (_code, rendered, _err) =
+        run_bleats(&client, &no_follow_args_out("all"), Format::Table).await;
 
     assert_eq!(
-        String::from_utf8(out).unwrap(),
-        "web | the shepherd stamped this\n",
+        rendered, "web | the shepherd stamped this\n",
         "a stamped row must keep losing the stamp the shepherd added"
     );
 }
@@ -200,6 +144,10 @@ async fn a_stamped_sheeps_shepherd_stamp_still_comes_off_the_file_tail() {
 /// A sheep that already crashed before `shep bleats <name>` runs: the
 /// backlog is what makes its last output reachable without starting it
 /// again in a second window.
+///
+/// The follow is ended by `close_after_subscribe` once its backlog has
+/// printed, so the run ends on the scripted connection rather than on
+/// [`RUN_TIMEOUT`].
 #[tokio::test]
 async fn following_prints_the_existing_log_before_it_follows() {
     let dir = tempfile::tempdir().unwrap();
@@ -214,23 +162,10 @@ async fn following_prints_the_existing_log_before_it_follows() {
     let mut sheep = info(1, "web");
     sheep.out_file = Some(out_path);
     daemon.reply_to_list(vec![sheep]);
+    daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        let _ = tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &follow_args_out("all")),
-        )
-        .await;
-    }
-    let rendered = String::from_utf8(out).unwrap();
+    let (_code, rendered, _err) = run_bleats(&client, &follow_args_out("all"), Format::Table).await;
+
     assert!(
         rendered.contains("FATAL: port 19999 already in use"),
         "a follow must carry the reason a dead sheep died: {rendered}"
@@ -239,6 +174,9 @@ async fn following_prints_the_existing_log_before_it_follows() {
 
 /// `--lines 0` is the escape hatch for someone who genuinely wants only
 /// what arrives next, and it is what the foreground runner passes.
+///
+/// Ended by `close_after_subscribe` like the test above: what is asserted
+/// is what the run printed before it subscribed.
 #[tokio::test]
 async fn lines_zero_follows_without_replaying_anything() {
     let dir = tempfile::tempdir().unwrap();
@@ -249,31 +187,14 @@ async fn lines_zero_follows_without_replaying_anything() {
     let mut sheep = info(1, "web");
     sheep.out_file = Some(out_path);
     daemon.reply_to_list(vec![sheep]);
+    daemon.close_after_subscribe().await;
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        let _ = tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(
-                &client,
-                &mut streams,
-                false,
-                &BleatsArgs {
-                    lines: 0,
-                    ..follow_args_out("all")
-                },
-            ),
-        )
-        .await;
-    }
-    let rendered = String::from_utf8(out).unwrap();
+    let args = BleatsArgs {
+        lines: 0,
+        ..follow_args_out("all")
+    };
+    let (_code, rendered, _err) = run_bleats(&client, &args, Format::Table).await;
+
     assert!(
         !rendered.contains("OLD-HISTORY"),
         "--lines 0 must replay nothing: {rendered}"
@@ -295,31 +216,11 @@ async fn the_tail_is_bounded_by_lines() {
     sheep.out_file = Some(out_path);
     daemon.reply_to_list(vec![sheep]);
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(
-                &client,
-                &mut streams,
-                false,
-                &BleatsArgs {
-                    lines: CAP,
-                    ..no_follow_args_out("all")
-                },
-            ),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own");
-    }
-    let rendered = String::from_utf8(out).unwrap();
+    let args = BleatsArgs {
+        lines: CAP,
+        ..no_follow_args_out("all")
+    };
+    let (_code, rendered, _err) = run_bleats(&client, &args, Format::Table).await;
 
     assert!(
         !rendered.lines().any(|line| line == "web | line-1"),
@@ -354,23 +255,8 @@ async fn the_tail_is_bounded_by_bytes_and_never_shows_half_a_line() {
     sheep.out_file = Some(out_path);
     daemon.reply_to_list(vec![sheep]);
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own");
-    }
-    let rendered = String::from_utf8(out).unwrap();
+    let (_code, rendered, _err) =
+        run_bleats(&client, &no_follow_args_out("all"), Format::Table).await;
 
     assert_eq!(
         rendered,
@@ -404,12 +290,7 @@ async fn instances_sharing_one_log_file_are_read_once_not_once_each() {
 
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: crate::style::Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
     let args = no_follow_args_out("talker");
     let selector = ProcessSelector::parse("talker").expect("selector");
 
@@ -455,12 +336,7 @@ async fn backlog_of(dir: &Path, app: &str, count: u32, shared: bool) -> String {
     }
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: crate::style::Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
     let args = no_follow_args_out(app);
     let selector = ProcessSelector::parse(app).expect("selector");
     tail_log_files(
@@ -543,20 +419,8 @@ async fn out_and_err_select_which_file_is_read() {
         sheep.err_file = Some(err_path);
         daemon.reply_to_list(vec![sheep]);
 
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
-            tokio::time::timeout(RUN_TIMEOUT, bleats(&client, &mut streams, false, &args))
-                .await
-                .expect("--no-follow never subscribes, so it must terminate on its own");
-        }
-        String::from_utf8(out).unwrap()
+        let (_code, out, _err) = run_bleats(&client, &args, Format::Table).await;
+        out
     }
 
     let out_only = run(no_follow_args_out("all")).await;
@@ -598,23 +462,8 @@ async fn files_are_printed_in_name_order() {
     sheep_a.out_file = Some(a_path);
     daemon.reply_to_list(vec![sheep_b, sheep_a]);
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own");
-    }
-    let rendered = String::from_utf8(out).unwrap();
+    let (_code, rendered, _err) =
+        run_bleats(&client, &no_follow_args_out("all"), Format::Table).await;
 
     let a_pos = rendered.find("line-from-a").expect("a's line is present");
     let b_pos = rendered.find("line-from-b").expect("b's line is present");
@@ -651,23 +500,8 @@ async fn one_apps_instances_are_printed_in_slot_order() {
     }
     daemon.reply_to_list(listing);
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own");
-    }
-    let rendered = String::from_utf8(out).unwrap();
+    let (_code, rendered, _err) =
+        run_bleats(&client, &no_follow_args_out("all"), Format::Table).await;
 
     let at = |slot: u32| {
         rendered
@@ -702,35 +536,19 @@ async fn a_missing_file_is_noticed_and_the_rest_still_print() {
     real.out_file = Some(real_path);
     daemon.reply_to_list(vec![ghost, real]);
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own")
-    };
+    let (code, out, err) = run_bleats(&client, &no_follow_args_out("all"), Format::Table).await;
 
     assert_eq!(
         code,
         ExitCode::Success,
         "a sheep that has never run is not a failed run"
     );
-    assert!(String::from_utf8(out).unwrap().contains("still-here"));
-    let stderr = String::from_utf8(err).unwrap();
+    assert!(out.contains("still-here"));
     assert!(
-        stderr.contains(&format!(
+        err.contains(&format!(
             "notice[log_missing]: ghost: no out log at {missing_path} yet"
         )),
-        "the notice must name the sheep, the stream and the file: {stderr}"
+        "the notice must name the sheep, the stream and the file: {err}"
     );
 }
 
@@ -747,36 +565,20 @@ async fn a_relative_path_names_the_file_this_process_actually_tried() {
     sheep.out_file = Some("logs/out.log".to_string());
     daemon.reply_to_list(vec![sheep]);
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own")
-    };
+    let (code, out, err) = run_bleats(&client, &no_follow_args_out("all"), Format::Table).await;
 
     assert_eq!(code, ExitCode::Success);
     assert!(out.is_empty());
-    let stderr = String::from_utf8(err).unwrap();
     // Asserted against the un-resolved spelling rather than against a
     // second `absolute` call: a sibling test moves the process cwd, so
     // the expected string cannot be recomputed here.
     assert!(
-        stderr.contains("out.log") && !stderr.contains("at logs"),
-        "the notice must name the absolute path this process read: {stderr}"
+        err.contains("out.log") && !err.contains("at logs"),
+        "the notice must name the absolute path this process read: {err}"
     );
     assert!(
-        stderr.contains("out_file is relative"),
-        "the notice must say why the shepherd's file is a different one: {stderr}"
+        err.contains("out_file is relative"),
+        "the notice must say why the shepherd's file is a different one: {err}"
     );
 }
 
@@ -800,32 +602,16 @@ async fn an_unreadable_file_is_noticed_and_exits_failure_with_the_rest_still_pri
     real.out_file = Some(real_path);
     daemon.reply_to_list(vec![bad, real]);
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own")
-    };
+    let (code, out, err) = run_bleats(&client, &no_follow_args_out("all"), Format::Table).await;
 
     assert_eq!(code, ExitCode::Failure);
     assert!(
-        String::from_utf8(out).unwrap().contains("still-here"),
+        out.contains("still-here"),
         "one sheep's unreadable file must not hide the rest of the flock's lines"
     );
-    let stderr = String::from_utf8(err).unwrap();
     assert!(
-        stderr.contains(&bad_dir),
-        "the notice must name the unreadable path: {stderr}"
+        err.contains(&bad_dir),
+        "the notice must name the unreadable path: {err}"
     );
 }
 
@@ -841,32 +627,16 @@ async fn a_daemon_that_reported_no_path_is_noticed_not_silently_empty() {
     sheep.err_file = None;
     daemon.reply_to_list(vec![sheep]);
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own")
-    };
+    let (code, _out, err) = run_bleats(&client, &no_follow_args_out("all"), Format::Table).await;
 
     assert_eq!(
         code,
         ExitCode::Success,
         "version skew is not a fault in this run"
     );
-    let stderr = String::from_utf8(err).unwrap();
     assert!(
-        stderr.contains("log_path_unknown"),
-        "a None path must be noticed, not silently empty: {stderr}"
+        err.contains("log_path_unknown"),
+        "a None path must be noticed, not silently empty: {err}"
     );
 }
 
@@ -883,23 +653,8 @@ async fn a_file_sourced_json_line_is_the_same_six_key_shape_as_a_bus_sourced_one
     sheep.out_file = Some(out_path);
     daemon.reply_to_list(vec![sheep]);
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Json,
-        };
-        tokio::time::timeout(
-            RUN_TIMEOUT,
-            bleats(&client, &mut streams, false, &no_follow_args_out("all")),
-        )
-        .await
-        .expect("--no-follow never subscribes, so it must terminate on its own");
-    }
-    let out = String::from_utf8(out).unwrap();
+    let (_code, out, _err) = run_bleats(&client, &no_follow_args_out("all"), Format::Json).await;
+
     let line = out.lines().next().expect("one JSON line was rendered");
     let json: serde_json::Value = serde_json::from_str(line).unwrap();
     let obj = json.as_object().expect("a bleats JSON line is an object");

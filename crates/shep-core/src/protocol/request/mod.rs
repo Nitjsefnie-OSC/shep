@@ -1,7 +1,9 @@
 //! RPC frames: requests, responses, envelopes, and structured errors
 
 mod config_reply;
+mod dog_access;
 mod dog_source;
+mod env_copy;
 mod envelope;
 mod handshake;
 mod log_tail;
@@ -14,8 +16,13 @@ mod selector_spec;
 mod smit;
 mod verbs;
 
+#[cfg(test)]
+mod reset_field_tests;
+
 pub use config_reply::{SheepApplied, SheepConfigView, SheepDrift, SheepRefusal};
+pub use dog_access::DogAccess;
 pub use dog_source::DogSource;
+pub use env_copy::{EnvCopyChange, EnvCopyKind};
 pub use envelope::{Envelope, HelloReply, Reply, RpcError, RpcErrorCode};
 pub use handshake::{Hello, HelloAck};
 pub use log_tail::{LogStream, LogTail};

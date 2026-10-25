@@ -16,10 +16,12 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 use shep_client::{Client, ConnectError, EventStream, Lagged, RequestError, SshOptions};
+use shep_core::paths::ShepPaths;
 use shep_core::protocol::{BusEvent, ProcessInfo, Request, Response};
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
 
 use crate::commands::rpc::deadline_for;
+use crate::dog_settings::{ask_dog, dog_write};
 use crate::exit::ExitCode;
 
 /// The topics lookout subscribes to.
@@ -140,7 +142,17 @@ impl From<ConnectError> for LinkError {
 
 /// The request half of a live connection.
 #[derive(Debug)]
-pub struct ClientFlock(Client);
+pub struct ClientFlock {
+    client: Client,
+    /// This machine's `$SHEP_HOME`, or `None` for a shepherd on another one.
+    ///
+    /// The manifest cache under that home is what says which dogs want to be
+    /// asked before a write to their settings lands, and this binary holds
+    /// manifests only for the dogs it has adopted here. A dog on a watched
+    /// host is not this machine's to ask, and its own `shep set` on that host
+    /// is where its checks run.
+    home: Option<ShepPaths>,
+}
 
 impl ClientFlock {
     /// The wrapped connection, for [`super::lookout`]'s version guard.
@@ -150,22 +162,35 @@ impl ClientFlock {
     /// whole reconnect ladder as `'static`. A borrowed `Streams` crosses
     /// neither bound.
     pub(crate) fn client(&self) -> &Client {
-        &self.0
+        &self.client
     }
 }
 
 impl FlockSource for ClientFlock {
     async fn flock(&self) -> Result<Vec<ProcessInfo>, RequestError> {
-        match self.0.list_flock().await {
+        match self.client.list_flock().await {
             // `Response` is `#[non_exhaustive]`; the next poll asks again.
             Err(RequestError::UnexpectedReply { .. }) => Ok(Vec::new()),
             answer => answer,
         }
     }
 
+    /// Sends `request`, asking the dog first when the request writes a dog's
+    /// settings and this machine has a manifest saying it wants to be asked.
+    ///
+    /// A refusal comes back as the same [`RequestError::Rpc`] the shepherd
+    /// would have answered a refused write with, so the pane reports a dog's
+    /// "no" and a shepherd's alike, and nothing is written either way.
     async fn send(&self, request: Request) -> Result<Response, RequestError> {
+        if let Some(write) = dog_write(&request)
+            && let Some(paths) = &self.home
+        {
+            ask_dog(&self.client, paths, write.dog, &write.table, write.sheep)
+                .await
+                .map_err(|failure| failure.request_error())?;
+        }
         let deadline = deadline_for(&request);
-        self.0.request_with_deadline(request, deadline).await
+        self.client.request_with_deadline(request, deadline).await
     }
 }
 
@@ -179,14 +204,17 @@ impl EventSource for EventStream {
 #[derive(Debug)]
 pub struct UnixShepherd {
     socket: PathBuf,
+    home: ShepPaths,
 }
 
 impl UnixShepherd {
-    /// Watches the shepherd listening at `socket`.
+    /// Watches the shepherd listening at `socket`, with `paths` as this
+    /// machine's `$SHEP_HOME`.
     #[must_use]
-    pub fn new(socket: &Path) -> Self {
+    pub fn new(socket: &Path, paths: &ShepPaths) -> Self {
         Self {
             socket: socket.to_path_buf(),
+            home: paths.clone(),
         }
     }
 }
@@ -200,7 +228,7 @@ impl Shepherd for UnixShepherd {
         // reconnecting one, must not start a shepherd, and a reconnect that
         // did would resurrect one the operator may have just killed.
         let client = Client::connect(&self.socket).await?;
-        subscribed(client).await
+        subscribed(client, Some(self.home.clone())).await
     }
 }
 
@@ -242,18 +270,21 @@ impl Shepherd for HostShepherd {
             self.options.clone()
         };
         let client = Client::connect_ssh_with(&self.dest, &options).await?;
-        subscribed(client).await
+        subscribed(client, None).await
     }
 }
 
 /// Subscribes `client` to [`TOPICS`] and pairs the two halves.
-async fn subscribed(client: Client) -> Result<(ClientFlock, EventStream), LinkError> {
+async fn subscribed(
+    client: Client,
+    home: Option<ShepPaths>,
+) -> Result<(ClientFlock, EventStream), LinkError> {
     let topics = TOPICS.iter().map(|topic| (*topic).to_string()).collect();
     let stream = client
         .subscribe(topics)
         .await
         .map_err(|err| LinkError::Refused(err.to_string()))?;
-    Ok((ClientFlock(client), stream))
+    Ok((ClientFlock { client, home }, stream))
 }
 
 /// One reading of the machine this lookout is running on.
@@ -466,16 +497,12 @@ mod tests {
             min_supported: None,
         };
         let (client, _fake) = shep_client::testing::fake_client_with_ack(&addr, ack).await;
-        let flock = ClientFlock(client);
+        let flock = ClientFlock { client, home: None };
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = crate::output::Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: crate::cli::Format::Table,
-        };
+        let mut streams =
+            crate::output::Streams::bare(&mut out, &mut err, crate::cli::Format::Table);
         let code = crate::version_guard::refuse_version_skew(
             &mut streams,
             flock.client(),
@@ -496,16 +523,12 @@ mod tests {
             min_supported: None,
         };
         let (client, _fake) = shep_client::testing::fake_client_with_ack(&addr, ack).await;
-        let flock = ClientFlock(client);
+        let flock = ClientFlock { client, home: None };
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = crate::output::Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: crate::cli::Format::Table,
-        };
+        let mut streams =
+            crate::output::Streams::bare(&mut out, &mut err, crate::cli::Format::Table);
         crate::version_guard::refuse_version_skew(
             &mut streams,
             flock.client(),
@@ -526,7 +549,7 @@ mod tests {
             Response::Stopped(Vec::new()),
         )
         .await;
-        let flock = ClientFlock(client);
+        let flock = ClientFlock { client, home: None };
 
         let answer = flock
             .send(Request::Stop {
@@ -711,3 +734,8 @@ cat >/dev/null
         assert_eq!(local.log_sizes(Some(log), Some(log)), None);
     }
 }
+
+/// The gate every dashboard write to a dog's settings passes through, against
+/// a shepherd that answers the ask.
+#[cfg(test)]
+mod validate_tests;

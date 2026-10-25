@@ -17,6 +17,7 @@
 //!
 //! - [`ReadinessSource`], [`Readiness`], [`await_ready`]
 
+use core::future::Future;
 use core::time::Duration;
 
 use std::sync::Arc;
@@ -58,6 +59,21 @@ impl ReadinessSource {
             Some(probe) => Ok(Self::Probe(probe.clone(), ProbeTarget::parse(probe)?)),
             None => Ok(Self::Heuristic),
         }
+    }
+
+    /// [`Self::of`] on a config that has already been through `normalize`.
+    ///
+    /// Every supervisor site reads the source off a `ResolvedApp`, which
+    /// `normalize` built by running [`ProbeTarget::parse`] over its
+    /// `readiness_probe`.
+    ///
+    /// # Panics
+    ///
+    /// Never for a `ResolvedApp`. A panic means an app reached the
+    /// supervisor without going through `normalize`.
+    #[track_caller]
+    pub(crate) fn of_normalized(config: &AppConfig) -> Self {
+        Self::of(config).expect("ResolvedApp already passed ProbeTarget::parse in normalize")
     }
 }
 
@@ -106,17 +122,15 @@ pub async fn await_ready(
         ReadinessSource::Channel => {
             // A dropped sender must not resolve this wait early, since
             // deciding here would race the exit path. A closed channel
-            // switches to a future that never resolves, leaving the outer
-            // `timeout` as the only thing that ends the wait.
+            // switches to a future that never resolves, leaving the
+            // deadline in `within_deadline` as the only thing that ends
+            // the wait.
             let wait_for_signal = async {
                 if channel.await.is_err() {
                     core::future::pending::<()>().await;
                 }
             };
-            match tokio::time::timeout(deadline, wait_for_signal).await {
-                Ok(()) => Readiness::Ready,
-                Err(_elapsed) => Readiness::TimedOut,
-            }
+            within_deadline(deadline, wait_for_signal).await
         }
         ReadinessSource::Probe(config, target) => {
             // Not floored at `MIN_PROBE_INTERVAL` like `spawn_liveness_task`:
@@ -137,10 +151,7 @@ pub async fn await_ready(
                     tokio::time::sleep(interval).await;
                 }
             };
-            match tokio::time::timeout(deadline, poll).await {
-                Ok(()) => Readiness::Ready,
-                Err(_elapsed) => Readiness::TimedOut,
-            }
+            within_deadline(deadline, poll).await
         }
         ReadinessSource::Heuristic => {
             // The elapse is the signal here: the one branch that returns
@@ -149,6 +160,19 @@ pub async fn await_ready(
             tokio::time::sleep(deadline).await;
             Readiness::Ready
         }
+    }
+}
+
+/// Runs `fut` against `deadline`: `Ready` if it finishes inside, `TimedOut`
+/// if the deadline elapses first.
+///
+/// The one place a readiness deadline becomes a [`Readiness`]. A future that
+/// resolves only by the deadline elapsing (a closed channel switched to
+/// `pending`) ends here as `TimedOut`, never early.
+async fn within_deadline<F: Future<Output = ()>>(deadline: Duration, fut: F) -> Readiness {
+    match tokio::time::timeout(deadline, fut).await {
+        Ok(()) => Readiness::Ready,
+        Err(_elapsed) => Readiness::TimedOut,
     }
 }
 
@@ -441,6 +465,30 @@ mod tests {
     fn neither_configured_is_heuristic() {
         let app = AppConfig::minimal("web", "./srv");
         assert_eq!(ReadinessSource::of(&app), Ok(ReadinessSource::Heuristic));
+    }
+
+    #[test]
+    fn of_normalized_agrees_with_of_for_channel_probe_and_heuristic() {
+        let probe_cfg = probe_config(ProbeKind::Tcp, "localhost:5432");
+        let target = ProbeTarget::parse(&probe_cfg).expect("a valid tcp target parses");
+
+        let mut channel = AppConfig::minimal("web", "./srv");
+        channel.wait_ready = true;
+        channel.readiness_probe = Some(probe_cfg.clone());
+        let mut probe = AppConfig::minimal("web", "./srv");
+        probe.readiness_probe = Some(probe_cfg.clone());
+        let heuristic = AppConfig::minimal("web", "./srv");
+
+        let cases = [
+            (&channel, ReadinessSource::Channel),
+            (&probe, ReadinessSource::Probe(probe_cfg, target)),
+            (&heuristic, ReadinessSource::Heuristic),
+        ];
+        for (app, expected) in cases {
+            let source = ReadinessSource::of_normalized(app);
+            assert_eq!(source, expected, "each signal still decides on its own");
+            assert_eq!(source, ReadinessSource::of(app).unwrap(), "and with `of`");
+        }
     }
 
     #[test]

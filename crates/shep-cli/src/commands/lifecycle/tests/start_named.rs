@@ -144,12 +144,7 @@ async fn start_over_host_with_args(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         start_on_host(client, &mut streams, args, "amp2").await
     };
     (
@@ -297,12 +292,7 @@ async fn a_bare_start_over_a_host_refuses_before_reading_the_working_directory()
     let mut err = Vec::new();
 
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         crate::client::load_command(
             &mut streams,
             &link,
@@ -341,12 +331,7 @@ async fn a_path_target_over_an_unreachable_host_is_refused_not_unreachable() {
         let mut err = Vec::new();
 
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             crate::client::load_command(
                 &mut streams,
                 &link,

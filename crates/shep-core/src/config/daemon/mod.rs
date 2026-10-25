@@ -5,12 +5,16 @@
 //! only the file and environment layers.
 
 mod config;
+mod dog_grants;
+#[cfg(test)]
+mod dog_grants_state_tests;
 mod error;
 mod overrides;
 mod sections;
 #[cfg(test)]
 mod testing;
 pub use config::DaemonConfig;
+pub use dog_grants::DogGrantsSection;
 pub use error::DaemonConfigError;
 pub use overrides::{DaemonOverrides, parse_daemon_bool};
 pub use sections::{DaemonSection, LogLevel, SecretsSection, StyleSection, WhistleSection};

@@ -256,8 +256,9 @@ under `[dog.bark]`. Layering: file < `SHEP_*` env < CLI flags.
 sheep to a named group. `shep fold <name>` lists that fold; `fold:<name>`
 selects it in any verb; `flock`/`describe` display fold membership.
 
-**KV store** (`shep set/get/unset`): retained for ad-hoc + dog runtime
-tweaks; file-locked JSON; not the primary config path. Lives at
+**KV store** (`shep kv get/set/unset`): retained for ad-hoc + dog runtime
+tweaks; file-locked JSON; not the primary config path. `shep get` is not one of
+them: it prints a sheep's or a dog's settings. Lives at
 `$SHEP_HOME/kv.json`; keys are flat strings, not paths — a dot in a key is
 part of its name, never a nesting separator. A dog reads the store through
 `shep_core::kv`, not over the socket, unlike `[dog.<name>]`: that section

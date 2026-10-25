@@ -10,7 +10,7 @@ use crate::output::Render;
 use crate::style::Presentation;
 
 use super::toolkit::{
-    GroupTotals, group_paint, group_row, group_totals, name_groups, paint, plain_row,
+    GroupTotals, group_paint, group_row, group_totals, is_slotted, name_groups, paint, plain_row,
     process_info_paint, slot_row,
 };
 
@@ -38,7 +38,7 @@ impl Render for FlockRows {
     fn rows(&self) -> Vec<Vec<String>> {
         name_groups(&self.0)
             .flat_map(|group| {
-                let slotted = group.len() > 1 && group.iter().all(|p| p.instance.is_some());
+                let slotted = is_slotted(group);
                 group.iter().map(move |p| plain_row(p, slotted))
             })
             .collect()
@@ -63,8 +63,7 @@ impl Render for FlockRows {
         let mut out = Vec::with_capacity(self.0.len());
         let mut sources: Vec<RowSource<'_>> = Vec::with_capacity(self.0.len());
         for group in name_groups(&self.0) {
-            // A slot nobody reported cannot be grouped or suffixed.
-            let slotted = group.len() > 1 && group.iter().all(|p| p.instance.is_some());
+            let slotted = is_slotted(group);
             if slotted && presentation.level.boxes() {
                 let totals = group_totals(group);
                 out.push(group_row(group, &totals));
@@ -96,7 +95,7 @@ impl Render for FlockRows {
     /// # Panics
     /// If `header` is not one of `Self::headers()`'s own values.
     #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
+    fn json_key_for(header: &str) -> String {
         match header {
             "ID" => "id",
             "NAME" => "name",
@@ -114,6 +113,7 @@ impl Render for FlockRows {
             "SMIT" => "smit",
             other => panic!("FlockRows::headers() does not include {other:?}"),
         }
+        .to_owned()
     }
 
     const JSON_ONLY: &'static [&'static str] = &[
@@ -203,19 +203,6 @@ impl Render for FlushedRows {
             status_word,
             |header, _cell, index| process_info_paint(header, &self.0[index]),
         )
-    }
-
-    /// # Panics
-    /// If `header` is not one of `Self::headers()`'s own values.
-    #[track_caller]
-    fn json_key_for(header: &str) -> &'static str {
-        match header {
-            "ID" => "id",
-            "NAME" => "name",
-            "OUT_FILE" => "out_file",
-            "ERR_FILE" => "err_file",
-            other => panic!("FlushedRows::headers() does not include {other:?}"),
-        }
     }
 
     const JSON_ONLY: &'static [&'static str] = &[

@@ -124,12 +124,7 @@ fn leaving_disabled_rows_out_keeps_the_rest_and_names_each_remedy() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let kept = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         leave_disabled(&mut streams, rows)
     };
 

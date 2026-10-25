@@ -46,15 +46,17 @@ const groups = [
       "delete",
       "stock",
       "copy",
+      "set",
+      "unset",
     ],
   },
   {
     title: "Inspecting the flock",
-    verbs: ["flock", "describe", "fold", "dogs"],
+    verbs: ["flock", "describe", "fold", "dogs", "get"],
   },
   {
     title: "Dogs",
-    verbs: ["enable", "disable", "adopt"],
+    verbs: ["enable", "disable", "adopt", "dogs grant", "dogs revoke"],
   },
   {
     title: "Talking to a sheep",
@@ -66,7 +68,7 @@ const groups = [
   },
   {
     title: "The KV store",
-    verbs: ["set", "get", "unset"],
+    verbs: ["kv", "kv get", "kv set", "kv unset"],
   },
   {
     title: "Secrets",

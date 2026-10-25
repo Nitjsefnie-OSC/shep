@@ -8,10 +8,10 @@
 
 use super::{
     AdoptArgs, BarksArgs, BleatsArgs, CompletionArgs, CopyArgs, DaemonArgs, DevArgs, DialStdioArgs,
-    DisableArgs, DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, HostArgs,
-    ImportArgs, InitArgs, KvGetArgs, KvSetArgs, KvUnsetArgs, LookoutArgs, ReopenArgs, RuntimeArgs,
-    SecretArgs, SelectorArgs, ServeArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs,
-    TriggerArgs, WhisperArgs,
+    DisableArgs, DogArgs, DogsArgs, EnableArgs, FlockArgs, FlushArgs, FoldArgs, GetArgs, HostArgs,
+    ImportArgs, InitArgs, KvArgs, LookoutArgs, ReopenArgs, RuntimeArgs, SecretArgs, SelectorArgs,
+    ServeArgs, SetArgs, SignalArgs, StartArgs, StartupArgs, StockArgs, StyleArgs, TriggerArgs,
+    UnsetArgs, WhisperArgs,
 };
 
 /// Every verb the binary understands.
@@ -200,7 +200,7 @@ pub enum Commands {
     Flock(FlockArgs),
     /// List the dogs, and nothing else. `--available` lists the community
     /// index of dogs you could adopt instead of the ones this shepherd is
-    /// running.
+    /// running. `grant` and `revoke` change one permission of a dog.
     Dogs(DogsArgs),
     /// Turn a sheep or a dog back on. A sheep named here has its disabled
     /// mark cleared and is started; a dog is written into `[daemon]
@@ -366,24 +366,64 @@ pub enum Commands {
     /// Same precedent as `shep flush --daemon`, which also works on files
     /// rather than through the socket.
     Barks(BarksArgs),
-    /// Store a value in the shepherd's key/value store.
+    /// Read and write the key/value store: `shep kv get`, `shep kv set`, `shep kv unset`.
     ///
     /// Reads and writes `$SHEP_HOME/kv.json` directly and never connects to the
-    /// shepherd — the store is for ad-hoc notes and dog settings, and it has to
+    /// shepherd: the store is for ad-hoc notes and dog settings, and it has to
     /// work while nothing is running, exactly as `shep enable` does.
     ///
     /// Keys are flat: letters, digits, `.`, `_` and `-`, up to 128 bytes, not
-    /// starting with a dot. A dot is part of the name — `bark.cooldown` is one
+    /// starting with a dot. A dot is part of the name. `bark.cooldown` is one
     /// key, not a path into anything.
-    Set(KvSetArgs),
-    /// Read one value from the store, or list the whole store with no key.
-    Get(KvGetArgs),
-    /// Remove one key from the store, or every key with --all.
-    Unset(KvUnsetArgs),
+    Kv(KvArgs),
+    /// Change one setting of a sheep or a dog: `shep set <address> <value>`.
+    ///
+    /// The address is `shep get`'s and `shep copy`'s, so one verb reaches a
+    /// sheep's own field, a dog's table on that sheep, and the dog's own
+    /// section of `dogs.toml`. The value is TOML, and text that is not TOML is
+    /// the string as typed: `5` is a number, `true` is a toggle and `3s` stays
+    /// `3s`. TOML's `nan` and `inf` are refused, because the JSON the flock
+    /// carries has no cell for them.
+    ///
+    /// A write that carries a dog's table is checked against the schema that
+    /// dog published, and a value it turns down is refused with the key path it
+    /// sits at. `env`, secrets, `name`, `instances` and the whole `dogs` map are
+    /// refused for the same reason the shepherd refuses them.
+    ///
+    /// Nothing is written until you confirm, and the change list prints first,
+    /// naming every key the write touches with its old and new value. Under
+    /// `--format json` that list prints on stderr, so stdout stays the one
+    /// envelope the run writes after the answer. `--yes` skips the question and
+    /// `--dry-run` prints the list and writes nothing. A write that replaces a
+    /// whole section or a whole dog table re-reads it after your answer, and is
+    /// refused if it changed while you were answering.
+    ///
+    /// The key/value store this verb used to write lives at `shep kv set`.
+    Set(SetArgs),
+    /// Drop an override, or remove a dog's key, so what was there before applies.
+    ///
+    /// The address is `shep set`'s. On a sheep's field it drops the override
+    /// you set, so the Flockfile's value returns, in `shep get` and in the
+    /// running config. A field with no override is refused: it already holds
+    /// the Flockfile's value. On a key of a dog's settings, whether the dog's
+    /// table on a sheep or its section of `dogs.toml`, it removes the key, so
+    /// the dog's own default applies. A sheep's whole `dogs.<dog>` table can be
+    /// removed too; a whole `dogs.toml` section, `env`, `name`, `instances` and
+    /// the whole `dogs` map are refused.
+    ///
+    /// The flow and the flags are `shep set`'s: the change list prints first,
+    /// `--yes` skips the question, `--dry-run` writes nothing, and
+    /// `--format json` prints one envelope after the answer. A key dropped from
+    /// a field the sheep only reads at spawn waits for the next one, and
+    /// `shep reload` promotes it.
+    ///
+    /// The key/value store this verb used to remove from lives at
+    /// `shep kv unset`.
+    Unset(UnsetArgs),
     /// Store the values a Flockfile refers to and never carries.
     ///
     /// Reads and writes `$SHEP_HOME/secrets.json` directly and never
-    /// connects to the shepherd, exactly as `shep set` does: filling the
+    /// connects to the shepherd, exactly as `shep kv set` does: filling the
     /// store before the first `shep start` is the ordinary first run.
     ///
     /// A key holds one value per environment, so production and staging
@@ -405,14 +445,16 @@ pub enum Commands {
     /// `~/.ssh/config` aliases, users, ports and ProxyJump all apply. Reads
     /// and writes that file directly and never connects to a machine.
     Host(HostArgs),
-    /// Copy one setting, or one dog's table, from one sheep onto another.
+    /// Copy one setting, one dog's table, or a sheep's env from one sheep onto
+    /// another.
     ///
     /// Each side is an address: a sheep name, then a path in its config.
     ///
     /// `shep copy web.restart_delay api.restart_delay` copies one field.
     /// `shep copy web.dogs.kelpie api.dogs.kelpie` copies a dog's whole table.
     /// `shep copy web.dogs.kelpie.rulings api.dogs.kelpie.rulings` copies one
-    /// key or sub-table inside it.
+    /// key or sub-table inside it. `shep copy web.env api.env` copies every env
+    /// key.
     ///
     /// A dog name and a key inside a table may each contain a dot, and each is
     /// read as the longest name the copy's tables actually hold: `web.dogs.foo.bar`
@@ -423,7 +465,7 @@ pub enum Commands {
     /// The path is the same on both sides: a copy moves values, and
     /// `web.restart_delay` onto `api.kill_timeout` is two different settings.
     ///
-    /// A dog table merges by default. Keys the source has overwrite the
+    /// A dog table and an env merge by default. Keys the source has overwrite the
     /// target's, and keys only the target has stay. `--replace` makes the
     /// target exactly the source at that path. `--except <key>` leaves one key
     /// out, named under the path you are copying: a dog's `git.checkout` names
@@ -431,19 +473,46 @@ pub enum Commands {
     /// to a sheep. A copy refuses when one side holds something that is not a
     /// table where the copy has to write through one.
     ///
-    /// `env` and secrets are not copied: a client is never sent a sheep's env
-    /// values, so there is nothing to read. `shep import env` writes a `.env`
-    /// into a sheep's env, and `shep secret` holds the values a Flockfile
-    /// refers to. `name`, `instances` and the whole `dogs` map are refused for
-    /// the same reason the shepherd refuses them.
+    /// The shepherd copies `env`, so no value reaches this client. A
+    /// `{{secret:NAME}}` value is copied as the reference and never resolved.
+    /// The change list and the JSON envelope show a reference as itself and
+    /// every other value as `<redacted>`. The copied keys wait for the
+    /// target's next spawn. `name`, `instances` and the whole `dogs` map are
+    /// refused for the same reason the shepherd refuses them.
     ///
     /// Nothing is written until you confirm. The change list prints first,
-    /// naming every key added, changed or removed with its old and new value.
+    /// naming every key added, changed or removed with its old and new value
+    /// (an env value is redacted).
     /// With `--format json` that list prints on stderr, so stdout stays the one
     /// envelope the run writes after the answer. `--yes` skips the question,
     /// `--dry-run` prints the list and writes nothing, and with no terminal to
     /// ask on the run refuses instead of writing.
     Copy(CopyArgs),
+    /// Print a sheep's or a dog's settings as TOML.
+    ///
+    /// The address is `shep copy`'s: a name, then a path inside the settings
+    /// that name holds. A sheep's name addresses its config and its
+    /// `dogs.<dog>` tables; a dog's name addresses its own section of
+    /// `dogs.toml`. A sheep is looked for first, among the names the running
+    /// flock carries, and anything no sheep is is read as a dog's section.
+    ///
+    /// `shep get api` prints a sheep's whole config, `shep get api.max_memory`
+    /// one field, `shep get api.dogs.kelpie.git` one dog's table inside a
+    /// sheep, and `shep get kelpie.worker` one table inside a dog's own
+    /// section. A path that ends at a value prints that value under the header
+    /// of the table that holds it.
+    ///
+    /// The answer is the TOML the address names, spelled as the file it lives
+    /// in spells it: a sheep's fragment carries its `dogs.<dog>` headers, a
+    /// dog's carries `[<name>]`. `--format json` wraps the same text in the
+    /// one envelope every other verb prints.
+    ///
+    /// A sheep's `env` values are never read: a client is never sent them.
+    /// `shep describe api` lists the keys, and `shep import env` writes them.
+    ///
+    /// A name that is neither a sheep nor a dog is refused by name: the
+    /// key/value store that `shep get` used to read lives at `shep kv get`.
+    Get(GetArgs),
     /// Check whether the shepherd answers.
     Ping,
     /// Shut the shepherd down.
@@ -643,6 +712,8 @@ mod tests {
         let lookout = cmd.find_subcommand("lookout").unwrap();
         assert_eq!(lookout.get_visible_aliases().collect::<Vec<_>>(), ["dash"]);
 
+        // `get`, `set` and `unset` are absent from the hidden list on purpose:
+        // they are the settings verbs.
         for hidden in ["thatlldo", "daemon", "dog", "rehome", "dial-stdio"] {
             assert!(
                 cmd.find_subcommand(hidden).unwrap().is_hide_set(),
@@ -664,6 +735,10 @@ mod tests {
             "enable",
             "disable",
             "adopt",
+            "kv",
+            "get",
+            "set",
+            "unset",
             "ping",
             "kill",
             "save",

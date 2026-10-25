@@ -358,12 +358,7 @@ async fn a_json_walk_whose_envelope_never_printed_names_the_refused_apps_on_stde
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Json,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
         reload(
             &client,
             &mut streams,
@@ -428,12 +423,7 @@ async fn a_load_that_failed_for_another_reason_exits_with_its_own_class() {
     use shep_client::testing::fake_client_answering;
 
     let dir = tempfile::tempdir().unwrap();
-    let flockfile = dir.path().join("Flockfile.toml");
-    std::fs::write(
-        &flockfile,
-        "[[app]]\nname = \"zam\"\nscript = \"./srv\"\nmax_restarts = 99\n",
-    )
-    .unwrap();
+    let flockfile = write_zam_flockfile(dir.path());
     let path = shep_client::testing::control_address(dir.path());
     let flock = a_clustered_flock(&[0, 1, 2]);
     // `Pong` to an `ApplyConfig`. `Response` is `#[non_exhaustive]`, so
@@ -499,12 +489,7 @@ async fn a_restart_over_a_host_probes_no_local_dog() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let args = SelectorArgs {
             selectors: vec!["log-rotate".into()],
         };

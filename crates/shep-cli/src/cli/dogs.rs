@@ -10,8 +10,14 @@
 
 use std::path::PathBuf;
 
-/// `shep dogs`, and the index of dogs you could adopt.
+/// `shep dogs`, the index of dogs you could adopt, and the two verbs that
+/// change one permission of a dog.
+///
+/// The listing's flag and filter and the subcommands exclude each other:
+/// `shep dogs grant` is a verb, so a dog named `grant` is reached with
+/// `shep dogs -- grant`.
 #[derive(Debug, clap::Args)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct DogsArgs {
     /// List the dogs published in the community index instead of the ones
     /// this shepherd is running. Needs no shepherd.
@@ -21,6 +27,41 @@ pub struct DogsArgs {
     /// contains this text, case-insensitively.
     #[arg(value_name = "FILTER")]
     pub filter: Option<String>,
+    /// Change one permission instead of listing.
+    #[command(subcommand)]
+    pub command: Option<DogsCommand>,
+}
+
+/// `shep dogs`'s subcommands.
+#[derive(Debug, clap::Subcommand)]
+pub enum DogsCommand {
+    /// Grant a dog one permission it declared.
+    ///
+    /// Writes `[daemon.dog_grants.<dog>]` in `shep.toml` and tells a
+    /// running shepherd, which judges the dog's next request by the new
+    /// grants with no restart. Only a permission the dog's manifest declares
+    /// can be granted; `shep adopt` and the first `shep enable` ask about
+    /// the whole list.
+    ///
+    /// Grants keep a dog's requests in bounds and do not confine it: it
+    /// runs as you and can do anything you can.
+    Grant(GrantArgs),
+    /// Revoke one permission from a dog.
+    ///
+    /// Writes `[daemon.dog_grants.<dog>]` in `shep.toml` and tells a
+    /// running shepherd, which refuses the dog's next request that needs
+    /// it with no restart.
+    Revoke(GrantArgs),
+}
+
+/// Arguments to `shep dogs grant` and `shep dogs revoke`.
+#[derive(Debug, clap::Args)]
+pub struct GrantArgs {
+    /// The dog's name, as `shep adopt` registered it
+    pub name: String,
+    /// The permission, as the dog's manifest spells it: `flock.read`,
+    /// `events:process.`, `secrets.read:staging`
+    pub permission: String,
 }
 
 /// Arguments to the hidden `shep rehome`, and to the hidden `shep dog`
@@ -65,6 +106,10 @@ pub struct EnableArgs {
     /// this flag's value as the binary path
     #[arg(long, hide = true)]
     pub exec: Option<PathBuf>,
+    /// Grant a dog everything it declares without asking; a dog's first
+    /// enable asks, and with no terminal and no `--yes` refuses
+    #[arg(long)]
+    pub yes: bool,
 }
 
 /// Arguments to `shep disable`.
@@ -95,6 +140,10 @@ pub struct AdoptArgs {
     /// to the binary's file stem with a leading `shep-` stripped.
     #[arg(long)]
     pub name: Option<String>,
+    /// Grant the dog everything it declares without asking. With no
+    /// terminal and no `--yes`, adopt refuses rather than granting.
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[cfg(test)]

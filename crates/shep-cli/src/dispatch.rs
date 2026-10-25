@@ -41,7 +41,8 @@ use crate::home::{
 use crate::remote::{HostScope, Link, host_scope, refuse_host};
 use crate::version_guard::{VersionGuard, connect_client, flock_command};
 use crate::{
-    cli, commands, completions, dog, exit, lookout, output, status, style, welcome, whistle,
+    adopted_help, cli, commands, completions, dog, exit, lookout, output, status, style, welcome,
+    whistle,
 };
 
 /// Parses, resolves `$SHEP_HOME` for the verbs that need it, and dispatches
@@ -94,15 +95,23 @@ pub(crate) async fn run(
         Commands::Completions(ref args) => {
             // Status to stderr: the script on stdout is meant to be sourced,
             // and a status line in it would be executed.
-            if let Ok(paths) = resolve_paths(&cli.global) {
-                let shepherd = status::ShepherdStatus::probe(&paths).await;
+            let paths = resolve_paths(&cli.global).ok();
+            if let Some(paths) = paths.as_ref() {
+                let shepherd = status::ShepherdStatus::probe(paths).await;
                 if std::io::stderr().is_terminal() {
                     let mut err = std::io::stderr();
                     let _ = writeln!(err, "{}", status::one_line(&shepherd));
                 }
             }
+            // The same tolerant read: a home that resolves nothing names no
+            // dogs, and a completion script for the built-in verbs still
+            // prints.
+            let dogs = paths
+                .as_ref()
+                .map(adopted_help::adopted_verbs)
+                .unwrap_or_default();
             let mut out = std::io::stdout().lock();
-            return completions::completions(&mut out, args);
+            return completions::completions(&mut out, args, &dogs);
         }
         Commands::Daemon(ref args) => {
             // `daemon reload` stops a shepherd and starts one rather than
@@ -371,9 +380,9 @@ pub(crate) async fn run(
                 {
                     let code = match err {
                         ShepTomlError::Io { .. } => ExitCode::Failure,
-                        ShepTomlError::Parse { .. } | ShepTomlError::WrongShape { .. } => {
-                            ExitCode::InvalidConfig
-                        }
+                        ShepTomlError::Parse { .. }
+                        | ShepTomlError::WrongShape { .. }
+                        | ShepTomlError::BadGrants { .. } => ExitCode::InvalidConfig,
                     };
                     return streams.fail(code, &err.to_string());
                 }
@@ -434,14 +443,36 @@ pub(crate) async fn run(
         // Falls back to the muster roll rather than refusing: looking at the
         // flock must not be a dead end on a machine that just rebooted.
         Commands::Flock(ref args) => flock_command(&mut streams, &link, guard, args).await,
-        // The guard arm is what makes `--available` work with no shepherd
-        // running: it never reaches `connect_client`.
-        Commands::Dogs(ref args) if args.available => {
-            query::available_dogs(&mut streams, args).await
-        }
-        Commands::Dogs(ref args) => match connect_client(&mut streams, &link, guard).await {
-            Ok(client) => query::dogs(&client, &mut streams, args).await,
-            Err(code) => code,
+        // `grant` and `revoke` write `shep.toml` and tell a shepherd only if
+        // one is running: tightening a dog must work with none, and never
+        // autostarts one. The guard arm is what makes `--available` work with
+        // no shepherd running: it never reaches `connect_client`.
+        Commands::Dogs(ref args) => match (&args.command, args.available) {
+            (Some(cli::DogsCommand::Grant(grant)), _) => {
+                dogs::change(
+                    &mut streams,
+                    &paths,
+                    dogs::Change::Grant,
+                    &grant.name,
+                    &grant.permission,
+                )
+                .await
+            }
+            (Some(cli::DogsCommand::Revoke(revoke)), _) => {
+                dogs::change(
+                    &mut streams,
+                    &paths,
+                    dogs::Change::Revoke,
+                    &revoke.name,
+                    &revoke.permission,
+                )
+                .await
+            }
+            (None, true) => query::available_dogs(&mut streams, args).await,
+            (None, false) => match connect_client(&mut streams, &link, guard).await {
+                Ok(client) => query::dogs(&client, &mut streams, &paths, args).await,
+                Err(code) => code,
+            },
         },
         // None of the four goes through the connect helpers: all four must
         // write the config with no shepherd running, so each connects
@@ -455,14 +486,15 @@ pub(crate) async fn run(
                     &AdoptArgs {
                         path: path.clone(),
                         name: Some(args.name.clone()),
+                        yes: args.yes,
                     },
                 )
                 .await
             }
-            None => toggle(&mut streams, &paths, Toggle::Enable, &args.name).await,
+            None => toggle(&mut streams, &paths, Toggle::Enable, &args.name, args.yes).await,
         },
         Commands::Disable(ref args) => {
-            toggle(&mut streams, &paths, Toggle::Disable, &args.name).await
+            toggle(&mut streams, &paths, Toggle::Disable, &args.name, false).await
         }
         Commands::Adopt(ref args) => dogs::adopt(&mut streams, &paths, args).await,
         Commands::Rehome(ref args) => dogs::rehome(&mut streams, &paths, &args.name).await,
@@ -508,9 +540,11 @@ pub(crate) async fn run(
         Commands::Barks(ref args) => dogs::barks(&mut streams, &paths, args),
         // Reads and writes `kv.json` directly and never connects to the
         // shepherd.
-        Commands::Set(ref args) => kv::set(&mut streams, &paths, args),
-        Commands::Get(ref args) => kv::get(&mut streams, &paths, args),
-        Commands::Unset(ref args) => kv::unset(&mut streams, &paths, args),
+        Commands::Kv(ref args) => match &args.command {
+            cli::KvCommand::Get(args) => kv::get(&mut streams, &paths, args),
+            cli::KvCommand::Set(args) => kv::set(&mut streams, &paths, args),
+            cli::KvCommand::Unset(args) => kv::unset(&mut streams, &paths, args),
+        },
         // Same rule, same file-first reason: `shep secret set` before a
         // first `shep start` is the ordinary first-run order.
         Commands::Secret(ref args) => secret::secret(&mut streams, &paths, args),
@@ -521,7 +555,28 @@ pub(crate) async fn run(
         // Reads two sheep's configs and writes one, so it needs the shepherd:
         // the copy is of what the running flock holds, not of a file.
         Commands::Copy(ref args) => match connect_client(&mut streams, &link, guard).await {
-            Ok(client) => commands::copy::copy(&client, &mut streams, args).await,
+            Ok(client) => commands::copy::copy(&client, &mut streams, &paths, args).await,
+            Err(code) => code,
+        },
+        // Reads the running flock's settings rather than a file, so it needs
+        // the shepherd: a Flockfile on disk is not what a sheep is running.
+        Commands::Get(ref args) => match connect_client(&mut streams, &link, guard).await {
+            Ok(client) => commands::settings_read::get(&client, &mut streams, args).await,
+            Err(code) => code,
+        },
+        // Writes the settings the same read reads, so the same rule: the write
+        // lands on the running flock, and the old value it prints beside the
+        // new one is what that flock holds, not what a file says.
+        Commands::Set(ref args) => match connect_client(&mut streams, &link, guard).await {
+            Ok(client) => commands::settings_write::set(&client, &mut streams, &paths, args).await,
+            Err(code) => code,
+        },
+        // Drops what `set` wrote, from the same running flock and under the
+        // same rule: the override it drops is the one that flock holds.
+        Commands::Unset(ref args) => match connect_client(&mut streams, &link, guard).await {
+            Ok(client) => {
+                commands::settings_write::unset(&client, &mut streams, &paths, args).await
+            }
             Err(code) => code,
         },
         // Does its own connecting: `connect_client` reports and gives up,

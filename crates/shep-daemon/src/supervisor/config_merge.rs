@@ -158,11 +158,24 @@ pub(super) fn merge_declared(
             }
         };
         if !in_scope {
+            // An override the file still declares: the file's value is what
+            // `ResetSheepField` returns to, so it is kept current here even
+            // though this load leaves the sheep alone.
+            if next.fields.contains_key(key)
+                && let Some(value) = incoming
+                    .declared
+                    .contains(key)
+                    .then(|| file.get(key))
+                    .flatten()
+            {
+                next.template.insert(key.clone(), value.clone());
+            }
             continue;
         }
         // The override is spent: one left in `fields` would keep
         // `ProcessEntry::overridden` reporting a field that matches the file.
         next.fields.remove(key);
+        next.template.remove(key);
         // `declared` grows only where the file really spoke: marking an
         // undeclared key would lock a later append out of it.
         if incoming.declared.contains(key) {

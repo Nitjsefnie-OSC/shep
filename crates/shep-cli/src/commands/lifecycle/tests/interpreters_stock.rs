@@ -12,25 +12,15 @@ async fn a_fold_flag_lands_on_the_resolved_app() {
     std::fs::write(&srv, "").unwrap();
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: crate::style::Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
     let mut args = start_args(srv.to_str().unwrap());
     args.fold = Some("backend".to_string());
 
     let _ = start(&client, &mut streams, &args, None, &BTreeMap::new()).await;
 
-    let sent = next_start(&mut envelopes).await;
-    match sent.body {
-        Request::Start { apps } => {
-            assert_eq!(apps.len(), 1);
-            assert_eq!(apps[0].fold.as_deref(), Some("backend"));
-        }
-        other => panic!("expected Request::Start, got {other:?}"),
-    }
+    let apps = start_apps(next_start(&mut envelopes).await);
+    assert_eq!(apps.len(), 1);
+    assert_eq!(apps[0].fold.as_deref(), Some("backend"));
 }
 
 /// Matched with the dot stripped, absent for a name with no extension,
@@ -60,12 +50,7 @@ async fn a_shep_toml_mapping_fills_an_unset_interpreter() {
     std::fs::write(&srv, "").unwrap();
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: crate::style::Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
     let mut interpreters = BTreeMap::new();
     interpreters.insert("js".to_string(), "node".to_string());
 
@@ -78,14 +63,9 @@ async fn a_shep_toml_mapping_fills_an_unset_interpreter() {
     )
     .await;
 
-    let sent = next_start(&mut envelopes).await;
-    match sent.body {
-        Request::Start { apps } => {
-            assert_eq!(apps.len(), 1);
-            assert_eq!(apps[0].interpreter.as_deref(), Some("node"));
-        }
-        other => panic!("expected Request::Start, got {other:?}"),
-    }
+    let apps = start_apps(next_start(&mut envelopes).await);
+    assert_eq!(apps.len(), 1);
+    assert_eq!(apps[0].interpreter.as_deref(), Some("node"));
 }
 
 /// Layer 2: the mapping is a fallback, not a policy.
@@ -102,12 +82,7 @@ async fn a_flockfile_interpreter_outranks_the_shep_toml_mapping() {
     .unwrap();
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: crate::style::Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
     let mut interpreters = BTreeMap::new();
     interpreters.insert("js".to_string(), "node".to_string());
 
@@ -120,14 +95,9 @@ async fn a_flockfile_interpreter_outranks_the_shep_toml_mapping() {
     )
     .await;
 
-    let sent = next_start(&mut envelopes).await;
-    match sent.body {
-        Request::Start { apps } => {
-            assert_eq!(apps.len(), 1);
-            assert_eq!(apps[0].interpreter.as_deref(), Some("bun"));
-        }
-        other => panic!("expected Request::Start, got {other:?}"),
-    }
+    let apps = start_apps(next_start(&mut envelopes).await);
+    assert_eq!(apps.len(), 1);
+    assert_eq!(apps[0].interpreter.as_deref(), Some("bun"));
 }
 
 /// Layer 3, the one-off override typed on the command line.
@@ -144,12 +114,7 @@ async fn the_interpreter_flag_outranks_a_flockfiles_own_field() {
     .unwrap();
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: crate::style::Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
     let mut args = start_args(flockfile.to_str().unwrap());
     args.interpreter = Some("deno".to_string());
     let mut interpreters = BTreeMap::new();
@@ -157,14 +122,9 @@ async fn the_interpreter_flag_outranks_a_flockfiles_own_field() {
 
     let _ = start(&client, &mut streams, &args, None, &interpreters).await;
 
-    let sent = next_start(&mut envelopes).await;
-    match sent.body {
-        Request::Start { apps } => {
-            assert_eq!(apps.len(), 1);
-            assert_eq!(apps[0].interpreter.as_deref(), Some("deno"));
-        }
-        other => panic!("expected Request::Start, got {other:?}"),
-    }
+    let apps = start_apps(next_start(&mut envelopes).await);
+    assert_eq!(apps.len(), 1);
+    assert_eq!(apps[0].interpreter.as_deref(), Some("deno"));
 }
 
 #[test]
@@ -187,12 +147,7 @@ async fn the_request_carries_the_app_name_and_the_count() {
     let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: crate::style::Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
     let _ = stock(
         &client,
         &mut streams,
@@ -228,12 +183,7 @@ async fn an_invalid_stock_exits_invalid_config_and_prints_the_reason() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         stock(
             &client,
             &mut streams,

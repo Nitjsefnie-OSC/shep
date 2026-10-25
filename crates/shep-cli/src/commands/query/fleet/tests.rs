@@ -104,9 +104,15 @@ fn host_runs(dir: &Path, host: &str, script: &str) {
 
 /// Makes `host` a shepherd of `version` listing one sheep, `name`.
 fn host_answers_as(dir: &Path, host: &str, version: &str, name: &str) {
+    host_speaks(dir, host, version, PROTOCOL_VERSION, name);
+}
+
+/// Makes `host` a shepherd of `version` speaking `protocol`, listing one
+/// sheep, `name`.
+fn host_speaks(dir: &Path, host: &str, version: &str, protocol: u32, name: &str) {
     let ack: HelloReply = Ok(HelloAck {
         daemon_version: version.to_owned(),
-        protocol: PROTOCOL_VERSION,
+        protocol,
         pid: 4242,
         min_supported: None,
     });
@@ -544,9 +550,15 @@ async fn a_local_shepherd_that_never_answers_is_abandoned_at_the_timeout_and_the
 }
 
 #[tokio::test]
-async fn a_host_on_another_version_is_refused_when_the_guard_enforces_and_the_rest_still_print() {
+async fn a_host_on_another_protocol_is_refused_when_the_guard_enforces_and_the_rest_still_print() {
     let (dir, _held) = fixture().await;
-    host_answers_as(dir.path(), "amp1", "0.0.1", "amp1-sheep");
+    host_speaks(
+        dir.path(),
+        "amp1",
+        "0.0.1",
+        PROTOCOL_VERSION - 1,
+        "amp1-sheep",
+    );
     host_answers(dir.path(), "amp2", "amp2-sheep");
 
     let run = run_guarded(dir.path(), &["amp1", "amp2"], ROOMY, VersionGuard::Enforce).await;
@@ -556,8 +568,39 @@ async fn a_host_on_another_version_is_refused_when_the_guard_enforces_and_the_re
     assert!(run.out.contains("amp2-sheep"), "{}", run.out);
     assert!(run.err.contains("amp1: this shep is "), "{}", run.err);
     assert!(
+        run.err
+            .contains(&format!("speaking protocol {}", PROTOCOL_VERSION - 1)),
+        "{}",
+        run.err
+    );
+    assert!(
         run.err.contains("ssh amp1 shep daemon reload"),
         "{}",
+        run.err
+    );
+}
+
+/// The fleet shape a patch release used to go dark over: a host on the
+/// previous version, the wire unchanged. Under a guard that enforces it is
+/// listed, with the same notice a read verb gets.
+#[tokio::test]
+async fn a_host_on_another_version_but_the_same_protocol_is_listed_when_the_guard_enforces() {
+    let (dir, _held) = fixture().await;
+    host_answers_as(dir.path(), "amp1", "0.0.1", "amp1-sheep");
+
+    let run = run_guarded(dir.path(), &["amp1"], ROOMY, VersionGuard::Enforce).await;
+
+    assert_eq!(run.code, ExitCode::Success, "{}", run.err);
+    assert!(run.out.contains("amp1-sheep"), "{}", run.out);
+    assert!(
+        run.err.contains("the shepherd on amp1 is 0.0.1"),
+        "{}",
+        run.err
+    );
+    assert!(run.err.contains("The wire protocol matches"), "{}", run.err);
+    assert!(
+        !run.err.contains("error[version_skew]"),
+        "a tolerated skew is a notice, not a refusal: {}",
         run.err
     );
 }

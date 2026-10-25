@@ -40,6 +40,28 @@ fn main() {
     // ...the dog's own loop, watching \`stop\`.
 }`;
 
+const validateSnippet = `use shep_client::dogs::{Probe, Stop, Verdict, validate_answer};
+
+fn main() {
+    Probe::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+        .ask_for_channel()
+        .validate()
+        .answer::<MyDogConfig>();
+
+    let (stop, request) = Stop::new();
+    let shepherd = shep_channel::serve();
+    shepherd.on_action("shep.validate", |params, _name| {
+        validate_answer(params, |proposed| {
+            match proposed.table().get("checkout").and_then(|v| v.as_str()) {
+                Some("/srv/api") => Verdict::Accept,
+                _ => Verdict::refuse("this checkout belongs to another project"),
+            }
+        })
+    });
+    shepherd.on_shutdown(move || request.request());
+    // ...the dog's own loop, watching \`stop\`.
+}`;
+
 const configSnippet = `use shep_client::dogs::dog_config;
 use shep_client::shep_core::values::{MemSize, UpDuration};
 
@@ -77,7 +99,7 @@ report to whoever wrote it`;
     </p>
 
     <h2 id="writing-your-own">Writing your own</h2>
-    <VerbSignature verb="adopt" usage="shep adopt <path> [--name <name>]">
+    <VerbSignature verb="adopt" usage="shep adopt <path> [--name <name>] [--yes]">
       <p>
         Third-party extension. The path can be given as-is, with a leading{" "}
         <code>~/</code>, or as a bare name already on <code>$PATH</code>{" "}
@@ -127,8 +149,14 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       and two environment variables; a dog you name on the command line
       gets whatever you typed after it, plus those same two. A built-in dog
       is the exception, and not one you can write: the shepherd starts it
-      as <code>shep dog &lt;name&gt;</code>. A built-in verb or alias always
-      wins over a same-named dog.
+      as <code>shep dog &lt;name&gt;</code>. A built-in verb or alias,{' '}
+      <code>help</code> included, always wins over a same-named dog.
+    </p>
+    <p>
+      An adopted dog is part of shep's listing from then on: it appears in
+      the Dogs group of <code>shep --help</code>, and completion offers it.
+      An undeclared dog is listed bare. Nothing a manifest declares claims a
+      top-level verb: a dog gets exactly <code>shep &lt;name&gt;</code>.
     </p>
     <p>
       What gets recorded in <code>shep.toml</code> is the canonicalized,
@@ -153,7 +181,11 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       <code>$SHEP_HOME</code>, which is how it finds that socket in the first
       place, and <code>$SHEP_DOG_NAME</code>, which is the name to put in
       that request. No <code>[&lt;name&gt;]</code> value rides along
-      beside them.
+      beside them. A third, <code>$SHEP_DOG_FD</code> on unix or{" "}
+      <code>$SHEP_DOG_PIPE</code> on Windows, names a connection open before
+      the socket is, and on unix survives a shepherd upgrade. Use it first and fall back to the
+      socket.
+      <code>DogRuntime</code> does.
     </p>
     <p>
       Put that name in the <code>Hello</code> too, as{" "}
@@ -249,7 +281,7 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       than after a handover.
     </p>
     <p>
-      Those two are what shep adds, not the whole environment. A dog is a
+      Those are what shep adds, not the whole environment. A dog is a
       supervised process like any other, so it also starts from the small
       base every sheep gets: <code>PATH</code>, plus whichever of{" "}
       <code>HOME</code>, <code>USER</code>, <code>LANG</code> and{" "}
@@ -293,8 +325,9 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       There is no sandbox, and it would be a mistake to assume one. An
       adopted dog runs at the shepherd's own trust level, with no isolation
       beyond it: the same trust an ordinary sheep in your Flockfile already
-      has. Adopting a dog does not grant anything beyond what any process
-      your own config already starts could do.
+      has. Adopting a dog grants nothing beyond what any process your own
+      config starts could do. Limit one with{" "}
+      <a href="/docs/dog-grants">grants</a>; they are no sandbox.
     </Callout>
     <p>
       Somebody else has probably already written the dog you're about to
@@ -302,6 +335,64 @@ watchdog  adopted  true      stopped`}</CodeBlock>
       before you start, or run <code>shep dogs --available</code> to browse
       the same index without leaving a terminal.
     </p>
+
+    <h2 id="answering-shep-manifest">Answering <code>--shep-manifest</code></h2>
+    <p>
+      <code>shep adopt</code> asks <code>--shep-manifest</code> first. A dog
+      answers on stdout with one JSON object and exits 0; <code>manifest</code>{" "}
+      (the version, <code>1</code>), <code>name</code>, <code>version</code>{" "}
+      and <code>protocol</code> are required, and a field shep doesn't know is
+      ignored. The fields are listed in <code>docs/dogs.md</code>.
+    </p>
+    <p>
+      A non-zero exit, no output, or output that isn't a manifest means the
+      dog has none, and shep asks <code>--version</code> and{" "}
+      <code>--schema</code> as before. Otherwise the manifest's{" "}
+      <code>version</code>, <code>protocol</code>, <code>channel</code> and{" "}
+      <code>settings</code> replace those answers. It is cached in{" "}
+      <code>$SHEP_HOME/manifests</code> by the binary's sha256: a build is
+      asked once, and a rebuilt binary is asked again.
+    </p>
+    <p>
+      <code>defaults</code> is TOML text for the body of the dog's own
+      section. When a manifest carries it and <code>dogs.toml</code> holds no
+      section for the dog, <code>shep adopt</code> writes it as that section:
+      the adopted dog arrives with its knobs filled in, where the operator
+      edits them, so a dog needs no <code>--print-config</code>-style flag of
+      its own any more. A section the operator already wrote is never
+      touched, and a <code>defaults</code> that is not valid TOML earns a
+      warning, not a refusal.
+    </p>
+    <CodeBlock>{`notice[dog_defaults_written]: otel's manifest defaults are now its \`[otel]\` section in dogs.toml, where you can edit them
+notice[dog_defaults_unreadable]: otel shipped a manifest whose \`defaults\` is not valid TOML, so nothing was added to dogs.toml for it. The dog is adopted and runs normally; this is a bug to report to whoever wrote it`}</CodeBlock>
+    <p>
+      <code>depends</code> names the dogs a dog needs and the oldest shep it
+      supports. <code>shep adopt</code> and <code>shep enable</code> warn
+      when a named dog isn't adopted or this shep is older, and go ahead
+      anyway. A dependency's version isn't checked yet.
+    </p>
+    <p>
+      <code>validate</code> says the dog has checks its <code>settings</code>{" "}
+      schema cannot state. They run over the channel, so it needs{" "}
+      <code>channel</code>: <code>shep adopt</code> refuses a manifest declaring
+      one without it. <a href="#being-asked-about-its-settings">Being asked</a>{" "}
+      is below.
+    </p>
+    <p>
+      <code>verb</code> is how shep describes <code>shep &lt;name&gt;</code>:
+      its <code>description</code> is the line the dog gets in the Dogs group
+      of <code>shep --help</code>, and its <code>subcommands</code> are what
+      <code>shep &lt;name&gt; --help</code> prints and what completion offers.
+      A dog that declares subcommands gets shep's page for them and its
+      binary never runs for <code>--help</code>; one that declares none keeps
+      <code>--help</code> as a pass-through. Both read the manifest cache,
+      never the binary, and completion is generated from the registry as it
+      stands, so generate the script again after an adopt. A manifest's text
+      prints as one line: braces, newlines and escapes go. A name a shell
+      would read as code is not completed.
+    </p>
+    <CodeBlock>{`notice[dog_dependency_missing]: \`otel\` depends on \`log-rotate\`, which is not adopted, so \`otel\` may not work until you run \`shep adopt\` for \`log-rotate\`
+notice[dog_needs_newer_shep]: \`otel\` needs shep 0.20.0 or newer, and this is shep 0.16.1, so \`otel\` may not work until you upgrade shep`}</CodeBlock>
 
     <h2 id="answering-version">Answering <code>--version</code></h2>
     <p>
@@ -394,8 +485,8 @@ against the current shep-core, or run a shep that accepts protocol 6`}</CodeBloc
     </p>
     <p>
       A candidate gets one second to exit and another to have its output
-      read, and an adopt runs two probes, so roughly four seconds is the
-      worst case. It is killed either way, so a dog that ignores both flags
+      read, and an adopt runs up to three probes, so roughly six seconds is the
+      worst case. It is killed either way, so a dog that ignores every flag
       and runs costs that time and is adopted with an unknown protocol. It
       can't hang the <code>adopt</code> that's vetting it.
     </p>
@@ -413,7 +504,7 @@ against the current shep-core, or run a shep that accepts protocol 6`}</CodeBloc
       by a message, adds a line to its answer:
     </p>
     <CodeBlock>{`shep-otel 0.2.0
-shep-protocol: 11
+shep-protocol: 12
 shep-channel: true`}</CodeBlock>
     <p>
       <code>shep adopt</code> records the ask in{" "}
@@ -429,6 +520,48 @@ shep-channel: true`}</CodeBlock>
       <code>shutdown</code> message with no signal behind it, so a dog that
       ignores it is killed once <code>kill_timeout</code> runs out.
     </p>
+
+    <h3 id="being-asked-about-its-settings">Being asked about a write to its settings</h3>
+    <p>
+      A schema says what a value looks like, not what it means. A dog holding
+      checks of that kind declares <code>validate</code>, and shep asks it
+      before it writes: a <code>shep.validate</code> action on the dog's
+      channel, carrying the table the write would leave behind.
+    </p>
+    <CodeBlock label="main.rs">{validateSnippet}</CodeBlock>
+    <p>
+      The reply is an ordinary <code>action-reply</code> whose body is one JSON
+      object: <code>accept</code> true, or <code>accept</code> false beside a
+      <code>reason</code> the operator reads. <code>validate_answer</code>{" "}
+      writes that body from the dog's own check. A body shep cannot read is a
+      refusal.
+    </p>
+    <p>
+      The params carry <code>table</code>: the dog's whole table on that sheep,
+      or its own <code>dogs.toml</code> section when there is no sheep. It is
+      the table <em>after</em> the write, so a <code>shep unset</code> is judged
+      on what would be left. Silence refuses: a dog that answers nothing inside
+      its <code>action_timeout</code> has not cleared the write.
+    </p>
+    <p>
+      Two cases ask nobody, and the write lands: a dog the shepherd has no live
+      channel for (not in the flock, stopped, or started before it asked for
+      one), and a dog with no manifest. A dog has no manifest when this machine
+      never adopted it, and when it answers <code>--shep-manifest</code> with
+      nothing at all: a build older than the flag, one whose argument parser
+      rejects an unknown flag, one that ignores the flag and starts its loop.
+      None of those ever declared <code>validate</code>. What shep cannot read
+      is never an acceptance: a cached manifest for this exact binary that
+      neither reads nor answers, and a <code>shep.toml</code> that will not
+      parse, both stop the write and name it.
+    </p>
+    <p>
+      <code>validate</code> without <code>channel</code> is refused at adopt,
+      because the check could never run:
+    </p>
+<CodeBlock>{`error[invalid_config]: this dog's manifest asks to be consulted before a write to
+its settings, and declares no channel to be consulted on; declare \`channel\`
+in the manifest, or drop \`validate\``}</CodeBlock>
 
     <h3 id="restart-and-the-answer">What <code>shep restart &lt;dog&gt;</code> does with the answer</h3>
     <p>
@@ -715,6 +848,13 @@ speaks protocol 9, accepts 8 and newer`}</CodeBlock>
       so a table that doesn't fit never hides the rest. shep stores every
       table and reads none of them itself. Subscribe to{" "}
       <code>config.sheep.&lt;dog&gt;</code> to hear one change.
+    </p>
+    <p>
+      A table may hold <code>{'{{secret:...}}'}</code> references. Ask{" "}
+      <code>Request::SheepDogSettingsResolved {"{"} name, dog {"}"}</code>{" "}
+      for one sheep's table with each replaced, in that sheep's own
+      environment. In <code>shep-client</code> that is{" "}
+      <code>sheep_dog_table</code>.
     </p>
 
     <h2 id="publishing-a-per-sheep-schema">Publishing a per-sheep schema</h2>

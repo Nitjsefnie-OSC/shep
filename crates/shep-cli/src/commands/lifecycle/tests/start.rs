@@ -29,12 +29,7 @@ async fn a_flockfile_load_applies_its_declared_keys_to_an_app_the_flock_has() {
     use shep_client::testing::fake_client_answering;
 
     let dir = tempfile::tempdir().unwrap();
-    let flockfile = dir.path().join("Flockfile.toml");
-    std::fs::write(
-        &flockfile,
-        "[[app]]\nname = \"zam\"\nscript = \"./srv\"\nmax_restarts = 99\n",
-    )
-    .unwrap();
+    let flockfile = write_zam_flockfile(dir.path());
     let path = shep_client::testing::control_address(dir.path());
     let (client, mut envelopes) =
         fake_client_answering(&path, a_daemon_for(a_clustered_flock(&[0, 1, 2]), &[])).await;
@@ -71,12 +66,7 @@ async fn reset_modes_choose_the_apply_config_depth_on_the_wire() {
 
     async fn sent_depth(reset: Option<ResetMode>) -> ResetDepth {
         let dir = tempfile::tempdir().unwrap();
-        let flockfile = dir.path().join("Flockfile.toml");
-        std::fs::write(
-            &flockfile,
-            "[[app]]\nname = \"zam\"\nscript = \"./srv\"\nmax_restarts = 99\n",
-        )
-        .unwrap();
+        let flockfile = write_zam_flockfile(dir.path());
         let path = shep_client::testing::control_address(dir.path());
         let (client, mut envelopes) =
             fake_client_answering(&path, a_daemon_for(a_clustered_flock(&[0, 1, 2]), &[])).await;
@@ -218,18 +208,13 @@ async fn an_assignment_reaches_the_env_of_the_sheep_it_registers() {
     args.targets.push(script.to_string_lossy().into_owned());
     let _ = start_against_with_args(&client, &args).await;
 
-    let sent = next_start(&mut envelopes).await;
-    match sent.body {
-        Request::Start { apps } => {
-            assert_eq!(apps.len(), 1);
-            assert_eq!(
-                apps[0].env.get("KOJI_TOKEN").map(String::as_str),
-                Some("s3cret"),
-                "the first spawn must already carry the value"
-            );
-        }
-        other => panic!("expected a Start request, got {other:?}"),
-    }
+    let apps = start_apps(next_start(&mut envelopes).await);
+    assert_eq!(apps.len(), 1);
+    assert_eq!(
+        apps[0].env.get("KOJI_TOKEN").map(String::as_str),
+        Some("s3cret"),
+        "the first spawn must already carry the value"
+    );
 }
 
 /// Each Flockfile's own value must reach the wire without the flag, and
@@ -262,16 +247,12 @@ async fn no_log_timestamps_reaches_the_sheep_a_script_or_a_flockfile_registers()
         args.no_log_timestamps = flag;
         let _ = start_against_with_args(&client, &args).await;
 
-        match next_start(&mut envelopes).await.body {
-            Request::Start { apps } => {
-                assert_eq!(apps.len(), 1, "{target:?} registers one app");
-                assert_eq!(
-                    apps[0].log_timestamps, want,
-                    "{target:?} with the flag {flag}"
-                );
-            }
-            other => panic!("expected a Start request, got {other:?}"),
-        }
+        let apps = start_apps(next_start(&mut envelopes).await);
+        assert_eq!(apps.len(), 1, "{target:?} registers one app");
+        assert_eq!(
+            apps[0].log_timestamps, want,
+            "{target:?} with the flag {flag}"
+        );
     }
 }
 
@@ -625,12 +606,7 @@ async fn an_assignment_reaches_the_env_of_a_sheep_add_registers() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         add(&client, &mut streams, &args, None, &BTreeMap::new()).await
     };
     assert_eq!(code, ExitCode::Success, "{}", String::from_utf8_lossy(&err));
@@ -811,12 +787,7 @@ async fn a_load_names_the_verb_that_promotes_what_is_pending() {
     use shep_client::testing::fake_client_answering;
 
     let dir = tempfile::tempdir().unwrap();
-    let flockfile = dir.path().join("Flockfile.toml");
-    std::fs::write(
-        &flockfile,
-        "[[app]]\nname = \"zam\"\nscript = \"./srv\"\nmax_restarts = 99\n",
-    )
-    .unwrap();
+    let flockfile = write_zam_flockfile(dir.path());
     let path = shep_client::testing::control_address(dir.path());
     let flock = a_clustered_flock(&[0, 1, 2]);
     let (client, _envelopes) = fake_client_answering(&path, move |request| match request {
@@ -851,12 +822,7 @@ async fn a_load_that_refused_an_app_exits_non_zero_and_still_reports_the_rest() 
     use shep_client::testing::fake_client_answering;
 
     let dir = tempfile::tempdir().unwrap();
-    let flockfile = dir.path().join("Flockfile.toml");
-    std::fs::write(
-        &flockfile,
-        "[[app]]\nname = \"zam\"\nscript = \"./srv\"\nmax_restarts = 99\n",
-    )
-    .unwrap();
+    let flockfile = write_zam_flockfile(dir.path());
     let path = shep_client::testing::control_address(dir.path());
     let flock = a_clustered_flock(&[0, 1, 2]);
     let (client, _envelopes) = fake_client_answering(&path, move |request| match request {

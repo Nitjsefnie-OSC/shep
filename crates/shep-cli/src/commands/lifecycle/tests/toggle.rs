@@ -20,12 +20,7 @@ async fn toggle_against(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, fmt);
         toggle_sheep(client, &mut streams, verb, name, &[]).await
     };
     (
@@ -308,13 +303,8 @@ async fn with_no_shepherd_a_sheep_is_refused_and_the_remedy_is_named() {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
-            toggle(&mut streams, &paths, verb, "api").await
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
+            toggle(&mut streams, &paths, verb, "api", true).await
         };
         let said = String::from_utf8(err).unwrap();
 
@@ -336,13 +326,8 @@ async fn a_dogs_name_still_edits_the_config_with_no_shepherd() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        toggle(&mut streams, &paths, Toggle::Enable, "metrics").await
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
+        toggle(&mut streams, &paths, Toggle::Enable, "metrics", true).await
     };
 
     assert_eq!(code, ExitCode::Success, "{}", String::from_utf8_lossy(&err));
@@ -374,18 +359,14 @@ async fn enable_over_a_host_treats_a_dog_name_as_a_sheep_selector_and_reads_no_l
     let mut err = Vec::new();
 
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         toggle_with(
             &mut streams,
             None,
             async |_| Ok(client),
             Toggle::Enable,
             "mydog",
+            true,
         )
         .await
     };
@@ -428,12 +409,7 @@ async fn disable_over_a_host_with_no_remote_shepherd_names_the_host_not_shep_sta
     let mut err = Vec::new();
 
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         toggle_on_host(
             &mut streams,
             &link,

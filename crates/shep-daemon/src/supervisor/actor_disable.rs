@@ -130,10 +130,7 @@ impl<R: ProcessRunner> Actor<R> {
         );
         self.reloads.remove(name);
         self.clear_reload(old_id);
-        if let Some(slot) = self.sheep.get(&old_id) {
-            let info = to_info(&slot.entry, &self.smits);
-            self.emit(ProcessEventKind::ReloadAbandoned, info, true);
-        }
+        self.emit_reload_abandoned(old_id);
     }
 
     /// Marks the apps of `apps` that `names` lists disabled, ahead of their

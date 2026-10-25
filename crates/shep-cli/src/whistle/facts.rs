@@ -237,8 +237,8 @@ impl From<&ExitInfo> for ExitInfoRow {
 impl From<&DogSource> for DogSourceRow {
     fn from(source: &DogSource) -> Self {
         match source {
-            DogSource::BuiltIn => Self::BuiltIn,
-            DogSource::Adopted { path, channel } => Self::Adopted {
+            DogSource::BuiltIn { .. } => Self::BuiltIn,
+            DogSource::Adopted { path, channel, .. } => Self::Adopted {
                 path: path.clone(),
                 channel: *channel,
             },
@@ -311,10 +311,9 @@ pub struct MetricsReading {
     /// The shepherd's crate version, from the handshake.
     ///
     /// From [`super::shepherd::Shepherd::call_with_ack`], not from the
-    /// reply: the handshake lives on the `Client` (`Client::daemon() ->
-    /// &HelloAck`, shep-client/src/client.rs:175) and plain `call` drops the
-    /// client before it returns, so `get_metrics` would have no way to fill
-    /// this field.
+    /// reply: the handshake lives on [`shep_client::Client::daemon`] and
+    /// plain `call` drops the client before it returns, so `get_metrics`
+    /// would have no way to fill this field.
     pub daemon_version: String,
     /// The shepherd's pid, from the same handshake and the same call.
     pub daemon_pid: u32,
@@ -402,6 +401,7 @@ mod tests {
             .max_memory(Some(64 * 1024 * 1024))
             .cpu_ms(Some(5_678))
             .dog(Some(DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/dog".to_string(),
                 channel: true,
             }))
@@ -426,10 +426,15 @@ mod tests {
     #[test]
     fn every_dog_source_shape_serializes_exactly_as_dog_source_does() {
         let adopted = |channel| DogSource::Adopted {
+            grants: None,
             path: "/usr/local/bin/dog".to_string(),
             channel,
         };
-        for source in [DogSource::BuiltIn, adopted(false), adopted(true)] {
+        for source in [
+            DogSource::BuiltIn { grants: None },
+            adopted(false),
+            adopted(true),
+        ] {
             assert_eq!(
                 serde_json::to_value(DogSourceRow::from(&source)).unwrap(),
                 serde_json::to_value(&source).unwrap(),
@@ -466,6 +471,7 @@ mod tests {
             .cpu_percent(Some(12.5))
             .memory_bytes(Some(1024 * 1024))
             .dog(Some(DogSource::Adopted {
+                grants: None,
                 path: "/usr/local/bin/dog".to_string(),
                 channel: false,
             }))

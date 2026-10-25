@@ -50,6 +50,31 @@ impl<R: ProcessRunner> Actor<R> {
             .collect()
     }
 
+    /// `name`'s table for `dog`, and the environment a reference in it
+    /// resolves in: the stored spec's `environment`, or the shepherd's when
+    /// it sets none, as [`Self::secret_view`] reads it.
+    ///
+    /// The slot is the one [`Self::dog_tables`] picks, ranked by
+    /// [`speaker_rank`], so this and the plain read agree about which slot
+    /// speaks for the name. `None` when no sheep has that name; a dog's own
+    /// name has none, since [`Self::dog_tables`] never lists a dog.
+    pub(super) fn handle_sheep_dog_read(&self, name: &str, dog: &str) -> Option<SheepDogRead> {
+        let (_, slot) = self
+            .sheep
+            .iter()
+            .filter(|(_, slot)| slot.entry.dog.is_none())
+            .filter(|(_, slot)| slot.entry.spec.config().name == name)
+            .min_by_key(|(id, slot)| speaker_rank(**id, slot))?;
+        let config = slot.entry.spec.config();
+        Some(SheepDogRead {
+            table: config.dogs.get(dog).cloned(),
+            environment: config
+                .environment
+                .clone()
+                .unwrap_or_else(|| self.host_environment.clone()),
+        })
+    }
+
     /// Sets `dog`'s table on `name`, or removes it with `None`, as an
     /// operator override of the whole `dogs` field.
     ///

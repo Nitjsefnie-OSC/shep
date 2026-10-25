@@ -311,14 +311,16 @@ mod tests {
             ],
             "the nine shared columns, in the sheep table's own order"
         );
-        assert!(
-            dogs_table
-                .lines()
-                .next()
-                .unwrap()
-                .trim_end()
-                .ends_with("SOURCE"),
-            "and this table's own column last"
+        let header: Vec<&str> = dogs_table
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .collect();
+        assert_eq!(
+            &header[9..],
+            ["SOURCE", "ACCESS"],
+            "and this table's own columns last"
         );
     }
 
@@ -403,7 +405,7 @@ mod tests {
     #[test]
     fn a_flock_with_no_silent_dog_says_nothing_about_silence() {
         let mut out = Vec::new();
-        let mut talking = dog_info("bark", DogSource::BuiltIn);
+        let mut talking = dog_info("bark", DogSource::BuiltIn { grants: None });
         talking.handshook = Some(true);
         talking.dog_stale = Some(false);
         emit_flock(

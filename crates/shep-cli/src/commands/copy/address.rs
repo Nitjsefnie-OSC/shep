@@ -27,6 +27,10 @@ use super::CopyRefusal;
 /// The one path root that is not an `AppConfig` field name.
 const DOGS: &str = "dogs";
 
+/// The `AppConfig` field a copy takes through the shepherd, not through the
+/// config a client reads.
+const ENV: &str = "env";
+
 /// The flock's names, split the way an address needs them.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct FlockNames {
@@ -53,6 +57,9 @@ pub(crate) enum ConfigPath {
         /// The field name.
         name: String,
     },
+    /// The sheep's whole env. The shepherd reads both sides, because a client
+    /// is never sent the values.
+    Env,
     /// One dog's table, or a key inside it. An empty `keys` is the whole
     /// table.
     Dog {
@@ -63,11 +70,22 @@ pub(crate) enum ConfigPath {
     },
 }
 
+/// The refusal for a verb that writes one key at a time and has no way to
+/// write a sheep's env.
+///
+/// `shep copy` takes `env` through the shepherd; `shep set` and `shep unset`
+/// do not.
+pub(crate) const ENV_NOT_WRITTEN: &str = "`env` is not written here: a client is never sent a \
+    sheep's env values. `shep copy <sheep>.env <other>.env` copies one sheep's env onto \
+    another's, `shep import env` writes a `.env` into a sheep's env, and `shep secret` holds the \
+    values a Flockfile refers to";
+
 impl ConfigPath {
     /// The path as an operator writes it after the sheep name.
     pub(crate) fn dotted(&self) -> String {
         match self {
             Self::Field { name } => name.clone(),
+            Self::Env => ENV.to_string(),
             Self::Dog { dog, keys } => {
                 let mut out = format!("{DOGS}.{dog}");
                 for key in keys {
@@ -178,7 +196,11 @@ impl DogNames {
 }
 
 /// The longest name in `names` that `rest` starts with, `None` when none does.
-fn longest_in(rest: &[String], names: &BTreeSet<String>) -> Option<String> {
+///
+/// `pub(crate)`: `shep get` splits a dog's own name the same way `shep copy`
+/// splits a sheep's, and one rule for "the longest name this address starts
+/// with" is what keeps the two verbs reading `we.b.dogs.kelpie` alike.
+pub(crate) fn longest_in(rest: &[String], names: &BTreeSet<String>) -> Option<String> {
     names
         .iter()
         .filter(|name| {
@@ -246,13 +268,8 @@ pub(crate) fn path_of(
     }
 
     let field = first.as_str();
-    if field == "env" {
-        return Err(CopyRefusal::Refused(
-            "`env` is not copied: a client is never sent a sheep's env values, so there is \
-             nothing here to read. `shep import env` writes a `.env` into a sheep's env, and \
-             `shep secret` holds the values a Flockfile refers to"
-                .to_string(),
-        ));
+    if field == ENV {
+        return Ok(ConfigPath::Env);
     }
     if apply_group(field) == ApplyGroup::Structural {
         return Err(CopyRefusal::Refused(format!(
@@ -278,6 +295,12 @@ pub(crate) fn path_of(
 /// `api` then `token` when it holds a table under `api`. A key nothing holds
 /// stays one segment, which is what lets the plan name the source that is
 /// missing rather than invent a path.
+///
+/// The walk descends by the key it matched, not by the segments that spelled
+/// it. A table holding `api.token` has no `api` to fall into, so stepping one
+/// segment at a time lands outside the table and reads the rest of the address
+/// as segments nothing holds: `api.token.auth.key` becomes `api.token`, `auth`,
+/// `key` instead of `api.token`, `auth.key`.
 pub(crate) fn resolve_keys(
     rest: &[String],
     source: Option<&Value>,
@@ -289,11 +312,10 @@ pub(crate) fn resolve_keys(
     let mut next = 0;
     while next < rest.len() {
         let taken = longest_key(&rest[next..], src, tgt);
-        keys.push(taken.join("."));
-        for part in &taken {
-            src = src.and_then(|value| value.as_object().and_then(|map| map.get(part)));
-            tgt = tgt.and_then(|value| value.as_object().and_then(|map| map.get(part)));
-        }
+        let key = taken.join(".");
+        keys.push(key.clone());
+        src = src.and_then(|value| value.as_object().and_then(|map| map.get(key.as_str())));
+        tgt = tgt.and_then(|value| value.as_object().and_then(|map| map.get(key.as_str())));
         next += taken.len();
     }
     keys
@@ -359,7 +381,10 @@ fn is_path_root(segment: &&str) -> bool {
 ///
 /// Read off the type rather than a hand-kept list, so a field added to
 /// `AppConfig` is copyable without editing this file.
-fn app_fields() -> impl Iterator<Item = &'static str> {
+///
+/// `pub(crate)`: `shep get` refuses a path that is no field for the same
+/// reason `shep copy` does.
+pub(crate) fn app_fields() -> impl Iterator<Item = &'static str> {
     STATIC_FIELDS.iter().map(String::as_str)
 }
 
@@ -524,13 +549,20 @@ mod tests {
         ));
     }
 
-    /// The three keys the shepherd refuses, each with the verb that does it.
     #[test]
-    fn env_name_instances_and_the_whole_dogs_map_each_say_why() {
-        let env = parse("web.env", &flock()).unwrap_err();
-        assert!(env.message().contains("shep import env"), "{env}");
-        assert!(env.message().contains("shep secret"), "{env}");
+    fn env_is_a_path_of_its_own() {
+        assert_eq!(parse("web.env", &flock()).unwrap().path, ConfigPath::Env);
+    }
 
+    #[test]
+    fn a_verb_that_cannot_write_env_names_the_one_that_can() {
+        assert!(ENV_NOT_WRITTEN.contains("shep copy"));
+        assert!(ENV_NOT_WRITTEN.contains("shep import env"));
+    }
+
+    /// The three paths a copy refuses, each with the verb that does it.
+    #[test]
+    fn name_instances_and_the_whole_dogs_map_each_say_why() {
         let instances = parse("web.instances", &flock()).unwrap_err();
         assert!(
             instances.message().contains("shep stock web"),
@@ -651,6 +683,35 @@ mod tests {
                 dog: "kelpie".into(),
                 keys: vec!["api".into(), "limit".into()]
             }
+        );
+    }
+
+    /// fails if the walk falls out of the table a dotted key names: a key
+    /// holding a dot has no shorter key to step through, so the second dotted
+    /// key has to be read inside the first, and `api.token.auth.key` is two
+    /// keys rather than `api.token` and two segments nothing holds.
+    #[test]
+    fn a_dotted_key_inside_a_dotted_key_stays_two_keys() {
+        let source = json!({ "dogs": { "kelpie": { "api.token": { "auth.key": 42 } } } });
+        let deep = parse_against(
+            "web.dogs.kelpie.api.token.auth.key",
+            &flock(),
+            &source,
+            &Value::Null,
+        )
+        .unwrap();
+        assert_eq!(
+            deep.path,
+            ConfigPath::Dog {
+                dog: "kelpie".into(),
+                keys: vec!["api.token".into(), "auth.key".into()]
+            },
+            "the walk stays inside the table `api.token` names"
+        );
+        assert_eq!(
+            deep.path.dotted(),
+            "dogs.kelpie.api.token.auth.key",
+            "it prints back as it was typed"
         );
     }
 

@@ -8,6 +8,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+use shep_core::dogs::manifest::Manifest;
 use shep_core::dogs::{DogVersion, SCHEMA_FLAG, VERSION_FLAG, parse_version_answer};
 use shep_core::paths::ShepPaths;
 use shep_core::protocol::{MIN_SUPPORTED, SelectorSpec};
@@ -15,6 +16,10 @@ use shep_core::protocol::{MIN_SUPPORTED, SelectorSpec};
 use crate::commands::shep_toml::ShepToml;
 use crate::exit::ExitCode;
 use crate::output::Streams;
+
+mod manifest;
+
+pub(crate) use manifest::{ManifestRead, cached_manifest, read_manifest};
 
 /// Why a binary cannot be adopted.
 ///
@@ -65,6 +70,12 @@ pub enum AdoptRefusal {
         /// [`MIN_SUPPORTED`], the oldest protocol this shep still accepts.
         min: u32,
     },
+    /// The manifest declares `validate: true`, which is this dog being asked
+    /// to approve a write to its own settings, and declares no channel to be
+    /// asked on. Adopting it would record a check shep could never run: every
+    /// ask would find no channel, and a check that never runs is a check an
+    /// operator believes is running.
+    ValidateWithoutChannel,
 }
 
 impl std::fmt::Display for AdoptRefusal {
@@ -91,6 +102,12 @@ impl std::fmt::Display for AdoptRefusal {
                  newer; reinstall the dog without --locked so it builds against the current \
                  shep-core, or run a shep that accepts protocol {dog}"
             ),
+            Self::ValidateWithoutChannel => write!(
+                f,
+                "this dog's manifest asks to be consulted before a write to its settings, and \
+                 declares no channel to be consulted on; declare `channel` in the manifest, or \
+                 drop `validate`"
+            ),
         }
     }
 }
@@ -102,13 +119,16 @@ impl core::error::Error for AdoptRefusal {}
 /// Returns the absolute, canonicalized path: the daemon exec's it after a
 /// reboot, from whatever directory the init system gave it. Checks in order,
 /// each refusing before the next: existence, file-ness, the execute bit,
-/// [`writability`], then one spawn per probe flag, since a probe runs the
-/// binary under `home` and `name`, the environment the adopted dog gets.
+/// [`writability`], then the manifest probe, and `--version` and `--schema`
+/// when it has no manifest. A probe runs the binary under `home` and `name`,
+/// the environment the adopted dog gets.
 ///
 /// # Errors
 /// [`AdoptRefusal`] when the path does not resolve, is not a file this
-/// kernel will exec, or answers a protocol this shep cannot speak. Silence
-/// is not an error: unknown protocol, [`DogSchema::Silent`] schema.
+/// kernel will exec, answers a protocol this shep cannot speak, or declares
+/// `validate` without the channel [`AdoptRefusal::ValidateWithoutChannel`]
+/// needs. Silence is not an error: unknown protocol, [`DogSchema::Silent`]
+/// schema.
 pub fn vet_binary(path: &Path, home: &Path, name: &str) -> Result<VettedBinary, AdoptRefusal> {
     vet_binary_within(path, home, name, VERSION_BUDGET)
 }
@@ -121,7 +141,7 @@ pub fn vet_binary(path: &Path, home: &Path, name: &str) -> Result<VettedBinary, 
 ///
 /// `budget` bounds one wait, not the call. [`answer_text`] gives the full
 /// budget to each of two waits, the child's exit and its output, so a probe
-/// costs roughly twice `budget` and a vet runs two probes.
+/// costs roughly twice `budget` and a vet runs up to three probes.
 ///
 /// # Errors
 /// The same [`AdoptRefusal`] set [`vet_binary`] raises.
@@ -150,7 +170,18 @@ pub fn vet_binary_within(
         .map(|abs| shep_core::paths::strip_verbatim_prefix(&abs).into_owned())
         .map_err(lookup_refusal)?;
     let group_writable = writability(&canonical)?;
-    let answer = ask_version(&canonical, home, name, budget)?;
+    let manifest = match read_manifest(&canonical, home, name, budget)? {
+        ManifestRead::Read(manifest) => Some(manifest),
+        // A dog that answered nothing, and one whose answer could not be read,
+        // are both a dog with no manifest for `adopt` to record. `adopt` has
+        // always gone ahead for either, and nothing here can tell an operator
+        // which one happened.
+        ManifestRead::Absent | ManifestRead::Unreadable => None,
+    };
+    let answer = match &manifest {
+        Some(manifest) => Some(manifest::version_of(manifest)),
+        None => ask_version(&canonical, home, name, budget)?,
+    };
     // `answer.version` is never compared: a third-party dog's crate version
     // has no relationship to shep's own. Only the protocol decides whether
     // the dog can connect.
@@ -162,14 +193,26 @@ pub fn vet_binary_within(
             min: MIN_SUPPORTED,
         });
     }
+    // A dog that asks to be consulted is consulted over its channel, and a
+    // manifest that asks without one promises a check shep can never run.
+    if manifest
+        .as_ref()
+        .is_some_and(|manifest| manifest.validate && !manifest.channel)
+    {
+        return Err(AdoptRefusal::ValidateWithoutChannel);
+    }
     // After the protocol refusal: a candidate shep is about to refuse is
     // not run a second time.
-    let schema = ask_schema(&canonical, home, name, budget);
+    let schema = match &manifest {
+        Some(manifest) => manifest::schema_of(manifest),
+        None => ask_schema(&canonical, home, name, budget),
+    };
     Ok(VettedBinary {
         path: canonical,
         group_writable,
         answer,
         schema,
+        manifest,
     })
 }
 
@@ -241,7 +284,8 @@ pub(crate) fn dog_env(home: &Path, name: &str) -> Vec<(String, OsString)> {
     env
 }
 
-/// Runs `path` with `flag`, one of [`VERSION_FLAG`] or [`SCHEMA_FLAG`], and
+/// Runs `path` with `flag`, one of [`VERSION_FLAG`], [`SCHEMA_FLAG`] or
+/// [`MANIFEST_FLAG`](shep_core::dogs::MANIFEST_FLAG), and
 /// hands back what it printed on stdout, within `budget`.
 ///
 /// `Ok(None)` is no answer, and never a fault: silence, a run that failed,
@@ -374,7 +418,7 @@ pub(crate) fn ask_schema(path: &Path, home: &Path, name: &str, budget: Duration)
 
 /// A binary [`vet_binary`] accepted, and what an operator should still be
 /// told about it.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct VettedBinary {
     /// The absolute, canonicalized path: the one `adopt` records and the
     /// daemon later exec's.
@@ -388,6 +432,24 @@ pub struct VettedBinary {
     /// What it answered when asked for its config schema. Written down by
     /// nobody, for the reason [`ask_schema`] gives.
     pub schema: DogSchema,
+    /// What it answered when asked for its manifest, and `None` for a dog
+    /// that has none: undeclared. [`answer`](Self::answer) and
+    /// [`schema`](Self::schema) come from it when there is one.
+    pub manifest: Option<Manifest>,
+}
+
+/// Reports that there is a manifest, never what is in it: its `defaults`
+/// are the field [`DogSchema`]'s `Debug` already keeps off a screen.
+impl core::fmt::Debug for VettedBinary {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("VettedBinary")
+            .field("path", &self.path)
+            .field("group_writable", &self.group_writable)
+            .field("answer", &self.answer)
+            .field("schema", &self.schema)
+            .field("manifest", &self.manifest.as_ref().map(|_| ".."))
+            .finish()
+    }
 }
 
 /// What a candidate answered when asked for its config schema. Three
@@ -755,3 +817,8 @@ pub fn warn_of_a_dog_a_restart_would_break(
 // `tests/cli_e2e.rs`.
 #[cfg(all(test, unix))]
 mod tests;
+
+/// The same probes, for the one manifest field that is a promise about a
+/// check shep runs: `validate`, which needs the channel to run on.
+#[cfg(all(test, unix))]
+mod validate_tests;

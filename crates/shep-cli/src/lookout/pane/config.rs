@@ -29,11 +29,35 @@ use super::sheep_dog::SheepDogTable;
 #[cfg(doc)]
 use super::super::field::ValueKind;
 use super::dogs::dog_names;
-use super::{DogsPane, EnvTyping, ListPane, Lock, PaneEdit, PaneRow, PaneTarget, PaneTyping};
+use super::{
+    DogsPane, EnvTyping, ListPane, Lock, PaneEdit, PaneRow, PaneTarget, PaneTyping, PathStep,
+};
 #[cfg(doc)]
 use shep_core::config::GROUP_ORDER;
 #[cfg(doc)]
 use shep_core::values::{MemSize, UpDuration};
+
+/// One dog's own table and the schema its rows were built from: the two
+/// halves of what `Request::SetDogConfig` replaces.
+///
+/// `Debug` is manual and redacted (IR-41): a schema can carry a `default`
+/// that is a token, and a section is the operator's text, comments and all.
+/// Neither is printed, which is the reason [`crate::lookout::pane::SheepDogEntry`]'s
+/// `Debug` withholds its schema too.
+#[derive(Clone)]
+pub(super) struct DogSection {
+    /// The `[<name>]` section as the shepherd last sent it.
+    pub(super) toml: String,
+    /// The dog's answer to the schema flag, probed at open and kept nowhere
+    /// else.
+    pub(super) schema: Value,
+}
+
+impl core::fmt::Debug for DogSection {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "DogSection {{ <section>, <schema> }}")
+    }
+}
 
 /// The state of an open pane.
 ///
@@ -79,7 +103,8 @@ pub struct ConfigPane {
     /// the same time as [`Self::list`] or an editor: it opens only on a
     /// field list with nothing else up.
     pub(super) dogs: Option<Box<DogsPane>>,
-    /// The dog's `[<name>]` table as TOML text, and [`None`] for a sheep.
+    /// The dog's `[<name>]` table as TOML text, with the schema its rows
+    /// were built from, and [`None`] for a sheep.
     ///
     /// Kept beside the parsed `values` rather than instead of them, because
     /// the two answer different questions: `values` is what the rows render,
@@ -87,7 +112,13 @@ pub struct ConfigPane {
     /// whole section, so an edit that re-rendered it from `values` would
     /// throw away every comment the operator wrote. See
     /// [`Self::edited_section_with`].
-    pub(super) section: Option<String>,
+    ///
+    /// The schema rides along in the same box because it is the other half
+    /// of the same question: it is what says a proposed section may go out,
+    /// and see [`crate::dog_settings::touched_refusal`]. Boxed, like
+    /// [`Self::dog_table`]: a `Value` this size does not belong in every move
+    /// of a pane that sits in [`crate::lookout::app::Body`] unboxed.
+    pub(super) section: Option<Box<DogSection>>,
     /// A dog's table on a sheep, whole, and where each dotted row lives in
     /// it. [`None`] for every other target. See [`Self::sheep_dog`].
     pub(super) dog_table: Option<Box<SheepDogTable>>,
@@ -205,12 +236,7 @@ impl ConfigPane {
                 .collect(),
             &[],
         );
-        let table: Map<String, Value> = section
-            .parse::<toml::Table>()
-            .ok()
-            .and_then(|table| serde_json::to_value(table).ok())
-            .and_then(|value| value.as_object().cloned())
-            .unwrap_or_default();
+        let table: Map<String, Value> = toml_table(&section);
         let values = flatten_values(&table, &paths);
         let entries = EntryRows::build(&fields, &paths, &values, shapes);
         Self {
@@ -227,7 +253,10 @@ impl ConfigPane {
             env_typing: None,
             list: None,
             dogs: None,
-            section: Some(section),
+            section: Some(Box::new(DogSection {
+                toml: section,
+                schema,
+            })),
             dog_table: None,
             reshapes: Arc::default(),
             arms: Arc::default(),
@@ -238,11 +267,67 @@ impl ConfigPane {
         }
     }
 
+    /// The schema these rows were built from, for the gate a write goes
+    /// through. See [`crate::dog_settings::touched_refusal`].
+    ///
+    /// [`None`] for a sheep pane, whose write is one field per request and
+    /// whose schema is the Flockfile's, and for a dog the shepherd never
+    /// answered a schema for.
+    #[must_use]
+    pub(in crate::lookout) fn schema(&self) -> Option<&Value> {
+        self.section
+            .as_ref()
+            .map(|held| &held.schema)
+            .or_else(|| self.dog_table.as_ref().map(|table| &table.schema))
+    }
+
+    /// The dog's section as the shepherd last sent it, and [`None`] for any
+    /// other target.
+    #[must_use]
+    pub(in crate::lookout) fn section_text(&self) -> Option<&str> {
+        self.section.as_ref().map(|held| held.toml.as_str())
+    }
+
+    /// Where the field edits in `edits` land in the table a write carries, as
+    /// property paths, for [`crate::dog_settings::touched_refusal`].
+    ///
+    /// The same walk [`Self::write_path`] does on the way into a dog section:
+    /// an entry leaf at its own index, every other row at the path
+    /// [`flattened`] built its key out of. A key this pane holds no path for
+    /// names nothing the write changes, so it names nothing to check.
+    #[must_use]
+    pub(in crate::lookout) fn touched_paths(&self, edits: &Edits) -> BTreeSet<Vec<String>> {
+        let mut paths = BTreeSet::new();
+        for (key, _) in edits.iter() {
+            let EditKey::Field(row) = key else {
+                continue;
+            };
+            if let Some(leaf) = self.entries.leaf(row) {
+                let path: Vec<String> = leaf
+                    .at
+                    .iter()
+                    .map(|step| match step {
+                        PathStep::Key(name) => name.clone(),
+                        PathStep::Index(index) => index.to_string(),
+                    })
+                    .collect();
+                paths.insert(path);
+            } else if let Some(path) = self.section_paths.get(row).or_else(|| {
+                self.dog_table
+                    .as_ref()
+                    .and_then(|table| table.paths.get(row))
+            }) {
+                paths.insert(path.clone());
+            }
+        }
+        paths
+    }
+
     /// Whether `section` is the text this dog pane last took from the
     /// shepherd, comments included. False for any other target.
     #[must_use]
     pub(in crate::lookout) fn holds_section(&self, section: &str) -> bool {
-        self.section.as_deref() == Some(section)
+        self.section_text() == Some(section)
     }
 
     /// The key under the cursor, and why the pane will not edit it, when it
@@ -615,4 +700,21 @@ pub(super) const fn reload_mode(readiness: ConfiguredReadiness, reuse_port: bool
         (ConfiguredReadiness::Probe, false) => ReloadKind::Serial,
         _ => ReloadKind::Overlap,
     }
+}
+
+/// A dog's section text as the JSON table [`crate::dog_settings::touched_refusal`]
+/// reads, or an empty one for text that does not parse.
+///
+/// The same conversion the pane runs on the section it opens on, so the table
+/// a write is checked against is built the way the table the pane's rows were
+/// read out of is. A section that does not parse reads as empty and refuses
+/// nothing: [`crate::lookout::pane::SectionWrite::Refused`] is what stops that
+/// write, in the sentence
+/// that names the file.
+pub(in crate::lookout) fn toml_table(text: &str) -> Map<String, Value> {
+    text.parse::<toml::Table>()
+        .ok()
+        .and_then(|table| serde_json::to_value(table).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default()
 }

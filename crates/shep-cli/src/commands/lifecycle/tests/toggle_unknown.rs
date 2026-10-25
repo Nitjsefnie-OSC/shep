@@ -13,12 +13,7 @@ async fn toggle_with_dogs(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         toggle_sheep(client, &mut streams, verb, name, dogs).await
     };
     (code, String::from_utf8(err).unwrap())
@@ -91,13 +86,8 @@ async fn an_unknown_name_with_no_shepherd_exits_unreachable() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
-        toggle(&mut streams, &paths, Toggle::Enable, "metrcs").await
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
+        toggle(&mut streams, &paths, Toggle::Enable, "metrcs", true).await
     };
 
     assert_eq!(code, ExitCode::DaemonUnreachable);

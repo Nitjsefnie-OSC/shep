@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 mod adopted;
+mod adopted_help;
 mod cli;
 mod client;
 mod commands;
@@ -17,6 +18,7 @@ mod config;
 mod dispatch;
 mod dog;
 mod dog_index;
+mod dog_settings;
 mod entry;
 mod exit;
 mod fetch;

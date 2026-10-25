@@ -426,17 +426,8 @@ mod tests {
     use crate::exit::ExitCode;
     use crate::output::Streams;
 
-    fn streams_with<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>, fmt: Format) -> Streams<'a> {
-        Streams {
-            out,
-            err,
-            style: crate::style::Presentation::BARE,
-            fmt,
-        }
-    }
-
     fn streams<'a>(out: &'a mut Vec<u8>, err: &'a mut Vec<u8>) -> Streams<'a> {
-        streams_with(out, err, Format::Json)
+        Streams::bare(out, err, Format::Json)
     }
 
     /// `$SHEP_HOME` is `dir` itself, so `paths.secrets`' parent exists:
@@ -491,7 +482,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = get(
-            &mut streams_with(&mut out, &mut err, fmt),
+            &mut Streams::bare(&mut out, &mut err, fmt),
             paths,
             key,
             environment,
@@ -547,7 +538,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = secret(
-            &mut streams_with(&mut out, &mut err, Format::Table),
+            &mut Streams::bare(&mut out, &mut err, Format::Table),
             paths,
             &args,
         );

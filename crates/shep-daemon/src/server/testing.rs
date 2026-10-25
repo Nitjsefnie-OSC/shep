@@ -109,11 +109,11 @@ pub(super) async fn connected(ctx: RpcContext) -> Client {
 pub(super) async fn start_dog(ctx: &RpcContext, name: &str) -> ProcessInfo {
     let spec = crate::dogs::DogSpec {
         name: name.to_string(),
-        source: DogSource::BuiltIn,
+        source: DogSource::BuiltIn { grants: None },
     };
     let app = crate::dogs::dog_app(&spec, &ctx.paths).expect("the dog fixture must assemble");
     ctx.supervisor
-        .start_dog(app, DogSource::BuiltIn)
+        .start_dog(app, DogSource::BuiltIn { grants: None })
         .await
         .expect("the dog fixture must start")
 }

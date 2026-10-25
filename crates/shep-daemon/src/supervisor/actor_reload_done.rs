@@ -32,9 +32,7 @@ impl<R: ProcessRunner> Actor<R> {
         self.clear_reload(new_id);
 
         if readiness == Readiness::Ready {
-            let info = to_info(&self.sheep[&new_id].entry, &self.smits);
-            self.emit(ProcessEventKind::Reloaded, info, true);
-            self.advance_reload(name, job.queue);
+            self.commit_swap_success(name, new_id, job.queue);
             return;
         }
 
@@ -212,10 +210,7 @@ impl<R: ProcessRunner> Actor<R> {
                 );
                 self.reloads.remove(name);
                 self.clear_reload(old_id);
-                if let Some(slot) = self.sheep.get(&old_id) {
-                    let info = to_info(&slot.entry, &self.smits);
-                    self.emit(ProcessEventKind::ReloadAbandoned, info, true);
-                }
+                self.emit_reload_abandoned(old_id);
             }
             ReloadPhase::AwaitReady => {
                 self.abort_reload(
@@ -238,10 +233,7 @@ impl<R: ProcessRunner> Actor<R> {
                 );
                 self.reloads.remove(name);
                 self.clear_reload(new_id);
-                if let Some(slot) = self.sheep.get(&new_id) {
-                    let info = to_info(&slot.entry, &self.smits);
-                    self.emit(ProcessEventKind::ReloadAbandoned, info, true);
-                }
+                self.emit_reload_abandoned(new_id);
             }
         }
     }
@@ -339,10 +331,7 @@ impl<R: ProcessRunner> Actor<R> {
                      be spawned, so the instance slot is empty"
                 );
                 self.reloads.remove(name);
-                if let Some(slot) = self.sheep.get(&old_id) {
-                    let info = to_info(&slot.entry, &self.smits);
-                    self.emit(ProcessEventKind::ReloadAbandoned, info, true);
-                }
+                self.emit_reload_abandoned(old_id);
             }
         }
     }
@@ -396,5 +385,34 @@ impl<R: ProcessRunner> Actor<R> {
         if let Some(slot) = self.sheep.get_mut(&id) {
             slot.entry.reload = ReloadState::None;
         }
+    }
+
+    /// Announces that the reload `id` belonged to ended without replacing
+    /// anything, read off the entry that reload leaves behind.
+    ///
+    /// Emits nothing once that entry is deregistered. Callers drop the job and
+    /// clear the markers first, so the event never names a swap still in
+    /// flight, and they set the status the event should carry before calling.
+    pub(super) fn emit_reload_abandoned(&mut self, id: u32) {
+        if let Some(slot) = self.sheep.get(&id) {
+            let info = to_info(&slot.entry, &self.smits);
+            self.emit(ProcessEventKind::ReloadAbandoned, info, true);
+        }
+    }
+
+    /// Commits a swap that succeeded: announces the replacement as reloaded,
+    /// then moves the reload on to its next instance.
+    ///
+    /// The event goes out before the next swap starts, so a clustered app's
+    /// reload reads in order. Callers owe it only to a replacement still
+    /// registered and serving, and have already dropped the job it belongs to.
+    pub(super) fn commit_swap_success(&mut self, name: &str, new_id: u32, queue: VecDeque<u32>) {
+        let slot = self
+            .sheep
+            .get(&new_id)
+            .expect("commit_swap_success: the replacement was read a moment ago");
+        let info = to_info(&slot.entry, &self.smits);
+        self.emit(ProcessEventKind::Reloaded, info, true);
+        self.advance_reload(name, queue);
     }
 }

@@ -8,6 +8,8 @@
 use core::fmt;
 use std::collections::BTreeSet;
 
+use shep_core::config::DogTable;
+use shep_core::config::key_path::{push_index, push_key};
 use shep_core::config::template::render_secrets;
 use shep_core::protocol::DogSectionToml;
 use shep_core::secrets::{SecretError, SecretView, references_in};
@@ -142,6 +144,45 @@ pub fn store_unreadable(raw: &str, source: &SecretError) -> DogError {
     }
 }
 
+/// `table`, a sheep's per-dog table, with every `{{secret:...}}` string
+/// value replaced by its resolution in `view`.
+///
+/// The JSON counterpart of [`resolve_section`]: strings in nested objects
+/// and arrays are walked, a string that changed is replaced, and keys and
+/// every non-string value are carried over. `root` is the table's key path
+/// in the message (`dogs.deploy`), so a refusal names where the string sits.
+///
+/// # Errors
+/// - [`DogError::Reference`]: a reference `view` cannot resolve, or a
+///   `{{secret:` token outside the reference grammar. Carries the key path
+///   of the first such string and never a value.
+pub fn resolve_table(
+    table: &DogTable,
+    root: &str,
+    view: &SecretView,
+) -> Result<DogTable, DogError> {
+    table.try_map_strings(root, |key_path, text| {
+        let rendered = render_secrets(text, view).map_err(|source| DogError::Reference {
+            key_path: key_path.to_string(),
+            source,
+        })?;
+        Ok((rendered != text).then_some(rendered))
+    })
+}
+
+/// The error for a table that names references when the store holding them
+/// could not be read.
+///
+/// Names the key path of the first reference under `root`. The caller has
+/// already established that `table` names one.
+#[must_use]
+pub fn table_store_unreadable(table: &DogTable, root: &str, source: &SecretError) -> DogError {
+    DogError::SecretStore {
+        key_path: table.first_reference_path(root).unwrap_or_default(),
+        fault: source.into(),
+    }
+}
+
 /// What a visitor does with one string value: the key path it sits at and
 /// its text in, the replacement out, or `None` to leave it.
 type Visit<'a, E> = dyn FnMut(&str, &str) -> Result<Option<String>, E> + 'a;
@@ -219,27 +260,6 @@ fn walk_value<E>(value: &mut Value, path: &mut String, visit: &mut Visit<'_, E>)
         }
         _ => Ok(()),
     }
-}
-
-/// Appends `.key`, or `key` at the root. A key that is not a bare TOML key
-/// is quoted so the path stays unambiguous.
-fn push_key(path: &mut String, key: &str) {
-    if !path.is_empty() {
-        path.push('.');
-    }
-    let bare = !key.is_empty()
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-    if bare {
-        path.push_str(key);
-    } else {
-        path.push_str(&format!("{key:?}"));
-    }
-}
-
-fn push_index(path: &mut String, index: usize) {
-    path.push_str(&format!("[{index}]"));
 }
 
 #[cfg(test)]
@@ -505,5 +525,124 @@ d = { e = \"{{secret:THREE}}\" }
             resolve_section("k = ", &SecretView::empty("production".to_string())).unwrap_err();
         assert!(matches!(err, DogError::Config(_)), "{err}");
         assert!(section_references("k = ").is_empty());
+    }
+
+    fn table_of(value: serde_json::Value) -> DogTable {
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn a_table_reference_in_a_nested_object_and_an_array_resolves() {
+        let table = table_of(serde_json::json!({
+            "token": "{{secret:T}}",
+            "port": 9615,
+            "on": true,
+            "none": null,
+            "plain": "unchanged",
+            "kinds": ["exit", "{{secret:T}}", 3],
+            "env": { "deep": "https://x.invalid/{{secret:T}}", "n": 1.5 },
+            "rules": [{ "url": "{{secret:T}}" }],
+        }));
+        let resolved = resolve_table(
+            &table,
+            "dogs.deploy",
+            &view("production", &[("T", "s3cret")]),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&resolved).unwrap(),
+            serde_json::json!({
+                "token": "s3cret",
+                "port": 9615,
+                "on": true,
+                "none": null,
+                "plain": "unchanged",
+                "kinds": ["exit", "s3cret", 3],
+                "env": { "deep": "https://x.invalid/s3cret", "n": 1.5 },
+                "rules": [{ "url": "s3cret" }],
+            })
+        );
+    }
+
+    #[test]
+    fn a_table_reference_is_refused_naming_its_key_path_under_the_root() {
+        let table = table_of(serde_json::json!({
+            "env": { "TOKEN": "{{secret:TOKEN}}" },
+            "kinds": ["ok", "{{secret:TOKEN}}"],
+        }));
+        let err =
+            resolve_table(&table, "dogs.deploy", &view("staging", &[("K", SENTINEL)])).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "`dogs.deploy.env.TOKEN`: `{{secret:TOKEN}}` has no value in the `staging` environment"
+        );
+        assert_eq!(
+            table.first_reference_path("dogs.deploy").as_deref(),
+            Some("dogs.deploy.env.TOKEN")
+        );
+        let unreadable = table_store_unreadable(
+            &table,
+            "dogs.deploy",
+            &SecretError::Io(std::io::Error::other(SENTINEL)),
+        );
+        assert_eq!(
+            unreadable.to_string(),
+            "`dogs.deploy.env.TOKEN`: the secret store could not be read (I/O failed)"
+        );
+    }
+
+    #[test]
+    fn table_references_agrees_with_what_resolve_table_substitutes() {
+        let table = table_of(serde_json::json!({
+            "a": "{{secret:ONE}}",
+            "b": ["{{secret:vercel/TWO}}", "{{name}}"],
+            "c": "{{secret:ONE}} {{{{secret:NOPE}}}} {{secret:",
+            "{{secret:IN_A_KEY}}": 1,
+            "t": { "d": { "e": "{{secret:THREE}}" } },
+        }));
+        assert_eq!(
+            table.references(),
+            BTreeSet::from([
+                "ONE".to_string(),
+                "THREE".to_string(),
+                "vercel/TWO".to_string()
+            ])
+        );
+
+        let providers = ProviderCache::new(
+            BTreeMap::from([(
+                "vercel".to_string(),
+                BTreeMap::from([(
+                    "TWO".to_string(),
+                    BTreeMap::from([("production".to_string(), "2".to_string())]),
+                )]),
+            )]),
+            BTreeMap::from([(
+                "vercel".to_string(),
+                BTreeSet::from(["production".to_string()]),
+            )]),
+        );
+        let store = |keys: &[&str]| {
+            keys.iter()
+                .map(|key| {
+                    (
+                        (*key).to_string(),
+                        BTreeMap::from([("production".to_string(), "1".to_string())]),
+                    )
+                })
+                .collect()
+        };
+        let full = SecretView::new(
+            "production".to_string(),
+            store(&["ONE", "THREE"]),
+            providers.clone(),
+        );
+        let resolved = resolve_table(&table, "dogs.d", &full).unwrap();
+        assert!(resolved.references().is_empty());
+        for missing in [&["THREE"][..], &["ONE"][..]] {
+            let partial =
+                SecretView::new("production".to_string(), store(missing), providers.clone());
+            assert!(resolve_table(&table, "dogs.d", &partial).is_err());
+        }
     }
 }

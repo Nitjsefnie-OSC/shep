@@ -280,6 +280,21 @@ listed. Every other verb, `lookout` and `whistle` included, stays at
 `Enforce`: a pane and a tool can write. `every_exempt_verb_is_one_of_the_documented_recovery_verbs`
 now pins `flock` at `Warn`, and `add` is still `Enforce`.
 
+**And the guard stopped being one rule for both links.** Over `--host` a
+crate-version difference refuses nothing. `skew_of` compares
+`HelloAck::protocol` against `PROTOCOL_VERSION`, equal rather than against
+`MIN_SUPPORTED`, because the host at the other end of the link has its own
+install: the half-replaced machine the crate comparison exists for cannot
+exist across ssh, and a fleet upgrades one host at a time. Same protocol and
+a different version: the verb runs, and one `version_skew` notice goes to
+stderr. Another protocol: exit 12, both numbers named, and the fix on
+whichever side of the gap is behind: `ssh <dest> shep daemon reload` for a
+host on an older protocol, `cargo install shep` on this machine for one on a
+newer protocol, since a half-upgraded fleet has hosts running ahead of the
+operator's laptop. The local socket is unchanged, and so are
+`Exempt` and `Warn`. `version_guard/tests/` pins each side of the table and
+`fleet/tests.rs` pins it across a `hosts` list.
+
 **`PROTOCOL_VERSION` and `MIN_SUPPORTED` moved to 8 on 2026-09-07, for
 `AppConfig::environment`.** Not for `Request::PutSecrets` and
 `Response::SecretsPut`, which arrived on the same branch and moved nothing.
@@ -557,6 +572,105 @@ the operator is reading it, on stdout for the table form and on stderr for
 wire change: the
 write is `Request::SetSheepField` for a field and
 `Request::SetSheepDogSettings` for a table.
+
+**One read prints any settings in the flock.** `shep get <name>[.<path>]`
+answers a sheep's config (`shep get api`), one field of it
+(`api.max_memory`), one dog's table inside a sheep
+(`api.dogs.kelpie.git`), or one dog's own section of `dogs.toml` and a table
+inside that (`kelpie.worker`). The answer is the TOML the address names,
+spelled as the file it lives in spells it: a sheep's fragment carries its
+`dogs.<dog>` headers, a dog's carries `[<name>]`, and the comments the
+operator wrote inside a dog's section survive the read. A dog's name is the
+longest run of segments the shepherd answers a section for, because
+`dogs.toml` spells a dog's sub-table as a header path rather than as a name.
+A table the file wrote with nothing under it keeps its header, and a key
+spelled with a dot in it stays one key on the way down, so an answer a dog's
+settings hold still pastes back.
+`env` is refused for the reason `shep copy` refuses it, and the dog read is
+the unresolved one, so a `{{secret:...}}` prints as the reference. Bare
+`shep get` is a usage error, and a name nothing answers is `NotFound`: the
+key/value store that spelling used to read lives at `shep kv get`. No wire
+change: the reads are `Request::SheepConfig` and `Request::DogConfig`.
+
+**One write changes any setting in the flock, so no dog needs its own**
+(issue #1096, under the settings spec #1073). `shep set <address> <value>`
+takes `shep get`'s address and `shep copy`'s flow: resolve against the names
+the running flock carries, read what that address holds, plan, print every key
+the write touches with its old value beside its new one, ask, write. A sheep's
+field, a key inside a sheep's table for a dog, and a key of a dog's own
+section are three shapes of one address, and each goes through the request the
+shepherd already answers, so there is no set request and everything those
+refuse this refuses, with the same reasons. A dog's section is edited in place
+rather than replaced: the text the shepherd answered is parsed, one key is
+changed, and the result is sent back, so a comment the operator wrote inside
+the section survives the write and a `[worker]` header stays a header. The
+value is TOML, and text that is not TOML is the string as typed, which is the
+grammar an operator already writes these settings in. A write carrying a dog's
+table is checked against the schema that dog published, through the same door
+lookout's config pane files a keystroke through, and only for the keys this run
+chose: a value the operator wrote into the file by hand rides along untouched.
+A dog that publishes nothing is asked nothing. A dog the flock has never been
+given a section for gets one. A write that replaces a whole section or a whole
+dog table re-reads that holder after the answer and is refused if it moved in
+the meantime, because what it sends carries every key it read rather than only
+the one named. TOML's `nan` and `inf` are refused as values: the JSON the
+shepherd carries has no cell for one, and a write built from it reaches the
+flock as a null. `--dry-run` writes nothing, `--yes` skips the
+question, and `--format json` carries the change list, `written` and `pending`
+in the one envelope. `shep set` stopped being the key/value store's hidden
+spelling at the same time: `shep kv set` is that store's verb, and a name no
+sheep or dog is is refused by name. No wire change: the writes are
+`Request::SetSheepField`, `Request::SetSheepDogSettings` and
+`Request::SetDogConfig`.
+
+**One undo drops an override or removes a dog's key** (issue #1097, under the
+settings spec #1073). `shep unset <address>` takes `shep set`'s address and
+flow, with the same `--yes`, `--dry-run` and `--format json`. A sheep's field
+goes through the new `Request::ResetSheepField { name, key }`: the shepherd
+drops the operator's override and the Flockfile's value returns, in `shep get`
+and in the running config, and the reply says what the field holds again. A key
+inside a sheep's table for a dog leaves the table, so the dog's default
+applies, and a key of a dog's own section leaves `dogs.toml` with the comments
+around it. A field with no override is refused with a sentence pointing at
+`shep get`, and the section as a whole is a usage error. The override record
+gained a `template` map holding the value in force before the first override,
+so the reset has a value to restore and a Flockfile edit keeps reaching the
+sheep. `shep unset` stopped being the key/value store's hidden spelling at the
+same time, so none of the store's old verbs remain. Wire change: additive
+`ResetSheepField` and `SheepFieldReset`, no `PROTOCOL_VERSION` move.
+
+**A dog can refuse a settings write before shep makes it** (issue #1098,
+under the settings spec #1073). A manifest declaring `validate` gets a
+`shep.validate` trigger on its channel before `shep set`, `shep unset` or a
+lookout write to that dog's settings lands, carrying the table the write would
+leave behind: `{"table": {...}, "sheep": "api"}`, with no `sheep` key for a
+dog's own section. The dog answers `{"accept":true}` or
+`{"accept":false,"reason":"..."}` on the channel it already answers `shep
+trigger` and its stop message on, and `shep_client::dogs::validate_answer`
+writes that body from one closure. A refusal, an answer that is not a verdict,
+and a dog that answered nothing inside its own `action_timeout` each stop the
+write, and the dog's own sentence is what the operator reads: `shep set` exits
+`invalid_config`, and lookout's pane reports the same
+`RequestError::Rpc` it reports a shepherd's own refusal with. A dog that
+declared nothing is never asked, and a dog in the flock with no live channel
+is not asked either, because its settings are what an operator edits before
+`shep enable`. What shep cannot read is never an acceptance: an answer with no
+verdict in it, and a manifest or `shep.toml` that could not be read, both stop
+the write and say so, because a dog that declared `validate` and was not asked
+is a check the operator believes is running. `read_manifest` says which of
+those it got (`Read`, `Absent`, `Unreadable`), and the line is at the cache: a
+dog that gave nothing, in any of the ways a dog gives nothing, declared
+nothing, and only a cache file for this exact binary that neither it nor a
+fresh probe restates is a record of a declaration shep wrote and cannot read.
+The holder is re-read after the ask as well as before it: the ask waits up to
+the dog's `action_timeout`, and a whole-section or whole-table plan carries
+every key it read. `shep copy` is a third door: it replaces a dog's whole table
+on another sheep, so it asks the dog about that table before it writes. `shep adopt` refuses a manifest
+declaring `validate` without
+`channel`: the check could never run. The ask is client-side, in
+`dog_settings::ask_dog`, and three doors use it: `settings_write::flow::run`,
+`copy::write_plan`, and `lookout::source::ClientFlock::send`. No wire change: the ask is
+`Request::Trigger`, and `Manifest.validate` shipped with the manifest.
 
 **A community dog index lists the dogs others have written, and shep prints
 how to install one without running anything** (2026-08-21 for the index and

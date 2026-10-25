@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::DogTable;
 
 use super::{
-    ActionReply, DogSectionToml, LineReply, LogTail, ProcessInfo, SheepApplied, SheepConfigView,
-    SheepDrift, SheepRefusal, SignalReply,
+    ActionReply, DogSectionToml, EnvCopyChange, LineReply, LogTail, ProcessInfo, SheepApplied,
+    SheepConfigView, SheepDrift, SheepRefusal, SignalReply,
 };
 
 // Named by intra-doc links and by nothing rustc compiles, so the
@@ -147,6 +147,19 @@ pub enum Response {
         /// Keys that held a different value.
         collisions: Vec<String>,
     },
+    /// What a [`Request::CopySheepEnv`] did, or would have done.
+    ///
+    /// Key names, and values only as [`EnvCopyChange`] allows: a reference as
+    /// written, anything else redacted. Never the resulting env map (IR-41).
+    SheepEnvCopied {
+        /// The sheep the env was read from.
+        from: String,
+        /// The sheep the env was written to.
+        to: String,
+        /// One entry per key the copy touches, in key order. Empty when `to`
+        /// already holds everything the copy would write.
+        changes: Vec<EnvCopyChange>,
+    },
     /// Answer to `SetSheepField`: which field moved, and whether the
     /// running child has it.
     ///
@@ -194,6 +207,25 @@ pub enum Response {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         warning: Option<String>,
     },
+    /// Answer to `ResetSheepField`: which field went back, to what, and
+    /// whether the running child has it.
+    ///
+    /// [`Self::SheepFieldSet`]'s twin, with the value the field now holds
+    /// beside it, since the caller asked for the Flockfile's value without
+    /// being told it.
+    SheepFieldReset {
+        /// The sheep.
+        name: String,
+        /// The field that went back.
+        key: String,
+        /// The value the field holds now, in the shape it serializes as.
+        value: serde_json::Value,
+        /// As [`Self::SheepFieldSet`]'s `pending`.
+        pending: bool,
+        /// As [`Self::SheepFieldSet`]'s `warning`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        warning: Option<String>,
+    },
     /// Answer to `DogSheepSettings`: one dog's table from every sheep
     /// carrying one.
     ///
@@ -208,6 +240,16 @@ pub enum Response {
     DogSheepSettings {
         /// Sheep name to that sheep's table for this dog.
         tables: BTreeMap<String, DogTable>,
+    },
+    /// Answer to `SheepDogSettingsResolved`: one sheep's table for one dog,
+    /// each `{{secret:...}}` reference replaced by its value.
+    ///
+    /// `None` when the sheep carries no table for the dog. Printing is the
+    /// same as [`Self::DogSheepSettings`]: [`DogTable`]'s manual `Debug`
+    /// keeps a resolved value out of a `{:?}` (IR-41).
+    SheepDogTable {
+        /// The table, or `None` when the sheep carries none for this dog.
+        table: Option<DogTable>,
     },
     /// Answer to `SetSheepDogSettings`: which sheep and dog moved.
     ///

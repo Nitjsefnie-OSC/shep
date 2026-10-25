@@ -18,7 +18,7 @@ use shep_core::protocol::{DogSource, ProcessInfo};
 fn built_in(name: &str) -> DogSpec {
     DogSpec {
         name: name.to_string(),
-        source: DogSource::BuiltIn,
+        source: DogSource::BuiltIn { grants: None },
     }
 }
 

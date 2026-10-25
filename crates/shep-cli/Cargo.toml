@@ -122,7 +122,12 @@ ring = { version = "0.17", default-features = false }
 # East-Asian Ambiguous reading where `▸` and friends measure two columns.
 # Plain `width` is right for a terminal nobody has told us is CJK-legacy.
 unicode-width = { version = "0.2", default-features = false }
-clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions", "env", "wrap_help"] }
+# `string` is for the values an operator's `shep.toml` supplies: an adopted
+# dog's name and its manifest's subcommands become `clap::Command` entries in
+# `crate::adopted_help`, and without this feature clap's `Str` accepts only a
+# `&'static str`. Adds zero crates: it switches `Str`'s inner from a
+# `Cow<'static, str>` to a boxed one.
+clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions", "env", "wrap_help", "string"] }
 # `default-features = false` is a no-op: clap_complete's default feature set
 # is empty, kept for consistency. `unstable-dynamic` not enabled: dynamic
 # completion is out of scope.
@@ -212,6 +217,9 @@ instability.workspace = true
 # by regex instead of literal text. Adds zero crates: shep-core already
 # resolves this version for its own selector matching.
 regex.workspace = true
+# `commands::dogs::depends`: whether this shep is the version a dog's manifest
+# asks for.
+semver.workspace = true
 
 [dev-dependencies]
 # `test-util` for `#[tokio::test(start_paused = true)]`, `crate::http`'s "a

@@ -3,7 +3,7 @@
 //! A flat map of short strings under `$SHEP_HOME`, for ad-hoc operator notes
 //! and dog runtime tweaks. Not the primary config path: a Flockfile
 //! configures a sheep, `shep.toml` the shepherd and its dogs. A file rather
-//! than an RPC, so `shep set`/`get`/`unset` work with no shepherd running.
+//! than an RPC, so `shep kv get`/`set`/`unset` work with no shepherd running.
 //! Every mutation is a read-modify-rename under a [`crate::file_lock`] on
 //! a sibling `kv.json.lock`, staged through a temp file.
 //!
@@ -143,7 +143,7 @@ fn check_key(key: &str) -> Result<(), KvError> {
 
 /// Reads `path` under the lock the caller already holds.
 ///
-/// A missing file reads as an empty, current-version store: `shep get`
+/// A missing file reads as an empty, current-version store: `shep kv get`
 /// against a fresh `$SHEP_HOME` should not fail with `ENOENT`. Any other
 /// `io::Error` propagates.
 fn read_file(path: &Path) -> Result<KvFile, KvError> {
@@ -243,7 +243,7 @@ pub fn unset(path: &Path, key: &str) -> Result<bool, KvError> {
 /// # Errors
 ///
 /// [`KvError::FutureVersion`], [`KvError::Decode`] and [`KvError::Io`]. A
-/// store that does not exist clears to `0` rather than failing: `shep unset
+/// store that does not exist clears to `0` rather than failing: `shep kv unset
 /// --all` on a fresh machine is a success that removed nothing.
 pub fn clear(path: &Path) -> Result<u32, KvError> {
     let _lock = FileLock::acquire(path)?;
@@ -304,7 +304,7 @@ mod tests {
         assert_eq!(clear(&path).unwrap(), 0);
     }
 
-    /// A key goes onto a shell command line (`shep get $k`) and into a JSON
+    /// A key goes onto a shell command line (`shep kv get $k`) and into a JSON
     /// object, so whitespace, control characters and an empty name are
     /// refused.
     #[test]

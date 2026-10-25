@@ -313,9 +313,9 @@ pub struct WhisperArgs {
 #[derive(Debug, clap::Args)]
 pub struct CopyArgs {
     /// The sheep and the path to copy from, such as `web.restart_delay`,
-    /// `web.dogs.kelpie`, or `web.dogs.kelpie.rulings`
+    /// `web.dogs.kelpie`, `web.dogs.kelpie.rulings`, or `web.env`
     pub from: String,
-    /// The sheep and the same path to copy onto, such as `api.restart_delay`
+    /// The sheep and the same path to copy onto, such as `api.restart_delay` or `api.env`
     pub to: String,
     /// Make the target exactly the source at that path, instead of merging
     /// into it

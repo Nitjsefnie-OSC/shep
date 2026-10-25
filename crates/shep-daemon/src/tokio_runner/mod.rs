@@ -49,10 +49,14 @@ const READ_BUFFER: usize = 8 * 1024;
 /// pump one `REPORT_DEADLINE` (2s) to answer.
 const FINAL_DRAIN: Duration = Duration::from_millis(100);
 
+#[cfg(unix)]
+mod dog_link;
 mod line_reader;
 mod log_file;
 mod pump;
 mod runner;
+#[cfg(windows)]
+mod windows_pipe;
 
 #[cfg(test)]
 mod tests;

@@ -12,6 +12,39 @@ fn mode_of(path: &Path) -> u32 {
     std::fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
+/// The `shep.toml` a preservation test seeds: a leading comment, a
+/// `[daemon]` table, and two keys whose order a writer that round-trips
+/// through a plain `toml::Table` would lose.
+const PRESERVATION_SEED: &str =
+    "# the shepherd's own knobs\n[daemon]\nlog_level = \"info\"  # chatty\nlog_json = false\n";
+
+/// Asserts a write over [`PRESERVATION_SEED`] kept every comment the seed
+/// carries, and kept `log_level` before `log_json`.
+///
+/// Reads each comment out of the seed rather than naming it here, so the
+/// seed stays the one place the file under test is written down.
+///
+/// # Panics
+///
+/// If `written` drops a seed comment, or `log_json` no longer follows
+/// `log_level`.
+#[track_caller]
+fn assert_preserves_comments_and_key_order(written: &str) {
+    for line in PRESERVATION_SEED.lines() {
+        if let Some(hash) = line.find('#') {
+            let comment = &line[hash..];
+            assert!(written.contains(comment), "{comment} gone: {written}");
+        }
+    }
+    assert!(
+        written
+            .find("log_level")
+            .zip(written.find("log_json"))
+            .is_some_and(|(level, json)| level < json),
+        "log_level must still precede log_json: {written}"
+    );
+}
+
 #[test]
 fn a_file_that_will_not_parse_is_refused_rather_than_replaced() {
     let dir = tempfile::tempdir().unwrap();
@@ -222,6 +255,9 @@ fn two_writer_processes_do_not_lose_each_other_s_edits() {
 }
 
 mod dogs;
+mod grants;
+mod grants_record;
+mod grants_write;
 mod hosts;
 mod scalars;
 mod style;

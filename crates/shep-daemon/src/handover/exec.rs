@@ -166,6 +166,7 @@ mod tests {
     use crate::handover::fixtures::entry_fixture;
     use crate::handover::{CarriedFds, CarriedSheep};
     use shep_handover::Carried;
+    use std::path::PathBuf;
 
     #[test]
     fn the_exec_target_exists_and_is_a_file() {
@@ -280,6 +281,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: None,
+                dog_link: None,
             },
         );
 
@@ -315,6 +317,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: None,
+                dog_link: None,
             },
         );
 
@@ -378,6 +381,7 @@ mod tests {
                     err_log: None,
                     stdin: Some(self.stdin.as_raw_fd()),
                     channel: Some(self.channel.as_raw_fd()),
+                    dog_link: None,
                 },
             )
         }
@@ -412,13 +416,21 @@ mod tests {
         .unwrap_err()
     }
 
-    #[test]
-    fn a_failed_exec_leaves_no_blob_behind() {
+    /// The setup both failed-exec tests share: a temp dir held alive for the
+    /// test, its paths, a target file that cannot execute, and five open
+    /// descriptors.
+    fn failed_exec_sandbox() -> (tempfile::TempDir, ShepPaths, PathBuf, FiveKinds) {
         let dir = tempfile::tempdir().unwrap();
         let paths = selftest_paths(dir.path());
         let target = dir.path().join("not-a-binary");
         std::fs::write(&target, "this will never execute").unwrap();
         let kinds = FiveKinds::new();
+        (dir, paths, target, kinds)
+    }
+
+    #[test]
+    fn a_failed_exec_leaves_no_blob_behind() {
+        let (_dir, paths, target, kinds) = failed_exec_sandbox();
 
         let err = failed_handover(&kinds, &paths, &target);
 
@@ -430,11 +442,7 @@ mod tests {
 
     #[test]
     fn a_failed_exec_makes_every_descriptor_close_on_exec_again() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = selftest_paths(dir.path());
-        let target = dir.path().join("not-a-binary");
-        std::fs::write(&target, "this will never execute").unwrap();
-        let kinds = FiveKinds::new();
+        let (_dir, paths, target, kinds) = failed_exec_sandbox();
         // The precondition, so the assertion below cannot pass on a
         // descriptor that was never inheritable in the first place.
         for fd in kinds.all() {
@@ -467,6 +475,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: None,
+                dog_link: None,
             },
         );
 
@@ -493,6 +502,7 @@ mod tests {
                 err_log: None,
                 stdin: None,
                 channel: None,
+                dog_link: None,
             },
         );
         blob.version = VERSION + 1;

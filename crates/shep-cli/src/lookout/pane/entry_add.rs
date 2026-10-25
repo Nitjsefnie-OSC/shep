@@ -14,10 +14,10 @@ use serde_json::Value;
 
 use super::super::field::{Entries, FieldKind};
 use super::super::textbox::TextBox;
-use super::super::validation::Refusal;
 use super::edit::PaneTyping;
 use super::entries::EntryBody;
 use super::{ConfigPane, PaneRow, PaneTarget, PathStep};
+use crate::dog_settings::Refusal;
 
 /// What the key editor's [`PaneTyping::key`] ends with after the entries
 /// field's own key, so it names no field the pane holds.

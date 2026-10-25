@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+#[cfg(windows)]
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::ChannelError;
@@ -74,14 +75,19 @@ pub fn discover() -> Result<Endpoint, ChannelError> {
 /// be worse than a merely wrong number.
 /// This crate would own the app's stdout, write JSON into it, and close it on drop.
 fn descriptor_from(text: &str) -> Result<Endpoint, ChannelError> {
+    descriptor_in(FD_VAR, text)
+}
+
+/// [`descriptor_from`] for the variable `var`, which the messages name.
+fn descriptor_in(var: &str, text: &str) -> Result<Endpoint, ChannelError> {
     let Ok(fd) = text.trim().parse::<i32>() else {
-        return Err(ChannelError::Unusable(format!("{FD_VAR}={text}")));
+        return Err(ChannelError::Unusable(format!("{var}={text}")));
     };
     if fd < FIRST_INHERITABLE_FD {
         return Err(ChannelError::Unusable(format!(
-            "{FD_VAR}={fd} must be {FIRST_INHERITABLE_FD} or above: the shepherd passes \
-             the channel as {FIRST_INHERITABLE_FD}, and 0, 1 and 2 are this process's own \
-             standard streams"
+            "{var}={fd} must be {FIRST_INHERITABLE_FD} or above: the shepherd passes \
+             the descriptor as {FIRST_INHERITABLE_FD} or higher, and 0, 1 and 2 are this \
+             process's own standard streams"
         )));
     }
     Ok(Endpoint::Descriptor(fd))
@@ -261,13 +267,51 @@ fn read_half(transport: Transport) -> ReadHalf {
     PipeReader { pipe: transport }
 }
 
-/// Guards the inherited channel from being taken twice in one process.
+/// Guards the inherited channel pipe from being taken twice in one process.
 ///
-/// Consumed only by the branch that actually takes a channel. A refusal
-/// takes nothing. `Endpoint::Absent`, or a `Descriptor`/`Pipe` naming a
-/// mechanism this platform lacks, must not consume the guard. Otherwise
-/// a later, legitimate call would be refused for no reason.
+/// Consumed only by the branch that actually takes a pipe. A refusal takes
+/// nothing, so a later, legitimate call is not refused for no reason.
+#[cfg(windows)]
 static CHANNEL_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// The descriptor numbers this process has adopted, the channel's and the dog
+/// link's alike.
+///
+/// One set, so two owners cannot be made of one descriptor, whichever
+/// variable names it. Numbers stay in it after the owner drops: the number
+/// may be reused by then, and a second adoption must find the first's claim.
+#[cfg(unix)]
+static CLAIMED: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
+
+/// Claims descriptor `fd`, named by `var`, for this process.
+///
+/// The existing claim is checked first, so a descriptor an earlier owner
+/// closed is `AlreadyTaken` and not a failed probe. The probe runs under the
+/// lock, so concurrent first callers cannot both pass it. A refusal claims
+/// nothing.
+///
+/// # Errors
+///
+/// - [`ChannelError::AlreadyTaken`]: this process already claimed `fd`.
+/// - [`ChannelError::Unusable`]: `fd` is not an open socket.
+#[cfg(unix)]
+fn claim_descriptor(var: &str, fd: i32) -> Result<(), ChannelError> {
+    claim_in(&CLAIMED, var, fd)
+}
+
+/// [`claim_descriptor`] against the set `claimed`.
+#[cfg(unix)]
+fn claim_in(claimed: &std::sync::Mutex<Vec<i32>>, var: &str, fd: i32) -> Result<(), ChannelError> {
+    let mut claimed = claimed
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if claimed.contains(&fd) {
+        return Err(ChannelError::AlreadyTaken);
+    }
+    refuse_unless_socket_in(var, fd)?;
+    claimed.push(fd);
+    Ok(())
+}
 
 /// Refuses a descriptor that cannot be the shepherd's channel.
 ///
@@ -280,10 +324,10 @@ static CHANNEL_TAKEN: AtomicBool = AtomicBool::new(false);
 ///
 /// # Errors
 ///
-/// [`ChannelError::Unusable`] when the descriptor is not an open socket.
-/// It is left open either way.
+/// [`ChannelError::Unusable`] naming `var` when the descriptor is not an
+/// open socket. It is left open either way.
 #[cfg(unix)]
-fn refuse_unless_socket(fd: i32) -> Result<(), ChannelError> {
+fn refuse_unless_socket_in(var: &str, fd: i32) -> Result<(), ChannelError> {
     use std::os::fd::FromRawFd as _;
 
     // SAFETY: `ManuallyDrop` is the invariant. The value is never dropped,
@@ -293,11 +337,53 @@ fn refuse_unless_socket(fd: i32) -> Result<(), ChannelError> {
     let probe = core::mem::ManuallyDrop::new(unsafe { Transport::from_raw_fd(fd) });
     probe.local_addr().map_err(|error| {
         ChannelError::Unusable(format!(
-            "{FD_VAR}={fd} is not an open socket ({error}): the shepherd passes \
-             the channel as one end of a socketpair"
+            "{var}={fd} is not an open socket ({error}): the shepherd passes \
+             this as one end of a socketpair"
         ))
     })?;
     Ok(())
+}
+
+/// Takes the connected socket the shepherd handed this process, named by the
+/// environment variable `var`.
+///
+/// For `shep-client`, which forbids unsafe code and so cannot adopt a
+/// descriptor itself. `var` is `shep_core::dogs::DOG_LINK_FD_VAR`, passed in
+/// because `shep-core` depends on this crate and not the other way round.
+/// The number comes from the environment and never from the caller, the
+/// channel's own rule: a descriptor a caller could name is one a safe caller
+/// could alias.
+///
+/// `Ok(None)` when `var` is unset: not a supervised process, the ordinary
+/// case. The claim is the channel's too: a descriptor the channel or an
+/// earlier call took is `AlreadyTaken`, even once its owner has dropped it,
+/// and a refusal takes nothing.
+///
+/// # Errors
+///
+/// - [`ChannelError::Unusable`]: `var` holds something that is not a
+///   descriptor, a number below 3, or a descriptor that is not an open
+///   socket.
+/// - [`ChannelError::AlreadyTaken`]: this process already took the
+///   descriptor `var` names, as the channel or as a connection.
+#[cfg(unix)]
+pub fn take_inherited_socket(
+    var: &str,
+) -> Result<Option<std::os::unix::net::UnixStream>, ChannelError> {
+    let Some(raw) = std::env::var_os(var) else {
+        return Ok(None);
+    };
+    let Endpoint::Descriptor(fd) = descriptor_in(var, &raw.to_string_lossy())? else {
+        return Ok(None);
+    };
+    claim_descriptor(var, fd)?;
+    use std::os::fd::FromRawFd as _;
+    // SAFETY: as the channel's own take in `connect`. Soundness rests on the
+    // shepherd naming a descriptor it handed this process; the probe rules
+    // out everything but another socket this process owns, and `CLAIMED`
+    // makes this block reachable once per descriptor, channel included.
+    #[allow(unsafe_code)]
+    Ok(Some(unsafe { Transport::from_raw_fd(fd) }))
 }
 
 /// Opens the endpoint, returning the reader's half and the writer's clone.
@@ -314,18 +400,15 @@ pub(crate) fn connect(endpoint: &Endpoint) -> Result<(ReadHalf, Transport), Chan
     let transport = match endpoint {
         #[cfg(unix)]
         Endpoint::Descriptor(fd) => {
-            // Probes before claiming, like the Windows arm below. A refusal
-            // must leave the guard alone, or one bad descriptor would refuse
+            // A refusal claims nothing, or one bad descriptor would refuse
             // every later call in this process.
-            refuse_unless_socket(*fd)?;
-            if CHANNEL_TAKEN.swap(true, Ordering::SeqCst) {
-                return Err(ChannelError::AlreadyTaken);
-            }
+            claim_descriptor(FD_VAR, *fd)?;
             use std::os::fd::FromRawFd as _;
             // SAFETY: soundness rests on the shepherd naming a descriptor it
-            // handed this process. The probe above rules out everything but
-            // another socket this process owns. `CHANNEL_TAKEN` makes this arm
-            // reachable once per process.
+            // handed this process. The probe in `claim_descriptor` rules out
+            // everything but another socket this process owns. `CLAIMED`
+            // makes this arm reachable once per descriptor, and shared with
+            // `take_inherited_socket`, so no other owner exists either.
             #[allow(unsafe_code)]
             unsafe {
                 Transport::from_raw_fd(*fd)
@@ -549,9 +632,9 @@ mod tests {
         assert_eq!(back, "still open");
     }
 
-    /// The only test that takes the channel. `CHANNEL_TAKEN` is
-    /// process-global, and tests share one process. The refusal above
-    /// probes before claiming, so it leaves the guard for this one.
+    /// The only test that takes the channel. `CLAIMED` is process-global,
+    /// and tests share one process. The refusal above claims nothing, and
+    /// this one takes a descriptor of its own.
     ///
     /// Asserts the transition, not just the second call's error. The
     /// first call must succeed here too, or a `connect` that refused
@@ -571,7 +654,47 @@ mod tests {
 
         // `first` stays bound, not `let _ = ...`, through both calls.
         // Its transport keeps the descriptor open, so it cannot close
-        // out from under `second`.
-        drop(first);
+        // out from under `second`. Forgotten rather than dropped: a closed
+        // number is reused by a parallel test, and `CLAIMED` remembers it.
+        core::mem::forget(first);
+    }
+
+    /// Fails if the channel and a dog connection can both adopt one
+    /// descriptor. Two owners of it close it twice, the second time under
+    /// whoever was handed the number next.
+    #[cfg(unix)]
+    #[test]
+    fn a_descriptor_the_channel_took_cannot_be_taken_as_a_connection() {
+        let (ours, _theirs) = UnixStream::pair().expect("socketpair");
+        let fd = ours.into_raw_fd();
+
+        let channel = connect(&Endpoint::Descriptor(fd));
+        assert!(channel.is_ok(), "the channel takes it first: {channel:?}");
+
+        assert!(matches!(
+            claim_descriptor("SHEP_DOG_FD", fd),
+            Err(ChannelError::AlreadyTaken)
+        ));
+        core::mem::forget(channel);
+    }
+
+    /// Fails if a descriptor whose owner closed it is probed before the
+    /// claim is looked up. Uses a set of its own, since the closed number
+    /// is free for a parallel test. A closed number is `Unusable`, which a dog treats
+    /// as a fault, where `AlreadyTaken` sends it to the socket.
+    #[cfg(unix)]
+    #[test]
+    fn a_claimed_descriptor_stays_taken_after_its_owner_closes_it() {
+        let (ours, _theirs) = UnixStream::pair().expect("socketpair");
+        let fd = ours.as_raw_fd();
+        let claimed = std::sync::Mutex::new(Vec::new());
+        claim_in(&claimed, "SHEP_DOG_FD", fd).expect("first claim");
+
+        drop(ours);
+
+        assert!(matches!(
+            claim_in(&claimed, "SHEP_DOG_FD", fd),
+            Err(ChannelError::AlreadyTaken)
+        ));
     }
 }

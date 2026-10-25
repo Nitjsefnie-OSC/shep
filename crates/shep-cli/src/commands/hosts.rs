@@ -309,12 +309,7 @@ mod tests {
         };
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = host_with(
-            &mut Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt,
-            },
+            &mut Streams::bare(&mut out, &mut err, fmt),
             paths,
             &args,
             ssh,

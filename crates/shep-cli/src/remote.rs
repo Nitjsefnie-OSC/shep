@@ -64,6 +64,7 @@ pub(crate) fn host_scope(command: &Commands) -> HostScope {
         | Commands::Reopen(_)
         | Commands::Flush(_)
         | Commands::Barks(_)
+        | Commands::Kv(_)
         | Commands::Set(_)
         | Commands::Get(_)
         | Commands::Unset(_)
@@ -204,7 +205,7 @@ mod tests {
     use super::*;
     use crate::cli::Cli;
 
-    /// One argv per verb, first word the verb's name. A new verb fails
+    /// At least one argv per verb, first word the verb's name. A new verb fails
     /// [`every_verb_has_a_sample_argv_here`] until it has a row.
     const SAMPLES: &[&[&str]] = &[
         &["start", "web"],
@@ -217,6 +218,8 @@ mod tests {
         &["stock", "web", "2"],
         &["flock"],
         &["dogs"],
+        &["dogs", "grant", "otel", "flock.read"],
+        &["dogs", "revoke", "otel", "flock.read"],
         &["enable", "metrics"],
         &["disable", "metrics"],
         &["adopt", "/bin/true"],
@@ -232,6 +235,7 @@ mod tests {
         &["reopen"],
         &["flush", "web"],
         &["barks"],
+        &["kv", "get", "k"],
         &["set", "k", "v"],
         &["get", "k"],
         &["unset", "k"],
@@ -407,6 +411,7 @@ mod tests {
         let mut sampled: Vec<String> = SAMPLES.iter().map(|row| row[0].to_owned()).collect();
         in_tree.sort();
         sampled.sort();
+        sampled.dedup();
         assert_eq!(sampled, in_tree);
     }
 }

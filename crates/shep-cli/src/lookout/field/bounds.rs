@@ -26,7 +26,7 @@ use super::schema::resolved;
 ///
 /// Empty for a field whose schema says nothing machine-checkable, which is
 /// most of them. A bound this type does not carry is a bound
-/// [`super::super::validation::refusal`] cannot enforce, and the pane
+/// [`crate::dog_settings::refusal`] cannot enforce, and the pane
 /// files the value: shep is not the authority on a dog's own config.
 ///
 /// `Debug` is derived (IR-41): a schema's bounds describe a value without
@@ -38,7 +38,7 @@ pub struct Bounds {
     /// has never heard of.
     pub pattern: Option<String>,
     /// `minLength`, counted in characters. Only an array's item schema is
-    /// checked against it today: [`super::super::validation::refusal`] reads
+    /// checked against it today: [`crate::dog_settings::refusal`] reads
     /// a scalar's `minLength` and enforces nothing with it.
     pub min_length: Option<usize>,
     /// `minimum` or `exclusiveMinimum`, whichever of the two is tighter,
@@ -396,7 +396,7 @@ mod tests {
     /// `$ref` away, and behind the `anyOf: [{$ref}, {type: null}]` that a
     /// dog writes for an `Option<UpDuration>`. That third one is the shape
     /// `shep-log-rotate` publishes, so it is the shape the gate in
-    /// [`super::super::validation::refusal`] actually meets.
+    /// [`crate::dog_settings::refusal`] actually meets.
     #[test]
     fn a_pattern_is_read_through_every_hop_a_schema_can_put_it_behind() {
         let defs = props(json!({
