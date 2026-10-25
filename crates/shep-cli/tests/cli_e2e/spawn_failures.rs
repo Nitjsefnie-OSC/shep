@@ -4,24 +4,25 @@
 use super::*;
 
 #[cfg(unix)]
-/// `Response::Restarted` has no per-id error slot, so a respawn that cannot
-/// spawn answers `Ok` with an `errored` row rather than an RPC error;
-/// `resume`'s `any_restart_failed` check is what closes that gap.
+/// The setup the two cases below share: a valid-shell script written at
+/// `0o644`, a `--format json` start by path that must fail `spawn_failed`,
+/// and a poll until the sheep sits registered `errored`. Returns the sheep's
+/// name, which is the script's stem.
 ///
-/// The script is valid shell but not executable (`0o644`), so every spawn of
-/// it fails `EACCES` whichever request drove it.
-#[test]
-fn starting_an_errored_sheep_by_name_reports_the_same_failure_as_by_path() {
-    let dir = tempfile::tempdir().unwrap();
-    let script = dir.path().join("broken.sh");
-    std::fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
+/// The daemon this autostarts is the one the caller's own verb reuses.
+#[track_caller]
+fn a_sheep_that_cannot_spawn(
+    dir: &TempDir,
+    script_name: &str,
+    body: &str,
+    guard: &mut DaemonGuard,
+) -> String {
+    let script = dir.path().join(script_name);
+    std::fs::write(&script, body).unwrap();
     let mut perms = std::fs::metadata(&script).unwrap().permissions();
     perms.set_mode(0o644);
     std::fs::set_permissions(&script, perms).unwrap();
-    let mut guard = DaemonGuard::default();
 
-    // Also autostarts the daemon the second command reuses, and registers the
-    // sheep the second half restarts by name.
     let by_path = shep(dir.path())
         .arg("--format")
         .arg("json")
@@ -32,7 +33,7 @@ fn starting_an_errored_sheep_by_name_reports_the_same_failure_as_by_path() {
     guard.adopt_home(dir.path());
     assert_json_error(&by_path, 7, "spawn_failed");
 
-    // Must be `errored` in the flock, or the second command takes
+    // Must be `errored` in the flock, or the caller's second command takes
     // `resolve_target`'s path arm instead of `resume`'s.
     let flock = poll_flock(dir.path(), |info| info["status"] == "errored");
     assert_eq!(
@@ -40,13 +41,28 @@ fn starting_an_errored_sheep_by_name_reports_the_same_failure_as_by_path() {
         "the by-path failure must leave the sheep registered as errored: {flock}"
     );
 
+    script.file_stem().unwrap().to_str().unwrap().to_string()
+}
+
+#[cfg(unix)]
+/// `Response::Restarted` has no per-id error slot, so a respawn that cannot
+/// spawn answers `Ok` with an `errored` row rather than an RPC error;
+/// `resume`'s `any_restart_failed` check is what closes that gap.
+///
+/// The script is valid shell but not executable (`0o644`), so every spawn of
+/// it fails `EACCES` whichever request drove it.
+#[test]
+fn starting_an_errored_sheep_by_name_reports_the_same_failure_as_by_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut guard = DaemonGuard::default();
+    let name = a_sheep_that_cannot_spawn(&dir, "broken.sh", "#!/bin/sh\necho hi\n", &mut guard);
+
     // By name, same broken script, same failure.
-    let name = script.file_stem().unwrap().to_str().unwrap();
     let by_name = shep(dir.path())
         .arg("--format")
         .arg("json")
         .arg("start")
-        .arg(name)
+        .arg(&name)
         .output()
         .unwrap();
     assert_json_error(&by_name, 7, "spawn_failed");
@@ -65,37 +81,14 @@ fn starting_an_errored_sheep_by_name_reports_the_same_failure_as_by_path() {
 #[test]
 fn restarting_a_sheep_that_cannot_spawn_reports_it_rather_than_exiting_zero() {
     let dir = tempfile::tempdir().unwrap();
-    let script = dir.path().join("noexec");
-    std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
-    let mut perms = std::fs::metadata(&script).unwrap().permissions();
-    perms.set_mode(0o644);
-    std::fs::set_permissions(&script, perms).unwrap();
     let mut guard = DaemonGuard::default();
+    let name = a_sheep_that_cannot_spawn(&dir, "noexec", "#!/bin/sh\nsleep 30\n", &mut guard);
 
-    let by_path = shep(dir.path())
-        .arg("--format")
-        .arg("json")
-        .arg("start")
-        .arg(&script)
-        .output()
-        .unwrap();
-    guard.adopt_home(dir.path());
-    assert_json_error(&by_path, 7, "spawn_failed");
-
-    // Must be registered and errored, or the restart below is not
-    // exercising the reply shape this test is about.
-    let flock = poll_flock(dir.path(), |info| info["status"] == "errored");
-    assert_eq!(
-        flock["status"], "errored",
-        "the by-path failure must leave the sheep registered as errored: {flock}"
-    );
-
-    let name = script.file_stem().unwrap().to_str().unwrap();
     let restarted = shep(dir.path())
         .arg("--format")
         .arg("json")
         .arg("restart")
-        .arg(name)
+        .arg(&name)
         .output()
         .unwrap();
     assert_json_error(&restarted, 7, "spawn_failed");

@@ -3,6 +3,20 @@
 
 use super::*;
 
+/// Runs `shep dogs --available` with `SHEP_DOG_INDEX` set to `url`, `args`
+/// appended after the flag, and hands back the raw `Output`. Which cases
+/// expect success and which expect a refusal is the caller's own assertion.
+#[track_caller]
+fn available_dogs(home: &Path, url: &str, args: &[&str]) -> Output {
+    shep(home)
+        .env("SHEP_DOG_INDEX", url)
+        .arg("dogs")
+        .arg("--available")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
 /// Rex's description carries a raw `\u{1b}[2J` screen-clear escape. The
 /// assertion is on raw stdout bytes, so a regression cannot hide behind
 /// `String::from_utf8_lossy`'s replacement character.
@@ -11,12 +25,7 @@ fn available_dogs_lists_the_index_and_never_leaks_a_raw_escape() {
     let home = TempDir::new().unwrap();
     let url = serve_dog_index(&two_entry_index_json());
 
-    let output = shep(home.path())
-        .env("SHEP_DOG_INDEX", &url)
-        .arg("dogs")
-        .arg("--available")
-        .output()
-        .unwrap();
+    let output = available_dogs(home.path(), &url, &[]);
     assert_success(&output);
 
     assert!(
@@ -58,13 +67,7 @@ fn available_dogs_detail_view_uses_adopt_as_never_name() {
     let home = TempDir::new().unwrap();
     let url = serve_dog_index(&two_entry_index_json());
 
-    let output = shep(home.path())
-        .env("SHEP_DOG_INDEX", &url)
-        .arg("dogs")
-        .arg("--available")
-        .arg("spot")
-        .output()
-        .unwrap();
+    let output = available_dogs(home.path(), &url, &["spot"]);
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -91,13 +94,7 @@ fn available_dogs_zero_matches_exits_zero_and_says_so() {
     let home = TempDir::new().unwrap();
     let url = serve_dog_index(&two_entry_index_json());
 
-    let output = shep(home.path())
-        .env("SHEP_DOG_INDEX", &url)
-        .arg("dogs")
-        .arg("--available")
-        .arg("wombat")
-        .output()
-        .unwrap();
+    let output = available_dogs(home.path(), &url, &["wombat"]);
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -113,12 +110,7 @@ fn available_dogs_needs_no_shepherd() {
     let home = TempDir::new().unwrap();
     let url = serve_dog_index(&two_entry_index_json());
 
-    let output = shep(home.path())
-        .env("SHEP_DOG_INDEX", &url)
-        .arg("dogs")
-        .arg("--available")
-        .output()
-        .unwrap();
+    let output = available_dogs(home.path(), &url, &[]);
     assert_success(&output);
     assert!(
         !home.path().join("run").join("shep.sock").exists(),
@@ -139,12 +131,7 @@ fn available_dogs_reports_a_server_error_naming_the_url() {
         "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n".to_string(),
     );
 
-    let output = shep(home.path())
-        .env("SHEP_DOG_INDEX", &url)
-        .arg("dogs")
-        .arg("--available")
-        .output()
-        .unwrap();
+    let output = available_dogs(home.path(), &url, &[]);
     assert!(
         !output.status.success(),
         "a 500 must not exit success: {output:?}"
@@ -179,12 +166,7 @@ fn available_dogs_names_no_url_that_carries_credentials() {
     ] {
         let home = TempDir::new().unwrap();
 
-        let output = shep(home.path())
-            .env("SHEP_DOG_INDEX", url)
-            .arg("dogs")
-            .arg("--available")
-            .output()
-            .unwrap();
+        let output = available_dogs(home.path(), url, &[]);
         assert!(
             !output.status.success(),
             "{url}: an unfetchable url must not exit success: {output:?}"
@@ -210,12 +192,7 @@ fn available_dogs_reports_a_truncated_body_naming_the_url() {
     // `Truncated` refusal.
     let url = serve_raw_response("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n[]".to_string());
 
-    let output = shep(home.path())
-        .env("SHEP_DOG_INDEX", &url)
-        .arg("dogs")
-        .arg("--available")
-        .output()
-        .unwrap();
+    let output = available_dogs(home.path(), &url, &[]);
     assert!(
         !output.status.success(),
         "a truncated body must not exit success: {output:?}"

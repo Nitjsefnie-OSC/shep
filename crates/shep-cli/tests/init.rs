@@ -108,6 +108,7 @@ fn discard_in_background<R: Read + Send + 'static>(mut source: R) {
 /// Blocks on `rx` until a line matching `shep runtime: init supervising
 /// pid <N>` arrives, and returns `N`. Panics past `deadline`: absence
 /// within a generous bound means the process never got that far.
+#[track_caller]
 fn recv_pid_line(rx: &Receiver<String>, deadline: Duration) -> i32 {
     const PREFIX: &str = "shep runtime: init supervising pid ";
     let start = Instant::now();
@@ -185,6 +186,23 @@ impl Drop for RuntimeGuard {
     }
 }
 
+/// The boot both cases below share: [`spawn_forced_runtime`], the stderr
+/// line reader, the stdout drain, and [`recv_pid_line`]'s pid. The
+/// [`RuntimeGuard`] is built before the pid read, so a pid read that panics
+/// still reaps the init, and it comes back with `supervisor_pid` set.
+#[track_caller]
+fn spawn_supervised_runtime(home: &Path, flockfile: &Path) -> RuntimeGuard {
+    let mut child = spawn_forced_runtime(home, flockfile);
+    let stderr_rx = spawn_line_reader(child.stderr.take().unwrap());
+    discard_in_background(child.stdout.take().unwrap());
+    let mut guard = RuntimeGuard {
+        child,
+        supervisor_pid: None,
+    };
+    guard.supervisor_pid = Some(recv_pid_line(&stderr_rx, INIT_DEADLINE));
+    guard
+}
+
 /// Fails if the init ignores `SIGTERM` or exits with its own status
 /// instead of the supervisor's.
 #[test]
@@ -192,17 +210,8 @@ fn a_sigterm_to_the_init_reaches_the_flock_and_the_status_is_the_childs() {
     let dir = tempfile::tempdir().unwrap();
     let flockfile = write_held_flockfile(&dir);
 
-    let mut child = spawn_forced_runtime(dir.path(), &flockfile);
-    let init_pid = child.id() as i32;
-    let stderr_rx = spawn_line_reader(child.stderr.take().unwrap());
-    discard_in_background(child.stdout.take().unwrap());
-
-    let mut guard = RuntimeGuard {
-        child,
-        supervisor_pid: None,
-    };
-    let supervisor_pid = recv_pid_line(&stderr_rx, INIT_DEADLINE);
-    guard.supervisor_pid = Some(supervisor_pid);
+    let mut guard = spawn_supervised_runtime(dir.path(), &flockfile);
+    let init_pid = guard.child.id() as i32;
 
     let online = poll_online_sheep(dir.path(), INIT_DEADLINE);
     let sheep_pid = online["pid"]
@@ -230,16 +239,10 @@ fn a_supervisor_killed_by_sigkill_makes_the_init_exit_137() {
     let dir = tempfile::tempdir().unwrap();
     let flockfile = write_held_flockfile(&dir);
 
-    let mut child = spawn_forced_runtime(dir.path(), &flockfile);
-    let stderr_rx = spawn_line_reader(child.stderr.take().unwrap());
-    discard_in_background(child.stdout.take().unwrap());
-
-    let mut guard = RuntimeGuard {
-        child,
-        supervisor_pid: None,
-    };
-    let supervisor_pid = recv_pid_line(&stderr_rx, INIT_DEADLINE);
-    guard.supervisor_pid = Some(supervisor_pid);
+    let mut guard = spawn_supervised_runtime(dir.path(), &flockfile);
+    let supervisor_pid = guard
+        .supervisor_pid
+        .expect("the guard comes back with the supervisor pid set");
 
     signal::kill(Pid::from_raw(supervisor_pid), Signal::SIGKILL)
         .expect("SIGKILL the supervisor directly");

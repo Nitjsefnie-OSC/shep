@@ -21,22 +21,29 @@ pub(crate) fn load_fixture(name: &str) -> serde_json::Value {
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
+/// The body [`write_test_script`] and [`write_slow_script`] share: record
+/// this spawn's pid, then keep the script alive for `secs`. `name` is the
+/// script's basename.
+fn write_sleep_script(dir: &TempDir, name: &str, secs: u32) -> PathBuf {
+    write_script(
+        dir,
+        name,
+        &format!(
+            "{}{}{}",
+            script_header(),
+            record_pid_line(dir),
+            sleep_line(secs)
+        ),
+    )
+}
+
 /// Writes a trivial long-running script into `dir` and returns its path.
 ///
 /// The trailing `sleep` is bare, not `exec sleep`: a bare one is a forked
 /// child of the `/bin/sh` the daemon tracks, sharing its process group, which
 /// is what a stop signalling only the recorded pid would orphan.
 pub(crate) fn write_test_script(dir: &TempDir) -> PathBuf {
-    write_script(
-        dir,
-        "sheep.sh",
-        &format!(
-            "{}{}{}",
-            script_header(),
-            record_pid_line(dir),
-            sleep_line(SCRIPT_SLEEP_SECS)
-        ),
-    )
+    write_sleep_script(dir, "sheep.sh", SCRIPT_SLEEP_SECS)
 }
 
 /// Writes a script that backgrounds a `sleep 300` and `wait`s on it, a real
@@ -85,16 +92,7 @@ pub(crate) fn record_pid_line(dir: &TempDir) -> String {
 /// [`a_cron_occurrence_restarts_a_sheep_on_the_real_clock`], which runs one as
 /// its subject and one as its control.
 pub(crate) fn write_slow_script(dir: &TempDir) -> PathBuf {
-    write_script(
-        dir,
-        "slow.sh",
-        &format!(
-            "{}{}{}",
-            script_header(),
-            record_pid_line(dir),
-            sleep_line(SLOW_SCRIPT_SLEEP_SECS)
-        ),
-    )
+    write_sleep_script(dir, "slow.sh", SLOW_SCRIPT_SLEEP_SECS)
 }
 
 /// Writes a script that grows its own resident set past [`BALLOON_BYTES`] and
