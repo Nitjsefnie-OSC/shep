@@ -19,6 +19,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::file_lock::FileLock;
+use crate::versioned_file::{self, ReadError, Versioned};
 
 /// The on-disk format's version.
 ///
@@ -44,6 +45,12 @@ pub const MAX_VALUE_BYTES: usize = 4096;
 struct KvFile {
     version: u32,
     entries: BTreeMap<String, String>,
+}
+
+impl Versioned for KvFile {
+    fn version(&self) -> u32 {
+        self.version
+    }
 }
 
 /// Error type returned by this module.
@@ -122,6 +129,16 @@ impl From<serde_json::Error> for KvError {
     }
 }
 
+impl From<ReadError> for KvError {
+    fn from(source: ReadError) -> Self {
+        match source {
+            ReadError::Io(err) => Self::Io(err),
+            ReadError::Decode(err) => Self::Decode(err),
+            ReadError::FutureVersion(version) => Self::FutureVersion(version),
+        }
+    }
+}
+
 /// Checks one key against the grammar.
 ///
 /// # Errors
@@ -141,22 +158,10 @@ fn check_key(key: &str) -> Result<(), KvError> {
     }
 }
 
-/// Reads `path` under the lock the caller already holds.
-///
-/// A missing file reads as an empty, current-version store: `shep kv get`
-/// against a fresh `$SHEP_HOME` should not fail with `ENOENT`. Any other
-/// `io::Error` propagates.
+/// Reads `path` under the lock the caller already holds: shorthand for
+/// [`crate::versioned_file::read_versioned`] at [`KV_VERSION`].
 fn read_file(path: &Path) -> Result<KvFile, KvError> {
-    let raw = match std::fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(KvFile::default()),
-        Err(err) => return Err(KvError::Io(err)),
-    };
-    let file: KvFile = serde_json::from_str(&raw)?;
-    if file.version > KV_VERSION {
-        return Err(KvError::FutureVersion(file.version));
-    }
-    Ok(file)
+    versioned_file::read_versioned(path, KV_VERSION).map_err(KvError::from)
 }
 
 /// Rewrites `path` to hold exactly `file`.

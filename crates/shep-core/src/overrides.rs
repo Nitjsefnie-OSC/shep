@@ -17,6 +17,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::file_lock::FileLock;
+use crate::versioned_file::{self, ReadError, Versioned};
 
 /// The on-disk format's version.
 ///
@@ -90,6 +91,12 @@ impl OverridesFile {
     }
 }
 
+impl Versioned for OverridesFile {
+    fn version(&self) -> u32 {
+        self.version
+    }
+}
+
 /// Error type returned by this module.
 ///
 /// `#[non_exhaustive]`: shep-core is published, so a new failure variant
@@ -152,24 +159,20 @@ impl From<serde_json::Error> for OverridesError {
     }
 }
 
-/// Reads `path` under the lock the caller already holds.
-///
-/// A missing file reads as an empty, current-version store: a fresh
-/// `$SHEP_HOME` has no overrides, and that is the normal state, not a fault.
-/// Any other `io::Error` propagates.
-fn read_file(path: &Path) -> Result<OverridesFile, OverridesError> {
-    let raw = match std::fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(OverridesFile::default());
+impl From<ReadError> for OverridesError {
+    fn from(source: ReadError) -> Self {
+        match source {
+            ReadError::Io(err) => Self::Io(err),
+            ReadError::Decode(err) => Self::Decode(err),
+            ReadError::FutureVersion(version) => Self::FutureVersion(version),
         }
-        Err(err) => return Err(OverridesError::Io(err)),
-    };
-    let file: OverridesFile = serde_json::from_str(&raw)?;
-    if file.version > OVERRIDES_VERSION {
-        return Err(OverridesError::FutureVersion(file.version));
     }
-    Ok(file)
+}
+
+/// Reads `path` under the lock the caller already holds: shorthand for
+/// [`crate::versioned_file::read_versioned`] at [`OVERRIDES_VERSION`].
+fn read_file(path: &Path) -> Result<OverridesFile, OverridesError> {
+    versioned_file::read_versioned(path, OVERRIDES_VERSION).map_err(OverridesError::from)
 }
 
 /// Rewrites `path` to hold exactly `file`.
