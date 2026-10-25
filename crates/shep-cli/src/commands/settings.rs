@@ -263,56 +263,31 @@ pub fn load_settings(
     let daemon_default = DaemonSection::default();
     let whistle_default = WhistleSection::default();
 
-    let log_level = match doc.daemon_log_level() {
-        Some(value) => ScalarView {
-            value,
-            source: StyleSource::Config,
-        },
-        None => ScalarView {
-            value: daemon_default.log_level.as_str().to_string(),
-            source: StyleSource::Default,
-        },
-    };
-    let log_json = match doc.daemon_log_json() {
-        Some(value) => ScalarView {
-            value: value.to_string(),
-            source: StyleSource::Config,
-        },
-        None => ScalarView {
-            value: daemon_default.log_json.to_string(),
-            source: StyleSource::Default,
-        },
-    };
-    let socket = match doc.daemon_socket() {
-        Some(value) => ScalarView {
-            value: value.display().to_string(),
-            source: StyleSource::Config,
-        },
-        None => ScalarView {
-            value: socket_default.display().to_string(),
-            source: StyleSource::Default,
-        },
-    };
-    let max_cron_sleep = match doc.daemon_max_cron_sleep() {
-        Some(value) => ScalarView {
-            value,
-            source: StyleSource::Config,
-        },
-        None => ScalarView {
-            value: render_compiled_max_cron_sleep(daemon_default.max_cron_sleep),
-            source: StyleSource::Default,
-        },
-    };
-    let allow_control = match doc.whistle_allow_control() {
-        Some(value) => ScalarView {
-            value: value.to_string(),
-            source: StyleSource::Config,
-        },
-        None => ScalarView {
-            value: whistle_default.allow_control.to_string(),
-            source: StyleSource::Default,
-        },
-    };
+    let log_level = scalar(
+        doc.daemon_log_level(),
+        |value| value,
+        daemon_default.log_level.as_str().to_string(),
+    );
+    let log_json = scalar(
+        doc.daemon_log_json(),
+        |value| value.to_string(),
+        daemon_default.log_json.to_string(),
+    );
+    let socket = scalar(
+        doc.daemon_socket(),
+        |value| value.display().to_string(),
+        socket_default.display().to_string(),
+    );
+    let max_cron_sleep = scalar(
+        doc.daemon_max_cron_sleep(),
+        |value| value,
+        render_compiled_max_cron_sleep(daemon_default.max_cron_sleep),
+    );
+    let allow_control = scalar(
+        doc.whistle_allow_control(),
+        |value| value.to_string(),
+        whistle_default.allow_control.to_string(),
+    );
     let (level, source) = style;
     let style_level = ScalarView {
         value: level.to_string(),
@@ -330,6 +305,26 @@ pub fn load_settings(
         style_level_in_file,
         dogs: dog_candidates(&doc),
     })
+}
+
+/// One scalar view: the document's value when the document wrote the key,
+/// the compiled default's text when it did not
+///
+/// `show` is the field's own display form, applied only to the document's
+/// value: a `PathBuf` for `socket`, a `String` already parsed for
+/// `log_level` and `max_cron_sleep`, a `bool` for the two flags. `default`
+/// is the absent-key text, already rendered by its own caller.
+fn scalar<T>(from_file: Option<T>, show: impl FnOnce(T) -> String, default: String) -> ScalarView {
+    match from_file {
+        Some(value) => ScalarView {
+            value: show(value),
+            source: StyleSource::Config,
+        },
+        None => ScalarView {
+            value: default,
+            source: StyleSource::Default,
+        },
+    }
 }
 
 /// [`DaemonSection::default`]'s own `max_cron_sleep`, rendered for the
@@ -543,6 +538,27 @@ mod tests {
             Some("bare".to_string()),
             "load_settings must read [style] level off the real document, \
              not just carry the resolved level `style_fixture` supplies"
+        );
+    }
+
+    /// Both halves of a [`ScalarView`], from one snapshot: a key someone
+    /// wrote carries the file's own text, and a key nobody wrote carries
+    /// the default this screen reads from.
+    #[test]
+    fn a_scalar_from_the_file_is_config_and_an_absent_one_is_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shep.toml");
+        std::fs::write(&path, "[whistle]\nallow_control = true\n").unwrap();
+
+        let snap = load_settings(&path, &socket_default_fixture(), style_fixture()).unwrap();
+
+        assert_eq!(snap.allow_control.source, StyleSource::Config);
+        assert_eq!(snap.allow_control.value, "true");
+
+        assert_eq!(snap.socket.source, StyleSource::Default);
+        assert_eq!(
+            snap.socket.value, "/var/run/shep-settings-fixture.sock",
+            "an absent key shows the socket this lookout is connected over"
         );
     }
 
