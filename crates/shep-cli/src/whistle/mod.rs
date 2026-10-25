@@ -138,9 +138,8 @@ impl ServerHandler for Whistle {
 /// pipe included.
 pub async fn whistle(err: &mut dyn Write, fmt: Format, paths: &ShepPaths) -> ExitCode {
     let file_source = std::fs::read_to_string(&paths.daemon_config).ok();
-    if let Some(src) = file_source.as_deref()
-        && let Err(parse_err) = shep_core::config::DaemonConfig::load(Some(src), &|_| None)
-    {
+    let loaded = shep_core::config::DaemonConfig::load(file_source.as_deref(), &|_| None);
+    if let Err(parse_err) = &loaded {
         let message = format!(
             "{}: {parse_err}. {}",
             paths.daemon_config.display(),
@@ -148,7 +147,7 @@ pub async fn whistle(err: &mut dyn Write, fmt: Format, paths: &ShepPaths) -> Exi
         );
         let _ = output::emit_error(err, fmt, ExitCode::InvalidConfig.code_str(), &message);
     }
-    let control = gate::resolve_control(file_source.as_deref());
+    let control = gate::resolve_control(&loaded);
     let whistle = Whistle::new(paths.clone(), control);
 
     let running = match whistle.serve(rmcp::transport::stdio()).await {
