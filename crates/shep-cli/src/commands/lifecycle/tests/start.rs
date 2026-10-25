@@ -606,12 +606,7 @@ async fn an_assignment_reaches_the_env_of_a_sheep_add_registers() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         add(&client, &mut streams, &args, None, &BTreeMap::new()).await
     };
     assert_eq!(code, ExitCode::Success, "{}", String::from_utf8_lossy(&err));

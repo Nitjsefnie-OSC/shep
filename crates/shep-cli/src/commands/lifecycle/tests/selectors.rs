@@ -14,12 +14,7 @@ async fn a_lifecycle_verb_renders_the_whole_flock_as_a_table() {
     let mut err = Vec::new();
     let touched = vec![ProcessInfo::builder(1, "koji", ProcStatus::Stopped).build()];
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         render_outcome(&client, &mut streams, "stop", FlockRows(touched)).await
     };
 
@@ -74,12 +69,7 @@ async fn the_json_surface_keeps_the_rows_the_verb_touched() {
     let mut err = Vec::new();
     let touched = vec![ProcessInfo::builder(1, "koji", ProcStatus::Stopped).build()];
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Json,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
         render_outcome(&client, &mut streams, "stop", FlockRows(touched)).await
     };
 
@@ -301,12 +291,7 @@ async fn a_start_on_an_empty_fold_exits_not_found_without_a_start_request() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         start(
             &client,
             &mut streams,
@@ -344,12 +329,7 @@ async fn a_target_naming_a_running_sheep_leaves_it_alone() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         start(
             &client,
             &mut streams,

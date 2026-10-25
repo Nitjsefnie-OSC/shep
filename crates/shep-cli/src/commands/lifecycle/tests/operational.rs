@@ -358,12 +358,7 @@ async fn a_json_walk_whose_envelope_never_printed_names_the_refused_apps_on_stde
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Json,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
         reload(
             &client,
             &mut streams,
@@ -494,12 +489,7 @@ async fn a_restart_over_a_host_probes_no_local_dog() {
     let mut out = Vec::new();
     let mut err = Vec::new();
     {
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let args = SelectorArgs {
             selectors: vec!["log-rotate".into()],
         };

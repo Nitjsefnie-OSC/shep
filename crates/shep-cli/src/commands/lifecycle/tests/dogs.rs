@@ -54,12 +54,7 @@ mod slow {
         let mut out = Vec::new();
         let mut err = Vec::new();
         {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             let args = SelectorArgs {
                 selectors: vec!["log-rotate".into()],
             };
@@ -92,12 +87,7 @@ mod slow {
         let mut out = Vec::new();
         let mut err = Vec::new();
         {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             let args = SelectorArgs {
                 selectors: vec!["log-rotate".into()],
             };
@@ -140,12 +130,7 @@ mod slow {
         let mut out = Vec::new();
         let mut err = Vec::new();
         {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             let args = SelectorArgs {
                 selectors: vec!["log-rotate".into()],
             };
@@ -187,12 +172,7 @@ mod slow {
         let mut out = Vec::new();
         let mut err = Vec::new();
         {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             let args = SelectorArgs {
                 selectors: vec!["log-rotate".into()],
             };
@@ -231,12 +211,7 @@ mod slow {
         let mut out = Vec::new();
         let mut err = Vec::new();
         {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             let args = SelectorArgs {
                 selectors: vec!["log-rotate".into()],
             };
@@ -280,12 +255,7 @@ mod slow {
         let mut out = Vec::new();
         let mut err = Vec::new();
         {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             let args = SelectorArgs {
                 selectors: vec!["metrics".into()],
             };
