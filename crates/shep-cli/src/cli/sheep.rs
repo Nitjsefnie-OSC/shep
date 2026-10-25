@@ -142,15 +142,14 @@ pub enum ResetMode {
     All,
 }
 
-impl ResetMode {
+impl From<ResetMode> for ResetDepth {
     /// Maps to the wire type `Request::ApplyConfig` actually carries.
-    #[must_use]
-    pub fn to_depth(self) -> ResetDepth {
-        match self {
-            Self::File => ResetDepth::File,
-            Self::Policy => ResetDepth::Policy,
-            Self::Env => ResetDepth::Env,
-            Self::All => ResetDepth::All,
+    fn from(mode: ResetMode) -> Self {
+        match mode {
+            ResetMode::File => Self::File,
+            ResetMode::Policy => Self::Policy,
+            ResetMode::Env => Self::Env,
+            ResetMode::All => Self::All,
         }
     }
 }
