@@ -3,9 +3,9 @@
 
 use super::*;
 
-/// Start `args` through `shep`, hand the home to `guard` before anything can
-/// panic, and wait for the sheep to come online with a pid. Returns its
-/// `flock` row.
+/// Start `args` through `shep`, hand the home to `guard` before anything that
+/// can panic after the spawn, and wait for the sheep to come online with a
+/// pid. Returns its `flock` row.
 ///
 /// Every handover case opens the same way, and the row is where each one
 /// reads its pid and its `out_file` back.
@@ -15,8 +15,15 @@ pub(crate) fn start_a_sheep_and_wait_online(
     home: &Path,
     args: &[&str],
 ) -> serde_json::Value {
-    let boot = shep(home).args(args).output().unwrap();
+    // Register the home before unwrapping. `output()` can fail after the CLI
+    // autostarted a daemon. A panic before the adoption would leave that
+    // daemon in no guard.
+    let attempt = shep(home).args(args).output();
     guard.adopt_home(home);
+    let boot = match attempt {
+        Ok(boot) => boot,
+        Err(e) => panic!("`shep` could not run at {}: {e}", home.display()),
+    };
     assert_success(&boot);
 
     let row = poll_flock(home, |info| {
