@@ -13,7 +13,7 @@ use shep_core::protocol::{HostUsage, ProcessInfo, sort_flock};
 use crate::cli::Format;
 use crate::style::Presentation;
 
-use super::{DogRows, FlockRows, SCHEMA_VERSION, rows, table_of};
+use super::{DogRows, FlockRows, SCHEMA_VERSION, rows, table_of, write_json_line};
 
 /// The `--format json` shape [`emit_flock`] writes:
 /// [`super::OutputEnvelope`]'s own three fields, plus `host` riding beside
@@ -128,7 +128,7 @@ pub(crate) fn emit_fleet_flock(
             })
         })
         .collect();
-    write_envelope(
+    write_json_line(
         out,
         &OriginEnvelope {
             schema_version: SCHEMA_VERSION,
@@ -153,7 +153,7 @@ pub(crate) fn emit_origin_flock(
     listing: &[ProcessInfo],
     host: Option<Option<HostUsage>>,
 ) -> io::Result<()> {
-    write_envelope(
+    write_json_line(
         out,
         &OriginEnvelope {
             schema_version: SCHEMA_VERSION,
@@ -169,11 +169,6 @@ pub(crate) fn emit_origin_flock(
             hosts: None,
         },
     )
-}
-
-fn write_envelope(out: &mut dyn io::Write, envelope: &OriginEnvelope<'_>) -> io::Result<()> {
-    serde_json::to_writer(&mut *out, envelope)?;
-    writeln!(out)
 }
 
 /// Renders one flock listing: the sheep table, then the dogs table
@@ -207,8 +202,7 @@ pub fn emit_flock(
                 data: FlockRows(listing),
                 host,
             };
-            serde_json::to_writer(&mut *out, &envelope)?;
-            writeln!(out)
+            write_json_line(&mut *out, &envelope)
         }
         Format::Table => {
             let (dogs, sheep): (Vec<ProcessInfo>, Vec<ProcessInfo>) =
