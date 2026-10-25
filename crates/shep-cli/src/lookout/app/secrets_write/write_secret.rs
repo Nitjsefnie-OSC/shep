@@ -160,13 +160,19 @@ impl App {
                     }
                     return Effect::None;
                 }
-                let environment = match &self.body {
-                    Body::Secrets(pane) => pane.environment().unwrap_or_default().to_string(),
+                // No tab showing is no environment to write to: the empty
+                // name is a slot no tab reads. Unreachable through the
+                // keymap today, since opening this input needs a loaded
+                // model and a loaded model always carries `all`.
+                let Some(environment) = (match &self.body {
+                    Body::Secrets(pane) => pane.environment().map(str::to_string),
                     Body::FlockTable
                     | Body::Settings(_)
                     | Body::ConfigPane(_)
                     | Body::Bleats(_)
-                    | Body::Sheep(_) => return Effect::None,
+                    | Body::Sheep(_) => None,
+                }) else {
+                    return Effect::None;
                 };
                 let Some(authority) = self.authorize_write() else {
                     return Effect::None;
@@ -267,6 +273,38 @@ mod tests {
         };
         assert_eq!(edit.environment, second_tab_of(&app));
         assert_eq!(edit.value.as_deref(), Some("s3cret"));
+    }
+
+    /// A reload's environment union can shrink while a value input is open,
+    /// and `SecretsPane::environment` over an empty list names no tab. The
+    /// write refuses rather than naming the environment `""`.
+    #[test]
+    fn a_value_with_no_environment_tab_writes_nothing() {
+        let mut app = fixtures::app_typing_a_value();
+        let _ = app.update(Msg::Secrets {
+            environment: "all".to_string(),
+            result: Ok(Box::default()),
+        });
+        assert!(
+            typing_of(&app)
+                .is_some_and(|typing| typing.what == TypingWhat::ValueFor("DB_PASSWORD".into())),
+            "sanity: the input outlived the load that took every tab away"
+        );
+
+        for c in "s3cret".chars() {
+            let _ = app.update(Msg::Key(KeyPress::TextChar(c)));
+        }
+        let effect = app.update(Msg::Key(KeyPress::TextApply));
+
+        assert!(
+            !matches!(effect, Effect::WriteSecret(..)),
+            "no tab is showing, so nothing here names an environment to write to: {effect:?}"
+        );
+        assert!(matches!(effect, Effect::None));
+        assert!(
+            notice_of(&app).is_none(),
+            "silent, the way a missing tab refuses a reveal and a delete"
+        );
     }
 
     #[test]

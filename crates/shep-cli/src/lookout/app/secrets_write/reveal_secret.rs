@@ -27,12 +27,12 @@ impl App {
     /// The value is not on screen when this returns. [`Self::on_revealed`]
     /// puts it there once the read lands.
     ///
-    /// A visibility check on `pane.selected` here, because `move_by` cannot
-    /// keep it inside the visible set when that set is empty: every group
-    /// folded away and no operator row standing leaves `selected` naming a
-    /// hidden row, and nothing else writes it back. Refused silently,
-    /// the same answer every other `v` press against a pane that is not
-    /// open gives.
+    /// A visibility check on `pane.selected` here, through
+    /// [`SecretsPane::selected_visible_row`], because `move_by` cannot keep
+    /// it inside the visible set when that set is empty: every group folded
+    /// away and no operator row standing leaves `selected` naming a hidden
+    /// row, and nothing else writes it back. Refused silently, the same
+    /// answer every other `v` press against a pane that is not open gives.
     pub(in crate::lookout::app) fn reveal_selected(&mut self) -> Effect {
         if !self.reveal_gate_open() {
             self.notice = Some(Notice::grave(
@@ -43,11 +43,10 @@ impl App {
         let Some(pane) = self.secrets_pane_mut() else {
             return Effect::None;
         };
-        if !pane.visible_row_indices().contains(&pane.selected) {
-            return Effect::None;
-        }
+        // A read needs the tab's name at once, to ask the store for this
+        // environment's slot and to echo it back in [`Msg::Revealed`].
         let (Some(row), Some(environment)) = (
-            pane.model.rows.get(pane.selected).cloned(),
+            pane.selected_visible_row(),
             pane.environment().map(str::to_string),
         ) else {
             return Effect::None;
