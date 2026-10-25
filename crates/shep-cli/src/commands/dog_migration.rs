@@ -100,8 +100,8 @@ pub(crate) fn migrate_dog_sections(paths: &ShepPaths) -> Result<Vec<String>, Dog
         if let Some(name) = incoming.keys().find(|name| collides(name)) {
             return Err(DogMigrationError::WouldOverwrite { name: name.clone() });
         }
-        let mut moved: Vec<String> = incoming.keys().cloned().collect();
-        moved.sort();
+        // `incoming` is a `BTreeMap`, so its keys are already in name order.
+        let moved: Vec<String> = incoming.keys().cloned().collect();
 
         // Appended: a table taken out of `shep.toml` still carries the
         // position it held there. The scan covers every positioned table, not
