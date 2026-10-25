@@ -15,7 +15,6 @@ use super::*;
 use crate::cli::FlockArgs;
 use crate::commands::query::testing::sample_host;
 use crate::remote::Link;
-use crate::style::Presentation;
 use crate::version_guard::flock_command_on;
 
 /// Room for a stand-in to start and answer, short enough that a hang fails
@@ -175,12 +174,7 @@ async fn run_formatted(
     let hosts: Vec<String> = hosts.iter().map(|&host| host.to_owned()).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = fleet(
-        &mut Streams {
-            out: &mut out,
-            err: &mut err,
-            style: Presentation::BARE,
-            fmt,
-        },
+        &mut Streams::bare(&mut out, &mut err, fmt),
         &paths,
         guard,
         &hosts,
@@ -299,12 +293,7 @@ async fn a_host_flag_listing_as_json_carries_origin_on_every_row() {
         options: SshOptions::default().program(dir.path().join("ssh")),
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: Presentation::BARE,
-        fmt: Format::Json,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
     let args = FlockArgs {
         follow: false,
         interval: crate::cli::FOLLOW_INTERVAL_FLOOR_SECONDS,
@@ -453,12 +442,7 @@ async fn fan_out_passes_batch_mode_and_a_single_host_does_not() {
         options: SshOptions::default().program(dir.path().join("ssh")),
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: Presentation::BARE,
-        fmt: Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
     let args = FlockArgs {
         follow: false,
         interval: crate::cli::FOLLOW_INTERVAL_FLOOR_SECONDS,
@@ -647,12 +631,7 @@ async fn a_stdout_that_fails_while_the_roll_prints_ends_the_run_with_failure() {
     let mut err = Vec::new();
 
     let code = fleet(
-        &mut Streams {
-            out: &mut Closed,
-            err: &mut err,
-            style: Presentation::BARE,
-            fmt: Format::Table,
-        },
+        &mut Streams::bare(&mut Closed, &mut err, Format::Table),
         &paths,
         VersionGuard::Warn,
         &["amp1".to_owned()],
@@ -676,12 +655,7 @@ mod dispatch {
             interval: crate::cli::FOLLOW_INTERVAL_FLOOR_SECONDS,
         };
         let code = flock_command_on(
-            &mut Streams {
-                out: &mut out,
-                err: &mut err,
-                style: Presentation::BARE,
-                fmt,
-            },
+            &mut Streams::bare(&mut out, &mut err, fmt),
             &Link::Local(paths),
             VersionGuard::Warn,
             &args,

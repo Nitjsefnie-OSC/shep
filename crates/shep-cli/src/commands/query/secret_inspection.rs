@@ -251,12 +251,7 @@ mod tests {
         ] {
             let mut out = Vec::new();
             let mut err = Vec::new();
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             let args = SelectorArgs {
                 selectors: vec![input.into()],
             };
@@ -286,12 +281,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             describe(
                 &client,
                 &mut streams,
@@ -320,12 +310,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Json,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
             describe(
                 &client,
                 &mut streams,
@@ -410,55 +395,21 @@ mod tests {
     /// dog mid-poll is about to supply.
     #[tokio::test]
     async fn describe_reads_a_namespace_pushed_for_another_environment_as_uncached() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = shep_client::testing::control_address(dir.path());
-        let (client, daemon) = fake_client_with_ack(&path, sample_ack()).await;
-        daemon.reply_to_describe(vec![
-            ProcessInfo::builder(1, "web", ProcStatus::Online).build(),
-        ]);
-        let home = dir.path().display().to_string();
-        let paths = ShepPaths::resolve(
-            &move |key| (key == "SHEP_HOME").then(|| home.clone()),
-            dir.path(),
-        );
-
-        let mut config = shep_core::config::AppConfig::minimal("web", "./srv");
-        config.environment = Some("staging".into());
-        config
-            .env
-            .insert("B".into(), "{{secret:vercel/API_KEY}}".into());
-        let roll = FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
-            app: config,
-            instances_running: 1,
-            disabled: false,
-        }]);
-        std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
-        // The pair the dog has pushed is production; staging is still to come.
-        std::fs::write(
-                &paths.secrets_cache,
-                r#"{"version":2,"namespaces":{"vercel":{"API_KEY":{"production":"sk_live"}}},"pushed":{"vercel":["production"]}}"#,
-            )
-            .unwrap();
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Json,
-            };
-            describe(
-                &client,
-                &mut streams,
-                &Link::Local(&paths),
-                &SelectorArgs {
-                    selectors: vec!["all".into()],
-                },
-            )
-            .await
-        };
+        let mut staging = app_with_env("web", &[("B", "{{secret:vercel/API_KEY}}")]);
+        staging.environment = Some("staging".into());
+        let Described { code, out, .. } = describe_against_a_local_roll(
+            vec![staging],
+            |paths| {
+                // The pair the dog has pushed is production; staging is still to come.
+                std::fs::write(
+                    &paths.secrets_cache,
+                    r#"{"version":2,"namespaces":{"vercel":{"API_KEY":{"production":"sk_live"}}},"pushed":{"vercel":["production"]}}"#,
+                )
+                .unwrap();
+            },
+            Format::Json,
+        )
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -477,58 +428,19 @@ mod tests {
     /// for `resolved`.
     #[tokio::test]
     async fn two_apps_in_two_environments_each_resolve_against_their_own() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = shep_client::testing::control_address(dir.path());
-        let (client, daemon) = fake_client_with_ack(&path, sample_ack()).await;
-        daemon.reply_to_describe(vec![
-            ProcessInfo::builder(1, "pinned", ProcStatus::Online).build(),
-            ProcessInfo::builder(2, "floating", ProcStatus::Online).build(),
-        ]);
-        let home = dir.path().display().to_string();
-        let paths = ShepPaths::resolve(
-            &move |key| (key == "SHEP_HOME").then(|| home.clone()),
-            dir.path(),
-        );
-
-        let mut pinned = shep_core::config::AppConfig::minimal("pinned", "./srv");
+        let mut pinned = app_with_env("pinned", &[("A", "{{secret:K}}")]);
         pinned.environment = Some("staging".into());
-        pinned.env.insert("A".into(), "{{secret:K}}".into());
-        let mut floating = shep_core::config::AppConfig::minimal("floating", "./srv");
-        floating.env.insert("A".into(), "{{secret:K}}".into());
-        let roll = FlockSnapshot::with_apps(
-            [pinned, floating]
-                .into_iter()
-                .map(|app| shep_daemon::snapshot::SavedApp {
-                    app,
-                    instances_running: 1,
-                    disabled: false,
-                })
-                .collect(),
-        );
-        std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
-        // Staging and no `all` slot, so the daemon's own `production` has
-        // nothing to fall back to.
-        secrets::set(&paths.secrets, "K", "staging", "sk_staging").unwrap();
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Json,
-            };
-            describe(
-                &client,
-                &mut streams,
-                &Link::Local(&paths),
-                &SelectorArgs {
-                    selectors: vec!["all".into()],
-                },
-            )
-            .await
-        };
+        let floating = app_with_env("floating", &[("A", "{{secret:K}}")]);
+        let Described { code, out, .. } = describe_against_a_local_roll(
+            vec![pinned, floating],
+            |paths| {
+                // Staging and no `all` slot, so the daemon's own `production` has
+                // nothing to fall back to.
+                secrets::set(&paths.secrets, "K", "staging", "sk_staging").unwrap();
+            },
+            Format::Json,
+        )
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -553,49 +465,17 @@ mod tests {
     /// for a value the store may already hold.
     #[tokio::test]
     async fn describe_says_the_store_would_not_read_rather_than_calling_keys_missing() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = shep_client::testing::control_address(dir.path());
-        let (client, daemon) = fake_client_with_ack(&path, sample_ack()).await;
-        daemon.reply_to_describe(vec![
-            ProcessInfo::builder(1, "web", ProcStatus::Online).build(),
-        ]);
-        let home = dir.path().display().to_string();
-        let paths = ShepPaths::resolve(
-            &move |key| (key == "SHEP_HOME").then(|| home.clone()),
-            dir.path(),
-        );
-
-        let mut config = shep_core::config::AppConfig::minimal("web", "./srv");
-        config
-            .env
-            .insert("A".into(), "{{secret:DB_PASSWORD}}".into());
-        let roll = FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
-            app: config,
-            instances_running: 1,
-            disabled: false,
-        }]);
-        std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
-        std::fs::write(&paths.secrets, b"{not json").unwrap();
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
-            describe(
-                &client,
-                &mut streams,
-                &Link::Local(&paths),
-                &SelectorArgs {
-                    selectors: vec!["all".into()],
-                },
-            )
-            .await
-        };
+        let Described {
+            code,
+            paths,
+            out,
+            err,
+        } = describe_against_a_local_roll(
+            vec![app_with_env("web", &[("A", "{{secret:DB_PASSWORD}}")])],
+            |paths| std::fs::write(&paths.secrets, b"{not json").unwrap(),
+            Format::Table,
+        )
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         let warning = String::from_utf8(err).unwrap();
@@ -642,12 +522,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Json,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
             describe(
                 &client,
                 &mut streams,
@@ -687,12 +562,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             describe(
                 &client,
                 &mut streams,
@@ -723,49 +593,14 @@ mod tests {
     #[tokio::test]
     async fn the_unreadable_store_notice_says_bare_references_read_as_missing_and_namespaced_ones_still_resolve()
      {
-        let dir = tempfile::tempdir().unwrap();
-        let path = shep_client::testing::control_address(dir.path());
-        let (client, daemon) = fake_client_with_ack(&path, sample_ack()).await;
-        daemon.reply_to_describe(vec![
-            ProcessInfo::builder(1, "web", ProcStatus::Online).build(),
-        ]);
-        let home = dir.path().display().to_string();
-        let paths = ShepPaths::resolve(
-            &move |key| (key == "SHEP_HOME").then(|| home.clone()),
-            dir.path(),
-        );
-
-        let mut config = shep_core::config::AppConfig::minimal("web", "./srv");
-        config
-            .env
-            .insert("A".into(), "{{secret:DB_PASSWORD}}".into());
-        let roll = FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
-            app: config,
-            instances_running: 1,
-            disabled: false,
-        }]);
-        std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
-        std::fs::write(&paths.secrets, r#"{"version":99,"entries":{}}"#).unwrap();
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
-            describe(
-                &client,
-                &mut streams,
-                &Link::Local(&paths),
-                &SelectorArgs {
-                    selectors: vec!["all".into()],
-                },
-            )
-            .await
-        };
+        let Described {
+            code, paths, err, ..
+        } = describe_against_a_local_roll(
+            vec![app_with_env("web", &[("A", "{{secret:DB_PASSWORD}}")])],
+            |paths| std::fs::write(&paths.secrets, r#"{"version":99,"entries":{}}"#).unwrap(),
+            Format::Table,
+        )
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         assert_eq!(
@@ -788,57 +623,22 @@ mod tests {
     /// namespaced reference `resolved`.
     #[tokio::test]
     async fn a_namespaced_reference_still_resolves_while_the_store_is_unreadable() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = shep_client::testing::control_address(dir.path());
-        let (client, daemon) = fake_client_with_ack(&path, sample_ack()).await;
-        daemon.reply_to_describe(vec![
-            ProcessInfo::builder(1, "web", ProcStatus::Online).build(),
-        ]);
-        let home = dir.path().display().to_string();
-        let paths = ShepPaths::resolve(
-            &move |key| (key == "SHEP_HOME").then(|| home.clone()),
-            dir.path(),
-        );
-
-        let mut config = shep_core::config::AppConfig::minimal("web", "./srv");
-        config
-            .env
-            .insert("A".into(), "{{secret:DB_PASSWORD}}".into());
-        config
-            .env
-            .insert("B".into(), "{{secret:vercel/KEY}}".into());
-        let roll = FlockSnapshot::with_apps(vec![shep_daemon::snapshot::SavedApp {
-            app: config,
-            instances_running: 1,
-            disabled: false,
-        }]);
-        std::fs::write(&paths.snapshot, serde_json::to_vec(&roll).unwrap()).unwrap();
-        std::fs::write(&paths.secrets, b"{not json").unwrap();
-        std::fs::write(
-            &paths.secrets_cache,
-            r#"{"version":2,"namespaces":{"vercel":{"KEY":{"production":"sk_live"}}},"pushed":{"vercel":["production"]}}"#,
+        let Described { code, out, err, .. } = describe_against_a_local_roll(
+            vec![app_with_env(
+                "web",
+                &[("A", "{{secret:DB_PASSWORD}}"), ("B", "{{secret:vercel/KEY}}")],
+            )],
+            |paths| {
+                std::fs::write(&paths.secrets, b"{not json").unwrap();
+                std::fs::write(
+                    &paths.secrets_cache,
+                    r#"{"version":2,"namespaces":{"vercel":{"KEY":{"production":"sk_live"}}},"pushed":{"vercel":["production"]}}"#,
+                )
+                .unwrap();
+            },
+            Format::Table,
         )
-        .unwrap();
-
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
-            describe(
-                &client,
-                &mut streams,
-                &Link::Local(&paths),
-                &SelectorArgs {
-                    selectors: vec!["all".into()],
-                },
-            )
-            .await
-        };
+        .await;
 
         assert_eq!(code, ExitCode::Success);
         let warning = String::from_utf8(err).unwrap();

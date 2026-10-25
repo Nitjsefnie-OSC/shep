@@ -615,12 +615,7 @@ mod tests {
         let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let _ = flock(&client, &mut streams).await;
         let sent = tokio::time::timeout(RECV_TIMEOUT, envelopes.recv())
             .await
@@ -636,12 +631,7 @@ mod tests {
         let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let _ = fold(&client, &mut streams, &FoldArgs { name: "api".into() }).await;
         let sent = tokio::time::timeout(RECV_TIMEOUT, envelopes.recv())
             .await
@@ -668,12 +658,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Json,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
             flock(&client, &mut streams).await
         };
 
@@ -696,12 +681,7 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Json,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Json);
         let code = fold(&client, &mut streams, &FoldArgs { name: "api".into() }).await;
         assert_eq!(code, ExitCode::Success);
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
