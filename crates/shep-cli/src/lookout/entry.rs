@@ -183,9 +183,6 @@ where
         poll_tx,
         request_tx,
         paths.clone(),
-        paths.home.clone(),
-        paths.daemon_config.clone(),
-        paths.socket.clone(),
         local,
     )
     .await;
@@ -216,7 +213,6 @@ mod tests {
     use super::super::MIN_REDRAW;
     use super::super::ui_event_loop::run_ui;
 
-    use std::path::Path;
     use std::time::{Duration, Instant};
 
     use ratatui::Terminal;
@@ -232,7 +228,6 @@ mod tests {
     use ratatui::backend::TestBackend;
     use shep_core::protocol::{BusEvent, ProcessInfo};
     use shep_core::status::ProcStatus;
-    use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
@@ -246,12 +241,7 @@ mod tests {
         let (msg_tx, msg_rx) = mpsc::channel(16);
         let (poll_tx, _poll_rx) = mpsc::channel(1);
         let (request_tx, _request_rx) = mpsc::channel(2);
-        let app = App::new(
-            Palette::detect(None, None, None),
-            Control::ReadOnly,
-            "/tmp/shep".to_string(),
-            Instant::now(),
-        );
+        let app = read_only_app();
         let terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
         let keys = stream::iter(vec![Ok(crossterm::event::Event::Key(
             crossterm::event::KeyEvent::new(
@@ -270,10 +260,7 @@ mod tests {
                 msg_rx,
                 poll_tx,
                 request_tx,
-                test_paths(Path::new("/tmp/shep-lookout-tests")),
-                PathBuf::from("/tmp/shep-lookout-tests"),
-                PathBuf::from("/tmp/shep-lookout-tests/shep.toml"),
-                PathBuf::from("/tmp/shep-lookout-tests/run/shep.sock"),
+                shared_test_paths(),
                 FakeLocal::default(),
             ),
         )
@@ -301,12 +288,7 @@ mod tests {
         msg_tx.send(Msg::Key(KeyPress::Quit)).await.unwrap();
         drop(msg_tx);
 
-        let app = App::new(
-            Palette::detect(None, None, None),
-            Control::ReadOnly,
-            "/tmp/shep".to_string(),
-            Instant::now(),
-        );
+        let app = read_only_app();
         let terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
         let _ = tokio::time::timeout(
             Duration::from_secs(10),
@@ -317,10 +299,7 @@ mod tests {
                 msg_rx,
                 poll_tx,
                 request_tx,
-                test_paths(Path::new("/tmp/shep-lookout-tests")),
-                PathBuf::from("/tmp/shep-lookout-tests"),
-                PathBuf::from("/tmp/shep-lookout-tests/shep.toml"),
-                PathBuf::from("/tmp/shep-lookout-tests/run/shep.sock"),
+                shared_test_paths(),
                 FakeLocal::default(),
             ),
         )
@@ -378,12 +357,7 @@ mod tests {
             let _ = msg_tx.send(Msg::Key(KeyPress::Quit)).await;
         });
 
-        let app = App::new(
-            Palette::detect(None, None, None),
-            Control::ReadOnly,
-            "/tmp/shep".to_string(),
-            Instant::now(),
-        );
+        let app = read_only_app();
         let terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
         let _ = tokio::time::timeout(
             Duration::from_secs(10),
@@ -394,10 +368,7 @@ mod tests {
                 msg_rx,
                 poll_tx,
                 request_tx,
-                test_paths(Path::new("/tmp/shep-lookout-tests")),
-                PathBuf::from("/tmp/shep-lookout-tests"),
-                PathBuf::from("/tmp/shep-lookout-tests/shep.toml"),
-                PathBuf::from("/tmp/shep-lookout-tests/run/shep.sock"),
+                shared_test_paths(),
                 local,
             ),
         )
@@ -469,12 +440,7 @@ mod tests {
             let _ = msg_tx.send(Msg::Key(KeyPress::Quit)).await;
         });
 
-        let app = App::new(
-            Palette::detect(None, None, None),
-            Control::ReadOnly,
-            "/tmp/shep".to_string(),
-            Instant::now(),
-        );
+        let app = read_only_app();
         // Tall enough for `view::panes_for` to report a detail pane; a shorter
         // terminal is meant to skip the read entirely.
         let terminal = Terminal::new(TestBackend::new(120, 48)).unwrap();
@@ -487,10 +453,7 @@ mod tests {
                 msg_rx,
                 poll_tx,
                 request_tx,
-                test_paths(Path::new("/tmp/shep-lookout-tests")),
-                PathBuf::from("/tmp/shep-lookout-tests"),
-                PathBuf::from("/tmp/shep-lookout-tests/shep.toml"),
-                PathBuf::from("/tmp/shep-lookout-tests/run/shep.sock"),
+                shared_test_paths(),
                 local,
             ),
         )
@@ -534,12 +497,7 @@ mod tests {
             let _ = msg_tx.send(Msg::Key(KeyPress::Quit)).await;
         });
 
-        let app = App::new(
-            Palette::detect(None, None, None),
-            Control::ReadOnly,
-            "/tmp/shep".to_string(),
-            Instant::now(),
-        );
+        let app = read_only_app();
         let terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
         let terminal = tokio::time::timeout(
             Duration::from_secs(10),
@@ -550,10 +508,7 @@ mod tests {
                 msg_rx,
                 poll_tx,
                 request_tx,
-                test_paths(Path::new("/tmp/shep-lookout-tests")),
-                PathBuf::from("/tmp/shep-lookout-tests"),
-                PathBuf::from("/tmp/shep-lookout-tests/shep.toml"),
-                PathBuf::from("/tmp/shep-lookout-tests/run/shep.sock"),
+                shared_test_paths(),
                 local,
             ),
         )
@@ -606,12 +561,7 @@ mod tests {
             let _ = msg_tx.send(Msg::Key(KeyPress::Quit)).await;
         });
 
-        let app = App::new(
-            Palette::detect(None, None, None),
-            Control::ReadOnly,
-            "/tmp/shep".to_string(),
-            Instant::now(),
-        );
+        let app = read_only_app();
         let terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
         let _ = tokio::time::timeout(
             Duration::from_secs(5),
@@ -622,10 +572,7 @@ mod tests {
                 msg_rx,
                 poll_tx,
                 request_tx,
-                test_paths(Path::new("/tmp/shep-lookout-tests")),
-                PathBuf::from("/tmp/shep-lookout-tests"),
-                PathBuf::from("/tmp/shep-lookout-tests/shep.toml"),
-                PathBuf::from("/tmp/shep-lookout-tests/run/shep.sock"),
+                shared_test_paths(),
                 local,
             ),
         )
@@ -670,12 +617,7 @@ mod tests {
             let _ = msg_tx.send(Msg::Key(KeyPress::Quit)).await;
         });
 
-        let app = App::new(
-            Palette::detect(None, None, None),
-            Control::ReadOnly,
-            "/tmp/shep".to_string(),
-            Instant::now(),
-        );
+        let app = read_only_app();
         // The 18-row tier: `super::super::view::panes_for(20).detail` is false, so the
         // detail pane is not drawn even though the host strip and feed are.
         let terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
@@ -688,10 +630,7 @@ mod tests {
                 msg_rx,
                 poll_tx,
                 request_tx,
-                test_paths(Path::new("/tmp/shep-lookout-tests")),
-                PathBuf::from("/tmp/shep-lookout-tests"),
-                PathBuf::from("/tmp/shep-lookout-tests/shep.toml"),
-                PathBuf::from("/tmp/shep-lookout-tests/run/shep.sock"),
+                shared_test_paths(),
                 local,
             ),
         )
@@ -778,9 +717,6 @@ mod tests {
                 poll_tx,
                 request_tx,
                 paths.clone(),
-                dir.path().to_path_buf(),
-                paths.daemon_config.clone(),
-                paths.socket.clone(),
                 FakeLocal::default(),
             ),
         )

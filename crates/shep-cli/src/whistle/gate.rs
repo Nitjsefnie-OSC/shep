@@ -3,7 +3,7 @@
 //! One source: `[whistle] allow_control` in `$SHEP_HOME/shep.toml`. Not a
 //! flag, not an environment variable.
 
-use shep_core::config::DaemonConfig;
+use shep_core::config::{DaemonConfig, DaemonConfigError};
 
 /// Whether whistle's control tools exist.
 ///
@@ -39,21 +39,23 @@ impl Control {
     }
 }
 
-/// Reads the gate out of `shep.toml`'s text.
+/// Reads the gate out of an already-loaded `shep.toml`.
 ///
-/// Missing or unparsable both read as `ReadOnly`: a broken config fails
-/// closed rather than open at the worst moment. The caller prints the
-/// parse failure to stderr, so a shut gate is never silent about why.
+/// An unparsable file reads as `ReadOnly`: a broken config fails closed
+/// rather than open at the worst moment. The caller prints the parse
+/// failure to stderr, so a shut gate is never silent about why.
 ///
-/// The environment closure is always `&|_| None`: none of
-/// `DaemonConfig::load`'s four env vars touch `allow_control`, so this
-/// stays a pure function of the file's text, testable without a tempdir.
+/// Takes the load's result rather than the text, so the caller parses the
+/// file once and reports from the same result. That load's environment
+/// closure is always `&|_| None`: none of `DaemonConfig::load`'s four env
+/// vars touch `allow_control`, so the answer depends only on the file's
+/// text.
 ///
 /// No `SHEP_WHISTLE_ALLOW_CONTROL` exists; only `--home`/`$SHEP_HOME` can
 /// vary which `shep.toml` is read.
 #[must_use]
-pub fn resolve_control(shep_toml: Option<&str>) -> Control {
-    match DaemonConfig::load(shep_toml, &|_| None) {
+pub fn resolve_control(loaded: &Result<DaemonConfig, DaemonConfigError>) -> Control {
+    match loaded {
         Ok(config) if config.whistle.allow_control => Control::Allowed,
         _ => Control::ReadOnly,
     }
@@ -63,23 +65,28 @@ pub fn resolve_control(shep_toml: Option<&str>) -> Control {
 mod tests {
     use super::*;
 
+    /// Loads the way `whistle()` does, then resolves.
+    fn control_of(text: Option<&str>) -> Control {
+        resolve_control(&DaemonConfig::load(text, &|_| None))
+    }
+
     /// fails if the file stops being read, or if the default stops being
     /// "no". Both halves matter: a gate that never opens is useless and a
     /// gate that opens by accident is worse than none.
     #[test]
     fn the_file_is_the_only_source_and_it_defaults_to_read_only() {
-        assert_eq!(resolve_control(None), Control::ReadOnly);
-        assert_eq!(resolve_control(Some("")), Control::ReadOnly);
+        assert_eq!(control_of(None), Control::ReadOnly);
+        assert_eq!(control_of(Some("")), Control::ReadOnly);
         assert_eq!(
-            resolve_control(Some("[daemon]\nlog_level = \"info\"\n")),
+            control_of(Some("[daemon]\nlog_level = \"info\"\n")),
             Control::ReadOnly
         );
         assert_eq!(
-            resolve_control(Some("[whistle]\nallow_control = true\n")),
+            control_of(Some("[whistle]\nallow_control = true\n")),
             Control::Allowed
         );
         assert_eq!(
-            resolve_control(Some("[whistle]\nallow_control = false\n")),
+            control_of(Some("[whistle]\nallow_control = false\n")),
             Control::ReadOnly
         );
     }
@@ -89,9 +96,9 @@ mod tests {
     /// a gate that disappears then is a gate that was never there.
     #[test]
     fn a_file_that_will_not_parse_is_read_as_no() {
-        assert_eq!(resolve_control(Some("[whistle")), Control::ReadOnly);
+        assert_eq!(control_of(Some("[whistle")), Control::ReadOnly);
         assert_eq!(
-            resolve_control(Some("[whistle]\nallow_control = \"yes\"\n")),
+            control_of(Some("[whistle]\nallow_control = \"yes\"\n")),
             Control::ReadOnly,
             "a string where a bool belongs is a broken file, not a true"
         );

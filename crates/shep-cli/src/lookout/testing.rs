@@ -1,11 +1,14 @@
 //! Fixtures and helpers shared by this module's tests.
 
+use crate::lookout::app::{App, Control};
 use crate::lookout::source::{HostSample, Local};
 use crate::lookout::tail::Tail;
+use crate::lookout::theme::Palette;
 use shep_core::paths::ShepPaths;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 /// The resolved layout for a given `home`, matching how the literal
 /// `home`/`daemon_config`/`socket_default` triples below were derived by
@@ -13,6 +16,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub(super) fn test_paths(home: &Path) -> ShepPaths {
     let home_str = home.to_string_lossy().into_owned();
     ShepPaths::resolve(&|key| (key == "SHEP_HOME").then(|| home_str.clone()), home)
+}
+
+/// [`test_paths`] under the home most tests share, which no test writes to.
+pub(super) fn shared_test_paths() -> ShepPaths {
+    test_paths(Path::new("/tmp/shep-lookout-tests"))
+}
+
+/// A read-only `App` on the default palette, for a test that drives the loop
+/// and does not care what the app starts with.
+pub(super) fn read_only_app() -> App {
+    App::new(
+        Palette::detect(None, None, None),
+        Control::ReadOnly,
+        "/tmp/shep".to_string(),
+        Instant::now(),
+    )
 }
 
 /// A `source::Local` that touches no disk: a fixed sample, a fixed tail, and a
