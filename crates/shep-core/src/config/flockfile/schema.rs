@@ -73,6 +73,12 @@ pub fn flockfile_schema_json() -> Schema {
 mod tests {
     use super::*;
 
+    /// The committed schema, parsed.
+    #[cfg(feature = "schema")]
+    fn parsed() -> serde_json::Value {
+        serde_json::from_str(&flockfile_schema_string()).unwrap()
+    }
+
     /// Resolves a `$ref` into `$defs`, one hop, and returns the subschema.
     /// Everything with a `schema_name` is referenced rather than inlined, so
     /// an assertion that does not follow the ref is asserting about a
@@ -117,7 +123,7 @@ mod tests {
     #[cfg(feature = "schema")]
     #[test]
     fn the_schema_describes_a_document_not_one_app() {
-        let schema: serde_json::Value = serde_json::from_str(&flockfile_schema_string()).unwrap();
+        let schema = parsed();
         assert!(schema["properties"]["app"].is_object(), "{schema}");
         assert_eq!(schema["properties"]["app"]["type"], "array", "{schema}");
         assert!(
@@ -133,7 +139,7 @@ mod tests {
     #[cfg(feature = "schema")]
     #[test]
     fn kill_signal_stays_an_unconstrained_string() {
-        let schema: serde_json::Value = serde_json::from_str(&flockfile_schema_string()).unwrap();
+        let schema = parsed();
         let field = resolved(
             &schema,
             &schema["$defs"]["AppConfig"]["properties"]["kill_signal"],
@@ -161,7 +167,7 @@ mod tests {
     #[cfg(feature = "schema")]
     #[test]
     fn duration_and_memory_fields_are_string_shaped() {
-        let schema: serde_json::Value = serde_json::from_str(&flockfile_schema_string()).unwrap();
+        let schema = parsed();
         let app = &schema["$defs"]["AppConfig"]["properties"];
 
         // `min_uptime: UpDuration` (not `Option`) is a bare `$ref`.

@@ -57,6 +57,18 @@ pub(super) fn refused(
     }
 }
 
+/// A claim that `normalize` refuses `name` in `env`, because shep sets it.
+fn reserved_env(name: &str, value: &str) -> RefusalClaim {
+    refused(
+        "env",
+        "SHEP_INSTANCE, SHEP_NAME, or SHEP_ENVIRONMENT, which shep sets itself",
+        sheep(|a| {
+            a.env.insert(name.to_owned(), value.to_owned());
+        }),
+        |e| matches!(e, NormalizeError::ReservedEnvVar { .. }),
+    )
+}
+
 /// A claim enforced past `normalize`, with `where` naming the enforcer.
 pub(super) fn elsewhere(
     field: &'static str,
@@ -186,31 +198,9 @@ pub(super) fn refusal_claims() -> Vec<RefusalClaim> {
             }),
             |e| matches!(e, NormalizeError::BadTemplate { .. }),
         ),
-        refused(
-            "env",
-            "SHEP_INSTANCE, SHEP_NAME, or SHEP_ENVIRONMENT, which shep sets itself",
-            sheep(|a| {
-                a.env.insert("SHEP_INSTANCE".to_owned(), "0".to_owned());
-            }),
-            |e| matches!(e, NormalizeError::ReservedEnvVar { .. }),
-        ),
-        refused(
-            "env",
-            "SHEP_INSTANCE, SHEP_NAME, or SHEP_ENVIRONMENT, which shep sets itself",
-            sheep(|a| {
-                a.env.insert("SHEP_NAME".to_owned(), "web".to_owned());
-            }),
-            |e| matches!(e, NormalizeError::ReservedEnvVar { .. }),
-        ),
-        refused(
-            "env",
-            "SHEP_INSTANCE, SHEP_NAME, or SHEP_ENVIRONMENT, which shep sets itself",
-            sheep(|a| {
-                a.env
-                    .insert("SHEP_ENVIRONMENT".to_owned(), "staging".to_owned());
-            }),
-            |e| matches!(e, NormalizeError::ReservedEnvVar { .. }),
-        ),
+        reserved_env("SHEP_INSTANCE", "0"),
+        reserved_env("SHEP_NAME", "web"),
+        reserved_env("SHEP_ENVIRONMENT", "staging"),
         refused(
             "env",
             "an unclosed {{ token",
