@@ -10,7 +10,7 @@ use core::fmt;
 /// is anticipated per backend, not per format: `.js` Flockfiles never
 /// appear here, since shep-core never executes anything. The node bridge
 /// lives in shep-cli, which feeds its output back through
-/// [`FlockFormat::Json`](crate::config::flockfile::FlockFormat::Json).
+/// [`FlockFormat::Json`].
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlockfileError {
