@@ -38,7 +38,7 @@ pub fn startup(
 ) -> ExitCode {
     let plan = match plan(explicit_home, args) {
         Ok(plan) => plan,
-        Err(refusal) => return refuse(streams, refusal.code, &refusal.message),
+        Err(refusal) => return streams.fail(refusal.code, &refusal.message),
     };
     // Created before the privilege and existing-unit checks on purpose.
     // An unprivileged run prints `sudo ... --home <default>`, which
@@ -47,7 +47,7 @@ pub fn startup(
     if let Some(paths) = plan.own_default_home.clone()
         && let Err(refusal) = crate::home::create_default_home(streams, paths)
     {
-        return refuse(streams, refusal.code(), &refusal.to_string());
+        return streams.fail(refusal.code(), &refusal.to_string());
     }
     install(streams, &plan, privilege())
 }
@@ -60,7 +60,7 @@ pub fn startup(
 pub fn unstartup(streams: &mut Streams<'_>, args: &StartupArgs) -> ExitCode {
     match plan(None, args) {
         Ok(plan) => remove(streams, &plan, privilege()),
-        Err(refusal) => refuse(streams, refusal.code, &refusal.message),
+        Err(refusal) => streams.fail(refusal.code, &refusal.message),
     }
 }
 
@@ -85,8 +85,7 @@ pub(crate) fn install(
     privilege: Privilege,
 ) -> ExitCode {
     if !plan.spec.home.is_dir() {
-        return refuse(
-            streams,
+        return streams.fail(
             ExitCode::Usage,
             &format!(
                 "no directory at {}; create it first (any shep verb run as {} creates that \
@@ -97,8 +96,7 @@ pub(crate) fn install(
         );
     }
     if plan.unit_path.exists() {
-        return refuse(
-            streams,
+        return streams.fail(
             ExitCode::Usage,
             &format!(
                 "{} already exists; shep unstartup removes it first",
@@ -107,8 +105,7 @@ pub(crate) fn install(
         );
     }
     if privilege == Privilege::Unprivileged {
-        return refuse(
-            streams,
+        return streams.fail(
             ExitCode::Failure,
             &format!(
                 "installing the unit needs root; run: sudo {} startup --user {} --home {}",
@@ -169,8 +166,7 @@ pub(crate) fn remove(
         );
     }
     if privilege == Privilege::Unprivileged {
-        return refuse(
-            streams,
+        return streams.fail(
             ExitCode::Failure,
             &format!(
                 "removing the unit needs root; run: sudo {} unstartup --user {}",
@@ -289,11 +285,6 @@ fn failure_line(output: &std::process::Output) -> String {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map_or_else(|| format!("failed: {}", output.status), ToString::to_string)
-}
-
-/// Writes one refusal to stderr and returns the code it earned.
-pub(super) fn refuse(streams: &mut Streams<'_>, code: ExitCode, message: &str) -> ExitCode {
-    streams.fail(code, message)
 }
 
 #[cfg(test)]

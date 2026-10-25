@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::cli::Format;
 
-use super::SCHEMA_VERSION;
+use super::{SCHEMA_VERSION, write_json_line};
 
 /// The `--format json` shape of a failure: `{"schema_version", "error":
 /// {"code", "message"}}`.
@@ -100,8 +100,7 @@ pub fn emit_error(
                 schema_version: SCHEMA_VERSION,
                 error: ErrorBody { code, message },
             };
-            serde_json::to_writer(&mut *err, &envelope)?;
-            writeln!(err)
+            write_json_line(&mut *err, &envelope)
         }
         Format::Table => writeln!(err, "error[{code}]: {message}"),
     }
@@ -158,8 +157,7 @@ pub fn emit_notice(
                 schema_version: SCHEMA_VERSION,
                 notice: NoticeBody { code, message },
             };
-            serde_json::to_writer(&mut *out, &envelope)?;
-            writeln!(out)
+            write_json_line(&mut *out, &envelope)
         }
         Format::Table => writeln!(out, "notice[{code}]: {message}"),
     }

@@ -12,7 +12,7 @@ use shep_client::{Client, START_DEADLINE};
 use shep_core::config::{DeclaredApp, ResetDepth};
 use shep_core::protocol::{Request, Response, SheepApplied};
 
-use crate::cli::{ResetMode, StartArgs};
+use crate::cli::StartArgs;
 use crate::commands::lifecycle::Load;
 use crate::exit::ExitCode;
 use crate::output::Streams;
@@ -228,5 +228,5 @@ pub(crate) fn reset_flag(args: &StartArgs) -> Option<String> {
 }
 
 pub(crate) fn reset_depth(args: &StartArgs) -> ResetDepth {
-    args.reset.map_or(ResetDepth::None, ResetMode::to_depth)
+    args.reset.map_or(ResetDepth::None, ResetDepth::from)
 }
