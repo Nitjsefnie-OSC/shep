@@ -13,6 +13,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-25
+
+### Added
+
+- One validator answers a dog schema and a proposed table
+- A dog table write goes through the shared validator
+- The table validator can answer only the keys a caller chose
+- Print a sheep's or a dog's settings with shep get **(BREAKING)**
+- Write a manifest dog's defaults into dogs.toml on adopt
+- Carry a dog's grants on DogSource and map every request to a permission **(BREAKING)**
+- Carry a dog's grants from shep.toml and say when a shepherd will not enforce them
+- Ask before granting a dog its declared permissions **(BREAKING)**
+- Add shep dogs grant and revoke to change one permission
+
+### Changed
+
+- Give Render a default json_key_for and an empty JSON_ONLY
+
+### Fixed
+
+- Arm bleats' Ctrl+C listener before its first request
+- Flush bleats' output before the interrupt grace ends it
+- Let Ctrl+C end a bleats run at any step
+- A table write is checked for the keys the edit changed
+- A table value must be the JSON type its schema names
+- A closed set spelled as a oneOf bounds a list element too
+- An unreported refusal does not stop the table walk
+- The table door enforces a union arm's required list
+- Name the dog a default-only read found, and match get's help to what it prints
+- Keep an empty dog table's header, and a dotted key whole on the way down
+- Name the sheep in the env refusal, and walk a dotted key as one key
+- Stay inside the toml_edit floor when seeding a dog's defaults
+- Judge dogs.toml before the defaults and warn without claiming a section
+- Migrate legacy dog settings before seeding defaults on adopt
+- Refuse a misspelt grant in adopt and enable
+- Bind a dog by its grants from the moment it starts
+- Keep a dog's grants out of its own reach
+- Build the adopt consent tests on unix only
+- Keep a grant written while the question was open, and report an unreadable config
+- Stop a running dog when its re-adopt is declined
+- Treat a stop of an unregistered dog as nothing running, and follow the file after a declined adopt
+- File dogs grant and revoke in the CLI page, and gate the e2e imports to unix
+- Name the dog argument without dogs.toml, and pin --host refusal for grant and revoke
+- Read a dog's manifest through ManifestRead in dogs grant
+- Copy a sheep env instead of refusing it
+- Refuse an env copy whose reviewed changes no longer hold
+
+### Performance
+
+- Build lookout's visible rows once per selection move
+
+
 ## [0.16.1] - 2026-10-22
 
 ### Fixed
