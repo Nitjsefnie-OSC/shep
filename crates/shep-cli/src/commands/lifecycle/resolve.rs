@@ -296,9 +296,9 @@ pub(crate) fn split_assignments(targets: &[String]) -> (BTreeMap<String, String>
 /// `cwd` the file's own directory
 ///
 /// The one body the two tiers of [`resolve_target_declared`] that name a
-/// recognised extension share: `--flockfile` over a format clap can read, and
-/// the same format recognised on its own. They read, parse and default the
-/// cwd identically, and only the tier above them differs.
+/// recognised extension share: the `--flockfile` tier, and the tier that
+/// recognises the same extension on its own. They read, parse and default
+/// the cwd identically, and only the tier above them differs.
 ///
 /// # Errors
 /// - [`TargetError::Read`] if `path` could not be read.
