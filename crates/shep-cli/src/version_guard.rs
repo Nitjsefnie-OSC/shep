@@ -1,6 +1,6 @@
-//! Protocol version safety: refusing a shepherd whose crate version differs
-//! from this binary's, and `shep flock`'s own dispatch, which applies the
-//! guard by hand around its roll fallback.
+//! Protocol version safety: refusing a shepherd this build cannot write to,
+//! and `shep flock`'s own dispatch, which applies the guard by hand around
+//! its roll fallback.
 
 use std::io::IsTerminal;
 use std::time::Duration;
@@ -10,6 +10,7 @@ use commands::query;
 use exit::ExitCode;
 use output::Streams;
 use shep_client::Client;
+use shep_core::protocol::PROTOCOL_VERSION;
 
 use crate::client::unreachable_message;
 use crate::remote::Link;
@@ -69,7 +70,10 @@ fn read_verb(command: &Commands) -> Option<&'static str> {
     }
 }
 
-/// Whether a shepherd of a different version refuses this invocation.
+/// Whether a shepherd this build cannot write to refuses this invocation.
+///
+/// What a shepherd cannot be written to is the link's question, not the
+/// verb's: see [`skew_of`].
 ///
 /// `pub(crate)`: `lookout`, `whistle` and `foreground` call `Client::connect`
 /// in their own modules and name this at each connect site, always
@@ -110,11 +114,26 @@ const VERSION_SKEW_CAUSE: [&str; 2] = [
 /// the table form prints.
 ///
 /// Not [`VERSION_SKEW_CAUSE`]: `cargo install` on this machine says nothing
-/// about a shepherd that lives elsewhere.
+/// about a shepherd that lives elsewhere. And it names the wire, not the
+/// version, because over `--host` a version difference alone is a notice and
+/// never reaches this cause: see [`skew_of`].
 const VERSION_SKEW_HOST_CAUSE: [&str; 2] = [
-    "The shepherd on that host runs a different shep than this one.",
-    "A reload runs the shep installed there; if they still differ, install the same version on both.",
+    "The shep installed on that host speaks a different wire protocol.",
+    "A reload runs the shep installed there; install this version there if they still differ.",
 ];
+
+/// What a tolerated skew adds after the two builds are named, one per kind of
+/// difference.
+///
+/// Held apart from [`skew_of`] because each sentence states what the operator
+/// may still do, which is the part that changes when a link stops refusing.
+const LOCAL_CRATE_NOTICE: &str =
+    "Listing works, but verbs that change the flock refuse until it is reloaded.";
+const HOST_CRATE_NOTICE: &str = concat!(
+    "The wire protocol matches, so verbs go ahead; install the same version ",
+    "there if you want them to match.",
+);
+const PROTOCOL_NOTICE: &str = "Read verbs go ahead, but verbs that change the flock refuse.";
 
 /// The one command that fixes a skew.
 ///
@@ -150,111 +169,187 @@ fn version_skew_instruction(fmt: Format, host: Option<&str>) -> String {
     }
 }
 
+/// Where the shepherd is, as a skew message names it.
+fn shepherd_at(host: Option<&str>) -> String {
+    match host {
+        Some(dest) => format!("the shepherd on {dest}"),
+        None => "the running shepherd".to_owned(),
+    }
+}
+
 /// The opening clause of a skew message: both versions, and where the
 /// shepherd runs.
 fn version_skew_summary(running: &str, host: Option<&str>) -> String {
-    let shepherd = match host {
-        Some(dest) => format!("the shepherd on {dest}"),
-        None => "the running shepherd".to_owned(),
-    };
     format!(
-        "this shep is {}, {shepherd} is {running}",
-        env!("CARGO_PKG_VERSION")
+        "this shep is {}, {} is {running}",
+        env!("CARGO_PKG_VERSION"),
+        shepherd_at(host)
     )
 }
 
-/// The one line a read verb prints when the shepherd runs another version,
-/// or `None` when the versions match.
+/// The opening clause of a refusal for a shepherd on another protocol: both
+/// protocol numbers, and both crate versions.
 ///
-/// With a `host` the remedy runs over ssh, as the refusal's does.
-pub(crate) fn version_skew_warning(client: &Client, host: Option<&str>) -> Option<String> {
-    let running = client.daemon().daemon_version.as_str();
-    if running == env!("CARGO_PKG_VERSION") {
-        return None;
-    }
-    let summary = version_skew_summary(running, host);
-    let command = version_skew_command(host);
-    // `daemon_version` arrives over the socket, so the sentence is
-    // collapsed as the table refusal's is.
-    let sentence = format!(
-        "{summary}. Listing works, but verbs that change the flock refuse until it is reloaded. Run `{command}`."
-    );
-    Some(crate::terminal_safe::sanitise(&sentence).0)
+/// The versions travel with the numbers because the remedy differs: a reload
+/// fixes a shepherd that is older than the shep installed beside it, and
+/// nothing but an install fixes a host whose install is.
+fn protocol_skew_summary(running: &str, peer: u32, host: Option<&str>) -> String {
+    format!(
+        "this shep is {} speaking protocol {PROTOCOL_VERSION}, {} is {running} speaking protocol {peer}",
+        env!("CARGO_PKG_VERSION"),
+        shepherd_at(host)
+    )
 }
 
-/// What `guard` makes of a skew on `host`, for a caller that asks several
-/// hosts at once and so cannot write to a [`Streams`] as each answers.
+/// The one line a tolerated skew prints: the two builds, what the operator
+/// may still do, and where the remedy runs.
+fn notice_line(summary: &str, tail: &str, host: Option<&str>) -> String {
+    let command = version_skew_command(host);
+    let sentence = format!("{summary}. {tail} Run `{command}`.");
+    // `daemon_version` arrives over the socket, so the sentence is
+    // collapsed as the table refusal's is.
+    crate::terminal_safe::sanitise(&sentence).0
+}
+
+/// The refusal [`refuse_version_skew`] lays out, or [`host_skew`] flattens.
+struct Refusal {
+    /// The opening clause naming both builds.
+    summary: String,
+    /// Why it happened, as the two lines the table form prints.
+    cause: [&'static str; 2],
+}
+
+/// The refusal as the one line a caller that lays out no table needs.
+fn one_line_refusal(summary: &str, host: Option<&str>) -> String {
+    let command = version_skew_command(host);
+    crate::terminal_safe::sanitise(&format!("{summary}. Run `{command}`.")).0
+}
+
+/// What the handshake this client already completed says about versions, in
+/// the two forms a guard needs.
+///
+/// The two links ask different questions, and each asks the one its own
+/// failure mode needs. The local socket asks whether this machine is
+/// half-replaced: `cargo install shep` replaces the binary and leaves the
+/// shepherd running the old code, so the two can agree on every byte of the
+/// wire while disagreeing about what a verb does. A link over `--host` asks
+/// only whether the two agree on the wire: that host has its own install, so
+/// there is no half machine to forget to reload, and a fleet upgrades one host
+/// at a time, which makes a version difference the normal state of six of
+/// seven rather than a mistake.
+///
+/// Equal protocols, not `peer >= MIN_SUPPORTED`: every change to a wire shape
+/// bumps [`PROTOCOL_VERSION`], so agreeing on the number is agreeing on the
+/// grammar. A floor would let this build write to a shepherd whose `AppConfig`
+/// refuses a field it has never heard of, which is the case
+/// `docs/decisions.md` turned the protocol floor down over.
+fn skew_of(client: &Client) -> Skew {
+    let ack = client.daemon();
+    let host = client.host();
+    let running = ack.daemon_version.as_str();
+    if host.is_some() {
+        if ack.protocol != PROTOCOL_VERSION {
+            let summary = protocol_skew_summary(running, ack.protocol, host);
+            return Skew {
+                notice: Some(notice_line(&summary, PROTOCOL_NOTICE, host)),
+                refusal: Some(Refusal {
+                    summary,
+                    cause: VERSION_SKEW_HOST_CAUSE,
+                }),
+            };
+        }
+        if running != env!("CARGO_PKG_VERSION") {
+            let summary = version_skew_summary(running, host);
+            return Skew {
+                notice: Some(notice_line(&summary, HOST_CRATE_NOTICE, host)),
+                refusal: None,
+            };
+        }
+    } else if running != env!("CARGO_PKG_VERSION") {
+        let summary = version_skew_summary(running, None);
+        return Skew {
+            notice: Some(notice_line(&summary, LOCAL_CRATE_NOTICE, None)),
+            refusal: Some(Refusal {
+                summary,
+                cause: VERSION_SKEW_CAUSE,
+            }),
+        };
+    }
+    Skew {
+        notice: None,
+        refusal: None,
+    }
+}
+
+/// A difference between this build and the shepherd it reached, in the two
+/// forms a guard needs.
+struct Skew {
+    /// The one line for stderr when the difference is tolerated, `None` when
+    /// there is nothing to say.
+    notice: Option<String>,
+    /// The message a verb that changes the flock gets when this link refuses
+    /// the difference, `None` when it tolerates it.
+    refusal: Option<Refusal>,
+}
+
+/// What `guard` makes of a skew on the host this client reached, for a caller
+/// that asks several hosts at once and so cannot write to a [`Streams`] as
+/// each answers.
 ///
 /// # Errors
 /// The one-line refusal, with the remedy that runs over ssh, when `guard` is
-/// [`VersionGuard::Enforce`] and the shepherd on `host` reports a different
-/// version. Otherwise the warning to print, if there is one: none for
-/// [`VersionGuard::Exempt`].
-pub(crate) fn host_skew(
-    client: &Client,
-    host: &str,
-    guard: VersionGuard,
-) -> Result<Option<String>, String> {
-    match guard {
-        VersionGuard::Exempt => Ok(None),
-        VersionGuard::Warn => Ok(version_skew_warning(client, Some(host))),
-        VersionGuard::Enforce => {
-            let running = client.daemon().daemon_version.as_str();
-            if running == env!("CARGO_PKG_VERSION") {
-                return Ok(None);
-            }
-            let summary = version_skew_summary(running, Some(host));
-            let command = version_skew_command(Some(host));
-            let sentence = format!("{summary}. Run `{command}`.");
-            Err(crate::terminal_safe::sanitise(&sentence).0)
+/// [`VersionGuard::Enforce`] and that host's shepherd speaks a protocol other
+/// than [`PROTOCOL_VERSION`]. Otherwise the notice to print, if there is one:
+/// none for [`VersionGuard::Exempt`].
+pub(crate) fn host_skew(client: &Client, guard: VersionGuard) -> Result<Option<String>, String> {
+    let skew = skew_of(client);
+    match (guard, skew.refusal) {
+        (VersionGuard::Exempt, _) => Ok(None),
+        (VersionGuard::Warn, _) => Ok(skew.notice),
+        (VersionGuard::Enforce, None) => Ok(skew.notice),
+        (VersionGuard::Enforce, Some(refusal)) => {
+            Err(one_line_refusal(&refusal.summary, client.host()))
         }
     }
 }
 
-/// Refuses a shepherd whose crate version differs from this binary's, or
-/// warns about it for a read verb.
+/// Refuses a shepherd this link cannot write to, or notices the difference
+/// and goes ahead.
 ///
-/// Any difference, not only a protocol difference: `cargo install shep`
-/// replaces the binary and leaves the shepherd running the old code, so the
-/// two can agree on every byte of the wire while disagreeing about what a
-/// verb does. Compares [`shep_core::protocol::HelloAck::daemon_version`]
-/// against `CARGO_PKG_VERSION`, read from a handshake that already succeeded.
+/// Which difference refuses is the link's, and [`skew_of`] states it: crate
+/// versions over the local socket, [`PROTOCOL_VERSION`] over `--host`. Both
+/// read a handshake that already succeeded, from
+/// [`shep_core::protocol::HelloAck`].
 ///
-/// [`VersionGuard::Warn`] writes [`version_skew_warning`] to stderr as a
+/// A difference the link tolerates writes [`Skew::notice`] to stderr as a
 /// notice and proceeds, so stdout stays whatever the verb prints.
 ///
 /// # Errors
 /// [`ExitCode::VersionSkew`], after writing the refusal to `streams`, when
-/// `guard` is [`VersionGuard::Enforce`] and the shepherd reports a different
-/// version. A [`VersionGuard::Exempt`] or [`VersionGuard::Warn`] verb is
-/// always `Ok`.
+/// `guard` is [`VersionGuard::Enforce`] and this link refuses the difference.
+/// A [`VersionGuard::Exempt`] or [`VersionGuard::Warn`] verb is always `Ok`.
 ///
-/// A client reached over ssh gets a refusal or a warning that names its host
+/// A client reached over ssh gets a refusal or a notice that names its host
 /// and a remedy that runs there.
 pub(crate) fn refuse_version_skew(
     streams: &mut Streams<'_>,
     client: &Client,
     guard: VersionGuard,
 ) -> Result<(), ExitCode> {
-    let running = client.daemon().daemon_version.as_str();
-    match guard {
-        VersionGuard::Exempt => return Ok(()),
-        VersionGuard::Warn => {
-            if let Some(warning) = version_skew_warning(client, client.host()) {
-                streams.aside("version_skew", &warning);
+    let skew = skew_of(client);
+    let refusal = match (guard, skew.refusal) {
+        (VersionGuard::Exempt, _) => return Ok(()),
+        (VersionGuard::Warn, _) | (VersionGuard::Enforce, None) => {
+            if let Some(notice) = skew.notice {
+                streams.aside("version_skew", &notice);
             }
             return Ok(());
         }
-        VersionGuard::Enforce if running == env!("CARGO_PKG_VERSION") => return Ok(()),
-        VersionGuard::Enforce => {}
-    }
+        (VersionGuard::Enforce, Some(refusal)) => refusal,
+    };
     let code = ExitCode::VersionSkew;
     let host = client.host();
-    let cause = match host {
-        Some(_) => VERSION_SKEW_HOST_CAUSE,
-        None => VERSION_SKEW_CAUSE,
-    };
-    let summary = version_skew_summary(running, host);
+    let Refusal { summary, cause } = refusal;
     match streams.fmt {
         // One line, one envelope. A `--format json` consumer has no use for
         // the layout below, and it still gets every fact in `error.message`.

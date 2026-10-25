@@ -35,8 +35,52 @@ async fn client_announcing(
     shep_client::testing::fake_client_with_ack(addr, ack).await
 }
 
+/// Writes an executable `ssh` into `dir` that answers the handshake with a
+/// shepherd of `version` speaking `protocol`, then reads until the client
+/// hangs up.
+#[cfg(unix)]
+fn ssh_stand_in(dir: &std::path::Path, version: &str, protocol: u32) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let ack = shep_core::protocol::HelloAck {
+        daemon_version: version.to_owned(),
+        protocol,
+        pid: 4242,
+        min_supported: None,
+    };
+    let reply: shep_core::protocol::HelloReply = Ok(ack);
+    let payload = shep_core::protocol::encode_frame(&reply).unwrap();
+    let mut framed = u32::try_from(payload.len()).unwrap().to_be_bytes().to_vec();
+    framed.extend_from_slice(&payload);
+    std::fs::write(dir.join("reply.bin"), framed).unwrap();
+    let program = dir.join("ssh");
+    std::fs::write(
+        &program,
+        "#!/bin/sh\ncat \"$(dirname \"$0\")/reply.bin\"\ncat >/dev/null\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    program
+}
+
+/// A [`Client`] dialled through a stand-in `ssh` that announced `version`
+/// speaking `protocol`. `dir` has to outlive it: the stand-in is the file the
+/// child is still reading.
+#[cfg(unix)]
+async fn client_over_host(dir: &std::path::Path, version: &str, protocol: u32) -> Client {
+    let options = shep_client::SshOptions::default().program(ssh_stand_in(dir, version, protocol));
+    Client::connect_ssh_with("amp2", &options)
+        .await
+        .expect("the stand-in ssh answers the handshake")
+}
+
 /// The case a protocol-only check misses: the wire versions agree and the
 /// crate versions do not.
+///
+/// Local only, which is the half of the guard that compares crate versions:
+/// over `--host` the same handshake is a notice, and
+/// [`a_host_on_another_version_but_the_same_protocol_is_written_to_and_warns`]
+/// holds that side.
 #[tokio::test]
 async fn a_version_difference_with_no_protocol_difference_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -268,42 +312,23 @@ async fn follow_refuses_json_and_a_pipe_for_different_reasons() {
     );
 }
 
-/// Writes an executable `ssh` into `dir` that answers the handshake with
-/// a shepherd of version 9.9.9 and then reads until the client hangs up.
-#[cfg(unix)]
-fn skewed_ssh_stand_in(dir: &std::path::Path) -> std::path::PathBuf {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let ack = shep_core::protocol::HelloAck {
-        daemon_version: "9.9.9".to_owned(),
-        protocol: shep_core::protocol::PROTOCOL_VERSION,
-        pid: 4242,
-        min_supported: None,
-    };
-    let reply: shep_core::protocol::HelloReply = Ok(ack);
-    let payload = shep_core::protocol::encode_frame(&reply).unwrap();
-    let mut framed = u32::try_from(payload.len()).unwrap().to_be_bytes().to_vec();
-    framed.extend_from_slice(&payload);
-    std::fs::write(dir.join("reply.bin"), framed).unwrap();
-    let program = dir.join("ssh");
-    std::fs::write(
-        &program,
-        "#!/bin/sh\ncat \"$(dirname \"$0\")/reply.bin\"\ncat >/dev/null\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-    program
-}
-
 /// A remedy without `ssh <dest>` would reload this machine's shepherd,
 /// which is not the one in skew.
+///
+/// The skew here is the protocol, because over `--host` that is the only
+/// difference that refuses: see
+/// [`a_host_on_another_version_but_the_same_protocol_is_written_to_and_warns`].
 #[cfg(unix)]
 #[tokio::test]
-async fn a_skew_over_a_host_names_the_remote_reload_command() {
+async fn a_protocol_skew_over_a_host_names_the_remote_reload_command() {
     let dir = tempfile::tempdir().unwrap();
     let link = Link::Host {
         dest: "amp2",
-        options: shep_client::SshOptions::default().program(skewed_ssh_stand_in(dir.path())),
+        options: shep_client::SshOptions::default().program(ssh_stand_in(
+            dir.path(),
+            "9.9.9",
+            PROTOCOL_VERSION - 1,
+        )),
     };
 
     for fmt in [Format::Table, Format::Json] {
@@ -334,6 +359,141 @@ async fn a_skew_over_a_host_names_the_remote_reload_command() {
         );
         assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
     }
+}
+
+/// The fleet case this issue is about: two hosts on two patch releases, the
+/// wire unchanged, and a verb that writes.
+///
+/// The write goes ahead, and the difference is one notice on stderr in the
+/// words a read verb already uses.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_host_on_another_version_but_the_same_protocol_is_written_to_and_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = client_over_host(dir.path(), "9.9.9", PROTOCOL_VERSION).await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    {
+        let mut streams = buffered_streams(&mut out, &mut err);
+        refuse_version_skew(&mut streams, &client, VersionGuard::Enforce)
+            .expect("a host that speaks this protocol is writable, whatever it is versioned");
+    }
+    assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
+    let text = String::from_utf8(err).unwrap();
+    assert_eq!(
+        text,
+        format!("notice[version_skew]: {HOST_SKEWED_NOTICE}\n"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("error[version_skew]"),
+        "a tolerated difference is a notice, not a refusal: {text}"
+    );
+}
+
+/// Under `--format json` the notice is one envelope on stderr and stdout
+/// belongs to the verb alone.
+#[cfg(unix)]
+#[tokio::test]
+async fn under_json_a_tolerated_host_skew_leaves_stdout_to_the_verb() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = client_over_host(dir.path(), "9.9.9", PROTOCOL_VERSION).await;
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    {
+        let mut streams = buffered_streams(&mut out, &mut err);
+        streams.fmt = Format::Json;
+        refuse_version_skew(&mut streams, &client, VersionGuard::Enforce).unwrap();
+    }
+    assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
+    let text = String::from_utf8(err).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    let notice: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(notice["notice"]["code"], "version_skew");
+    assert_eq!(notice["notice"]["message"], HOST_SKEWED_NOTICE);
+}
+
+/// The half of the table that still refuses, and the numbers an operator
+/// needs from it: this build's and that host's, so the two installs can be
+/// named before anything is upgraded.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_host_on_another_protocol_is_refused_naming_both_protocol_numbers() {
+    let dir = tempfile::tempdir().unwrap();
+    let peer = PROTOCOL_VERSION - 1;
+    let client = client_over_host(dir.path(), "0.16.0", peer).await;
+
+    for fmt in [Format::Table, Format::Json] {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = {
+            let mut streams = buffered_streams(&mut out, &mut err);
+            streams.fmt = fmt;
+            refuse_version_skew(&mut streams, &client, VersionGuard::Enforce)
+                .expect_err("a shepherd on another protocol is not writable")
+        };
+
+        assert_eq!(code, ExitCode::VersionSkew, "{fmt:?}");
+        let text = String::from_utf8(err).unwrap();
+        let this_build = format!(
+            "this shep is {} speaking protocol {PROTOCOL_VERSION}",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(text.contains(&this_build), "{text}");
+        assert!(
+            text.contains(&format!(
+                "the shepherd on amp2 is 0.16.0 speaking protocol {peer}"
+            )),
+            "{text}"
+        );
+        assert!(text.contains("ssh amp2 shep daemon reload"), "{text}");
+        assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
+    }
+}
+
+/// A host that agrees on both says nothing at all: a notice nobody asked for
+/// on every `--host` run is noise an operator learns to ignore.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_host_that_agrees_on_version_and_protocol_says_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = client_over_host(dir.path(), env!("CARGO_PKG_VERSION"), PROTOCOL_VERSION).await;
+
+    for guard in [VersionGuard::Enforce, VersionGuard::Warn] {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        {
+            let mut streams = buffered_streams(&mut out, &mut err);
+            refuse_version_skew(&mut streams, &client, guard)
+                .expect("an agreeing host is writable under every guard");
+        }
+        assert!(out.is_empty() && err.is_empty(), "{guard:?}");
+    }
+}
+
+/// A fleet caller flattens the refusal to one line, so the two protocol
+/// numbers have to survive without the table's layout.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_host_skew_under_an_enforcing_guard_is_one_line_naming_both_protocols() {
+    let dir = tempfile::tempdir().unwrap();
+    let peer = PROTOCOL_VERSION - 1;
+    let client = client_over_host(dir.path(), "0.16.0", peer).await;
+
+    let message = host_skew(&client, VersionGuard::Enforce)
+        .expect_err("a host on another protocol is a failure of its own");
+    assert_eq!(message.lines().count(), 1, "{message}");
+    assert!(
+        message.contains(&format!("speaking protocol {PROTOCOL_VERSION}")),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("speaking protocol {peer}")),
+        "{message}"
+    );
+    assert!(message.contains("ssh amp2 shep daemon reload"), "{message}");
 }
 
 /// The roll is this machine's `flock.json`. A dead host that printed it
@@ -492,24 +652,38 @@ async fn a_matching_version_warns_about_nothing_under_warn() {
         refuse_version_skew(&mut streams, &client, VersionGuard::Warn).unwrap();
     }
     assert!(out.is_empty() && err.is_empty());
-    assert_eq!(version_skew_warning(&client, None), None);
+    assert_eq!(skew_of(&client).notice, None);
 }
 
+/// The notice a tolerated host skew prints, in full: the sentence says the
+/// write went ahead, which is what `--host` now does on a matching protocol.
+const HOST_SKEWED_NOTICE: &str = concat!(
+    "this shep is ",
+    env!("CARGO_PKG_VERSION"),
+    ", the shepherd on amp2 is 9.9.9. The wire protocol matches, so verbs go ",
+    "ahead; install the same version there if you want them to match. Run ",
+    "`ssh amp2 shep daemon reload`.",
+);
+
+#[cfg(unix)]
 #[tokio::test]
-async fn the_warning_for_a_host_names_that_host_and_an_ssh_remedy() {
+async fn the_notice_for_a_host_names_that_host_and_an_ssh_remedy() {
     let dir = tempfile::tempdir().unwrap();
-    let addr = shep_client::testing::control_address(dir.path());
-    let (client, _fake) = client_announcing(&addr, "0.1.8").await;
+    let client = client_over_host(dir.path(), "9.9.9", PROTOCOL_VERSION).await;
 
     assert_eq!(
-        version_skew_warning(&client, Some("amp2")).as_deref(),
-        Some(concat!(
-            "this shep is ",
-            env!("CARGO_PKG_VERSION"),
-            ", the shepherd on amp2 is 0.1.8. Listing works, but verbs that change the flock \
-                 refuse until it is reloaded. Run `ssh amp2 shep daemon reload`."
-        ))
+        host_skew(&client, VersionGuard::Warn).unwrap().as_deref(),
+        Some(HOST_SKEWED_NOTICE)
     );
+    // The same line a verb that writes gets, so a fleet listing and a single
+    // `--host` write cannot drift apart in what they admit.
+    assert_eq!(
+        host_skew(&client, VersionGuard::Enforce)
+            .unwrap()
+            .as_deref(),
+        Some(HOST_SKEWED_NOTICE)
+    );
+    assert_eq!(host_skew(&client, VersionGuard::Exempt).unwrap(), None);
 }
 
 /// The version arrives over the socket, so a control character in it must
@@ -520,7 +694,7 @@ async fn a_version_with_an_escape_in_it_is_collapsed_in_the_warning() {
     let addr = shep_client::testing::control_address(dir.path());
     let (client, _fake) = client_announcing(&addr, "0.1.8\u{1b}[31m").await;
 
-    let text = version_skew_warning(&client, None).unwrap();
+    let text = skew_of(&client).notice.unwrap();
     assert!(!text.contains('\u{1b}'), "{text:?}");
 }
 
