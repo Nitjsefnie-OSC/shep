@@ -174,6 +174,10 @@ fn poll_online_sheep(home: &Path, deadline: Duration) -> serde_json::Value {
 struct RuntimeGuard {
     child: Child,
     supervisor_pid: Option<i32>,
+    /// The pid line's channel, held for the guard's lifetime. Dropping the
+    /// `Receiver` ends the reader thread, which closes the pipe's read end,
+    /// and the init then fails or blocks on its next stderr write.
+    stderr_rx: Receiver<String>,
 }
 
 impl Drop for RuntimeGuard {
@@ -189,7 +193,8 @@ impl Drop for RuntimeGuard {
 /// The boot both cases below share: [`spawn_forced_runtime`], the stderr
 /// line reader, the stdout drain, and [`recv_pid_line`]'s pid. The
 /// [`RuntimeGuard`] is built before the pid read, so a pid read that panics
-/// still reaps the init, and it comes back with `supervisor_pid` set.
+/// still reaps the init, and it comes back with `supervisor_pid` set and the
+/// stderr reader channel held for the test's whole lifetime.
 #[track_caller]
 fn spawn_supervised_runtime(home: &Path, flockfile: &Path) -> RuntimeGuard {
     let mut child = spawn_forced_runtime(home, flockfile);
@@ -198,8 +203,9 @@ fn spawn_supervised_runtime(home: &Path, flockfile: &Path) -> RuntimeGuard {
     let mut guard = RuntimeGuard {
         child,
         supervisor_pid: None,
+        stderr_rx,
     };
-    guard.supervisor_pid = Some(recv_pid_line(&stderr_rx, INIT_DEADLINE));
+    guard.supervisor_pid = Some(recv_pid_line(&guard.stderr_rx, INIT_DEADLINE));
     guard
 }
 

@@ -97,6 +97,7 @@ fn the_default_home_resolves_from_the_platform_s_own_variable() {
 /// The watched tree is its own [`TempDir`], never this case's `$SHEP_HOME`:
 /// a watch rooted there would see [`FIXTURE_PIDS`] grow on each spawn and
 /// restart on its own sheep.
+#[track_caller]
 fn boot_a_watched_flock() -> (TempDir, TempDir, DaemonGuard) {
     let dir = tempfile::tempdir().unwrap();
     let watched = tempfile::tempdir().unwrap();
