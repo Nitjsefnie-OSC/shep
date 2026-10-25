@@ -172,6 +172,15 @@ impl App {
                     | Body::Bleats(_)
                     | Body::Sheep(_) => None,
                 }) else {
+                    // Refused the way the too-long refusal above is: the
+                    // input stays open holding what was typed, so a tab
+                    // that went away costs no retype.
+                    if let Some(pane) = self.secrets_pane_mut() {
+                        pane.typing = Some(Typing {
+                            what: TypingWhat::ValueFor(key),
+                            buffer: value,
+                        });
+                    }
                     return Effect::None;
                 };
                 let Some(authority) = self.authorize_write() else {
@@ -304,6 +313,19 @@ mod tests {
         assert!(
             notice_of(&app).is_none(),
             "silent, the way a missing tab refuses a reveal and a delete"
+        );
+        assert_eq!(
+            typing_of(&app).map(|typing| (typing.what.clone(), typing.buffer.as_str().to_string())),
+            Some((
+                TypingWhat::ValueFor("DB_PASSWORD".into()),
+                "s3cret".to_string()
+            )),
+            "the refusal keeps what was typed, the way the too-long one does"
+        );
+        assert_eq!(
+            app.mode(),
+            InputMode::Text,
+            "and the input is still the live one, not a copy off the screen"
         );
     }
 
