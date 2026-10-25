@@ -13,6 +13,7 @@ pub(crate) fn shep(home: &Path) -> Command {
 
 /// Asserts `output` exited `Success`, printing stderr on failure so a
 /// red run names the actual cause instead of just "assertion failed".
+#[track_caller]
 pub(crate) fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
