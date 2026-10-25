@@ -4,6 +4,21 @@
 use super::*;
 
 #[cfg(unix)]
+/// Asserts `output` exited `Success`, then parses its stdout as a JSON
+/// envelope and returns it. A parse failure prints the stdout text, which is
+/// what a `--format json` verb that answered something else looks like.
+#[track_caller]
+fn success_envelope(output: &Output) -> serde_json::Value {
+    assert_success(output);
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+        panic!(
+            "stdout was not JSON: {e}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+#[cfg(unix)]
 /// The envelope's `command` is what pins which handler `Commands::Reload`
 /// reaches, since `main`'s dispatch arms have no unit coverage. The polled id
 /// is the other half: a reload ends in a new id in the same instance slot,
@@ -25,8 +40,7 @@ fn reload_swaps_a_sheep_for_a_fresh_instance_under_a_new_id() {
         .output()
         .unwrap();
     guard.adopt_home(dir.path());
-    assert_success(&started);
-    let envelope: serde_json::Value = serde_json::from_slice(&started.stdout).unwrap();
+    let envelope = success_envelope(&started);
     let original_id = envelope["data"][0]["id"]
         .as_u64()
         .unwrap_or_else(|| panic!("a started sheep must carry an id: {envelope}"));
@@ -38,8 +52,7 @@ fn reload_swaps_a_sheep_for_a_fresh_instance_under_a_new_id() {
         .arg("sheep")
         .output()
         .unwrap();
-    assert_success(&reloaded);
-    let envelope: serde_json::Value = serde_json::from_slice(&reloaded.stdout).unwrap();
+    let envelope = success_envelope(&reloaded);
     assert_eq!(
         envelope["command"], "reload",
         "`shep reload` must reach the reload verb and no other: {envelope}"
@@ -92,8 +105,7 @@ fn trigger_reaches_the_trigger_verb_and_names_the_missing_channel() {
         .arg("reload-config")
         .output()
         .unwrap();
-    assert_success(&triggered);
-    let envelope: serde_json::Value = serde_json::from_slice(&triggered.stdout).unwrap();
+    let envelope = success_envelope(&triggered);
     assert_eq!(
         envelope["command"], "trigger",
         "`shep trigger` must reach the trigger verb and no other: {envelope}"
@@ -137,8 +149,7 @@ fn signal_reaches_the_signal_verb_and_delivers() {
         .arg("SIGWINCH")
         .output()
         .unwrap();
-    assert_success(&signalled);
-    let envelope: serde_json::Value = serde_json::from_slice(&signalled.stdout).unwrap();
+    let envelope = success_envelope(&signalled);
     assert_eq!(
         envelope["command"], "signal",
         "`shep signal` must reach the signal verb and no other: {envelope}"
@@ -182,8 +193,7 @@ fn stock_reaches_the_stock_verb_and_settles_the_flock() {
         .arg("3")
         .output()
         .unwrap();
-    assert_success(&stocked_up);
-    let envelope: serde_json::Value = serde_json::from_slice(&stocked_up.stdout).unwrap();
+    let envelope = success_envelope(&stocked_up);
     assert_eq!(
         envelope["command"], "stock",
         "`shep stock` must reach the stock verb and no other: {envelope}"
@@ -253,8 +263,7 @@ fn scale_alias_reaches_stock_against_a_real_daemon() {
         .arg("2")
         .output()
         .unwrap();
-    assert_success(&scaled);
-    let envelope: serde_json::Value = serde_json::from_slice(&scaled.stdout).unwrap();
+    let envelope = success_envelope(&scaled);
     assert_eq!(
         envelope["command"], "stock",
         "`shep scale` is an alias for `stock`, and must reach it: {envelope}"
@@ -349,8 +358,7 @@ fn a_sheep_labels_one_of_its_lambs_over_its_channel() {
             .args(["--format", "json", "describe", "labeller"])
             .output()
             .unwrap();
-        assert_success(&output);
-        let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let envelope = success_envelope(&output);
         let lambs = envelope["data"][0]["lambs"].clone();
         let sleeps = lambs.as_array().map_or(0, |all| {
             all.iter().filter(|lamb| lamb["name"] == "sleep").count()
@@ -420,8 +428,7 @@ fn saving_the_roll_then_mustering_reports_the_same_flock() {
         .output()
         .unwrap();
     guard.adopt_home(home);
-    assert_success(&started);
-    let start_envelope: serde_json::Value = serde_json::from_slice(&started.stdout).unwrap();
+    let start_envelope = success_envelope(&started);
     assert_eq!(
         start_envelope["data"][0]["status"], "online",
         "{start_envelope}"
@@ -436,8 +443,7 @@ fn saving_the_roll_then_mustering_reports_the_same_flock() {
         .arg("save")
         .output()
         .unwrap();
-    assert_success(&saved);
-    let save_envelope: serde_json::Value = serde_json::from_slice(&saved.stdout).unwrap();
+    let save_envelope = success_envelope(&saved);
     assert_eq!(
         save_envelope["command"], "save",
         "`shep save` must reach the save verb and no other: {save_envelope}"
@@ -453,8 +459,7 @@ fn saving_the_roll_then_mustering_reports_the_same_flock() {
         .arg("muster")
         .output()
         .unwrap();
-    assert_success(&mustered);
-    let muster_envelope: serde_json::Value = serde_json::from_slice(&mustered.stdout).unwrap();
+    let muster_envelope = success_envelope(&mustered);
     assert_eq!(
         muster_envelope["command"], "muster",
         "`shep muster` must reach the muster verb and no other: {muster_envelope}"

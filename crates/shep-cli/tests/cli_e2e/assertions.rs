@@ -166,6 +166,7 @@ pub(crate) fn combined_output(output: &Output) -> String {
 /// Asserts a failed `--format json` invocation kept `stdout` empty and put a
 /// parseable `{"schema_version", "error": {"code", "message"}}` object on
 /// `stderr`. Only this tier has two real streams.
+#[track_caller]
 pub(crate) fn assert_json_error(output: &Output, expected_status: i32, expected_error_code: &str) {
     assert_eq!(
         output.status.code(),
