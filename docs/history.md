@@ -292,7 +292,7 @@ whichever side of the gap is behind: `ssh <dest> shep daemon reload` for a
 host on an older protocol, `cargo install shep` on this machine for one on a
 newer protocol, since a half-upgraded fleet has hosts running ahead of the
 operator's laptop. The local socket is unchanged, and so are
-`Exempt` and `Warn`. `version_guard/tests.rs` pins each side of the table and
+`Exempt` and `Warn`. `version_guard/tests/` pins each side of the table and
 `fleet/tests.rs` pins it across a `hosts` list.
 
 **`PROTOCOL_VERSION` and `MIN_SUPPORTED` moved to 8 on 2026-09-07, for
