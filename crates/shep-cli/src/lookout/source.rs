@@ -501,12 +501,8 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = crate::output::Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: crate::cli::Format::Table,
-        };
+        let mut streams =
+            crate::output::Streams::bare(&mut out, &mut err, crate::cli::Format::Table);
         let code = crate::version_guard::refuse_version_skew(
             &mut streams,
             flock.client(),
@@ -531,12 +527,8 @@ mod tests {
 
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = crate::output::Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: crate::cli::Format::Table,
-        };
+        let mut streams =
+            crate::output::Streams::bare(&mut out, &mut err, crate::cli::Format::Table);
         crate::version_guard::refuse_version_skew(
             &mut streams,
             flock.client(),

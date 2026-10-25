@@ -2,7 +2,6 @@
 //! first-run creation.
 
 use super::*;
-use crate::style;
 
 /// fails if the copyable remedy stops being one shell word. A path with
 /// a space rendered `mkdir -p /tmp/my shep`, which creates two
@@ -183,12 +182,7 @@ fn creating_startups_default_home_scaffolds_it_like_the_shared_gate() {
     let paths = paths_at(root.path());
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let mut streams = Streams {
-        out: &mut out,
-        err: &mut err,
-        style: style::Presentation::BARE,
-        fmt: cli::Format::Table,
-    };
+    let mut streams = Streams::bare(&mut out, &mut err, cli::Format::Table);
 
     create_default_home(&mut streams, paths.clone()).expect("a default home is created");
     assert!(paths.home.is_dir());

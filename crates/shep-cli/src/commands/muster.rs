@@ -108,12 +108,7 @@ mod tests {
         let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let _ = save(&client, &mut streams).await;
 
         let envelope = tokio::time::timeout(FAKE_REPLY_WAIT, envelopes.recv())
@@ -136,12 +131,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             save(&client, &mut streams).await
         };
         assert_eq!(code, ExitCode::Internal);
@@ -160,12 +150,7 @@ mod tests {
         let (client, mut envelopes) = fake_client_capturing_envelopes(&path).await;
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let mut streams = Streams {
-            out: &mut out,
-            err: &mut err,
-            style: crate::style::Presentation::BARE,
-            fmt: Format::Table,
-        };
+        let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
         let _ = muster(&client, &mut streams).await;
 
         let envelope = tokio::time::timeout(FAKE_REPLY_WAIT, envelopes.recv())
@@ -199,12 +184,7 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = {
-            let mut streams = Streams {
-                out: &mut out,
-                err: &mut err,
-                style: crate::style::Presentation::BARE,
-                fmt: Format::Table,
-            };
+            let mut streams = Streams::bare(&mut out, &mut err, Format::Table);
             muster(&client, &mut streams).await
         };
         assert_eq!(code, ExitCode::Success, "an empty roll is not a failure");
