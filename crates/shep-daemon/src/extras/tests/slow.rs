@@ -1,6 +1,8 @@
 //! Tests that wait on real filesystem events or real elapsed time. The inner
 //! loop skips them with `--skip ::slow::`; the full suite runs them.
 
+use std::path::Path;
+
 use super::*;
 
 // The overlap a reload runs on: the replacement arms before the
@@ -136,6 +138,21 @@ async fn a_group_disarmed_before_its_first_occurrence_leaves_no_worker_behind() 
     assert_no_restart_within(&mut rx, "web", PAST_THE_NEXT_OCCURRENCE).await;
 }
 
+/// The `watch_delay` a real-clock watch test arms with: `watch::real_time`'s
+/// `TEST_DELAY`, that module being the owner of this subsystem's real-time
+/// constants.
+fn test_watch_delay() -> UpDuration {
+    UpDuration::from_millis(real_time::TEST_DELAY.as_millis() as u64)
+}
+
+/// Touch a file under the watched root and wait for the single restart it
+/// must cause.
+async fn touch_and_expect_single_restart(rx: &mut broadcast::Receiver<SharedEvent>, root: &Path) {
+    touch(root, "trigger.txt").unwrap();
+    let info = expect_restart(rx, "web", real_time::SMOKE_DEADLINE).await;
+    assert_eq!(info.restarts, 1);
+}
+
 // The watch twin of the case above, and separate because the gate is two
 // independent conditions. The ending is forced with `abort` rather than
 // by killing the `WatchSource` the loop really returns on, which dies
@@ -151,9 +168,7 @@ async fn a_watch_that_ended_on_its_own_is_rebuilt_on_the_next_arm() {
     let app = app_with("web", |app| {
         app.watch = true;
         app.cwd = Some(root.path().display().to_string());
-        app.watch_delay = Some(UpDuration::from_millis(
-            real_time::TEST_DELAY.as_millis() as u64
-        ));
+        app.watch_delay = Some(test_watch_delay());
     });
     handle.start(vec![app.clone()]).await.unwrap();
 
@@ -177,9 +192,7 @@ async fn a_watch_that_ended_on_its_own_is_rebuilt_on_the_next_arm() {
         &handle,
     );
 
-    touch(root.path(), "trigger.txt").unwrap();
-    let info = expect_restart(&mut rx, "web", real_time::SMOKE_DEADLINE).await;
-    assert_eq!(info.restarts, 1);
+    touch_and_expect_single_restart(&mut rx, root.path()).await;
 }
 
 // An unresolved root fires never: on macOS a tempdir under `/var/...` is
@@ -195,11 +208,7 @@ async fn a_watched_app_restarts_on_a_save_and_goes_quiet_once_disarmed() {
     let app = app_with("web", |app| {
         app.watch = true;
         app.cwd = Some(root.path().display().to_string());
-        // From `watch::real_time`, the owner of this subsystem's
-        // real-time constants.
-        app.watch_delay = Some(UpDuration::from_millis(
-            real_time::TEST_DELAY.as_millis() as u64
-        ));
+        app.watch_delay = Some(test_watch_delay());
     });
     handle.start(vec![app.clone()]).await.unwrap();
     registry.arm(
@@ -209,9 +218,7 @@ async fn a_watched_app_restarts_on_a_save_and_goes_quiet_once_disarmed() {
         &handle,
     );
 
-    touch(root.path(), "trigger.txt").unwrap();
-    let info = expect_restart(&mut rx, "web", real_time::SMOKE_DEADLINE).await;
-    assert_eq!(info.restarts, 1);
+    touch_and_expect_single_restart(&mut rx, root.path()).await;
 
     registry.disarm(0, "web");
     touch(root.path(), "after-disarm.txt").unwrap();
@@ -241,9 +248,7 @@ async fn a_watched_app_naming_no_delay_still_restarts_on_a_save() {
         &handle,
     );
 
-    touch(root.path(), "trigger.txt").unwrap();
-    let info = expect_restart(&mut rx, "web", real_time::SMOKE_DEADLINE).await;
-    assert_eq!(info.restarts, 1);
+    touch_and_expect_single_restart(&mut rx, root.path()).await;
 }
 
 // The watch's own door into the claim the cron case makes, and separate
@@ -260,9 +265,7 @@ async fn a_watch_restart_is_not_reported_as_a_user_action() {
     let app = app_with("web", |app| {
         app.watch = true;
         app.cwd = Some(root.path().display().to_string());
-        app.watch_delay = Some(UpDuration::from_millis(
-            real_time::TEST_DELAY.as_millis() as u64
-        ));
+        app.watch_delay = Some(test_watch_delay());
     });
     handle.start(vec![app.clone()]).await.unwrap();
     registry.arm(
@@ -296,9 +299,7 @@ async fn a_watched_app_ignores_the_paths_its_ignore_watch_names() {
         app.watch = true;
         app.cwd = Some(root.path().display().to_string());
         app.ignore_watch = vec!["ignored.txt".to_string()];
-        app.watch_delay = Some(UpDuration::from_millis(
-            real_time::TEST_DELAY.as_millis() as u64
-        ));
+        app.watch_delay = Some(test_watch_delay());
     });
     handle.start(vec![app.clone()]).await.unwrap();
     registry.arm(
@@ -311,9 +312,7 @@ async fn a_watched_app_ignores_the_paths_its_ignore_watch_names() {
     touch(root.path(), "ignored.txt").unwrap();
     assert_no_restart_within(&mut rx, "web", real_time::NO_EVENT_WINDOW).await;
 
-    touch(root.path(), "trigger.txt").unwrap();
-    let info = expect_restart(&mut rx, "web", real_time::SMOKE_DEADLINE).await;
-    assert_eq!(info.restarts, 1);
+    touch_and_expect_single_restart(&mut rx, root.path()).await;
 }
 
 // The default globs plus `ignore_watch` alone let an app naming an
@@ -335,9 +334,7 @@ async fn a_watched_app_ignores_its_own_log_writes() {
         // `logs`: a shep write really does land inside the tree.
         app.out_file = Some(root.path().join("app-out.txt").display().to_string());
         app.err_file = Some(root.path().join("app-err.txt").display().to_string());
-        app.watch_delay = Some(UpDuration::from_millis(
-            real_time::TEST_DELAY.as_millis() as u64
-        ));
+        app.watch_delay = Some(test_watch_delay());
     });
     handle.start(vec![app.clone()]).await.unwrap();
     registry.arm(
@@ -351,9 +348,7 @@ async fn a_watched_app_ignores_its_own_log_writes() {
     touch(root.path(), "app-err.txt").unwrap();
     assert_no_restart_within(&mut rx, "web", real_time::NO_EVENT_WINDOW).await;
 
-    touch(root.path(), "trigger.txt").unwrap();
-    let info = expect_restart(&mut rx, "web", real_time::SMOKE_DEADLINE).await;
-    assert_eq!(info.restarts, 1);
+    touch_and_expect_single_restart(&mut rx, root.path()).await;
 }
 
 // `probe_exec` runs `env_clear().envs(&self.env)` and `SHEP_INSTANCE` is
