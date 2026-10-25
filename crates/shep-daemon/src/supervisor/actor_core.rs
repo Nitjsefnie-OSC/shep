@@ -188,10 +188,17 @@ impl<R: ProcessRunner> Actor<R> {
                 replace,
                 except,
                 dry_run,
+                expect,
                 reply,
             } => {
-                let _ =
-                    reply.send(self.handle_copy_sheep_env(&from, &to, replace, &except, dry_run));
+                let _ = reply.send(self.handle_copy_sheep_env(
+                    &from,
+                    &to,
+                    replace,
+                    &except,
+                    dry_run,
+                    expect.as_deref(),
+                ));
                 false
             }
             Command::SetSheepField {

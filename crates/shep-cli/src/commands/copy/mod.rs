@@ -465,7 +465,8 @@ async fn write_plan(
             from,
             replace,
             except,
-        } => env::write_env(client, streams, target, &from, replace, &except).await,
+            expect,
+        } => env::write_env(client, streams, target, &from, replace, &except, expect).await,
         Write::DogTable { dog, table } => {
             match ask_dog(client, paths, &dog, table.as_map(), Some(target)).await {
                 Ok(()) => {}

@@ -87,6 +87,7 @@ pub(super) fn rpc_error(err: &SupervisorError) -> RpcError {
         // would send them to the wrong place entirely. The message is
         // `normalize`'s own refusal, which already names the key.
         SupervisorError::InvalidEnv(msg) => invalid_config(msg),
+        SupervisorError::EnvChanged(_) => invalid_config(err),
         // Beside `InvalidEnv` above and for its reason: every shape that
         // reaches it is the caller's own key or value, and the message names
         // the field.

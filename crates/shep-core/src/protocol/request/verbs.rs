@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{AppConfig, DeclaredApp, DogTable, ResetDepth};
 
-use super::{DogSectionToml, DogSource, EnvValue, LogStream, SelectorSpec, Smit};
+use super::{DogSectionToml, DogSource, EnvCopyChange, EnvValue, LogStream, SelectorSpec, Smit};
 
 // Named by intra-doc links and by nothing rustc compiles, so the
 // import is behind `cfg(doc)` rather than flagged unused.
@@ -198,6 +198,12 @@ pub enum Request {
     /// `dry_run` computes the change list and writes nothing. Parks for the
     /// next spawn, exactly as [`Self::SetSheepEnv`] does.
     ///
+    /// `expect` is the change list a dry run answered, sent back with the
+    /// write. The shepherd computes the list again from what the two sheep
+    /// hold now, and refuses with [`RpcErrorCode::InvalidConfig`], writing
+    /// nothing, when it is not the one named. Without it, an edit between
+    /// the two requests changes what lands. Absent on the wire when `None`.
+    ///
     /// Answers [`Response::SheepEnvCopied`], or
     /// [`RpcErrorCode::NotFound`] when either name is no sheep. Not a protocol
     /// bump: a shepherd that has never heard of this one decodes
@@ -213,6 +219,10 @@ pub enum Request {
         except: Vec<String>,
         /// Report what would happen and write nothing.
         dry_run: bool,
+        /// The change list the caller reviewed; the write is refused when
+        /// the shepherd's own differs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expect: Option<Vec<EnvCopyChange>>,
     },
     /// Sets one config field on one sheep, recorded as an operator
     /// override.

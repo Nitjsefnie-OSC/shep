@@ -604,9 +604,10 @@ async fn run(id: u64, conn: ConnId, request: Request, ctx: &RpcContext) -> Outco
             replace,
             except,
             dry_run,
+            expect,
         } => match ctx
             .supervisor
-            .copy_sheep_env(&from, &to, replace, except, dry_run)
+            .copy_sheep_env(&from, &to, replace, except, dry_run, expect)
             .await
         {
             // Recorded for `SetSheepEnv`'s reason. `app` is `None` for a dry

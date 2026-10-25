@@ -288,6 +288,8 @@ impl SupervisorHandle {
     /// - [`SupervisorError::NoSuchSheep`] - `from` or `to` is no sheep.
     /// - [`SupervisorError::IsADog`] - `from` or `to` is a dog's.
     /// - [`SupervisorError::InvalidEnv`] - `normalize` refuses the result.
+    /// - [`SupervisorError::EnvChanged`] - `expect` is not the change list the
+    ///   two sheep give now.
     /// - [`SupervisorError::Overrides`] - the override store could not be
     ///   read or written, so nothing was recorded and nothing parked.
     /// - [`SupervisorError::EngineStopped`] - the actor is gone.
@@ -298,6 +300,7 @@ impl SupervisorHandle {
         replace: bool,
         except: Vec<String>,
         dry_run: bool,
+        expect: Option<Vec<shep_core::protocol::EnvCopyChange>>,
     ) -> Result<EnvCopy, SupervisorError> {
         self.call(|reply| Command::CopySheepEnv {
             from: from.to_string(),
@@ -305,6 +308,7 @@ impl SupervisorHandle {
             replace,
             except,
             dry_run,
+            expect,
             reply,
         })
         .await?

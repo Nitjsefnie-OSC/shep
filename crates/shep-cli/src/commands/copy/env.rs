@@ -32,7 +32,7 @@ pub(crate) async fn plan_env(
     except: &[String],
     replace: bool,
 ) -> Result<Plan, ExitCode> {
-    let request = copy_request(sides, except, replace, true);
+    let request = copy_request(sides, except, replace, None);
     match client.request(request).await {
         Ok(Response::SheepEnvCopied { changes, .. }) => {
             Ok(plan_of(sides.source, except, replace, changes))
@@ -56,13 +56,14 @@ pub(crate) async fn write_env(
     from: &str,
     replace: bool,
     except: &[String],
+    expect: Vec<EnvCopyChange>,
 ) -> Result<Vec<String>, ExitCode> {
     let sides = Sides {
         source: from,
         target,
     };
     match client
-        .request(copy_request(sides, except, replace, false))
+        .request(copy_request(sides, except, replace, Some(expect)))
         .await
     {
         Ok(Response::SheepEnvCopied { .. }) => Ok(vec!["env".to_string()]),
@@ -71,14 +72,22 @@ pub(crate) async fn write_env(
     }
 }
 
-/// The request both halves send, differing only in `dry_run`.
-fn copy_request(sides: Sides<'_>, except: &[String], replace: bool, dry_run: bool) -> Request {
+/// The request both halves send. The dry run carries no `expect`; the write
+/// carries the list the dry run answered, so an edit made while the operator
+/// was being asked is refused rather than applied unseen.
+fn copy_request(
+    sides: Sides<'_>,
+    except: &[String],
+    replace: bool,
+    expect: Option<Vec<EnvCopyChange>>,
+) -> Request {
     Request::CopySheepEnv {
         from: sides.source.to_string(),
         to: sides.target.to_string(),
         replace,
         except: except.to_vec(),
-        dry_run,
+        dry_run: expect.is_none(),
+        expect,
     }
 }
 
@@ -90,6 +99,7 @@ fn plan_of(from: &str, except: &[String], replace: bool, changes: Vec<EnvCopyCha
         from: from.to_string(),
         replace,
         except: except.to_vec(),
+        expect: changes.clone(),
     });
     Plan {
         changes: changes.into_iter().map(change_of).collect(),
@@ -126,21 +136,17 @@ mod tests {
 
     #[test]
     fn the_listed_changes_become_the_plan_and_one_write() {
-        let plan = plan_of(
-            "web",
-            &["PORT".to_string()],
-            true,
-            vec![
-                listed("A", EnvCopyKind::Added, None, Some("{{secret:A}}")),
-                listed(
-                    "B",
-                    EnvCopyKind::Changed,
-                    Some("<redacted>"),
-                    Some("<redacted>"),
-                ),
-                listed("D", EnvCopyKind::Removed, Some("<redacted>"), None),
-            ],
-        );
+        let listed_changes = vec![
+            listed("A", EnvCopyKind::Added, None, Some("{{secret:A}}")),
+            listed(
+                "B",
+                EnvCopyKind::Changed,
+                Some("<redacted>"),
+                Some("<redacted>"),
+            ),
+            listed("D", EnvCopyKind::Removed, Some("<redacted>"), None),
+        ];
+        let plan = plan_of("web", &["PORT".to_string()], true, listed_changes.clone());
 
         let rows: Vec<_> = plan
             .changes
@@ -183,6 +189,7 @@ mod tests {
                 from: "web".to_string(),
                 replace: true,
                 except: vec!["PORT".to_string()],
+                expect: listed_changes,
             })
         );
     }
@@ -241,5 +248,31 @@ mod tests {
                 ],
             ]
         );
+    }
+
+    #[test]
+    fn the_write_sends_back_the_list_the_dry_run_answered() {
+        let sides = Sides {
+            source: "web",
+            target: "api",
+        };
+        let reviewed = vec![listed("A", EnvCopyKind::Added, None, Some("{{secret:A}}"))];
+
+        let Request::CopySheepEnv {
+            dry_run, expect, ..
+        } = copy_request(sides, &[], false, None)
+        else {
+            panic!("a copy request");
+        };
+        assert!(dry_run && expect.is_none());
+
+        let Request::CopySheepEnv {
+            dry_run, expect, ..
+        } = copy_request(sides, &[], false, Some(reviewed.clone()))
+        else {
+            panic!("a copy request");
+        };
+        assert!(!dry_run);
+        assert_eq!(expect, Some(reviewed));
     }
 }

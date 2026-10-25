@@ -35,6 +35,10 @@ impl<R: ProcessRunner> Actor<R> {
     /// - [`SupervisorError::IsADog`] - `from` or `to` is a dog's. Raised before
     ///   the store is read, for [`Self::handle_set_sheep_env`]'s reason, and
     ///   for `from` because a dog's env is not a pane's to read either.
+    /// - [`SupervisorError::EnvChanged`] - `expect` is not the change list the
+    ///   two sheep give now. Raised before anything is written, so a key
+    ///   another client edited since the caller's dry run is never replaced
+    ///   or removed unseen.
     /// - [`SupervisorError::InvalidEnv`] - the resulting config is one
     ///   `normalize` refuses. Nothing was written.
     /// - [`SupervisorError::Overrides`] - the store could not be read or
@@ -46,6 +50,7 @@ impl<R: ProcessRunner> Actor<R> {
         replace: bool,
         except: &[String],
         dry_run: bool,
+        expect: Option<&[EnvCopyChange]>,
     ) -> Result<EnvCopy, SupervisorError> {
         let source_id = self
             .representative_id(from)
@@ -77,6 +82,13 @@ impl<R: ProcessRunner> Actor<R> {
         }
 
         let changes = diff(&before, &after);
+        if let Some(reviewed) = expect
+            && reviewed != changes
+        {
+            return Err(SupervisorError::EnvChanged(differing_keys(
+                reviewed, &changes,
+            )));
+        }
         if changes.is_empty() {
             return Ok(EnvCopy { app: None, changes });
         }
@@ -107,6 +119,17 @@ impl<R: ProcessRunner> Actor<R> {
             changes,
         })
     }
+}
+
+/// The keys whose change is in one list and not in the other, in key order.
+fn differing_keys(reviewed: &[EnvCopyChange], now: &[EnvCopyChange]) -> String {
+    let keys: BTreeSet<&str> = reviewed
+        .iter()
+        .filter(|change| !now.contains(change))
+        .chain(now.iter().filter(|change| !reviewed.contains(change)))
+        .map(|change| change.key.as_str())
+        .collect();
+    keys.into_iter().collect::<Vec<_>>().join(", ")
 }
 
 /// Every key that differs between `before` and `after`, in key order, with

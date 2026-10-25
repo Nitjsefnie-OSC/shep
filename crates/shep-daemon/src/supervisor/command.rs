@@ -242,6 +242,8 @@ pub(crate) enum Command {
         except: Vec<String>,
         /// Compute the change list and write nothing.
         dry_run: bool,
+        /// The change list the caller reviewed, which the write must match.
+        expect: Option<Vec<shep_core::protocol::EnvCopyChange>>,
         /// Answers the change list, or an error when either name is no sheep,
         /// is a dog's, or the result will not normalize or be stored.
         reply: oneshot::Sender<Result<EnvCopy, SupervisorError>>,

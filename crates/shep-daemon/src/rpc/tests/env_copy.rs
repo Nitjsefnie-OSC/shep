@@ -52,6 +52,19 @@ async fn copy(
     except: &[&str],
     dry_run: bool,
 ) -> Result<Response, RpcError> {
+    copy_expecting(h, id, replace, except, dry_run, None).await
+}
+
+/// Sends one `CopySheepEnv` web onto api, holding the shepherd to the change
+/// list `expect` names.
+async fn copy_expecting(
+    h: &Harness,
+    id: u64,
+    replace: bool,
+    except: &[&str],
+    dry_run: bool,
+    expect: Option<Vec<EnvCopyChange>>,
+) -> Result<Response, RpcError> {
     reply_of(
         dispatch(
             envelope(
@@ -62,6 +75,7 @@ async fn copy(
                     replace,
                     except: except.iter().map(|key| (*key).to_string()).collect(),
                     dry_run,
+                    expect,
                 },
             ),
             &h.ctx,
@@ -210,6 +224,7 @@ async fn a_missing_sheep_on_either_side_is_not_found() {
                         replace: false,
                         except: Vec::new(),
                         dry_run: false,
+                        expect: None,
                     },
                 ),
                 &h.ctx,
@@ -245,6 +260,7 @@ async fn a_dog_on_either_side_is_refused() {
                         replace: false,
                         except: Vec::new(),
                         dry_run: false,
+                        expect: None,
                     },
                 ),
                 &h.ctx,
@@ -256,4 +272,51 @@ async fn a_dog_on_either_side_is_refused() {
         };
         assert_eq!(err.code, RpcErrorCode::InvalidConfig, "{err:?}");
     }
+}
+
+/// The write is held to the change list the operator reviewed: a key another
+/// client added to the target since then would be deleted by `replace` without
+/// ever having been shown, so the shepherd refuses and writes nothing.
+#[tokio::test(start_paused = true)]
+async fn a_write_whose_reviewed_changes_no_longer_hold_is_refused() {
+    let h = harness(vec![ProcScript::never_exits(), ProcScript::never_exits()]);
+    start_pair(&h).await;
+    let reviewed = changes_of(copy(&h, 2, true, &[], true).await);
+
+    let edited = reply_of(
+        dispatch(
+            envelope(
+                3,
+                Request::SetSheepEnv {
+                    name: "api".to_string(),
+                    key: "ADDED_SINCE".to_string(),
+                    value: Some("late".to_string().into()),
+                },
+            ),
+            &h.ctx,
+        )
+        .await,
+    );
+    assert!(edited.result.is_ok(), "{:?}", edited.result);
+    let before = stored_env(&h, "api");
+
+    let err = copy_expecting(&h, 4, true, &[], false, Some(reviewed))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, RpcErrorCode::InvalidConfig, "{err:?}");
+    assert!(err.message.contains("changed"), "{err:?}");
+    assert_eq!(stored_env(&h, "api"), before, "nothing was written");
+}
+
+/// A change list that still holds is applied.
+#[tokio::test(start_paused = true)]
+async fn a_write_whose_reviewed_changes_still_hold_is_applied() {
+    let h = harness(vec![ProcScript::never_exits(), ProcScript::never_exits()]);
+    start_pair(&h).await;
+    let reviewed = changes_of(copy(&h, 2, false, &[], true).await);
+
+    let applied =
+        changes_of(copy_expecting(&h, 3, false, &[], false, Some(reviewed.clone())).await);
+    assert_eq!(applied, reviewed);
+    assert_eq!(stored_env(&h, "api")["B"], "web-literal");
 }

@@ -497,6 +497,7 @@ async fn every_new_variant_reaches_an_arm_and_not_the_wildcard() {
             replace: false,
             except: Vec::new(),
             dry_run: true,
+            expect: None,
         },
         Request::DogSheepSettings {
             dog: "ghost".to_string(),
